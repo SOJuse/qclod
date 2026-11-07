@@ -40,3 +40,30 @@ export function notificationFor(input: NotificationInput): NotificationPlan | nu
     silent: !input.settings.soundEnabled
   }
 }
+
+/**
+ * Shows the notification, if the state deserves one. Clicking it brings the
+ * tab that caused it to the front — a notification you cannot act on is noise.
+ */
+export function notifyIfNeeded(input: {
+  settings: AppSettings
+  tab: { title: string }
+  status: SessionStatus
+  isActive: boolean
+  onActivate: () => void
+}): void {
+  const plan = notificationFor({
+    status: input.status,
+    tabTitle: input.tab.title,
+    isWindowFocused: input.isActive,
+    settings: input.settings
+  })
+  if (!plan) return
+
+  const { Notification } = require('electron') as typeof import('electron')
+  if (!Notification.isSupported()) return
+
+  const notification = new Notification(plan)
+  notification.on('click', input.onActivate)
+  notification.show()
+}

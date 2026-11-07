@@ -12,6 +12,7 @@
  * app under e2e, without a build step in between.
  *
  * @typedef {{kind:'text', text:string}} TextStep
+ * @typedef {{kind:'textStream', pieces:string[], pauseMs?:number}} TextStreamStep
  * @typedef {{kind:'thinking', text?:string, ms?:number}} ThinkingStep
  * @typedef {{kind:'tool', name:string, input?:object, result?:string}} ToolStep
  * @typedef {{kind:'toolError', name:string, input?:object, error:string}} ToolErrorStep
@@ -88,6 +89,45 @@ export function createFakeSdk(script = {}) {
         case 'thinking':
           yield assistant([{ type: 'thinking', thinking: step.text ?? 'размышляю' }])
           break
+
+        // What a real session looks like with --include-partial-messages: the
+        // text arrives as deltas and the complete message follows it.
+        case 'textStream': {
+          const messageId = `msg_${randomUUID()}`
+          yield {
+            type: 'stream_event',
+            uuid: randomUUID(),
+            session_id: sessionId,
+            parent_tool_use_id: null,
+            event: {
+              type: 'message_start',
+              message: { id: messageId, role: 'assistant', content: [] }
+            }
+          }
+          for (const piece of step.pieces ?? []) {
+            if (step.pauseMs) await new Promise((r) => setTimeout(r, step.pauseMs))
+            yield {
+              type: 'stream_event',
+              uuid: randomUUID(),
+              session_id: sessionId,
+              parent_tool_use_id: null,
+              event: {
+                type: 'content_block_delta',
+                index: 0,
+                delta: { type: 'text_delta', text: piece }
+              }
+            }
+          }
+          const whole = (step.pieces ?? []).join('')
+          yield {
+            type: 'assistant',
+            uuid: randomUUID(),
+            session_id: sessionId,
+            parent_tool_use_id: null,
+            message: { id: messageId, role: 'assistant', content: [{ type: 'text', text: whole }] }
+          }
+          break
+        }
 
         case 'tool': {
           const id = randomUUID()

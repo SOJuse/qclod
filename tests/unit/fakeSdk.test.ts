@@ -190,3 +190,22 @@ describe('createFakeSdk: следующий ход', () => {
     expect(driver.disposed).toBe(true)
   })
 })
+
+describe('createFakeSdk: потоковый текст', () => {
+  test('textStream даёт дельты и завершающее сообщение с тем же id', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'textStream', pieces: ['Привет', ', ', 'мир'] }]
+    })
+    const out = await collect(driver)
+
+    const deltas = out.filter((m) => m['type'] === 'stream_event')
+    expect(deltas).toHaveLength(4) // message_start + три дельты
+
+    const started = deltas[0]!['event'] as { message: { id: string } }
+    const complete = out.find((m) => m['type'] === 'assistant')!
+    expect((complete['message'] as { id: string }).id).toBe(started.message.id)
+    expect((complete['message'] as { content: Array<{ text: string }> }).content[0]!.text).toBe(
+      'Привет, мир'
+    )
+  })
+})

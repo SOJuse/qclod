@@ -1,11 +1,21 @@
 import { app, BrowserWindow, globalShortcut, ipcMain } from 'electron'
+import { homedir } from 'node:os'
 import { createMainWindow, hardenWebContents, RENDERER_ENTRY } from './window'
 import { registerBaseIpc } from './ipc'
+import { registerAgentIpc } from './agentIpc'
 import { loadSettings, saveSettings } from './store/settingsStore'
 import { HotkeyRegistrar } from './hotkey/globalHotkey'
 import { createTray } from './tray'
 import { CHANNELS } from '../shared/channels'
-import type { AppSettings, TabId } from '../shared/types'
+import { AgentSessionManager } from './agent/AgentSessionManager'
+import { createDriverFactory } from './agent/createDriver'
+import { PermissionBroker } from './agent/permissions'
+import { loadRules, saveRules } from './agent/permissionStore'
+import { SessionHistory } from './agent/sessionHistory'
+import { TabController } from './tabs/TabController'
+import { notifyIfNeeded } from './notifications'
+import { RibbonBatcher } from './ribbonBatcher'
+import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 let quitting = false
@@ -29,9 +39,14 @@ app.on('web-contents-created', (_e, contents) => {
   hardenWebContents(contents)
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
+
+  function send(channel: string, payload: unknown): void {
+    const win = mainWindow
+    if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+  }
 
   function showWindow(): void {
     const win = mainWindow
@@ -57,6 +72,66 @@ app.whenReady().then(() => {
     toggleWindow
   )
 
+  // The permission question goes to the window and comes back through IPC.
+  // A window that is gone cannot answer, so the broker denies rather than
+  // leaving the agent waiting forever.
+  const broker = new PermissionBroker({
+    loadRules: () => loadRules(userData),
+    saveRules: (rules) => saveRules(userData, rules),
+    ask: (request: PermissionRequest) => {
+      const win = mainWindow
+      if (!win || win.isDestroyed()) {
+        broker.answer(request.requestId, { behavior: 'deny' })
+        return
+      }
+      showWindow()
+      send(CHANNELS.permissionAsked, request)
+    }
+  })
+
+  const manager = new AgentSessionManager({
+    getAgentPath: () => settings.agentPath,
+    createDriver: createDriverFactory(),
+    askPermission: (request) => broker.request(request.tabId, request.toolName, request.input)
+  })
+
+  const history = process.env['QCLOD_FAKE_SDK']
+    ? new SessionHistory({ listSessions: async () => [], getSessionMessages: async () => [] })
+    : await import('./agent/sessionHistory').then((m) => m.createSessionHistory())
+
+  const ribbonBatcher = new RibbonBatcher((event) => send(CHANNELS.ribbonChanged, event))
+
+  const controller = new TabController({
+    manager,
+    storeDir: userData,
+    defaultCwd: process.cwd() || homedir(),
+    history: {
+      list: (cwd) => history.list(cwd),
+      messages: (sessionId) => history.messages(sessionId)
+    },
+    onChanged: (tabs) => {
+      send(CHANNELS.tabsChanged, tabs)
+      tray?.rebuild()
+    },
+    onRibbon: (event) => ribbonBatcher.push(event),
+    onPanel: (event) => send(CHANNELS.panelChanged, event),
+    onStatus: (event) => {
+      send(CHANNELS.statusChanged, event)
+      const tab = controller.list().find((t) => t.id === event.tabId)
+      if (!tab) return
+      notifyIfNeeded({
+        settings,
+        tab,
+        status: event.status,
+        isActive: controller.activeTabId === event.tabId && (mainWindow?.isFocused() ?? false),
+        onActivate: () => {
+          showWindow()
+          send(CHANNELS.activateTab, event.tabId)
+        }
+      })
+    }
+  })
+
   registerBaseIpc({
     getWindow: () => mainWindow,
     getSettings: () => settings,
@@ -69,6 +144,7 @@ app.whenReady().then(() => {
     }
   })
 
+  registerAgentIpc({ getWindow: () => mainWindow, controller, manager, broker })
   ipcMain.handle(CHANNELS.hotkeyStatus, () => hotkey.status)
 
   mainWindow = createMainWindow()
@@ -78,10 +154,10 @@ app.whenReady().then(() => {
     ? null
     : (createTray({
         getWindow: () => mainWindow,
-        getTabs: () => [],
+        getTabs: () => controller.list(),
         onActivateTab: (id: TabId) => {
           showWindow()
-          mainWindow?.webContents.send(CHANNELS.activateTab, id)
+          send(CHANNELS.activateTab, id)
         },
         toggleWindow
       }) as ReturnType<typeof createTray> & { rebuild: () => void })
@@ -95,12 +171,17 @@ app.whenReady().then(() => {
   if (!headless) hotkey.apply(settings.globalHotkey)
 
   mainWindow.webContents.once('did-finish-load', () => {
+    void controller.restore()
     tray?.rebuild()
   })
 
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
+    if (quitting) return
     quitting = true
+    event.preventDefault()
     hotkey.release()
+    broker.cancelAll()
+    void controller.disposeAll().finally(() => app.quit())
   })
 
   app.on('will-quit', () => {

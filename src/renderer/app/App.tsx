@@ -27,6 +27,19 @@ export function App(): JSX.Element {
     [patchSettings]
   )
 
+  const setMenuActive = useAppStore((s) => s.setMenuActive)
+  const autoFocusOnMenu = settings?.autoFocusOnMenu ?? true
+
+  const onMenuActive = useCallback(
+    (active: boolean) => {
+      setMenuActive(activeTabId, active)
+      // Convenience only — the Ctrl+` toggle and the empty-field key rules
+      // work regardless, and this can be switched off in settings (spec 6.4).
+      if (active && autoFocusOnMenu) setFocusTarget('terminal')
+    },
+    [activeTabId, autoFocusOnMenu, setFocusTarget, setMenuActive]
+  )
+
   return (
     <div className="app" data-testid="app-root">
       <header className="app-bar">
@@ -41,6 +54,7 @@ export function App(): JSX.Element {
             onRequestFocus={() => setFocusTarget('terminal')}
             onToggleFocus={toggleFocusTarget}
             onFontSize={setFontSize}
+            onMenuActive={onMenuActive}
           />
           <Composer
             tabId={activeTabId}

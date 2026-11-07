@@ -96,3 +96,17 @@ test('стрелка вверх при пустом поле достаёт от
   await win.keyboard.press('ArrowUp')
   await expect(win.locator('[data-testid="composer-input"]')).toHaveValue('первый запрос')
 })
+
+test('меню агента само забирает фокус в терминал', async () => {
+  await win.keyboard.type('/menu')
+  await win.keyboard.press('Enter')
+
+  await expect(win.locator('[data-testid="terminal"]')).toContainText('menu-open', {
+    timeout: 15000
+  })
+  // Auto-focus is convenience, but when it works the arrows must land in the menu.
+  await expect(win.locator('[data-testid="terminal"]')).toHaveClass(/is-focused/)
+
+  await win.keyboard.press('ArrowDown')
+  await expect(win.locator('[data-testid="terminal"]')).toContainText('❯ option-2')
+})

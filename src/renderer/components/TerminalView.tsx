@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { createTerminal, type TerminalHandle } from '../terminal/createTerminal'
 import { resolveTerminalKey } from '../terminal/keymap'
 import { encodeForPty } from '../input/encode'
+import { detectMenu } from '../terminal/menuDetect'
 import type { TabId } from '../../shared/types'
 import './TerminalView.css'
 
@@ -12,6 +13,7 @@ interface Props {
   onRequestFocus: () => void
   onToggleFocus: () => void
   onFontSize: (next: number) => void
+  onMenuActive: (active: boolean) => void
 }
 
 export function TerminalView({
@@ -20,14 +22,15 @@ export function TerminalView({
   focused,
   onRequestFocus,
   onToggleFocus,
-  onFontSize
+  onFontSize,
+  onMenuActive
 }: Props): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const handleRef = useRef<TerminalHandle | null>(null)
   // Keep the latest callbacks reachable from the terminal's own listeners,
   // which are attached once for the terminal's lifetime.
-  const actions = useRef({ onToggleFocus, onFontSize, fontSize })
-  actions.current = { onToggleFocus, onFontSize, fontSize }
+  const actions = useRef({ onToggleFocus, onFontSize, fontSize, onMenuActive })
+  actions.current = { onToggleFocus, onFontSize, fontSize, onMenuActive }
 
   useEffect(() => {
     const host = hostRef.current
@@ -36,8 +39,29 @@ export function TerminalView({
     const handle = createTerminal(host, fontSize)
     handleRef.current = handle
 
+    // Menu detection runs on a short debounce: a redraw arrives in several
+    // chunks and checking mid-redraw would read a half-painted screen.
+    let menuTimer: ReturnType<typeof setTimeout> | undefined
+    let lastMenu = false
+    const checkMenu = (): void => {
+      const buffer = handle.term.buffer.active
+      const lines: string[] = []
+      for (let row = 0; row < handle.term.rows; row++) {
+        lines.push(buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '')
+      }
+      const active = detectMenu(lines)
+      if (active !== lastMenu) {
+        lastMenu = active
+        actions.current.onMenuActive(active)
+      }
+    }
+
     const offData = window.qclod.onSessionData((event) => {
-      if (event.tabId === tabId) handle.term.write(event.chunk)
+      if (event.tabId !== tabId) return
+      handle.term.write(event.chunk, () => {
+        clearTimeout(menuTimer)
+        menuTimer = setTimeout(checkMenu, 80)
+      })
     })
 
     handle.term.onData((data) => {
@@ -104,6 +128,7 @@ export function TerminalView({
 
     return () => {
       observer.disconnect()
+      clearTimeout(menuTimer)
       offData()
       handle.dispose()
       handleRef.current = null

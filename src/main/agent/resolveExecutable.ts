@@ -48,8 +48,8 @@ function findIn(dir: string, base: string, exts: string[]): string | undefined {
 }
 
 /**
- * ConPTY needs a real path to an executable: unlike a shell, node-pty does not
- * search PATH/PATHEXT, and `spawn('claude')` fails with "File not found" even
+ * The SDK spawns the agent directly rather than through a shell, so it needs a
+ * real path to an executable: the spawn does not search PATH/PATHEXT, and `spawn('claude')` fails with "File not found" even
  * when `claude` runs fine from a terminal. Probe note 1, 2026-11-07.
  */
 export function resolveExecutable(requested: string, env: NodeJS.ProcessEnv): string {

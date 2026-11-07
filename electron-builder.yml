@@ -8,14 +8,13 @@ directories:
 
 files:
   - out/**/*
-  - bin/**/*
   - package.json
   - '!**/*.map'
 
-# ELECTRON_RUN_AS_NODE cannot read a script out of an asar archive, and the
-# hook helper is launched that way by Claude Code. See hookLauncher.ts.
+# The SDK spawns the user's own claude executable as a child process and reads
+# its own files from node_modules, so it must stay outside the asar archive.
 asarUnpack:
-  - bin/**/*
+  - node_modules/@anthropic-ai/claude-agent-sdk/**/*
 
 win:
   target:

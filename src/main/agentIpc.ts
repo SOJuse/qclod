@@ -86,6 +86,9 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     // place every path to it passes through — this channel, a tab's stored
     // overrides, and a settings default alike.
     await manager.get(id)?.setPermissionMode(mode)
+    // What the session actually ended up in — a refused bypass leaves it alone.
+    const actual = manager.get(id)?.panel.permissionMode
+    if (actual) controller.rememberOverride(id, { permissionMode: actual })
   })
 
   ipcMain.handle(CHANNELS.agentModel, async (_e, id: unknown, model: unknown) => {

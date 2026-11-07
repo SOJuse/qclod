@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { CommandInfo, HotkeyRegistration, SessionSummary } from '../../shared/types'
+import type {
+  CommandInfo,
+  EnvironmentReport,
+  HotkeyRegistration,
+  SessionSummary
+} from '../../shared/types'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { TitleBar } from '../components/TitleBar'
 import { ChatPane } from '../components/ChatPane'
 import { CommandPalette } from '../components/CommandPalette'
 import { SidePanel } from '../components/SidePanel'
 import { HistoryScreen } from '../components/HistoryScreen'
+import { SetupScreen } from '../components/SetupScreen'
 import { isLocalCommand, markUnavailable, needsArgument } from '../../shared/commandFilter'
 import { SettingsScreen } from '../components/SettingsScreen'
 import './App.css'
@@ -25,6 +31,16 @@ export function App(): JSX.Element {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
   const [focusToken, setFocusToken] = useState(0)
+  const [environment, setEnvironment] = useState<EnvironmentReport | null>(null)
+  const [setupDismissed, setSetupDismissed] = useState(false)
+
+  const recheck = useCallback((): void => {
+    void window.qclod.checkEnvironment().then(setEnvironment)
+  }, [])
+
+  // Checked once at start: without Claude Code on the machine there is nothing
+  // to drive, and finding that out by typing a message is a poor welcome.
+  useEffect(recheck, [recheck])
   const splitTabId = useAppStore((s) => s.splitTabId)
   const setSplitTabId = useAppStore((s) => s.setSplitTabId)
 
@@ -197,6 +213,16 @@ export function App(): JSX.Element {
     void window.qclod.setPermissionMode(activeTabId, ring[(at + 1) % ring.length]!)
   }, [activeTabId])
 
+
+  if (environment && !environment.ready && !setupDismissed) {
+    return (
+      <SetupScreen
+        report={environment}
+        onRecheck={recheck}
+        onDone={() => setSetupDismissed(true)}
+      />
+    )
+  }
 
   return (
     <div className="app" data-testid="app-root">

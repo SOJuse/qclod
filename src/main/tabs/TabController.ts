@@ -178,6 +178,15 @@ export class TabController {
     await this.ensureSession(id)
   }
 
+  /** Records a launch option the user changed while the tab was running. */
+  rememberOverride(id: TabId, patch: LaunchOverrides): void {
+    const tab = this.tabs.find((t) => t.id === id)
+    if (!tab) return
+    tab.overrides = { ...tab.overrides, ...patch }
+    this.persist()
+    this.emit()
+  }
+
   update(id: TabId, patch: Partial<TabState>): TabState | undefined {
     const tab = this.patch(id, patch)
     if (tab) this.persist()
@@ -204,7 +213,13 @@ export class TabController {
     if (tab.missingCwd) return
     if (this.deps.manager.get(id)) return
 
-    const session = this.deps.manager.create(id, tab.cwd, tab.overrides)
+    // Defaults first, the tab's own choices on top: a tab stored before a
+    // setting existed still follows it, and a tab that picked its own mode
+    // keeps it.
+    const session = this.deps.manager.create(id, tab.cwd, {
+      ...this.deps.getDefaults(),
+      ...tab.overrides
+    })
     this.wire(id, session)
 
     const resumeId = tab.lastSessionId

@@ -29,7 +29,11 @@ interface Harness {
   ribbon: RibbonEvent[]
   resumedWith: Array<string | undefined>
   /** Every driver the manager actually built, in order. */
-  created: Array<{ resume: string | undefined; driver: ReturnType<typeof createFakeSdk> }>
+  created: Array<{
+    resume: string | undefined
+    permissionMode: string | undefined
+    driver: ReturnType<typeof createFakeSdk>
+  }>
 }
 
 function makeController(
@@ -64,7 +68,7 @@ function makeController(
         }) as unknown as AgentDriver
       }
       const driver = createFakeSdk(options.script ?? { steps: [] })
-      created.push({ resume: driverOptions.resume, driver })
+      created.push({ resume: driverOptions.resume, permissionMode: driverOptions.permissionMode, driver })
       return driver as unknown as AgentDriver
     }
   })
@@ -395,5 +399,45 @@ describe('TabController: возобновление не ждёт агента',
     const items = controller.itemsOf('a')
     expect(items.filter((i) => i.kind === 'user')).toHaveLength(1)
     expect(items.filter((i) => i.kind === 'agentText')[0]).toMatchObject({ text: 'вот что' })
+  })
+})
+
+describe('TabController: режим запуска переживает перезапуск', () => {
+  test('вкладка без своего режима следует настройке по умолчанию', async () => {
+    // Tabs stored before the setting existed have empty overrides; they must
+    // still follow it rather than silently falling back to «спрашивать».
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {} }])
+
+    const { controller, created } = makeController({ defaults: { permissionMode: 'acceptEdits' } })
+    await controller.restore()
+    await controller.whenSettled()
+
+    expect(created[0]!.permissionMode).toBe('acceptEdits')
+  })
+
+  test('свой режим вкладки сильнее умолчания', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: { permissionMode: 'plan' } }
+    ])
+
+    const { controller, created } = makeController({ defaults: { permissionMode: 'acceptEdits' } })
+    await controller.restore()
+    await controller.whenSettled()
+
+    expect(created[0]!.permissionMode).toBe('plan')
+  })
+
+  test('выбранный режим запоминается у вкладки', async () => {
+    const { controller } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    const id = controller.list()[0]!.id
+
+    controller.rememberOverride(id, { permissionMode: 'plan' })
+
+    const stored = JSON.parse(
+      require('node:fs').readFileSync(join(store, TABS_FILE), 'utf8')
+    ) as Array<{ overrides: Record<string, unknown> }>
+    expect(stored[0]!.overrides['permissionMode']).toBe('plan')
   })
 })

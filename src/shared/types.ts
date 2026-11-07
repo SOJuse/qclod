@@ -238,6 +238,20 @@ export interface AppSettings {
   defaults: LaunchOverrides
 }
 
+export interface ToolReport {
+  found: boolean
+  version?: string
+  path?: string
+}
+
+/** What the machine has, for the setup screen. */
+export interface EnvironmentReport {
+  node: ToolReport
+  npm: ToolReport
+  agent: ToolReport
+  ready: boolean
+}
+
 export interface HotkeyRegistration {
   ok: boolean
   accelerator: string

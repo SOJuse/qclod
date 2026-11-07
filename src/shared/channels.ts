@@ -46,6 +46,11 @@ export const CHANNELS = Object.freeze({
   windowClose: 'window:close',
   openExternal: 'window:openExternal',
 
+  setupCheck: 'setup:check',
+  setupInstall: 'setup:install',
+  setupCancel: 'setup:cancel',
+  setupTerminal: 'setup:terminal',
+
   // main -> renderer (events)
   ribbonChanged: 'ribbon:changed',
   panelChanged: 'panel:changed',
@@ -53,7 +58,8 @@ export const CHANNELS = Object.freeze({
   tabsChanged: 'tabs:changed',
   activateTab: 'tabs:activateRequest',
   settingsChanged: 'settings:changed',
-  commandsChanged: 'commands:changed'
+  commandsChanged: 'commands:changed',
+  setupOutput: 'setup:output'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -90,7 +96,11 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.windowMinimize,
   CHANNELS.windowMaximize,
   CHANNELS.windowClose,
-  CHANNELS.openExternal
+  CHANNELS.openExternal,
+  CHANNELS.setupCheck,
+  CHANNELS.setupInstall,
+  CHANNELS.setupCancel,
+  CHANNELS.setupTerminal
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
@@ -100,5 +110,6 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.tabsChanged,
   CHANNELS.activateTab,
   CHANNELS.settingsChanged,
-  CHANNELS.commandsChanged
+  CHANNELS.commandsChanged,
+  CHANNELS.setupOutput
 ])

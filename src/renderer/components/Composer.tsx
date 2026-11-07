@@ -35,6 +35,8 @@ export function Composer({
   const areaRef = useRef<HTMLTextAreaElement | null>(null)
   const draft = useAppStore((s) => s.draftByTab[tabId] ?? '')
   const setDraft = useAppStore((s) => s.setDraft)
+  const markTyped = useAppStore((s) => s.markTyped)
+  const markHandedOff = useAppStore((s) => s.markHandedOff)
 
   // One history per tab, kept across re-renders.
   const histories = useRef(new Map<TabId, InputHistory>())
@@ -69,8 +71,9 @@ export function Composer({
       void window.qclod.write(tabId, '\r')
       history.push(text)
       setDraft(tabId, '')
+      markHandedOff()
     },
-    [history, setDraft, tabId]
+    [history, markHandedOff, setDraft, tabId]
   )
 
   const onKeyDown = useCallback(
@@ -93,6 +96,7 @@ export function Composer({
         case 'copy':
         case 'newline':
           // Let the textarea do what a textarea does.
+          markTyped()
           return
         case 'toggleFocus':
           ev.preventDefault()
@@ -129,7 +133,7 @@ export function Composer({
           return
       }
     },
-    [draft, history, menuActive, onToggleFocus, passthrough, send, setDraft, tabId]
+    [draft, history, markTyped, menuActive, onToggleFocus, passthrough, send, setDraft, tabId]
   )
 
   const onPaste = useCallback(

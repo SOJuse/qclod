@@ -130,6 +130,8 @@ export function TerminalView({
       observer.disconnect()
       clearTimeout(menuTimer)
       offData()
+      // Do not leave a stale "menu is open" belief behind for this tab.
+      if (lastMenu) actions.current.onMenuActive(false)
       handle.dispose()
       handleRef.current = null
     }

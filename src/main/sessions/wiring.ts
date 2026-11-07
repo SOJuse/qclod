@@ -1,17 +1,13 @@
-import { app, ipcMain, type BrowserWindow } from 'electron'
-import { homedir } from 'node:os'
+import { app, dialog, ipcMain, type BrowserWindow } from 'electron'
 import { CHANNELS } from '../../shared/channels'
-import type { AppSettings, TabId } from '../../shared/types'
+import type { AppSettings, LaunchOverrides, TabId, TabState } from '../../shared/types'
 import { SessionManager } from './SessionManager'
-import { AgentNotFoundError } from './resolveExecutable'
-import type { Session } from './Session'
-
-export const IMPLICIT_TAB_ID = 'default'
+import { TabController } from '../tabs/TabController'
 
 export interface SessionWiring {
   manager: SessionManager
-  startTab(tabId: TabId, cwd: string): Session
-  disposeAll(): Promise<void>
+  tabs: TabController
+  disposeAll: () => Promise<void>
 }
 
 /**
@@ -23,7 +19,7 @@ function agentFromEnv(settings: AppSettings): { path: string; prefixArgs: string
   const prefix = process.env['QCLOD_AGENT_PREFIX_ARGS']
   return {
     path: path && path.trim() !== '' ? path : settings.agentPath,
-    prefixArgs: prefix ? JSON.parse(prefix) : []
+    prefixArgs: prefix ? (JSON.parse(prefix) as string[]) : []
   }
 }
 
@@ -31,7 +27,9 @@ export function wireSessions(
   getWindow: () => BrowserWindow | null,
   getSettings: () => AppSettings,
   getUserHooks: () => unknown,
-  pipePath: string
+  pipePath: string,
+  storeDir: string,
+  defaultCwd: string
 ): SessionWiring {
   const resolved = agentFromEnv(getSettings())
 
@@ -47,33 +45,39 @@ export function wireSessions(
     if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
   }
 
-  function startTab(tabId: TabId, cwd: string): Session {
-    const session = manager.create(tabId, cwd, {})
-    session.onData((chunk) => send(CHANNELS.sessionData, { tabId, chunk }))
-    session.onExit((code) => send(CHANNELS.sessionExit, { tabId, code }))
-    try {
-      session.start()
-    } catch (error) {
-      const message =
-        error instanceof AgentNotFoundError ? error.message : `Не удалось запустить агента: ${error}`
-      send(CHANNELS.sessionExit, { tabId, code: -1, error: message })
-    }
-    return session
-  }
+  const tabs = new TabController({
+    manager,
+    storeDir,
+    defaultCwd,
+    onData: (tabId, chunk) => send(CHANNELS.sessionData, { tabId, chunk }),
+    onExit: (tabId, code) => send(CHANNELS.sessionExit, { tabId, code }),
+    onChanged: (list: TabState[]) => send(CHANNELS.tabsChanged, list)
+  })
+
+  ipcMain.handle(CHANNELS.tabsList, () => tabs.list())
+  ipcMain.handle(CHANNELS.tabsCreate, (_e, cwd: string, overrides?: LaunchOverrides) =>
+    tabs.create(cwd, overrides ?? {})
+  )
+  ipcMain.handle(CHANNELS.tabsClose, (_e, tabId: TabId) => tabs.close(tabId))
+  ipcMain.handle(CHANNELS.tabsActivate, (_e, tabId: TabId) => tabs.activate(tabId))
+  ipcMain.handle(CHANNELS.tabsUpdate, (_e, tabId: TabId, patch: Partial<TabState>) =>
+    tabs.update(tabId, patch)
+  )
 
   ipcMain.handle(CHANNELS.sessionWrite, (_e, tabId: TabId, data: string) => {
     manager.get(tabId)?.write(data)
   })
-
   ipcMain.handle(CHANNELS.sessionResize, (_e, tabId: TabId, cols: number, rows: number) => {
     manager.get(tabId)?.resize(cols, rows)
   })
+  ipcMain.handle(CHANNELS.sessionRestart, (_e, tabId: TabId) => tabs.restart(tabId))
 
-  ipcMain.handle(CHANNELS.sessionRestart, async (_e, tabId: TabId) => {
-    const existing = manager.get(tabId)
-    const cwd = existing?.cwd ?? homedir()
-    await manager.close(tabId)
-    startTab(tabId, cwd)
+  ipcMain.handle(CHANNELS.dialogPickFolder, async () => {
+    const win = getWindow()
+    const result = win
+      ? await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
+      : await dialog.showOpenDialog({ properties: ['openDirectory'] })
+    return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
   // Quitting must never leave an agent process behind (Review Focus 4).
@@ -83,5 +87,5 @@ export function wireSessions(
     void manager.disposeAll().then(() => app.exit(0))
   })
 
-  return { manager, startTab, disposeAll: () => manager.disposeAll() }
+  return { manager, tabs, disposeAll: () => manager.disposeAll() }
 }

@@ -10,10 +10,16 @@ export function stripAnsi(line: string): string {
   return line.replace(OSC, '').replace(CSI, '').replace(OTHER_ESC, '').trim()
 }
 
-/** The marker Claude Code puts next to the highlighted choice. */
-const SELECTION_MARKER = /^[❯▶>]\s+\S/
+/**
+ * The marker Claude Code puts next to the highlighted choice. ASCII ">" is
+ * deliberately NOT accepted: it starts quoted lines, diffs and shell prompts in
+ * ordinary output, which is exactly the content an attacker can influence.
+ */
+const SELECTION_MARKER = /^[❯▶]\s+\S/
 const CONFIRM_HINT = /enter\b[^\n]*\b(confirm|подтверд)|esc\b[^\n]*\b(cancel|отмен)/i
-const OPTION_LINE = /^(?:[❯▶>]\s+)?(?:\d+[.)]\s+)?\S/
+
+/** How far above the bottom of the viewport a real prompt can start. */
+const PROMPT_ZONE_ROWS = 15
 
 /**
  * Recognises the moment the agent is showing an arrow-driven menu, so focus can
@@ -31,10 +37,11 @@ export function detectMenu(visibleLines: string[]): boolean {
   const markerIndex = lines.findIndex((line) => SELECTION_MARKER.test(line))
   if (markerIndex === -1) return false
 
-  if (lines.some((line) => CONFIRM_HINT.test(line))) return true
+  // Claude Code draws its prompts at the bottom of the screen. A marker in the
+  // middle of a long scroll is output being quoted, not a prompt.
+  if (markerIndex < lines.length - PROMPT_ZONE_ROWS) return false
 
-  // No hint line visible: accept it only if the marked line has at least one
-  // sibling choice right beneath it.
-  const sibling = lines[markerIndex + 1]
-  return sibling !== undefined && OPTION_LINE.test(sibling) && !CONFIRM_HINT.test(sibling)
+  // The confirmation hint is required, and it has to sit below the marker —
+  // text that merely mentions it (a file being read aloud) does not count.
+  return lines.slice(markerIndex + 1).some((line) => CONFIRM_HINT.test(line))
 }

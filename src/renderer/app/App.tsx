@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react'
 import { TerminalView } from '../components/TerminalView'
 import { Composer } from '../components/Composer'
 import { useAppStore } from '../state/useAppStore'
+import { shouldStealFocus } from '../input/focusSteal'
 import './App.css'
 
 export function App(): JSX.Element {
@@ -14,10 +15,17 @@ export function App(): JSX.Element {
   const activeTabId = useAppStore((s) => s.activeTabId)
   const menuActive = useAppStore((s) => s.menuActiveByTab[s.activeTabId] ?? false)
 
+  const setTabs = useAppStore((s) => s.setTabs)
+
   useEffect(() => {
     void window.qclod.getSettings().then(setSettings)
     return window.qclod.onSettingsChanged(setSettings)
   }, [setSettings])
+
+  useEffect(() => {
+    void window.qclod.listTabs().then(setTabs)
+    return window.qclod.onTabsChanged(setTabs)
+  }, [setTabs])
 
   const setFontSize = useCallback(
     (fontSize: number) => {
@@ -35,7 +43,14 @@ export function App(): JSX.Element {
       setMenuActive(activeTabId, active)
       // Convenience only — the Ctrl+` toggle and the empty-field key rules
       // work regardless, and this can be switched off in settings (spec 6.4).
-      if (active && autoFocusOnMenu) setFocusTarget('terminal')
+      if (!active) return
+      const { draftByTab, lastTypedAt } = useAppStore.getState()
+      const allowed = shouldStealFocus({
+        autoFocusOnMenu,
+        draft: draftByTab[activeTabId] ?? '',
+        msSinceTyping: Date.now() - lastTypedAt
+      })
+      if (allowed) setFocusTarget('terminal')
     },
     [activeTabId, autoFocusOnMenu, setFocusTarget, setMenuActive]
   )
@@ -45,7 +60,7 @@ export function App(): JSX.Element {
       <header className="app-bar">
         <span className="app-name">Qclod</span>
       </header>
-      {settings && (
+      {settings && activeTabId !== '' && (
         <>
           <TerminalView
             tabId={activeTabId}

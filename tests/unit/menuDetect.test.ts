@@ -79,3 +79,36 @@ describe('detectMenu', () => {
     expect(detectMenu(['', '   '])).toBe(false)
   })
 })
+
+describe('detectMenu: устойчивость к подделке в выводе', () => {
+  // Terminal output is attacker-influenceable — the agent prints file contents,
+  // diffs and fetched text. A shape that appears in ordinary prose must not be
+  // able to claim the keyboard.
+  test('цитата в стиле email не считается меню', () => {
+    const lines = [
+      '> я посмотрел файл и думаю',
+      '> стоит переписать парсер',
+      'Нажми Enter чтобы подтвердить — так было в письме'
+    ]
+    expect(detectMenu(lines)).toBe(false)
+  })
+
+  test('маркер без подсказки про Enter/Esc не считается меню', () => {
+    expect(detectMenu(['❯ 1. Да', '  2. Нет'])).toBe(false)
+  })
+
+  test('меню далеко от низа экрана не считается меню', () => {
+    const filler = Array.from({ length: 20 }, (_, i) => `строка вывода ${i}`)
+    const lines = ['❯ 1. Да', '  2. Нет', 'Enter to confirm · Esc to cancel', ...filler]
+    expect(detectMenu(lines)).toBe(false)
+  })
+
+  test('содержимое файла с текстом подсказки не считается меню', () => {
+    const lines = [
+      '⏺ Read(README.md)',
+      '  В интерфейсе написано "Enter to confirm · Esc to cancel"',
+      '  и строка начинается с > для цитат'
+    ]
+    expect(detectMenu(lines)).toBe(false)
+  })
+})

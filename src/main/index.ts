@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { createMainWindow, hardenWebContents, RENDERER_ENTRY } from './window'
 import { registerBaseIpc } from './ipc'
 import { loadSettings, saveSettings } from './store/settingsStore'
-import { IMPLICIT_TAB_ID, wireSessions } from './sessions/wiring'
+import { wireSessions } from './sessions/wiring'
 import { readUserHooks } from './store/userHooks'
 
 let mainWindow: BrowserWindow | null = null
@@ -16,6 +16,11 @@ function loadRenderer(win: BrowserWindow): void {
     void win.loadFile(RENDERER_ENTRY)
   }
 }
+
+// Tests point the app at a throwaway profile so runs cannot affect each other
+// or the real one.
+const userDataOverride = process.env['QCLOD_USER_DATA']
+if (userDataOverride) app.setPath('userData', userDataOverride)
 
 // Any webContents created later inherits the same navigation gate.
 app.on('web-contents-created', (_e, contents) => {
@@ -41,15 +46,17 @@ app.whenReady().then(() => {
     () => mainWindow,
     () => settings,
     () => readUserHooks(),
-    pipePath
+    pipePath,
+    userData,
+    homedir()
   )
 
   mainWindow = createMainWindow()
   loadRenderer(mainWindow)
 
+  // Tabs come up only once the renderer can receive their output.
   mainWindow.webContents.once('did-finish-load', () => {
-    settings = loadSettings(userData)
-    sessions.startTab(IMPLICIT_TAB_ID, homedir())
+    sessions.tabs.restore()
   })
 
   app.on('activate', () => {

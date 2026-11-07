@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { PendingAttachment } from '../input/attachments'
 import type {
   AppSettings,
   PanelData,
@@ -26,8 +27,10 @@ interface AppState {
   ribbonByTab: Record<TabId, RibbonItem[]>
   todoByTab: Record<TabId, TodoItem[]>
   panelByTab: Record<TabId, PanelData>
-  /** Unsent text per tab — switching tabs must never lose it. */
+  /** Unsent text and files per tab — switching tabs must never lose them. */
   draftByTab: Record<TabId, string>
+  attachmentsByTab: Record<TabId, PendingAttachment[]>
+  fileIndexByTab: Record<TabId, string[]>
 
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
@@ -37,6 +40,8 @@ interface AppState {
   applyRibbon: (id: TabId, changes: RibbonChange[]) => void
   applyPanel: (id: TabId, patch: Partial<PanelData>) => void
   setDraft: (id: TabId, text: string) => void
+  setAttachments: (id: TabId, items: PendingAttachment[]) => void
+  setFileIndex: (id: TabId, paths: string[]) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -80,6 +85,8 @@ export const useAppStore = create<AppState>((set) => ({
   todoByTab: {},
   panelByTab: {},
   draftByTab: {},
+  attachmentsByTab: {},
+  fileIndexByTab: {},
 
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
@@ -114,6 +121,12 @@ export const useAppStore = create<AppState>((set) => ({
       }
     })),
 
-  setDraft: (id, text) => set((state) => ({ draftByTab: { ...state.draftByTab, [id]: text } }))
+  setDraft: (id, text) => set((state) => ({ draftByTab: { ...state.draftByTab, [id]: text } })),
+
+  setAttachments: (id, items) =>
+    set((state) => ({ attachmentsByTab: { ...state.attachmentsByTab, [id]: items } })),
+
+  setFileIndex: (id, paths) =>
+    set((state) => ({ fileIndexByTab: { ...state.fileIndexByTab, [id]: paths } }))
 
 }))

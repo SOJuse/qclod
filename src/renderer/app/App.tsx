@@ -3,6 +3,7 @@ import type { HotkeyRegistration } from '../../shared/types'
 import { useAppStore } from '../state/useAppStore'
 import { TitleBar } from '../components/TitleBar'
 import { Ribbon } from '../components/Ribbon'
+import { Composer } from '../components/Composer'
 import { SettingsScreen } from '../components/SettingsScreen'
 import './App.css'
 
@@ -22,6 +23,9 @@ export function App(): JSX.Element {
   const activeTabId = useAppStore((s) => s.activeTabId)
   const ribbonByTab = useAppStore((s) => s.ribbonByTab)
   const todoByTab = useAppStore((s) => s.todoByTab)
+  const draftByTab = useAppStore((s) => s.draftByTab)
+  const attachmentsByTab = useAppStore((s) => s.attachmentsByTab)
+  const fileIndexByTab = useAppStore((s) => s.fileIndexByTab)
 
   const setSettings = useAppStore((s) => s.setSettings)
   const setTabs = useAppStore((s) => s.setTabs)
@@ -29,6 +33,9 @@ export function App(): JSX.Element {
   const setRibbon = useAppStore((s) => s.setRibbon)
   const applyRibbon = useAppStore((s) => s.applyRibbon)
   const applyPanel = useAppStore((s) => s.applyPanel)
+  const setDraft = useAppStore((s) => s.setDraft)
+  const setAttachments = useAppStore((s) => s.setAttachments)
+  const setFileIndex = useAppStore((s) => s.setFileIndex)
 
   useEffect(() => {
     void window.qclod.getSettings().then(setSettings)
@@ -47,6 +54,13 @@ export function App(): JSX.Element {
       for (const off of unsubscribers) off()
     }
   }, [setSettings, setTabs, setActiveTabId, applyRibbon, applyPanel])
+
+  // The file index backs @-mentions; it is per folder, so it is fetched once
+  // per tab rather than on every keystroke.
+  useEffect(() => {
+    if (!activeTabId || fileIndexByTab[activeTabId]) return
+    void window.qclod.fileIndex(activeTabId).then((paths) => setFileIndex(activeTabId, paths))
+  }, [activeTabId, fileIndexByTab, setFileIndex])
 
   // The first tab the main process reports is the one to show.
   useEffect(() => {
@@ -90,7 +104,10 @@ export function App(): JSX.Element {
         onClose={(id) => void window.qclod.closeTab(id)}
         onCreate={() => {
           void window.qclod.pickFolder().then((cwd) => {
-            if (cwd) void window.qclod.createTab(cwd)
+            if (!cwd) return
+            void window.qclod.createTab(cwd).then((tab) => {
+              if (tab) activate(tab.id)
+            })
           })
         }}
         onConfigure={() => setSettingsOpen(true)}
@@ -104,6 +121,31 @@ export function App(): JSX.Element {
         onAnswerPermission={answerPermission}
         onAnswerQuestion={answerQuestion}
       />
+      {activeTabId && (
+        <Composer
+          tabId={activeTabId}
+          status={tabs.find((t) => t.id === activeTabId)?.status ?? 'stopped'}
+          draft={draftByTab[activeTabId] ?? ''}
+          attachments={attachmentsByTab[activeTabId] ?? []}
+          fileIndex={fileIndexByTab[activeTabId] ?? []}
+          onDraftChange={(text) => setDraft(activeTabId, text)}
+          onAttachmentsChange={(items) => setAttachments(activeTabId, items)}
+          onSubmit={(text, attachments) => {
+            void window.qclod.send(activeTabId, { text, attachments })
+          }}
+          onInterrupt={() => void window.qclod.interrupt(activeTabId)}
+          onOpenPalette={() => undefined}
+          onPickFiles={() => {
+            void window.qclod.pickFiles().then((paths) => {
+              if (paths.length === 0) return
+              setAttachments(activeTabId, [
+                ...(useAppStore.getState().attachmentsByTab[activeTabId] ?? []),
+                ...paths.map((path) => ({ kind: 'file' as const, path }))
+              ])
+            })
+          }}
+        />
+      )}
       {settingsOpen && settings && (
         <SettingsScreen
           settings={settings}

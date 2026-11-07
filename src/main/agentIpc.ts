@@ -121,7 +121,13 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     return controller.history(id)
   })
 
+  // A native file dialog cannot be driven from a test, so an e2e run answers
+  // it from the environment — the same kind of seam as QCLOD_FAKE_SDK, and
+  // never set in a real install.
   ipcMain.handle(CHANNELS.dialogPickFolder, async () => {
+    const stubbed = process.env['QCLOD_PICK_FOLDER']
+    if (stubbed) return stubbed
+
     const win = deps.getWindow()
     if (!win) return null
     const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
@@ -129,6 +135,9 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   })
 
   ipcMain.handle(CHANNELS.dialogPickFiles, async () => {
+    const stubbed = process.env['QCLOD_PICK_FILES']
+    if (stubbed) return stubbed.split(';').filter(Boolean)
+
     const win = deps.getWindow()
     if (!win) return []
     const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] })

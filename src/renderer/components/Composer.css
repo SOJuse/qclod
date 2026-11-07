@@ -1,0 +1,117 @@
+.composer {
+  flex: 0 0 auto;
+  margin: 0 auto 14px;
+  width: min(920px, calc(100% - 40px));
+  position: relative;
+}
+
+.composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 7px;
+}
+
+.composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 5px 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  max-width: 260px;
+}
+
+.composer-chip button {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 50%;
+}
+
+.composer-chip button:hover {
+  color: var(--text);
+  background: var(--border);
+}
+
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 7px 8px 7px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.composer-row:focus-within {
+  border-color: var(--border-accent);
+  box-shadow: var(--glow-accent);
+}
+
+.composer-input {
+  flex: 1 1 auto;
+  min-height: 24px;
+  max-height: 260px;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+  padding: 2px 0;
+  user-select: text;
+}
+
+.composer-input::placeholder {
+  color: var(--text-faint);
+}
+
+.composer-clip,
+.composer-send {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.composer-clip:hover,
+.composer-send:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.composer-send {
+  background: var(--accent);
+  color: #0c0f1c;
+}
+
+.composer-send:hover {
+  background: color-mix(in srgb, var(--accent) 85%, white);
+  color: #0c0f1c;
+}
+
+.composer-send.is-busy {
+  background: var(--danger);
+}
+
+.mention-popup {
+  bottom: calc(100% + 6px);
+}

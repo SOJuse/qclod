@@ -1,13 +1,15 @@
 import { physicalKey, type PhysicalKeyEvent } from './physicalKey'
 
 export type ComposerKeyAction =
-  | 'toPty'
-  | 'toggleFocus'
-  | 'paste'
-  | 'copy'
+  /** The browser already does it right: paste, undo, select-all, cut, copy. */
+  | 'native'
+  | 'interrupt'
   | 'closePopup'
   | 'popupNav'
   | 'popupAccept'
+  | 'openPalette'
+  | 'openMentions'
+  | 'cyclePermissionMode'
   | 'submit'
   | 'newline'
   | 'historyPrev'
@@ -17,12 +19,8 @@ export type ComposerKeyAction =
 
 export interface ComposerContext {
   text: string
-  /** The line starts with "/" — keystrokes go straight to the CLI. */
-  passthrough: boolean
-  /** The composer's own @-mention popup is open. */
+  /** The composer's own popup — mentions or the command palette — is open. */
   popupOpen: boolean
-  /** The agent is showing an arrow-driven menu in the terminal. */
-  menuActive: boolean
   hasSelection: boolean
   caretAtStart: boolean
   caretAtEnd: boolean
@@ -38,46 +36,52 @@ export interface KeyLike extends PhysicalKeyEvent {
 
 type Rule = (ev: KeyLike, ctx: ComposerContext) => ComposerKeyAction | undefined
 
+/** Editing shortcuts the field must never intercept. */
+const NATIVE_KEYS = new Set(['v', 'z', 'y', 'a', 'x', 'c'])
+
 /**
- * Spec 6.4's precedence table, as an ordered list. The order IS the priority:
- * the first rule that returns an action wins, and nothing is decided by nested
- * conditions elsewhere. Anti-goal 2 ("fragile magic") is why this is one
- * readable list with a test per row.
+ * The precedence table, as an ordered list. The order IS the priority: the
+ * first rule that returns an action wins, and nothing is decided by nested
+ * conditions elsewhere.
+ *
+ * There is one input line now, and it is ours (spec 6.3), so the whole notion
+ * of handing keystrokes to a second field is gone — with it the focus jumping
+ * the user called «мега неудобная».
+ *
+ * Everything matches on the PHYSICAL key, never on `ev.key`: on a Russian
+ * layout Ctrl+V reports «м», and a table built on the letter silently stops
+ * working the moment someone switches layout.
  */
 const RULES: Rule[] = [
-  // Esc must always reach the agent, or a half-typed draft would make the
-  // agent uninterruptible. With our own popup open it closes the popup first.
-  (ev, ctx) => (ev.key === 'Escape' ? (ctx.popupOpen ? 'closePopup' : 'toPty') : undefined),
+  // Esc must always reach the agent, or a half-typed draft would make it
+  // uninterruptible. With a popup open it closes the popup first.
+  (ev, ctx) => (ev.key === 'Escape' ? (ctx.popupOpen ? 'closePopup' : 'interrupt') : undefined),
 
-  // The always-available manual escape hatch.
-  (ev) => (ev.ctrlKey && physicalKey(ev) === '`' ? 'toggleFocus' : undefined),
-
-  (ev) => (ev.ctrlKey && !ev.altKey && physicalKey(ev) === 'v' ? 'paste' : undefined),
-  (ev, ctx) =>
-    ev.ctrlKey && !ev.altKey && physicalKey(ev) === 'c'
-      ? ctx.hasSelection || ev.shiftKey
-        ? 'copy'
-        : 'toPty'
+  // Native editing. The field is a plain textarea and the browser does these
+  // correctly; intercepting them is how undo gets broken.
+  (ev) =>
+    (ev.ctrlKey || ev.metaKey) && !ev.altKey && NATIVE_KEYS.has(physicalKey(ev))
+      ? 'native'
       : undefined,
 
-  // Our popup owns Tab/Enter/arrows while it is open.
-  (ev, ctx) => (ctx.popupOpen && (ev.key === 'Tab' || ev.key === 'Enter') ? 'popupAccept' : undefined),
+  // Our popup owns Tab, Enter and the arrows while it is open.
+  (ev, ctx) =>
+    ctx.popupOpen && (ev.key === 'Tab' || ev.key === 'Enter') ? 'popupAccept' : undefined,
   (ev, ctx) =>
     ctx.popupOpen && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') ? 'popupNav' : undefined,
 
-  // Shift+Tab / Tab switch the agent's modes.
-  (ev) => (ev.key === 'Tab' ? 'toPty' : undefined),
+  // Shift+Tab cycles the permission mode, as it does in the terminal.
+  (ev) => (ev.key === 'Tab' ? 'cyclePermissionMode' : undefined),
 
-  // The "/" that turns passthrough on must itself reach the CLI, or the
-  // command would arrive one character short.
+  // A slash on an empty line is a command; mid-sentence it is a path, a date
+  // or a fraction, and must stay one.
   (ev, ctx) =>
-    ev.key === '/' && ctx.text === '' && !ev.ctrlKey && !ev.altKey ? 'toPty' : undefined,
+    ev.key === '/' && ctx.text === '' && !ev.ctrlKey && !ev.altKey ? 'openPalette' : undefined,
 
-  // In passthrough the text lives in the CLI, so editing keys belong to it too.
-  (_ev, ctx) => (ctx.passthrough ? 'toPty' : undefined),
+  (ev) => (ev.key === '@' && !ev.ctrlKey && !ev.altKey ? 'openMentions' : undefined),
 
   (ev) => (ev.key === 'Enter' && ev.shiftKey ? 'newline' : undefined),
-  (ev, ctx) => (ev.key === 'Enter' ? (ctx.text === '' ? 'toPty' : 'submit') : undefined),
+  (ev, ctx) => (ev.key === 'Enter' ? (ctx.text === '' ? 'insert' : 'submit') : undefined),
 
   // Horizontal movement is always just movement inside the field.
   (ev) =>
@@ -85,10 +89,9 @@ const RULES: Rule[] = [
       ? 'caret'
       : undefined,
 
-  // Vertical arrows: menu navigation, history, or caret movement.
+  // Vertical arrows: history at the edges of the text, caret movement inside.
   (ev, ctx) => {
     if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return undefined
-    if (ctx.text === '' && ctx.menuActive) return 'toPty'
     const atEdge = ev.key === 'ArrowUp' ? ctx.caretAtStart : ctx.caretAtEnd
     if (!atEdge) return 'caret'
     return ev.key === 'ArrowUp' ? 'historyPrev' : 'historyNext'

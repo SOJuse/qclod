@@ -3,11 +3,8 @@ import { resolve, join } from 'node:path'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
-// Every e2e run talks to the fake agent, never the real CLI (Global Constraints).
-process.env['QCLOD_AGENT_PATH'] = process.execPath
-process.env['QCLOD_AGENT_PREFIX_ARGS'] = JSON.stringify([
-  resolve(__dirname, 'tests/fixtures/fake-agent/index.js')
-])
+// Every e2e run talks to the fake SDK, never the real agent (Global Constraints).
+process.env['QCLOD_FAKE_SDK'] = resolve(__dirname, 'tests/fixtures/fake-sdk/index.mjs')
 
 // A throwaway profile per run: tabs and settings never leak between runs or
 // into the developer's real Qclod profile.

@@ -13,14 +13,21 @@ describe('ipc channel contract', () => {
 
   test('каждый канал отнесён либо к invoke, либо к event', () => {
     const classified = new Set<string>([...INVOKE_CHANNELS, ...EVENT_CHANNELS])
-    for (const name of Object.values(CHANNELS)) {
-      expect(classified.has(name)).toBe(true)
-    }
+    for (const name of Object.values(CHANNELS)) expect(classified.has(name)).toBe(true)
     expect(classified.size).toBe(Object.values(CHANNELS).length)
   })
 
   test('invoke и event каналы не пересекаются', () => {
     const events = new Set<string>(EVENT_CHANNELS)
     for (const name of INVOKE_CHANNELS) expect(events.has(name)).toBe(false)
+  })
+
+  test('терминальных каналов v1 больше нет', () => {
+    // The pty is gone; a channel that outlives its feature is a trap for the
+    // next reader.
+    const names = Object.values(CHANNELS).join(' ')
+    expect(names).not.toContain('session:write')
+    expect(names).not.toContain('session:resize')
+    expect(names).not.toContain('session:data')
   })
 })

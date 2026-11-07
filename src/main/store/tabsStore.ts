@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { LaunchOverrides, PersistedTab } from '../../shared/types'
+import { PERMISSION_MODES, type LaunchOverrides, PersistedTab } from '../../shared/types'
 
 export const TABS_FILE = 'tabs.json'
 
@@ -21,8 +21,11 @@ function sanitizeOverrides(value: unknown): LaunchOverrides {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
   const source = value as Record<string, unknown>
   const out: LaunchOverrides = {}
-  for (const key of ['model', 'permissionMode', 'mcpConfig', 'extraFlags'] as const) {
-    if (typeof source[key] === 'string') out[key] = source[key] as string
+  for (const key of ['model', 'permissionMode', 'extraFlags'] as const) {
+    const candidate = source[key]
+    if (typeof candidate !== 'string') continue
+    if (key === 'permissionMode' && !PERMISSION_MODES.includes(candidate as never)) continue
+    out[key] = candidate as never
   }
   return out
 }

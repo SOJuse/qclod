@@ -1,26 +1,19 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Notification, type Tray } from 'electron'
-import { homedir } from 'node:os'
+import { app, BrowserWindow, globalShortcut, ipcMain } from 'electron'
 import { createMainWindow, hardenWebContents, RENDERER_ENTRY } from './window'
 import { registerBaseIpc } from './ipc'
 import { loadSettings, saveSettings } from './store/settingsStore'
-import { wireSessions } from './sessions/wiring'
-import { readUserHooks } from './store/userHooks'
 import { HotkeyRegistrar } from './hotkey/globalHotkey'
-import { notificationFor } from './notifications'
 import { createTray } from './tray'
 import { CHANNELS } from '../shared/channels'
-import type { TabId } from '../shared/types'
+import type { AppSettings, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 let quitting = false
 
 function loadRenderer(win: BrowserWindow): void {
   const devServer = process.env['ELECTRON_RENDERER_URL']
-  if (devServer) {
-    void win.loadURL(devServer)
-  } else {
-    void win.loadFile(RENDERER_ENTRY)
-  }
+  if (devServer) void win.loadURL(devServer)
+  else void win.loadFile(RENDERER_ENTRY)
 }
 
 // Tests point the app at a throwaway profile so runs cannot affect each other
@@ -28,19 +21,17 @@ function loadRenderer(win: BrowserWindow): void {
 const userDataOverride = process.env['QCLOD_USER_DATA']
 if (userDataOverride) app.setPath('userData', userDataOverride)
 
-// Any webContents created later inherits the same navigation gate.
+// The tray keeps the app alive after its window closes, which a headless test
+// run cannot shut down cleanly.
+const headless = process.env['QCLOD_HEADLESS'] === '1'
+
 app.on('web-contents-created', (_e, contents) => {
   hardenWebContents(contents)
 })
 
-// The tray keeps the app alive after the window closes, which a headless
-// test run cannot shut down cleanly. Tray behaviour is OS-level and is
-// verified by the release checklist instead.
-const headless = process.env['QCLOD_HEADLESS'] === '1'
-
 app.whenReady().then(() => {
   const userData = app.getPath('userData')
-  let settings = loadSettings(userData)
+  let settings: AppSettings = loadSettings(userData)
 
   function showWindow(): void {
     const win = mainWindow
@@ -80,49 +71,21 @@ app.whenReady().then(() => {
 
   ipcMain.handle(CHANNELS.hotkeyStatus, () => hotkey.status)
 
-  const pipePath = `\\\\.\\pipe\\qclod-${process.pid}`
-  const sessions = wireSessions(
-    () => mainWindow,
-    () => settings,
-    () => readUserHooks(),
-    pipePath,
-    userData,
-    homedir(),
-    (tabId, state, tabTitle) => {
-      const plan = notificationFor({
-        state,
-        tabTitle,
-        isWindowFocused: mainWindow?.isFocused() ?? false,
-        settings
-      })
-      if (!plan || !Notification.isSupported()) return
-
-      const note = new Notification({ title: plan.title, body: plan.body, silent: plan.silent })
-      note.on('click', () => {
-        showWindow()
-        mainWindow?.webContents.send(CHANNELS.activateTab, tabId)
-      })
-      note.show()
-    }
-  )
-
   mainWindow = createMainWindow()
   loadRenderer(mainWindow)
 
   const tray = headless
     ? null
     : (createTray({
-    getWindow: () => mainWindow,
-    getTabs: () => sessions.tabs.list(),
-    onActivateTab: (id: TabId) => {
-      showWindow()
-      sessions.tabs.activate(id)
-      mainWindow?.webContents.send(CHANNELS.activateTab, id)
-    },
-      toggleWindow
-      }) as Tray & { rebuild: () => void })
+        getWindow: () => mainWindow,
+        getTabs: () => [],
+        onActivateTab: (id: TabId) => {
+          showWindow()
+          mainWindow?.webContents.send(CHANNELS.activateTab, id)
+        },
+        toggleWindow
+      }) as ReturnType<typeof createTray> & { rebuild: () => void })
 
-  // Closing the window hides it; the app keeps running for the global hotkey.
   mainWindow.on('close', (event) => {
     if (quitting || headless || !settings.closeToTray) return
     event.preventDefault()
@@ -130,10 +93,8 @@ app.whenReady().then(() => {
   })
 
   if (!headless) hotkey.apply(settings.globalHotkey)
-  void sessions.startHooks()
 
   mainWindow.webContents.once('did-finish-load', () => {
-    sessions.tabs.restore()
     tray?.rebuild()
   })
 

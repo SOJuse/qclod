@@ -1,7 +1,12 @@
-import type { LaunchOverrides, TabState } from '../../shared/types'
+import {
+  PERMISSION_MODES,
+  type LaunchOverrides,
+  type PermissionMode,
+  type TabState
+} from '../../shared/types'
 
 const MAX_TITLE = 200
-const OVERRIDE_KEYS = ['model', 'permissionMode', 'mcpConfig', 'extraFlags'] as const
+const OVERRIDE_KEYS = ['model', 'permissionMode', 'extraFlags'] as const
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -17,7 +22,15 @@ export function sanitizeOverrides(value: unknown): LaunchOverrides {
   const out: LaunchOverrides = {}
   for (const key of OVERRIDE_KEYS) {
     const candidate = value[key]
-    if (typeof candidate === 'string') out[key] = candidate
+    if (typeof candidate !== 'string') continue
+    // permissionMode is an enum, not free text: an unknown value would reach
+    // the SDK and be rejected there, far from where it was introduced.
+    if (key === 'permissionMode') {
+      if (!(PERMISSION_MODES as readonly string[]).includes(candidate)) continue
+      out.permissionMode = candidate as PermissionMode
+      continue
+    }
+    out[key] = candidate
   }
   return out
 }

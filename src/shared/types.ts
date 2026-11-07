@@ -1,27 +1,157 @@
 export type TabId = string
 
-/** What a tab's agent is doing right now (spec 6.3, 6.9). */
-export type SessionStatus = 'starting' | 'busy' | 'waiting' | 'idle' | 'exited' | 'error'
+/** What a tab's agent is doing right now. */
+export type SessionStatus = 'stopped' | 'starting' | 'busy' | 'waiting' | 'idle' | 'error'
 
-/** Launch flags. Global values are defaults; a tab may override any of them. */
-export interface LaunchOverrides {
-  model?: string
-  permissionMode?: string
-  mcpConfig?: string
-  extraFlags?: string
+export const PERMISSION_MODES = [
+  'default',
+  'acceptEdits',
+  'plan',
+  'auto',
+  'dontAsk',
+  'bypassPermissions'
+] as const
+
+export type PermissionMode =
+  | 'default'
+  | 'acceptEdits'
+  | 'plan'
+  | 'auto'
+  | 'dontAsk'
+  | 'bypassPermissions'
+
+/** What the user attached to a message. */
+export type Attachment =
+  | { kind: 'image'; mediaType: string; dataBase64: string }
+  | { kind: 'file'; path: string }
+
+export interface UserInput {
+  text: string
+  attachments: Attachment[]
 }
 
-export interface AppSettings {
-  /** Absolute path to the agent executable, or a bare name to resolve on PATH. */
-  agentPath: string
-  globalHotkey: string
-  notificationsEnabled: boolean
-  soundEnabled: boolean
-  fontSize: number
-  /** Move focus to the terminal when the agent opens a menu (spec 6.4). */
-  autoFocusOnMenu: boolean
-  closeToTray: boolean
-  defaults: LaunchOverrides
+// ---------------------------------------------------------------- the ribbon
+
+export interface RibbonBase {
+  id: string
+  /** Set when this item belongs inside a subagent's nested stream. */
+  parentId?: string
+}
+
+export type ToolState = 'running' | 'done'
+
+/**
+ * One element of the conversation as the user reads it. Deliberately a view
+ * model, not a copy of the SDK's message: the translator (shared/ribbon.ts)
+ * folds a tool call and its result into one item, and a stream of text deltas
+ * into one paragraph.
+ */
+export type RibbonItem =
+  | (RibbonBase & { kind: 'user'; text: string; attachments: Attachment[] })
+  | (RibbonBase & { kind: 'agentText'; text: string; streaming: boolean })
+  | (RibbonBase & { kind: 'thinking'; text: string; done: boolean })
+  | (RibbonBase & {
+      kind: 'tool'
+      toolUseId: string
+      name: string
+      target: string
+      summary: string
+      detail: string
+      state: ToolState
+    })
+  | (RibbonBase & {
+      kind: 'toolError'
+      toolUseId: string
+      name: string
+      target: string
+      error: string
+    })
+  | (RibbonBase & {
+      kind: 'subagent'
+      toolUseId: string
+      name: string
+      state: ToolState
+      summary: string
+    })
+  | (RibbonBase & {
+      kind: 'permission'
+      requestId: string
+      toolName: string
+      target: string
+      state: 'pending' | 'allowed' | 'denied'
+    })
+  | (RibbonBase & {
+      kind: 'question'
+      toolUseId: string
+      question: string
+      options: string[]
+      answer: string | null
+    })
+  | (RibbonBase & {
+      kind: 'compaction'
+      trigger: 'auto' | 'manual'
+      freedTokens: number
+    })
+  /** Something Qclod itself needs to say: a crash, a session that would not resume. */
+  | (RibbonBase & { kind: 'notice'; text: string; tone: 'info' | 'error' })
+
+export interface TodoItem {
+  content: string
+  status: string
+}
+
+export type RibbonChange =
+  | { kind: 'append'; item: RibbonItem }
+  | { kind: 'update'; id: string; patch: Partial<RibbonItem> }
+  | { kind: 'todo'; items: TodoItem[] }
+
+// ----------------------------------------------------------------- the panel
+
+export interface ContextInfo {
+  used: number
+  max: number
+  percent: number
+  categories: Array<{ name: string; tokens: number }>
+}
+
+export interface CostInfo {
+  session: number
+}
+
+/** One subscription window, as `rate_limit_event` reports it (probe note 2). */
+export interface LimitWindow {
+  /** 0..1 */
+  utilization: number
+  /** unix seconds */
+  resetsAt: number
+}
+
+export interface McpServerInfo {
+  name: string
+  status: 'connected' | 'connecting' | 'failed' | 'needs-auth' | 'pending' | 'disabled'
+}
+
+export interface ProjectSettingsInfo {
+  hooks: number
+  mcpServers: string[]
+}
+
+export interface PanelData {
+  context: ContextInfo | null
+  cost: CostInfo | null
+  limits: { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null }
+  model: string | null
+  permissionMode: PermissionMode
+  mcp: McpServerInfo[]
+  projectSettings: ProjectSettingsInfo | null
+}
+
+// ------------------------------------------------------------------ the rest
+
+export interface LaunchOverrides {
+  model?: string
+  permissionMode?: PermissionMode
+  extraFlags?: string
 }
 
 export interface PersistedTab {
@@ -29,49 +159,76 @@ export interface PersistedTab {
   cwd: string
   title: string
   overrides: LaunchOverrides
+  /** Lets the tab pick its conversation back up after a restart (spec 6.9). */
+  lastSessionId?: string
 }
 
 export interface TabState extends PersistedTab {
   status: SessionStatus
-  /** Something happened here while the tab was not in front. */
   badge: boolean
-  /** Status is being guessed from output silence because hooks went quiet. */
-  degraded: boolean
-  exitCode?: number
   error?: string
   missingCwd?: boolean
 }
 
-/** Shape of the JSON a Claude Code hook writes to its command's stdin. */
-export interface HookEvent {
-  hook_event_name: string
-  session_id?: string
-  cwd?: string
-  matcher?: string
-  tool_name?: string
-  last_assistant_message?: string
-  /** Added by Qclod so an event can be attributed to the tab that caused it. */
-  tabId?: TabId
+export interface CommandInfo {
+  name: string
+  description: string
+  argumentHint: string
+  aliases?: string[]
+  builtin?: boolean
+  /** Set when the command cannot work here, e.g. /remote-control (spec 6.7). */
+  unavailableReason?: string
 }
 
-export interface SessionDataEvent {
-  tabId: TabId
-  chunk: string
+export interface SessionSummary {
+  id: string
+  title: string
+  firstMessage: string
+  updatedAt: number
 }
 
-export interface SessionExitEvent {
+export interface PermissionRequest {
+  requestId: string
   tabId: TabId
-  code: number
+  toolName: string
+  target: string
+  input: Record<string, unknown>
 }
 
-export interface SessionStatusEvent {
-  tabId: TabId
-  status: SessionStatus
-  degraded: boolean
+export interface PermissionAnswer {
+  behavior: 'allow' | 'deny'
+  remember?: boolean
+}
+
+export interface AppSettings {
+  agentPath: string
+  globalHotkey: string
+  notificationsEnabled: boolean
+  soundEnabled: boolean
+  fontSize: number
+  closeToTray: boolean
+  panelOpen: boolean
+  defaults: LaunchOverrides
 }
 
 export interface HotkeyRegistration {
   ok: boolean
   accelerator: string
   reason?: string
+}
+
+export interface RibbonEvent {
+  tabId: TabId
+  changes: RibbonChange[]
+}
+
+export interface PanelEvent {
+  tabId: TabId
+  patch: Partial<PanelData>
+}
+
+export interface StatusEvent {
+  tabId: TabId
+  status: SessionStatus
+  error?: string
 }

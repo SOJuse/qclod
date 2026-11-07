@@ -81,12 +81,6 @@ export function SettingsScreen({ settings, version, onPatch, onClose }: Props): 
                 onBlur={(e) => onPatch({ fontSize: Number(e.target.value) || settings.fontSize })}
               />
             </Field>
-            <Toggle
-              id="autoFocusOnMenu"
-              label="Переводить фокус в терминал, когда агент показал меню"
-              checked={settings.autoFocusOnMenu}
-              onChange={(autoFocusOnMenu) => onPatch({ autoFocusOnMenu })}
-            />
           </Group>
 
           <Group title="Запуск агента">
@@ -113,7 +107,7 @@ export function SettingsScreen({ settings, version, onPatch, onClose }: Props): 
                 data-testid="setting-defaultPermissionMode"
                 placeholder="как у CLI"
                 defaultValue={settings.defaults.permissionMode ?? ''}
-                onBlur={(e) => onPatch({ defaults: { permissionMode: e.target.value } })}
+                onBlur={(e) => onPatch({ defaults: { permissionMode: e.target.value as AppSettings['defaults']['permissionMode'] } })}
               />
             </Field>
             <Field label="Дополнительные флаги">

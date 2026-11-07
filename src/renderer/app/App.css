@@ -5,3 +5,23 @@
   background: var(--surface);
 }
 
+
+.app-bar {
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-height);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+
+.app-name {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.app-empty {
+  flex: 1 1 auto;
+}

@@ -8,13 +8,16 @@ const exe = process.env['QCLOD_PACKAGED_EXE']
 /**
  * Runs the real packaged build rather than `electron .`, which is the only way
  * to catch problems that exist only after packaging: files missing from the
- * asar, and the hook helper being unreachable inside it.
+ * asar, and the SDK's own files being unreachable inside it.
  *
  * Enable with: QCLOD_PACKAGED_EXE=dist/win-unpacked/Qclod.exe
+ *
+ * Task 16 extends this to a full round trip (send a message, read the ribbon)
+ * once packaging is settled for the SDK.
  */
 test.skip(!exe, 'задать QCLOD_PACKAGED_EXE, чтобы проверить собранное приложение')
 
-test('собранное приложение запускается, агент отвечает, хук доходит', async () => {
+test('собранное приложение запускается и поднимает мост', async () => {
   const profile = mkdtempSync(join(tmpdir(), 'qclod-packaged-'))
   const app = await electron.launch({
     executablePath: exe,
@@ -24,17 +27,12 @@ test('собранное приложение запускается, агент
 
   try {
     const win = await app.firstWindow()
-    const terminal = win.locator('[data-testid="terminal"]').first()
-    await expect(terminal).toContainText('fake-agent ready', { timeout: 30000 })
+    await win.locator('[data-testid="app-ready"]').waitFor({ timeout: 30000 })
 
-    await win.locator('[data-testid="composer-input"]').click()
-    await win.keyboard.type('проверка сборки')
-    await win.keyboard.press('Enter')
-    await expect(terminal).toContainText('[submit 1]', { timeout: 20000 })
-
-    // Proves bin/qclod-hook.js is reachable outside the asar archive.
-    const dot = win.locator('[data-testid="tab"] .tab-status').first()
-    await expect(dot).toHaveClass(/is-idle/, { timeout: 20000 })
+    const version = await win.evaluate(() =>
+      (window as never as { qclod: { appVersion(): Promise<string> } }).qclod.appVersion()
+    )
+    expect(version).toMatch(/^\d+\.\d+\.\d+$/)
   } finally {
     await app.close().catch(() => undefined)
     rmSync(profile, { recursive: true, force: true })

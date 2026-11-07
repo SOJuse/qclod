@@ -44,14 +44,27 @@ describe('sanitizeOverrides', () => {
       sanitizeOverrides({
         model: 'opus',
         permissionMode: 'plan',
-        mcpConfig: './mcp.json',
         extraFlags: '--verbose'
       })
     ).toEqual({
       model: 'opus',
       permissionMode: 'plan',
-      mcpConfig: './mcp.json',
       extraFlags: '--verbose'
+    })
+  })
+
+  // mcpConfig was a v1 override; in v2 a tab cannot point the agent at another
+  // MCP config, so it must fall through as an unknown field.
+  test('mcpConfig больше не принимается', () => {
+    expect(sanitizeOverrides({ model: 'opus', mcpConfig: './mcp.json' })).toEqual({
+      model: 'opus'
+    })
+  })
+
+  test('неизвестный режим разрешений отбрасывается', () => {
+    expect(sanitizeOverrides({ permissionMode: 'yolo' })).toEqual({})
+    expect(sanitizeOverrides({ permissionMode: 'acceptEdits' })).toEqual({
+      permissionMode: 'acceptEdits'
     })
   })
 

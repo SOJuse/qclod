@@ -14,7 +14,7 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
   busy: 'работает',
   waiting: 'ждёт ответа',
   idle: 'простаивает',
-  exited: 'завершился',
+  stopped: 'не запущена',
   error: 'ошибка'
 }
 
@@ -35,7 +35,7 @@ export function TabStrip({
           className={`tab${tab.id === activeTabId ? ' is-active' : ''}${
             tab.badge ? ' has-badge' : ''
           }`}
-          title={`${tab.cwd}\n${STATUS_LABEL[tab.status]}${tab.degraded ? ' (оценочно)' : ''}`}
+          title={`${tab.cwd}\n${STATUS_LABEL[tab.status]}`}
           onContextMenu={(e) => {
             e.preventDefault()
             onConfigure(tab.id)
@@ -50,7 +50,7 @@ export function TabStrip({
           }}
         >
           <span
-            className={`tab-status is-${tab.status}${tab.degraded ? ' is-degraded' : ''}`}
+            className={`tab-status is-${tab.status}`}
             aria-hidden
           />
           <span className="tab-title">{tab.title}</span>

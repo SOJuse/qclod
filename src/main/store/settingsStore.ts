@@ -10,8 +10,8 @@ export const DEFAULT_SETTINGS: AppSettings = Object.freeze({
   notificationsEnabled: true,
   soundEnabled: true,
   fontSize: 13,
-  autoFocusOnMenu: true,
   closeToTray: true,
+  panelOpen: true,
   defaults: {}
 })
 

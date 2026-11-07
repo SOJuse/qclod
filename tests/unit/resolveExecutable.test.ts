@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AgentNotFoundError, resolveExecutable } from '@main/sessions/resolveExecutable'
+import { AgentNotFoundError, resolveExecutable } from '@main/agent/resolveExecutable'
 
 describe('resolveExecutable', () => {
   test('абсолютный путь к существующему файлу возвращается как есть', () => {

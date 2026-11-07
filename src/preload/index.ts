@@ -2,14 +2,21 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { CHANNELS } from '../shared/channels'
 import type {
   AppSettings,
+  CommandInfo,
   HotkeyRegistration,
   LaunchOverrides,
+  PanelData,
+  PanelEvent,
+  PermissionAnswer,
+  PermissionRequest,
   PersistedTab,
-  SessionDataEvent,
-  SessionExitEvent,
-  SessionStatusEvent,
+  RibbonEvent,
+  RibbonItem,
+  SessionSummary,
+  StatusEvent,
   TabId,
-  TabState
+  TabState,
+  UserInput
 } from '../shared/types'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -19,8 +26,8 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 /**
- * One named wrapper per channel. `ipcRenderer` itself never crosses the bridge,
- * so the renderer can only reach the channels listed here.
+ * One named wrapper per channel. `ipcRenderer` itself never crosses the
+ * bridge, so the renderer can only reach what is listed here.
  */
 const api = {
   appVersion: (): Promise<string> => ipcRenderer.invoke(CHANNELS.appVersion),
@@ -31,25 +38,44 @@ const api = {
   hotkeyStatus: (): Promise<HotkeyRegistration> => ipcRenderer.invoke(CHANNELS.hotkeyStatus),
 
   listTabs: (): Promise<TabState[]> => ipcRenderer.invoke(CHANNELS.tabsList),
-  createTab: (cwd: string, overrides?: LaunchOverrides): Promise<TabState> =>
+  createTab: (cwd: string, overrides?: LaunchOverrides): Promise<TabState | null> =>
     ipcRenderer.invoke(CHANNELS.tabsCreate, cwd, overrides),
   closeTab: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.tabsClose, id),
   activateTab: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.tabsActivate, id),
-  updateTab: (id: TabId, patch: Partial<PersistedTab>): Promise<TabState> =>
+  updateTab: (id: TabId, patch: Partial<PersistedTab>): Promise<TabState | undefined> =>
     ipcRenderer.invoke(CHANNELS.tabsUpdate, id, patch),
+  restartTab: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.tabsRestart, id),
 
-  write: (id: TabId, data: string): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.sessionWrite, id, data),
-  resize: (id: TabId, cols: number, rows: number): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.sessionResize, id, cols, rows),
-  restart: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.sessionRestart, id),
+  send: (id: TabId, input: UserInput): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.agentSend, id, input),
+  interrupt: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.agentInterrupt, id),
+  setPermissionMode: (id: TabId, mode: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.agentPermissionMode, id, mode),
+  commands: (id: TabId): Promise<CommandInfo[]> => ipcRenderer.invoke(CHANNELS.agentCommands, id),
+  /** Everything already in this tab's ribbon — used when a tab is opened. */
+  ribbon: (id: TabId): Promise<RibbonItem[]> => ipcRenderer.invoke(CHANNELS.agentRibbon, id),
+  panel: (id: TabId): Promise<PanelData> => ipcRenderer.invoke(CHANNELS.agentPanel, id),
+
+  answerPermission: (requestId: string, answer: PermissionAnswer): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.permissionAnswer, requestId, answer),
+  permissionRules: (): Promise<Array<{ id: string; toolName: string; target?: string }>> =>
+    ipcRenderer.invoke(CHANNELS.permissionRules),
+  deletePermissionRule: (ruleId: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.permissionRuleDelete, ruleId),
+  answerQuestion: (id: TabId, toolUseId: string, choice: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.questionAnswer, id, toolUseId, choice),
+
+  listHistory: (cwd: string): Promise<SessionSummary[]> =>
+    ipcRenderer.invoke(CHANNELS.historyList, cwd),
+  openHistory: (cwd: string, sessionId: string): Promise<TabState | null> =>
+    ipcRenderer.invoke(CHANNELS.historyOpen, cwd, sessionId),
 
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.dialogPickFolder),
+  pickFiles: (): Promise<string[]> => ipcRenderer.invoke(CHANNELS.dialogPickFiles),
   fileIndex: (id: TabId): Promise<string[]> => ipcRenderer.invoke(CHANNELS.filesIndex, id),
-  clipboardImage: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.clipboardImage),
 
   // File.path was removed in Electron 32; webUtils is the supported way to
-  // learn where a dropped file lives on disk.
+  // learn where a dropped or pasted file lives on disk.
   pathForFile: (file: File): string | null => {
     try {
       return webUtils.getPathForFile(file) || null
@@ -62,12 +88,15 @@ const api = {
   toggleMaximize: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.windowMaximize),
   closeWindow: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowClose),
 
-  onSessionData: (cb: (e: SessionDataEvent) => void) => on(CHANNELS.sessionData, cb),
-  onSessionExit: (cb: (e: SessionExitEvent) => void) => on(CHANNELS.sessionExit, cb),
-  onSessionStatus: (cb: (e: SessionStatusEvent) => void) => on(CHANNELS.sessionStatus, cb),
+  onRibbon: (cb: (e: RibbonEvent) => void) => on(CHANNELS.ribbonChanged, cb),
+  onPanel: (cb: (e: PanelEvent) => void) => on(CHANNELS.panelChanged, cb),
+  onStatus: (cb: (e: StatusEvent) => void) => on(CHANNELS.statusChanged, cb),
   onTabsChanged: (cb: (tabs: TabState[]) => void) => on(CHANNELS.tabsChanged, cb),
   onActivateTab: (cb: (id: TabId) => void) => on(CHANNELS.activateTab, cb),
-  onSettingsChanged: (cb: (s: AppSettings) => void) => on(CHANNELS.settingsChanged, cb)
+  onSettingsChanged: (cb: (s: AppSettings) => void) => on(CHANNELS.settingsChanged, cb),
+  onCommandsChanged: (cb: (e: { tabId: TabId; commands: CommandInfo[] }) => void) =>
+    on(CHANNELS.commandsChanged, cb),
+  onPermissionAsked: (cb: (r: PermissionRequest) => void) => on(CHANNELS.permissionAsked, cb)
 }
 
 export type QclodApi = typeof api

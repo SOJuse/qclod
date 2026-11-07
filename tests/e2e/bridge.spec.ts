@@ -7,7 +7,7 @@ test('window.qclod есть, window.require нет', async () => {
 
   const probe = await win.evaluate(() => ({
     hasApi: typeof (window as never as { qclod?: unknown }).qclod === 'object',
-    canWrite: typeof (window as never as { qclod?: { write?: unknown } }).qclod?.write === 'function',
+    canSend: typeof (window as never as { qclod?: { send?: unknown } }).qclod?.send === 'function',
     hasRequire: typeof (window as never as { require?: unknown }).require !== 'undefined',
     hasProcess: typeof (window as never as { process?: unknown }).process !== 'undefined',
     leaksIpc:
@@ -16,7 +16,7 @@ test('window.qclod есть, window.require нет', async () => {
   }))
 
   expect(probe.hasApi).toBe(true)
-  expect(probe.canWrite).toBe(true)
+  expect(probe.canSend).toBe(true)
   expect(probe.hasRequire).toBe(false)
   expect(probe.hasProcess).toBe(false)
   expect(probe.leaksIpc).toBe(false)

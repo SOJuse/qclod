@@ -119,6 +119,22 @@ export function App(): JSX.Element {
     []
   )
 
+  const answerPlan = useCallback(
+    (requestId: string, approve: boolean) => {
+      if (activeTabId) void window.qclod.answerPlan(activeTabId, requestId, approve)
+    },
+    [activeTabId]
+  )
+
+  /** Shift+Tab walks the everyday modes; «без проверок» is not on the ring. */
+  const cycleMode = useCallback((): void => {
+    if (!activeTabId) return
+    const ring = ['default', 'acceptEdits', 'plan'] as const
+    const current = useAppStore.getState().panelByTab[activeTabId]?.permissionMode ?? 'default'
+    const at = ring.indexOf(current as (typeof ring)[number])
+    void window.qclod.setPermissionMode(activeTabId, ring[(at + 1) % ring.length]!)
+  }, [activeTabId])
+
   const answerQuestion = useCallback(
     (toolUseId: string, choice: string) => {
       if (activeTabId) void window.qclod.answerQuestion(activeTabId, toolUseId, choice)
@@ -153,6 +169,7 @@ export function App(): JSX.Element {
         todo={todoByTab[activeTabId] ?? []}
         onAnswerPermission={answerPermission}
         onAnswerQuestion={answerQuestion}
+        onAnswerPlan={answerPlan}
       />
       {activeTabId && (
         <Composer
@@ -168,6 +185,7 @@ export function App(): JSX.Element {
             void window.qclod.send(activeTabId, { text, attachments })
           }}
           onInterrupt={() => void window.qclod.interrupt(activeTabId)}
+          onCycleMode={cycleMode}
           onOpenPalette={() => {
             setPaletteOpen(true)
             void window.qclod.commands(activeTabId).then(setCommands)
@@ -188,6 +206,9 @@ export function App(): JSX.Element {
           <SidePanel
             data={panelByTab[activeTabId] ?? EMPTY_PANEL}
             started={(tabs.find((t) => t.id === activeTabId)?.status ?? 'stopped') !== 'stopped'}
+            onSetMode={(mode) => {
+              if (activeTabId) void window.qclod.setPermissionMode(activeTabId, mode)
+            }}
             onClose={togglePanel}
           />
         )}

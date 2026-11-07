@@ -71,6 +71,7 @@ export class AgentSession {
   private readonly idleWaiters: Array<() => void> = []
   /** Questions the agent asked through canUseTool, waiting on the user. */
   private readonly pendingQuestions = new Map<string, (answer: PermissionAnswer) => void>()
+  private readonly pendingPlans = new Map<string, (answer: PermissionAnswer) => void>()
 
   constructor(options: AgentSessionOptions) {
     this.options = options
@@ -173,6 +174,27 @@ export class AgentSession {
     this.emit(this.builder.addPermission(requestId, toolName, target))
   }
 
+  /**
+   * The user read the plan and decided.
+   *
+   * Approving also leaves plan mode, because staying in it would stop the
+   * agent from doing the very thing that was just approved.
+   */
+  answerPlan(requestId: string, approve: boolean): void {
+    this.emit(this.builder.resolvePlan(requestId, approve ? 'approved' : 'rejected'))
+
+    const waiting = this.pendingPlans.get(requestId)
+    if (!waiting) return
+    this.pendingPlans.delete(requestId)
+
+    if (approve) {
+      void this.setPermissionMode('acceptEdits')
+      waiting({ behavior: 'allow' })
+    } else {
+      waiting({ behavior: 'deny' })
+    }
+  }
+
   /** Something Qclod itself needs to say — a crash, a session that would not resume. */
   notice(text: string, tone: 'info' | 'error' = 'info'): RibbonChange[] {
     return this.builder.notice(text, tone)
@@ -254,6 +276,8 @@ export class AgentSession {
     // A question nobody can answer any more must not hold the agent open.
     for (const [, resolve] of this.pendingQuestions) resolve({ behavior: 'deny' })
     this.pendingQuestions.clear()
+    for (const [, resolve] of this.pendingPlans) resolve({ behavior: 'deny' })
+    this.pendingPlans.clear()
 
     const driver = this.driver
     this.driver = null
@@ -341,6 +365,11 @@ export class AgentSession {
     // rather than shown as a permission the user cannot sensibly answer.
     if (toolName === 'AskUserQuestion') return this.askQuestion(input, opts)
 
+    // A plan is a document to read, not a tool call to wave through. In plan
+    // mode the agent finishes by calling ExitPlanMode with what it intends to
+    // do, and that is the moment the user decides (spec 6.4).
+    if (toolName === 'ExitPlanMode') return this.askPlan(input, opts)
+
     const requestId = opts.toolUseId ?? `${this.options.tabId}:${Date.now()}`
     const target = displayTarget(input)
 
@@ -361,6 +390,24 @@ export class AgentSession {
     } finally {
       this.setStatus(previous === 'waiting' ? 'busy' : previous)
     }
+  }
+
+  private askPlan(
+    input: Record<string, unknown>,
+    opts: { toolUseId?: string }
+  ): Promise<PermissionAnswer> {
+    const requestId = opts.toolUseId ?? `plan-${Date.now()}`
+    const text = typeof input['plan'] === 'string' ? input['plan'] : ''
+    this.emit(this.builder.addPlan(requestId, text))
+
+    const previous = this.state
+    this.setStatus('waiting')
+    return new Promise<PermissionAnswer>((resolve) => {
+      this.pendingPlans.set(requestId, (answer) => {
+        this.setStatus(previous === 'waiting' ? 'busy' : previous)
+        resolve(answer)
+      })
+    })
   }
 
   private askQuestion(

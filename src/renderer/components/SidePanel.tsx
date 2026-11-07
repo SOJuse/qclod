@@ -1,10 +1,11 @@
-import type { LimitWindow, McpServerInfo, PanelData } from '../../shared/types'
+import { PERMISSION_MODES, type LimitWindow, type McpServerInfo, type PanelData, type PermissionMode } from '../../shared/types'
 import './SidePanel.css'
 
 interface Props {
   data: PanelData
   started: boolean
   onClose: () => void
+  onSetMode: (mode: PermissionMode) => void
 }
 
 const MCP_LABEL: Record<McpServerInfo['status'], string> = {
@@ -47,7 +48,7 @@ function until(resetsAt: number): string {
  * between «nothing has happened» and «it is zero» matters to someone deciding
  * whether to keep going.
  */
-export function SidePanel({ data, started, onClose }: Props): JSX.Element {
+export function SidePanel({ data, started, onClose, onSetMode }: Props): JSX.Element {
   return (
     <aside className="panel" data-testid="side-panel">
       <header className="panel-head">
@@ -112,9 +113,18 @@ export function SidePanel({ data, started, onClose }: Props): JSX.Element {
       </Section>
 
       <Section title="Разрешения">
-        <div className="panel-line" data-testid="panel-mode">
-          <span>{MODE_LABEL[data.permissionMode] ?? data.permissionMode}</span>
-        </div>
+        <select
+          className="panel-mode"
+          data-testid="panel-mode"
+          value={data.permissionMode}
+          onChange={(e) => onSetMode(e.target.value as PermissionMode)}
+        >
+          {PERMISSION_MODES.map((mode) => (
+            <option key={mode} value={mode}>
+              {MODE_LABEL[mode] ?? mode}
+            </option>
+          ))}
+        </select>
       </Section>
 
       <Section title="MCP и плагины">

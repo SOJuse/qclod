@@ -385,3 +385,64 @@
 .ribbon {
   user-select: text;
 }
+
+/* ------------------------------------------------------------- plan mode */
+
+.row-plan {
+  margin: 12px 0;
+  border: 1px solid var(--border-accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--glow) 7%, var(--surface-raised));
+  overflow: hidden;
+}
+
+.row-plan-head {
+  padding: 8px 13px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.row-plan-text {
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.row-plan-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+
+.row-plan-actions button {
+  padding: 6px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.row-plan-actions button:first-child {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0c0f1c;
+}
+
+.row-plan-done {
+  padding: 0 14px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.row-plan.is-rejected {
+  border-color: var(--border);
+  background: var(--surface-raised);
+}

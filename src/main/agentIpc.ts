@@ -80,6 +80,14 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   ipcMain.handle(CHANNELS.agentPermissionMode, async (_e, id: unknown, mode: unknown) => {
     if (!isString(id) || !isString(mode)) return
     if (!(PERMISSION_MODES as readonly string[]).includes(mode)) return
+
+    // One mode turns Qclod's own gate off entirely. Every other mode still
+    // asks about something; this one asks about nothing, so it is confirmed
+    // here, in the main process, where the renderer cannot answer for the
+    // user. The user can still choose it — they just cannot arrive in it by
+    // a stray click or a bug in the window.
+    if (mode === 'bypassPermissions' && !(await confirmBypass(deps.getWindow()))) return
+
     await manager.get(id)?.setPermissionMode(mode)
   })
 
@@ -108,6 +116,12 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   ipcMain.handle(CHANNELS.questionAnswer, (_e, id: unknown, toolUseId: unknown, choice: unknown) => {
     if (!isString(id) || !isString(toolUseId) || !isString(choice)) return
     manager.get(id)?.answerQuestion(toolUseId, choice)
+  })
+
+  ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, approve: unknown) => {
+    if (!isString(id) || !isString(requestId)) return
+    // Anything but a literal true is not an approval.
+    manager.get(id)?.answerPlan(requestId, approve === true)
   })
 
   ipcMain.handle(CHANNELS.permissionRules, () => broker.rules())
@@ -143,6 +157,32 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] })
     return result.canceled ? [] : result.filePaths
   })
+}
+
+/**
+ * Asks, in a window the renderer cannot script, whether the user really means
+ * to let the agent act without being asked again.
+ */
+async function confirmBypass(win: BrowserWindow | null): Promise<boolean> {
+  // An e2e run cannot click a native dialog, and a modal one would hang the
+  // run rather than fail it; this is the same kind of seam as QCLOD_FAKE_SDK
+  // and is never set in a real install.
+  const stubbed = process.env['QCLOD_CONFIRM_BYPASS']
+  if (stubbed !== undefined) return stubbed === 'allow'
+  if (!win) return false
+
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Отмена', 'Включить'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Режим без проверок',
+    message: 'Агент перестанет спрашивать разрешение на инструменты',
+    detail:
+      'Он сможет менять файлы и запускать команды в этой папке без вопросов, ' +
+      'пока вы не вернёте другой режим.'
+  })
+  return response === 1
 }
 
 export type { LaunchOverrides, TabId }

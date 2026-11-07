@@ -61,6 +61,9 @@ const api = {
     ipcRenderer.invoke(CHANNELS.permissionRules),
   deletePermissionRule: (ruleId: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.permissionRuleDelete, ruleId),
+  answerPlan: (id: TabId, requestId: string, approve: boolean): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.planAnswer, id, requestId, approve),
+
   answerQuestion: (id: TabId, toolUseId: string, choice: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.questionAnswer, id, toolUseId, choice),
 

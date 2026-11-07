@@ -9,6 +9,7 @@ interface Props {
   todo: TodoItem[]
   onAnswerPermission: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
   onAnswerQuestion: (toolUseId: string, choice: string) => void
+  onAnswerPlan: (requestId: string, approve: boolean) => void
 }
 
 /**
@@ -29,7 +30,13 @@ const ASSUMED_ROW_HEIGHT = 44
  * get wrong, and the measuring loop below is smaller than the adapter a
  * general library would need.
  */
-export function Ribbon({ items, todo, onAnswerPermission, onAnswerQuestion }: Props): JSX.Element {
+export function Ribbon({
+  items,
+  todo,
+  onAnswerPermission,
+  onAnswerQuestion,
+  onAnswerPlan
+}: Props): JSX.Element {
   const viewport = useRef<HTMLDivElement | null>(null)
   const heights = useRef(new Map<string, number>())
   const [, forceRender] = useState(0)
@@ -102,6 +109,7 @@ export function Ribbon({ items, todo, onAnswerPermission, onAnswerQuestion }: Pr
             onMeasure={measure}
             onAnswerPermission={onAnswerPermission}
             onAnswerQuestion={onAnswerQuestion}
+            onAnswerPlan={onAnswerPlan}
           />
         ))}
         <div style={{ height: padBottom }} aria-hidden />

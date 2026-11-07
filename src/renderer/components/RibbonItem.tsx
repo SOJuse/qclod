@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { RibbonItem as Item } from '../../shared/types'
 import { PermissionCard } from './PermissionCard'
+import { PlanCard } from './PlanCard'
 import { QuestionCard } from './QuestionCard'
 import { ToolCard } from './ToolCard'
 
@@ -10,6 +11,7 @@ interface Props {
   onMeasure: (id: string, height: number) => void
   onAnswerPermission: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
   onAnswerQuestion: (toolUseId: string, choice: string) => void
+  onAnswerPlan: (requestId: string, approve: boolean) => void
 }
 
 function seconds(ms: number): string {
@@ -34,7 +36,8 @@ export function RibbonRow({
   children,
   onMeasure,
   onAnswerPermission,
-  onAnswerQuestion
+  onAnswerQuestion,
+  onAnswerPlan
 }: Props): JSX.Element {
   const host = useRef<HTMLDivElement | null>(null)
 
@@ -115,6 +118,9 @@ export function RibbonRow({
             </div>
           </details>
         )
+
+      case 'plan':
+        return <PlanCard item={item} onAnswer={onAnswerPlan} />
 
       case 'permission':
         return <PermissionCard item={item} onAnswer={onAnswerPermission} />

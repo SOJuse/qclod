@@ -81,6 +81,12 @@ export type RibbonItem =
       state: 'pending' | 'allowed' | 'denied'
     })
   | (RibbonBase & {
+      kind: 'plan'
+      requestId: string
+      text: string
+      state: 'pending' | 'approved' | 'rejected'
+    })
+  | (RibbonBase & {
       kind: 'question'
       toolUseId: string
       question: string

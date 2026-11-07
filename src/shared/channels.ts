@@ -30,6 +30,7 @@ export const CHANNELS = Object.freeze({
   permissionRules: 'permission:rules',
   permissionRuleDelete: 'permission:ruleDelete',
   questionAnswer: 'question:answer',
+  planAnswer: 'plan:answer',
 
   historyList: 'history:list',
   historyOpen: 'history:open',
@@ -75,6 +76,7 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.permissionRules,
   CHANNELS.permissionRuleDelete,
   CHANNELS.questionAnswer,
+  CHANNELS.planAnswer,
   CHANNELS.historyList,
   CHANNELS.historyOpen,
   CHANNELS.dialogPickFolder,

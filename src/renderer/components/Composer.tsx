@@ -26,6 +26,7 @@ interface Props {
   onSubmit: (text: string, attachments: Attachment[]) => void
   onInterrupt: () => void
   onOpenPalette: () => void
+  onCycleMode: () => void
   onPickFiles: () => void
 }
 
@@ -51,6 +52,7 @@ export function Composer({
   onSubmit,
   onInterrupt,
   onOpenPalette,
+  onCycleMode,
   onPickFiles
 }: Props): JSX.Element {
   const field = useRef<HTMLTextAreaElement | null>(null)
@@ -170,9 +172,10 @@ export function Composer({
         return
 
       case 'cyclePermissionMode':
-        // Owned by the panel (Task 13); swallowed here so Tab never moves focus
-        // out of the field.
+        // Shift+Tab cycles the mode as it does in the terminal, and Tab never
+        // moves focus out of the field.
         ev.preventDefault()
+        onCycleMode()
         return
 
       case 'submit':

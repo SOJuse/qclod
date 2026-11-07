@@ -157,6 +157,18 @@ export class RibbonBuilder {
     ]
   }
 
+  /** The agent's plan, waiting to be read and answered (spec 6.4). */
+  addPlan(requestId: string, text: string): RibbonChange[] {
+    return [this.append({ kind: 'plan', id: this.nextId(), requestId, text, state: 'pending' })]
+  }
+
+  resolvePlan(requestId: string, state: 'approved' | 'rejected'): RibbonChange[] {
+    const item = this.list.find((i) => i.kind === 'plan' && i.requestId === requestId)
+    if (!item || item.kind !== 'plan') return []
+    item.state = state
+    return [this.update(item.id, { state })]
+  }
+
   resolvePermission(requestId: string, state: 'allowed' | 'denied'): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'permission' && i.requestId === requestId)
     if (!item || item.kind !== 'permission') return []

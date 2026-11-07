@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type ClipboardEvent as ClipboardEventBase,
-  type DragEvent as DragEventBase,
   type KeyboardEvent
 } from 'react'
 import { chunkForPty } from '../input/encode'
@@ -32,16 +31,23 @@ interface Props {
   menuActive: boolean
   onRequestFocus: () => void
   onToggleFocus: () => void
+  /** Lets the whole window hand dropped files to the composer (spec 6.6). */
+  dropRef?: { current: ComposerHandle | null }
 }
 
 const MAX_ROWS = 12
+
+export interface ComposerHandle {
+  acceptDrop: (ev: { dataTransfer: DataTransfer | null; preventDefault: () => void }) => void
+}
 
 export function Composer({
   tabId,
   focused,
   menuActive,
   onRequestFocus,
-  onToggleFocus
+  onToggleFocus,
+  dropRef
 }: Props): JSX.Element {
   const areaRef = useRef<HTMLTextAreaElement | null>(null)
   const draft = useAppStore((s) => s.draftByTab[tabId] ?? '')
@@ -209,7 +215,7 @@ export function Composer({
   )
 
   const onDrop = useCallback(
-    (ev: DragEventBase<HTMLTextAreaElement>) => {
+    (ev: { dataTransfer: DataTransfer | null; preventDefault: () => void }) => {
       const text = dropTextFor(Array.from(ev.dataTransfer?.files ?? []), (file) =>
         window.qclod.pathForFile(file)
       )
@@ -247,6 +253,8 @@ export function Composer({
     },
     [draft, insertAtCaret, passthrough, setDraft, tabId]
   )
+
+  if (dropRef) dropRef.current = { acceptDrop: onDrop }
 
   return (
     <div
@@ -287,8 +295,6 @@ export function Composer({
         onSelect={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
-        onDrop={onDrop}
-        onDragOver={(e) => e.preventDefault()}
         onFocus={onRequestFocus}
       />
       <div className="composer-hint">

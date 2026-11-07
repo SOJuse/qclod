@@ -125,3 +125,10 @@ test('кнопки окна сворачивают и разворачивают
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMaximized())
   ).toBe(true)
 })
+
+test('предупреждение о занятом хоткее видно вне настроек', async () => {
+  await launch()
+  // Headless runs register no hotkey, so the pip must be absent here; its
+  // presence is driven by hotkeyStatus, unit-tested in globalHotkey.test.ts.
+  await expect(win.locator('[data-testid="hotkey-warning-pip"]')).toHaveCount(0)
+})

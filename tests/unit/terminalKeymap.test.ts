@@ -75,3 +75,37 @@ describe('resolveTerminalKey', () => {
     expect(resolveTerminalKey(key('F', { ctrl: true }), noSelection)).toBe('search')
   })
 })
+
+describe('раскладка клавиатуры не влияет на хоткеи терминала', () => {
+  const ru = (
+    code: string,
+    key: string,
+    mods: { ctrl?: boolean; shift?: boolean } = {}
+  ): { key: string; code: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean } => ({
+    key,
+    code,
+    ctrlKey: mods.ctrl ?? true,
+    shiftKey: mods.shift ?? false,
+    altKey: false,
+    metaKey: false
+  })
+
+  test('Ctrl+C на русской раскладке копирует при выделении', () => {
+    expect(resolveTerminalKey(ru('KeyC', 'с'), withSelection)).toBe('copy')
+  })
+
+  test('Ctrl+C на русской раскладке прерывает без выделения', () => {
+    expect(resolveTerminalKey(ru('KeyC', 'с'), noSelection)).toBe('toPty')
+  })
+
+  test('Ctrl+V, Ctrl+A, Ctrl+F, Ctrl+L работают на русской раскладке', () => {
+    expect(resolveTerminalKey(ru('KeyV', 'м'), noSelection)).toBe('paste')
+    expect(resolveTerminalKey(ru('KeyA', 'ф'), noSelection)).toBe('selectAll')
+    expect(resolveTerminalKey(ru('KeyF', 'а'), noSelection)).toBe('search')
+    expect(resolveTerminalKey(ru('KeyL', 'д'), noSelection)).toBe('clear')
+  })
+
+  test('Ctrl+Backquote переключает фокус на русской раскладке', () => {
+    expect(resolveTerminalKey(ru('Backquote', 'ё'), noSelection)).toBe('toggleFocus')
+  })
+})

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { BUSY_TIMEOUT_MS, mayNotify, reduceStatus } from '@main/sessions/sessionStatus'
+import { mayNotify, reduceStatus } from '@main/sessions/sessionStatus'
 import type { SessionStatus } from '@shared/types'
 
 const start = { status: 'idle' as SessionStatus, degraded: false }
@@ -74,7 +74,6 @@ describe('reduceStatus', () => {
   test('таймаут в busy переводит в режим пониженной достоверности', () => {
     const busy = { status: 'busy' as SessionStatus, degraded: false }
     expect(reduceStatus(busy, { kind: 'timeout' })).toEqual({ status: 'idle', degraded: true })
-    expect(BUSY_TIMEOUT_MS).toBeGreaterThan(0)
   })
 
   test('таймаут вне busy ничего не меняет', () => {

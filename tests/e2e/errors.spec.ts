@@ -5,7 +5,7 @@ import {
   type ElectronApplication,
   type Page
 } from '@playwright/test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -96,4 +96,44 @@ test('перезапуск поднимает сессию в той же вкл
   await expect(win.locator('[data-testid="composer-input"]')).toBeVisible()
   await expect(win.locator('[data-testid="tab"]')).toHaveCount(1)
   expect(await win.locator('[data-testid="tab"]').first().innerText()).toBe(tabTitle)
+})
+
+test('путь к агенту можно починить из настроек без перезапуска приложения', async () => {
+  // The full recovery loop spec 6.10 promises: error panel → settings → fix
+  // the path → restart → working session.
+  const { QCLOD_AGENT_PATH: _dropped, ...withoutAgentOverride } = process.env
+  const fakeAgent = join(process.cwd(), 'tests', 'fixtures', 'fake-agent', 'index.js')
+
+  // Seed a broken agent path in the profile. The env override is dropped so
+  // the setting is what decides — and the path is one that cannot exist, so
+  // this can never reach the real CLI.
+  writeFileSync(
+    join(profile, 'settings.json'),
+    JSON.stringify({ agentPath: 'qclod-no-such-agent-xyz' }),
+    'utf8'
+  )
+
+  app = await electron.launch({
+    args: ['.'],
+    env: {
+      ...withoutAgentOverride,
+      QCLOD_USER_DATA: profile,
+      QCLOD_AGENT_PREFIX_ARGS: JSON.stringify([fakeAgent])
+    } as Record<string, string>
+  })
+  win = await app.firstWindow()
+
+  await expect(win.locator('[data-testid="tab-error"]')).toBeVisible({ timeout: 20000 })
+
+  await win.locator('[data-testid="error-open-settings"]').click()
+  await win.locator('[data-testid="setting-agentPath"]').fill(process.execPath)
+  await win.locator('[data-testid="setting-agentPath"]').blur()
+  await win.locator('[data-testid="close-settings"]').click()
+
+  await win.locator('[data-testid="error-restart"]').click()
+
+  await expect(win.locator('[data-testid="tab-error"]')).toBeHidden({ timeout: 20000 })
+  await expect(win.locator('[data-testid="terminal"]').first()).toContainText('fake-agent ready', {
+    timeout: 20000
+  })
 })

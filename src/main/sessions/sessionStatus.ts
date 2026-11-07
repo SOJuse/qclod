@@ -1,8 +1,5 @@
 import type { HookEvent, SessionStatus } from '../../shared/types'
 
-/** How long a tab may sit in `busy` without a hook before we stop trusting it. */
-export const BUSY_TIMEOUT_MS = 90_000
-
 export interface StatusState {
   status: SessionStatus
   /**

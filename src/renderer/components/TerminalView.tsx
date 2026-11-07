@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createTerminal, type TerminalHandle } from '../terminal/createTerminal'
 import { resolveTerminalKey } from '../terminal/keymap'
-import { encodeForPty } from '../input/encode'
-import { detectMenu } from '../terminal/menuDetect'
+import { chunkForPty } from '../input/encode'
+import { detectMenu, detectMenuLikely } from '../terminal/menuDetect'
+import { SelectionCopyGate } from '../terminal/selectionCopy'
 import type { TabId } from '../../shared/types'
 import './TerminalView.css'
 
@@ -14,7 +15,7 @@ interface Props {
   onRequestFocus: () => void
   onToggleFocus: () => void
   onFontSize: (next: number) => void
-  onMenuActive: (active: boolean) => void
+  onMenuActive: (signals: { focusWorthy: boolean; likely: boolean }) => void
 }
 
 export function TerminalView({
@@ -28,11 +29,20 @@ export function TerminalView({
   onMenuActive
 }: Props): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
   const handleRef = useRef<TerminalHandle | null>(null)
   // Keep the latest callbacks reachable from the terminal's own listeners,
   // which are attached once for the terminal's lifetime.
-  const actions = useRef({ onToggleFocus, onFontSize, fontSize, onMenuActive })
-  actions.current = { onToggleFocus, onFontSize, fontSize, onMenuActive }
+  const actions = useRef({ onToggleFocus, onFontSize, fontSize, onMenuActive, openSearch: () => setSearchOpen(true) })
+  actions.current = {
+    ...actions.current,
+    onToggleFocus,
+    onFontSize,
+    fontSize,
+    onMenuActive
+  }
 
   useEffect(() => {
     const host = hostRef.current
@@ -44,17 +54,17 @@ export function TerminalView({
     // Menu detection runs on a short debounce: a redraw arrives in several
     // chunks and checking mid-redraw would read a half-painted screen.
     let menuTimer: ReturnType<typeof setTimeout> | undefined
-    let lastMenu = false
+    let lastMenu = { focusWorthy: false, likely: false }
     const checkMenu = (): void => {
       const buffer = handle.term.buffer.active
       const lines: string[] = []
       for (let row = 0; row < handle.term.rows; row++) {
         lines.push(buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '')
       }
-      const active = detectMenu(lines)
-      if (active !== lastMenu) {
-        lastMenu = active
-        actions.current.onMenuActive(active)
+      const next = { focusWorthy: detectMenu(lines), likely: detectMenuLikely(lines) }
+      if (next.focusWorthy !== lastMenu.focusWorthy || next.likely !== lastMenu.likely) {
+        lastMenu = next
+        actions.current.onMenuActive(next)
       }
     }
 
@@ -70,6 +80,8 @@ export function TerminalView({
       void window.qclod.write(tabId, data)
     })
 
+    const copyGate = new SelectionCopyGate()
+
     handle.term.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== 'keydown') return true
       const action = resolveTerminalKey(ev, { hasSelection: handle.term.hasSelection() })
@@ -84,16 +96,17 @@ export function TerminalView({
         }
         case 'paste':
           void navigator.clipboard.readText().then((text) => {
-            // encodeForPty strips paste markers and control characters, so
-            // clipboard content cannot break out of the paste block.
-            if (text) void window.qclod.write(tabId, encodeForPty(text))
+            // Chunked like the composer: a multi-megabyte clipboard must not
+            // arrive as one IPC message and one pty write.
+            for (const chunk of chunkForPty(text)) void window.qclod.write(tabId, chunk)
           })
           return false
         case 'selectAll':
+          copyGate.programmaticSelect()
           handle.term.selectAll()
           return false
         case 'search':
-          // Search UI lands with the title bar; Ctrl+F must not reach the agent.
+          actions.current.openSearch()
           return false
         case 'clear':
           handle.term.clear()
@@ -113,11 +126,30 @@ export function TerminalView({
       }
     })
 
-    // Selecting with the mouse copies on release, the way a terminal should.
-    handle.term.onSelectionChange(() => {
+    // Selecting with the mouse copies on release, the way a terminal should —
+    // and Ctrl+A selects without touching the clipboard.
+    const copySelection = (): void => {
       const selection = handle.term.getSelection()
       if (selection) void navigator.clipboard.writeText(selection)
+    }
+    handle.term.onSelectionChange(() => {
+      if (copyGate.selectionChanged()) copySelection()
     })
+    host.addEventListener('mousedown', (ev) => {
+      if (ev.button === 1) {
+        // Middle-click pastes, the way a terminal does (spec 6.5).
+        ev.preventDefault()
+        void navigator.clipboard.readText().then((text) => {
+          for (const chunk of chunkForPty(text)) void window.qclod.write(tabId, chunk)
+        })
+        return
+      }
+      copyGate.pointerDown()
+    })
+    const onMouseUp = (): void => {
+      if (copyGate.pointerUp()) copySelection()
+    }
+    window.addEventListener('mouseup', onMouseUp)
 
     const syncSize = (): void => {
       const { cols, rows } = handle.fit()
@@ -130,10 +162,13 @@ export function TerminalView({
 
     return () => {
       observer.disconnect()
+      window.removeEventListener('mouseup', onMouseUp)
       clearTimeout(menuTimer)
       offData()
       // Do not leave a stale "menu is open" belief behind for this tab.
-      if (lastMenu) actions.current.onMenuActive(false)
+      if (lastMenu.focusWorthy || lastMenu.likely) {
+        actions.current.onMenuActive({ focusWorthy: false, likely: false })
+      }
       handle.dispose()
       handleRef.current = null
     }
@@ -150,6 +185,10 @@ export function TerminalView({
   }, [fontSize, tabId])
 
   useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus()
+  }, [searchOpen])
+
+  useEffect(() => {
     if (focused) handleRef.current?.term.focus()
     else handleRef.current?.term.blur()
   }, [focused])
@@ -160,6 +199,42 @@ export function TerminalView({
       data-testid="terminal"
       onMouseDown={onRequestFocus}
     >
+      {searchOpen && (
+        <div className="terminal-search" data-testid="terminal-search">
+          <input
+            ref={searchInputRef}
+            data-testid="terminal-search-input"
+            placeholder="поиск по выводу…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              handleRef.current?.search.findNext(e.target.value, { incremental: true })
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                handleRef.current?.search.clearDecorations()
+                setSearchOpen(false)
+              } else if (e.key === 'Enter') {
+                e.preventDefault()
+                if (e.shiftKey) handleRef.current?.search.findPrevious(query)
+                else handleRef.current?.search.findNext(query)
+              }
+            }}
+          />
+          <button
+            type="button"
+            data-testid="terminal-search-close"
+            aria-label="Закрыть поиск"
+            onClick={() => {
+              handleRef.current?.search.clearDecorations()
+              setSearchOpen(false)
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div className="terminal-host" ref={hostRef} />
     </div>
   )

@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { physicalKey } from '../input/physicalKey'
 import type { TabId, TabState } from '../../shared/types'
 
 export interface TabShortcutActions {
@@ -24,13 +25,14 @@ export function useTabShortcuts({
   useEffect(() => {
     const handler = (ev: KeyboardEvent): void => {
       if (!ev.ctrlKey || ev.altKey || ev.metaKey) return
+      const pressed = physicalKey(ev)
 
-      if (ev.key.toLowerCase() === 't' && !ev.shiftKey) {
+      if (pressed === 't' && !ev.shiftKey) {
         ev.preventDefault()
         onCreate()
         return
       }
-      if (ev.key.toLowerCase() === 'w' && !ev.shiftKey) {
+      if (pressed === 'w' && !ev.shiftKey) {
         ev.preventDefault()
         onClose(activeTabId)
         return
@@ -44,8 +46,8 @@ export function useTabShortcuts({
         onActivate(tabs[next].id)
         return
       }
-      if (/^[1-9]$/.test(ev.key) && !ev.shiftKey) {
-        const target = tabs[Number(ev.key) - 1]
+      if (/^[1-9]$/.test(pressed) && !ev.shiftKey) {
+        const target = tabs[Number(pressed) - 1]
         if (!target) return
         ev.preventDefault()
         onActivate(target.id)

@@ -1,5 +1,5 @@
 import { TabStrip } from './TabStrip'
-import type { TabId, TabState } from '../../shared/types'
+import type { HotkeyRegistration, TabId, TabState } from '../../shared/types'
 import './TitleBar.css'
 
 interface Props {
@@ -9,6 +9,7 @@ interface Props {
   onClose: (id: TabId) => void
   onCreate: () => void
   onConfigure: (id: TabId) => void
+  hotkey: HotkeyRegistration | null
   onOpenSettings: () => void
 }
 
@@ -19,6 +20,7 @@ export function TitleBar({
   onClose,
   onCreate,
   onConfigure,
+  hotkey,
   onOpenSettings
 }: Props): JSX.Element {
   return (
@@ -33,6 +35,17 @@ export function TitleBar({
         onConfigure={onConfigure}
       />
       <div className="title-bar-spacer" />
+      {hotkey && !hotkey.ok && (
+        <button
+          type="button"
+          className="hotkey-warning"
+          data-testid="hotkey-warning-pip"
+          title={hotkey.reason}
+          onClick={onOpenSettings}
+        >
+          ⚠ хоткей занят
+        </button>
+      )}
       <div className="window-controls">
         <button
           type="button"

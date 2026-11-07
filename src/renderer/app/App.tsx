@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { TerminalView } from '../components/TerminalView'
-import { Composer } from '../components/Composer'
+import { Composer, type ComposerHandle } from '../components/Composer'
 import { TitleBar } from '../components/TitleBar'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { TabSettingsDialog } from '../components/TabSettingsDialog'
@@ -8,7 +8,7 @@ import { TabErrorPanel } from '../components/TabErrorPanel'
 import { useAppStore } from '../state/useAppStore'
 import { shouldStealFocus } from '../input/focusSteal'
 import { useTabShortcuts } from './useTabShortcuts'
-import type { TabId } from '../../shared/types'
+import type { HotkeyRegistration, TabId } from '../../shared/types'
 import './App.css'
 
 export function App(): JSX.Element {
@@ -29,6 +29,8 @@ export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [configuringTab, setConfiguringTab] = useState<TabId | null>(null)
   const [version, setVersion] = useState('')
+  const composerRef = useRef<ComposerHandle | null>(null)
+  const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
 
   useEffect(() => {
     void window.qclod.getSettings().then(setSettings)
@@ -41,12 +43,14 @@ export function App(): JSX.Element {
   }, [setTabs])
 
   useEffect(() => {
-    return window.qclod.onActivateTab(setActiveTabId)
-  }, [setActiveTabId])
-
-  useEffect(() => {
     void window.qclod.appVersion().then(setVersion)
   }, [])
+
+  // A combination another app already holds has to be visible without opening
+  // Settings — otherwise the user just concludes the hotkey does not work.
+  useEffect(() => {
+    void window.qclod.hotkeyStatus().then(setHotkey)
+  }, [settings?.globalHotkey])
 
   const patchGlobalSettings = useCallback(
     (patch: Partial<typeof settings>) => {
@@ -68,9 +72,11 @@ export function App(): JSX.Element {
   const autoFocusOnMenu = settings?.autoFocusOnMenu ?? true
 
   const onMenuActive = useCallback(
-    (active: boolean) => {
-      setMenuActive(activeTabId, active)
-      if (!active) return
+    ({ focusWorthy, likely }: { focusWorthy: boolean; likely: boolean }) => {
+      // The loose signal only decides where arrow keys go; the strict one is
+      // the only thing allowed to move the keyboard.
+      setMenuActive(activeTabId, likely)
+      if (!focusWorthy) return
       const { draftByTab, lastTypedAt } = useAppStore.getState()
       // Terminal output is attacker-influenceable, so the keyboard only moves
       // when the person is clearly not mid-sentence. See focusSteal.ts.
@@ -107,6 +113,12 @@ export function App(): JSX.Element {
     [setActiveTabId]
   )
 
+  useEffect(() => {
+    // Route through activateTab so the main process clears the badge too —
+    // otherwise a notification click lands on the tab with its dot still lit.
+    return window.qclod.onActivateTab((id) => activateTab(id))
+  }, [activateTab])
+
   useTabShortcuts({
     tabs,
     activeTabId,
@@ -116,7 +128,15 @@ export function App(): JSX.Element {
   })
 
   return (
-    <div className="app" data-testid="app-root">
+    <div
+      className="app"
+      data-testid="app-root"
+      // Spec 6.6: files are dropped on the window. The terminal covers most of
+      // it, so attaching this to the composer alone would make the obvious
+      // target silently inert.
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => composerRef.current?.acceptDrop(e)}
+    >
       <TitleBar
         tabs={tabs}
         activeTabId={activeTabId}
@@ -124,6 +144,7 @@ export function App(): JSX.Element {
         onClose={(id) => void closeTab(id)}
         onCreate={() => void createTab()}
         onConfigure={setConfiguringTab}
+        hotkey={hotkey}
         onOpenSettings={() => setSettingsOpen((open) => !open)}
       />
       <span hidden>Qclod</span>
@@ -159,6 +180,7 @@ export function App(): JSX.Element {
             menuActive={menuActive}
             onRequestFocus={() => setFocusTarget('composer')}
             onToggleFocus={toggleFocusTarget}
+            dropRef={composerRef}
           />
           )}
         </>

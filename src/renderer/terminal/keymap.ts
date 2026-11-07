@@ -1,3 +1,5 @@
+import { physicalKey, type PhysicalKeyEvent } from '../input/physicalKey'
+
 export type TerminalKeyAction =
   | 'copy'
   | 'paste'
@@ -14,7 +16,7 @@ export interface TerminalKeyContext {
   hasSelection: boolean
 }
 
-export interface KeyLike {
+export interface KeyLike extends PhysicalKeyEvent {
   key: string
   ctrlKey: boolean
   shiftKey: boolean
@@ -30,7 +32,7 @@ export interface KeyLike {
 export function resolveTerminalKey(ev: KeyLike, ctx: TerminalKeyContext): TerminalKeyAction {
   if (!ev.ctrlKey || ev.altKey || ev.metaKey) return 'toPty'
 
-  const key = ev.key.toLowerCase()
+  const key = physicalKey(ev)
 
   if (key === '`') return 'toggleFocus'
 

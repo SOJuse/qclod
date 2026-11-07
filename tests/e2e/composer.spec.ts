@@ -9,7 +9,13 @@ test.beforeEach(async () => {
   await expect(win.locator('[data-testid="terminal"]')).toContainText('fake-agent ready', {
     timeout: 20000
   })
-  await win.locator('[data-testid="composer-input"]').click()
+  // Wait for the composer to be interactive, not just present: under load the
+  // app can still be wiring up when the first keystroke or synthetic event
+  // arrives, which showed up twice as a 46s failure in this file.
+  const input = win.locator('[data-testid="composer-input"]')
+  await expect(input).toBeEnabled()
+  await input.click()
+  await expect(input).toBeFocused()
 })
 
 test.afterEach(async () => {

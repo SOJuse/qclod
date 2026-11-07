@@ -40,8 +40,9 @@ describe('fake agent', () => {
     const a = start()
     await a.waitFor('ready')
     a.write('/menu\r')
-    await a.waitFor('menu-open')
-    expect(a.output()).toContain('❯ option-1')
+    // The marker and the menu body are separate writes, so waiting for the
+    // marker alone races the chunk boundary.
+    await a.waitFor('❯ option-1')
     a.write('\x1b[B')
     await a.waitFor('❯ option-2')
     a.write('\r')

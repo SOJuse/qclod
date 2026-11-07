@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { detectMenu, stripAnsi } from '@renderer/terminal/menuDetect'
+import { detectMenu, detectMenuLikely, stripAnsi } from '@renderer/terminal/menuDetect'
 
 const ESC = String.fromCharCode(27)
 
@@ -110,5 +110,42 @@ describe('detectMenu: устойчивость к подделке в вывод
       '  и строка начинается с > для цитат'
     ]
     expect(detectMenu(lines)).toBe(false)
+  })
+})
+
+describe('detectMenuLikely: мягкий признак для маршрутизации стрелок', () => {
+  // detectMenu is strict because it moves the keyboard, and a false positive
+  // there is a security problem. Routing ↑↓ to the pty is not: if we are wrong
+  // the user gets the agent's reaction instead of their input history, and
+  // nothing can be approved by accident. So arrow routing uses a looser signal
+  // — otherwise a real permission prompt whose layout we did not anticipate
+  // would leave arrows going to history while a menu is on screen.
+  test('пронумерованное меню без подсказки про Enter распознаётся', () => {
+    expect(detectMenuLikely(['Do you want to proceed?', '❯ 1. Yes', '  2. No'])).toBe(true)
+  })
+
+  test('меню с подсказкой тоже распознаётся', () => {
+    expect(
+      detectMenuLikely(['❯ No, exit', '  Yes, I trust this folder', 'Enter to confirm · Esc to cancel'])
+    ).toBe(true)
+  })
+
+  test('обычный вывод не распознаётся', () => {
+    expect(detectMenuLikely(['⏺ Read(auth.ts)', '  Прочитано 120 строк'])).toBe(false)
+  })
+
+  test('цитата через > не распознаётся', () => {
+    expect(detectMenuLikely(['> цитата из письма', '> вторая строка'])).toBe(false)
+  })
+
+  test('строгий детектор остаётся строже мягкого', () => {
+    const noHint = ['❯ 1. Yes', '  2. No']
+    expect(detectMenuLikely(noHint)).toBe(true)
+    expect(detectMenu(noHint)).toBe(false)
+  })
+
+  test('маркер далеко от низа экрана не распознаётся и мягким', () => {
+    const filler = Array.from({ length: 20 }, (_, i) => `строка ${i}`)
+    expect(detectMenuLikely(['❯ 1. Да', '  2. Нет', ...filler])).toBe(false)
   })
 })

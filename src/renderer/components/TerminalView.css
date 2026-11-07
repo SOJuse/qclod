@@ -53,3 +53,49 @@
 .terminal-surface.is-hidden {
   display: none;
 }
+
+.terminal-search {
+  position: absolute;
+  top: 10px;
+  right: 18px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 8px;
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--glow-accent);
+}
+
+.terminal-search input {
+  width: 200px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  user-select: text;
+}
+
+.terminal-search input::placeholder {
+  color: var(--text-faint);
+}
+
+.terminal-search button {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 14px;
+  cursor: default;
+}
+
+.terminal-search button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}

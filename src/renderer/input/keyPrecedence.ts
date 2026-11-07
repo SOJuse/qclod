@@ -1,3 +1,5 @@
+import { physicalKey, type PhysicalKeyEvent } from './physicalKey'
+
 export type ComposerKeyAction =
   | 'toPty'
   | 'toggleFocus'
@@ -26,7 +28,7 @@ export interface ComposerContext {
   caretAtEnd: boolean
 }
 
-export interface KeyLike {
+export interface KeyLike extends PhysicalKeyEvent {
   key: string
   ctrlKey: boolean
   shiftKey: boolean
@@ -48,11 +50,11 @@ const RULES: Rule[] = [
   (ev, ctx) => (ev.key === 'Escape' ? (ctx.popupOpen ? 'closePopup' : 'toPty') : undefined),
 
   // The always-available manual escape hatch.
-  (ev) => (ev.ctrlKey && ev.key === '`' ? 'toggleFocus' : undefined),
+  (ev) => (ev.ctrlKey && physicalKey(ev) === '`' ? 'toggleFocus' : undefined),
 
-  (ev) => (ev.ctrlKey && !ev.altKey && ev.key.toLowerCase() === 'v' ? 'paste' : undefined),
+  (ev) => (ev.ctrlKey && !ev.altKey && physicalKey(ev) === 'v' ? 'paste' : undefined),
   (ev, ctx) =>
-    ev.ctrlKey && !ev.altKey && ev.key.toLowerCase() === 'c'
+    ev.ctrlKey && !ev.altKey && physicalKey(ev) === 'c'
       ? ctx.hasSelection || ev.shiftKey
         ? 'copy'
         : 'toPty'

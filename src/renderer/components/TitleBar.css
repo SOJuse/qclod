@@ -197,3 +197,21 @@
   background: #c4312f;
   color: #fff;
 }
+
+.hotkey-warning {
+  align-self: center;
+  margin-right: 8px;
+  padding: 3px 9px;
+  border: 1px solid rgba(255, 196, 107, 0.45);
+  border-radius: 99px;
+  background: rgba(255, 196, 107, 0.1);
+  color: var(--warn);
+  font: inherit;
+  font-size: 11px;
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+
+.hotkey-warning:hover {
+  background: rgba(255, 196, 107, 0.2);
+}

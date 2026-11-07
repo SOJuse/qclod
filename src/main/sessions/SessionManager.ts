@@ -5,8 +5,11 @@ import { Session } from './Session'
 
 export interface SessionManagerDeps {
   getSettings: () => AppSettings
-  /** The user's own hooks, so ours are merged in rather than written over. */
-  getUserHooks: () => unknown
+  /**
+   * Hooks that already apply in this folder — the user's and the project's —
+   * so ours are merged in rather than written over.
+   */
+  getUserHooks: (cwd: string) => unknown
   pipePath: string
   /** Arguments inserted before the agent's own flags. Tests use it to run node. */
   prefixArgs?: string[]
@@ -26,7 +29,7 @@ export class SessionManager {
     const settingsJson = buildHookSettings(
       tabId,
       this.deps.pipePath,
-      this.deps.getUserHooks(),
+      this.deps.getUserHooks(cwd),
       this.deps.hookHelper
     )
 

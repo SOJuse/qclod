@@ -26,3 +26,20 @@ test('набранное в терминале уходит агенту и во
 
   await app.close()
 })
+
+test('Ctrl+F открывает поиск по выводу и Esc его закрывает', async () => {
+  const app = await electron.launch({ args: ['.'] })
+  const win = await app.firstWindow()
+  const terminal = win.locator('[data-testid="terminal"]').first()
+  await expect(terminal).toContainText('fake-agent ready', { timeout: 20000 })
+
+  await terminal.click()
+  await win.keyboard.press('Control+f')
+  await expect(win.locator('[data-testid="terminal-search"]')).toBeVisible()
+
+  await win.keyboard.type('ready')
+  await win.keyboard.press('Escape')
+  await expect(win.locator('[data-testid="terminal-search"]')).toBeHidden()
+
+  await app.close()
+})

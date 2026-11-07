@@ -300,7 +300,12 @@ describe('AgentSession: разрешения', () => {
   test('вопрос о разрешении появляется в ленте и закрывается ответом', async () => {
     const { session } = makeSession(
       { steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }] },
-      { askPermission: async () => ({ behavior: 'allow' as const }) }
+      {
+        askPermission: async (request) => {
+          session.showPermissionCard(request.requestId, request.toolName, request.target)
+          return { behavior: 'allow' as const }
+        }
+      }
     )
     const rec = watch(session)
 
@@ -315,7 +320,12 @@ describe('AgentSession: разрешения', () => {
   test('отказ помечает карточку отклонённой, инструмент не выполняется', async () => {
     const { session, driver } = makeSession(
       { steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'rm -rf /' } }] },
-      { askPermission: async () => ({ behavior: 'deny' as const }) }
+      {
+        askPermission: async (request) => {
+          session.showPermissionCard(request.requestId, request.toolName, request.target)
+          return { behavior: 'deny' as const }
+        }
+      }
     )
     const rec = watch(session)
 
@@ -330,7 +340,8 @@ describe('AgentSession: разрешения', () => {
     const { session, driver } = makeSession(
       { steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }] },
       {
-        askPermission: async () => {
+        askPermission: async (request) => {
+          session.showPermissionCard(request.requestId, request.toolName, request.target)
           throw new Error('окно закрылось')
         }
       }

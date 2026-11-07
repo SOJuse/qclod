@@ -14,6 +14,7 @@ import type {
   UserInput
 } from '../../shared/types'
 import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
+import { PanelCollector, readProjectSettings } from './panelData'
 import { displayTarget } from './permissionStore'
 import { resolveExecutable } from './resolveExecutable'
 
@@ -54,6 +55,7 @@ function splitArgs(flags: string | undefined): string[] {
 export class AgentSession {
   private readonly options: AgentSessionOptions
   private readonly builder = new RibbonBuilder()
+  private readonly collector = new PanelCollector()
   private readonly changeListeners: ChangeListener[] = []
   private readonly panelListeners: PanelListener[] = []
   private readonly statusListeners: StatusListener[] = []
@@ -208,6 +210,7 @@ export class AgentSession {
     }
 
     this.pump = this.readMessages(this.driver)
+    this.emitPanel(this.collector.setProjectSettings(readProjectSettings(this.options.cwd)))
   }
 
   send(input: UserInput): void {
@@ -225,9 +228,7 @@ export class AgentSession {
 
   async setPermissionMode(mode: string): Promise<void> {
     this.mode = mode
-    // The SDK reports the mode at start and never again, so ours is the
-    // authority once we change it (spec 6.5).
-    this.emitPanel({ permissionMode: mode as PanelData['permissionMode'] })
+    this.emitPanel(this.collector.setPermissionMode(mode))
     if (!this.driver) return
     await this.driver.setPermissionMode(mode).catch(() => undefined)
   }
@@ -242,6 +243,11 @@ export class AgentSession {
     if (!this.driver) return
     const mcp = await this.driver.mcpServerStatus().catch((): McpServerInfo[] => [])
     if (mcp.length > 0) this.emitPanel({ mcp })
+  }
+
+  /** Everything the panel knows about this tab right now. */
+  get panel(): PanelData {
+    return this.collector.data
   }
 
   async dispose(): Promise<void> {
@@ -273,6 +279,8 @@ export class AgentSession {
 
   private onMessage(message: unknown): void {
     this.emit(this.builder.apply(message))
+    const panel = this.collector.apply(message)
+    if (panel) this.emitPanel(panel)
     const todo = this.builder.todo
     if (todo) this.todoItems = todo
 
@@ -284,11 +292,9 @@ export class AgentSession {
         if (m['subtype'] === 'init') this.onInit(m)
         else if (m['subtype'] === 'commands_changed') this.onCommandsChanged(m)
         break
-      case 'rate_limit_event':
-        this.onRateLimit(m)
-        break
       case 'result':
-        this.onResult(m)
+        this.setStatus('idle')
+        void this.refreshContext()
         break
       default:
         break
@@ -297,19 +303,6 @@ export class AgentSession {
 
   private onInit(m: Record<string, unknown>): void {
     this.session = typeof m['session_id'] === 'string' ? m['session_id'] : this.session
-    const patch: Partial<PanelData> = {}
-    if (typeof m['model'] === 'string') patch.model = m['model']
-    if (typeof m['permissionMode'] === 'string') {
-      this.mode = m['permissionMode']
-      patch.permissionMode = m['permissionMode'] as PanelData['permissionMode']
-    }
-    if (Array.isArray(m['mcp_servers'])) {
-      patch.mcp = (m['mcp_servers'] as McpServerInfo[]).map((s) => ({
-        name: String(s.name),
-        status: s.status
-      }))
-    }
-    this.emitPanel(patch)
     this.setStatus('idle')
   }
 
@@ -324,40 +317,12 @@ export class AgentSession {
     for (const listener of this.commandListeners) listener(commands)
   }
 
-  private onRateLimit(m: Record<string, unknown>): void {
-    const info = m['rate_limit_info']
-    if (typeof info !== 'object' || info === null) return
-    const windows = (info as Record<string, unknown>)['unifiedWindows']
-    if (typeof windows !== 'object' || windows === null) return
-    const w = windows as Record<string, { utilization: number; resetsAt: number } | undefined>
-    this.emitPanel({
-      limits: { fiveHour: w['five_hour'] ?? null, sevenDay: w['seven_day'] ?? null }
-    })
-  }
-
-  private onResult(m: Record<string, unknown>): void {
-    const cost = m['total_cost_usd']
-    if (typeof cost === 'number') this.emitPanel({ cost: { session: cost } })
-    this.setStatus('idle')
-    void this.refreshContext()
-  }
-
   /** Context is not in the turn's result message (probe note 4): ask for it. */
   private async refreshContext(): Promise<void> {
     const driver = this.driver
     if (!driver) return
     try {
-      const usage = await driver.getContextUsage()
-      this.emitPanel({
-        context: {
-          used: usage.totalTokens,
-          max: usage.maxTokens,
-          percent: usage.percentage,
-          categories: usage.categories
-            .filter((c) => c.kind === undefined || c.kind === 'used')
-            .map((c) => ({ name: c.name, tokens: c.tokens }))
-        }
-      })
+      this.emitPanel(this.collector.setContext(await driver.getContextUsage()))
     } catch {
       // A session that is shutting down cannot answer; the panel keeps its
       // last numbers rather than showing a hole.

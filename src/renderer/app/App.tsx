@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { CommandInfo, HotkeyRegistration } from '../../shared/types'
-import { useAppStore } from '../state/useAppStore'
+import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { TitleBar } from '../components/TitleBar'
 import { Ribbon } from '../components/Ribbon'
 import { Composer } from '../components/Composer'
 import { CommandPalette } from '../components/CommandPalette'
+import { SidePanel } from '../components/SidePanel'
 import { markUnavailable } from '../../shared/commandFilter'
 import { SettingsScreen } from '../components/SettingsScreen'
 import './App.css'
@@ -32,6 +33,7 @@ export function App(): JSX.Element {
   const draftByTab = useAppStore((s) => s.draftByTab)
   const attachmentsByTab = useAppStore((s) => s.attachmentsByTab)
   const fileIndexByTab = useAppStore((s) => s.fileIndexByTab)
+  const panelByTab = useAppStore((s) => s.panelByTab)
 
   const setSettings = useAppStore((s) => s.setSettings)
   const setTabs = useAppStore((s) => s.setTabs)
@@ -64,6 +66,25 @@ export function App(): JSX.Element {
       for (const off of unsubscribers) off()
     }
   }, [setSettings, setTabs, setActiveTabId, applyRibbon, applyPanel])
+
+  const togglePanel = useCallback((): void => {
+    const next = !(useAppStore.getState().settings?.panelOpen ?? true)
+    void window.qclod.setSettings({ panelOpen: next }).then(setSettings)
+    // Live MCP state is only worth asking for while someone is looking.
+    if (next && activeTabId) void window.qclod.panel(activeTabId)
+  }, [activeTabId, setSettings])
+
+  // Ctrl+ folds the panel away, and the choice is remembered (spec 6.5).
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.ctrlKey && ev.code === 'Backslash') {
+        ev.preventDefault()
+        togglePanel()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [togglePanel])
 
   // The file index backs @-mentions; it is per folder, so it is fetched once
   // per tab rather than on every keystroke.
@@ -125,6 +146,8 @@ export function App(): JSX.Element {
         onOpenSettings={() => setSettingsOpen(true)}
       />
       {settings && <div className="app-ready" data-testid="app-ready" hidden />}
+      <div className="app-body">
+        <div className="app-main">
       <Ribbon
         items={ribbonByTab[activeTabId] ?? []}
         todo={todoByTab[activeTabId] ?? []}
@@ -160,6 +183,26 @@ export function App(): JSX.Element {
           }}
         />
       )}
+        </div>
+        {settings?.panelOpen && (
+          <SidePanel
+            data={panelByTab[activeTabId] ?? EMPTY_PANEL}
+            started={(tabs.find((t) => t.id === activeTabId)?.status ?? 'stopped') !== 'stopped'}
+            onClose={togglePanel}
+          />
+        )}
+        {!settings?.panelOpen && (
+          <button
+            type="button"
+            className="panel-reopen"
+            data-testid="panel-open"
+            aria-label="Показать панель"
+            onClick={togglePanel}
+          >
+            ‹
+          </button>
+        )}
+      </div>
       {paletteOpen && (
         <CommandPalette
           commands={markUnavailable(commands)}

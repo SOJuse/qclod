@@ -610,3 +610,44 @@ describe('AgentSession: сообщение с вложением', () => {
     expect(rec.items.filter((i) => i.kind === 'user')).toHaveLength(1)
   })
 })
+
+describe('AgentSession: init не заканчивает ход', () => {
+  test('init, пришедший после отправки, не гасит «работает»', async () => {
+    // With streaming input the CLI sends system/init only once it has been
+    // given something to answer — so init lands *after* the first message.
+    // Treating it as a turn boundary made the very first message look dead:
+    // the status flipped to idle while the agent was still working, and only
+    // the second message onwards ever looked alive.
+    const { session } = makeSession({ steps: [] })
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+
+    session.send({ text: 'первое сообщение', attachments: [] })
+    expect(rec.statuses.at(-1)).toBe('busy')
+
+    session.handle({
+      type: 'system',
+      subtype: 'init',
+      session_id: 's-late',
+      model: 'claude-opus-5',
+      permissionMode: 'default',
+      mcp_servers: []
+    })
+
+    expect(session.status).toBe('busy')
+  })
+
+  test('результат хода по-прежнему заканчивает ход', async () => {
+    const { session } = makeSession({ steps: [] })
+
+    await session.start()
+    await settle(session)
+    session.send({ text: 'раз', attachments: [] })
+    expect(session.status).toBe('busy')
+
+    session.handle({ type: 'result', subtype: 'success', total_cost_usd: 0.01 })
+    expect(session.status).toBe('idle')
+  })
+})

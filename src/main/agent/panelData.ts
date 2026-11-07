@@ -138,7 +138,9 @@ export class PanelCollector {
 
   private onResult(m: Record<string, unknown>): Partial<PanelData> | null {
     const cost = m['total_cost_usd']
-    if (typeof cost !== 'number') return null
+    // A turn that reported nothing is «ещё ничего», not «стоит ноль»: showing
+    // $0.0000 reads as a broken counter.
+    if (typeof cost !== 'number' || cost <= 0) return null
     // The SDK reports the session total, not a per-turn delta.
     return this.patch({ cost: { session: cost } })
   }

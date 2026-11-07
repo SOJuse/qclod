@@ -213,3 +213,14 @@ describe('readProjectSettings', () => {
     expect(require('node:fs').readFileSync(path, 'utf8')).toBe(before)
   })
 })
+
+describe('PanelCollector: нулевой расход', () => {
+  test('ноль не показывается как цена', () => {
+    const collector = new PanelCollector()
+    expect(collector.apply({ type: 'result', subtype: 'success', total_cost_usd: 0 })).toBeNull()
+    expect(collector.data.cost).toBeNull()
+
+    collector.apply({ type: 'result', subtype: 'success', total_cost_usd: 0.004 })
+    expect(collector.data.cost?.session).toBeCloseTo(0.004)
+  })
+})

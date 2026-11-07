@@ -413,6 +413,11 @@ export class AgentSession {
     }
   }
 
+  /** Feeds one message in, as the stream would. Exposed for tests. */
+  handle(message: unknown): void {
+    this.onMessage(message)
+  }
+
   private onMessage(message: unknown): void {
     this.emit(this.builder.apply(message))
     const panel = this.collector.apply(message)
@@ -451,7 +456,13 @@ export class AgentSession {
       // then, and a status that does not change notifies nobody.
       for (const listener of this.sessionListeners) listener(id)
     }
-    this.setStatus('idle')
+    // init is the session introducing itself, not a turn ending. With
+    // streaming input the CLI sends it only once it has been given something
+    // to answer, so it lands *after* the first message — and treating it as a
+    // turn boundary made that first message look dead: the status flipped to
+    // idle while the agent was still working, and only from the second message
+    // on did anything ever look alive. Only `result` ends a turn.
+    if (this.state !== 'busy' && this.state !== 'waiting') this.setStatus('idle')
     void this.refreshModels()
   }
 

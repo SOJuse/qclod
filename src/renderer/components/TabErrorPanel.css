@@ -1,0 +1,37 @@
+.tab-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex: 0 0 auto;
+  margin: 6px 12px 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 122, 122, 0.45);
+  border-radius: var(--radius);
+  background: rgba(255, 122, 122, 0.07);
+  box-shadow: 0 0 0 1px rgba(255, 122, 122, 0.18);
+}
+
+.tab-error-text {
+  min-width: 0;
+}
+
+.tab-error-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.tab-error-detail {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  user-select: text;
+}
+
+.tab-error-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}

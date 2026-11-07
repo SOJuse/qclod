@@ -4,6 +4,7 @@ import { Composer } from '../components/Composer'
 import { TitleBar } from '../components/TitleBar'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { TabSettingsDialog } from '../components/TabSettingsDialog'
+import { TabErrorPanel } from '../components/TabErrorPanel'
 import { useAppStore } from '../state/useAppStore'
 import { shouldStealFocus } from '../input/focusSteal'
 import { useTabShortcuts } from './useTabShortcuts'
@@ -23,6 +24,8 @@ export function App(): JSX.Element {
   const setTabs = useAppStore((s) => s.setTabs)
   const setMenuActive = useAppStore((s) => s.setMenuActive)
   const menuActive = useAppStore((s) => s.menuActiveByTab[s.activeTabId] ?? false)
+  const activeTab = tabs.find((t) => t.id === activeTabId)
+  const sessionDown = activeTab?.status === 'error' || activeTab?.status === 'exited'
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [configuringTab, setConfiguringTab] = useState<TabId | null>(null)
   const [version, setVersion] = useState('')
@@ -143,6 +146,13 @@ export function App(): JSX.Element {
               onMenuActive={onMenuActive}
             />
           ))}
+          {sessionDown && activeTab ? (
+            <TabErrorPanel
+              tab={activeTab}
+              onRestart={() => void window.qclod.restart(activeTab.id)}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
+          ) : (
           <Composer
             tabId={activeTabId}
             focused={focusTarget === 'composer'}
@@ -150,6 +160,7 @@ export function App(): JSX.Element {
             onRequestFocus={() => setFocusTarget('composer')}
             onToggleFocus={toggleFocusTarget}
           />
+          )}
         </>
       )}
       {settingsOpen && settings && (

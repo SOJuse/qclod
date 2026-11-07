@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from 'electron'
-import { join } from 'node:path'
-import { createMainWindow } from './window'
+import { createMainWindow, hardenWebContents, RENDERER_ENTRY } from './window'
+import { registerBaseIpc } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -9,11 +9,17 @@ function loadRenderer(win: BrowserWindow): void {
   if (devServer) {
     void win.loadURL(devServer)
   } else {
-    void win.loadFile(join(__dirname, '../renderer/index.html'))
+    void win.loadFile(RENDERER_ENTRY)
   }
 }
 
+// Any webContents created later inherits the same navigation gate.
+app.on('web-contents-created', (_e, contents) => {
+  hardenWebContents(contents)
+})
+
 app.whenReady().then(() => {
+  registerBaseIpc(() => mainWindow)
   mainWindow = createMainWindow()
   loadRenderer(mainWindow)
 

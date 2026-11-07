@@ -1,6 +1,8 @@
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow, shell, type WebContents } from 'electron'
 import { join } from 'node:path'
-import { isSafeExternalUrl } from './security'
+import { isSafeExternalUrl, makeNavigationGuard } from './security'
+
+export const RENDERER_ENTRY = join(__dirname, '../renderer/index.html')
 
 export function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -21,29 +23,36 @@ export function createMainWindow(): BrowserWindow {
     }
   })
 
+  // Navigation hardening is registered app-wide via `web-contents-created`,
+  // so every webContents gets it, not just this window.
   win.once('ready-to-show', () => win.show())
-  hardenWebContents(win)
 
   return win
 }
 
-function hardenWebContents(win: BrowserWindow): void {
+export function hardenWebContents(contents: WebContents): void {
+  const mayNavigateTo = makeNavigationGuard(
+    process.env['ELECTRON_RENDERER_URL'],
+    RENDERER_ENTRY
+  )
+
   // External links open in the user's browser — and only if they are plain web
   // URLs. Anything else (file:, javascript:, a registered protocol handler)
   // is dropped rather than handed to the OS.
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  contents.setWindowOpenHandler(({ url }) => {
     if (isSafeExternalUrl(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
 
-  // The window must only ever show our own renderer. Fail closed.
-  win.webContents.on('will-navigate', (event, url) => {
-    const devServer = process.env['ELECTRON_RENDERER_URL']
-    const allowed = devServer ? url.startsWith(devServer) : url.startsWith('file://')
-    if (!allowed) event.preventDefault()
-  })
+  // Every way a navigation can start, gated by the same predicate. Fail closed.
+  const gate = (e: Electron.Event, url: string): void => {
+    if (!mayNavigateTo(url)) e.preventDefault()
+  }
+  contents.on('will-navigate', gate)
+  contents.on('will-redirect', gate)
+  contents.on('will-frame-navigate', (e) => gate(e, e.url))
 
-  win.webContents.on('will-attach-webview', (event) => {
-    event.preventDefault()
+  contents.on('will-attach-webview', (e) => {
+    e.preventDefault()
   })
 }

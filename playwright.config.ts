@@ -11,6 +11,7 @@ process.env['QCLOD_AGENT_PREFIX_ARGS'] = JSON.stringify([
 
 // A throwaway profile per run: tabs and settings never leak between runs or
 // into the developer's real Qclod profile.
+process.env['QCLOD_HEADLESS'] = '1'
 process.env['QCLOD_USER_DATA'] = mkdtempSync(join(tmpdir(), 'qclod-e2e-'))
 
 export default defineConfig({

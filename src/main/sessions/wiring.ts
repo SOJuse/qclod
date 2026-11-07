@@ -4,6 +4,7 @@ import type { AppSettings, TabId, TabState } from '../../shared/types'
 import { SessionManager } from './SessionManager'
 import { TabController } from '../tabs/TabController'
 import { sanitizeOverrides, sanitizeTabPatch } from '../tabs/sanitize'
+import { buildFileIndex } from '../files/fileIndex'
 
 export interface SessionWiring {
   manager: SessionManager
@@ -72,6 +73,19 @@ export function wireSessions(
     manager.get(tabId)?.resize(cols, rows)
   })
   ipcMain.handle(CHANNELS.sessionRestart, (_e, tabId: TabId) => tabs.restart(tabId))
+
+  // Built once per tab and reused: walking a big tree on every keystroke
+  // would stall the main process.
+  const indexCache = new Map<TabId, string[]>()
+  ipcMain.handle(CHANNELS.filesIndex, async (_e, tabId: TabId) => {
+    const cached = indexCache.get(tabId)
+    if (cached) return cached
+    const tab = tabs.list().find((t) => t.id === tabId)
+    if (!tab) return []
+    const index = await buildFileIndex(tab.cwd)
+    indexCache.set(tabId, index)
+    return index
+  })
 
   ipcMain.handle(CHANNELS.dialogPickFolder, async () => {
     // Tests cannot click a native dialog, so they name the folder up front.

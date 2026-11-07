@@ -70,3 +70,7 @@
   font-size: 10px;
   color: var(--text-dim);
 }
+
+.composer {
+  position: relative;
+}

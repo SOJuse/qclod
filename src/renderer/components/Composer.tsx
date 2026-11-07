@@ -3,6 +3,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ClipboardEvent as ClipboardEventBase,
   type KeyboardEvent
 } from 'react'
@@ -12,6 +13,9 @@ import { resolveComposerKey } from '../input/keyPrecedence'
 import { nextPassthrough } from '../input/passthrough'
 import { useAppStore } from '../state/useAppStore'
 import { toSequence } from '../input/keySequence'
+import { applyMention, findMentionQuery } from '../input/mentions'
+import { filterPaths } from '../../shared/fuzzy'
+import { MentionPopup } from './MentionPopup'
 import type { TabId } from '../../shared/types'
 import './Composer.css'
 
@@ -49,11 +53,39 @@ export function Composer({
     return existing
   }, [tabId])
 
+  const [caret, setCaret] = useState(0)
+  const [index, setIndex] = useState<string[]>([])
+  const [matches, setMatches] = useState<string[]>([])
+  const [selected, setSelected] = useState(0)
+
   const passthrough = nextPassthrough(false, draft)
+  const mention = passthrough ? null : findMentionQuery(draft, caret)
+  const popupOpen = mention !== null && matches.length > 0
 
   useEffect(() => {
     if (focused) areaRef.current?.focus()
   }, [focused, tabId])
+
+  // The project index is built once per tab, the first time it is needed.
+  useEffect(() => {
+    if (mention === null || index.length > 0) return
+    let cancelled = false
+    void window.qclod.fileIndex(tabId).then((paths) => {
+      if (!cancelled) setIndex(paths)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [index.length, mention, tabId])
+
+  useEffect(() => {
+    if (mention === null) {
+      setMatches([])
+      return
+    }
+    setMatches(filterPaths(index, mention.query, 12))
+    setSelected(0)
+  }, [index, mention?.query, mention === null])
 
   // Grow with the content, up to a ceiling.
   useEffect(() => {
@@ -82,7 +114,7 @@ export function Composer({
       const action = resolveComposerKey(ev, {
         text: draft,
         passthrough,
-        popupOpen: false,
+        popupOpen,
         menuActive,
         hasSelection: area.selectionStart !== area.selectionEnd,
         caretAtStart: area.selectionStart === 0,
@@ -97,6 +129,25 @@ export function Composer({
         case 'newline':
           // Let the textarea do what a textarea does.
           markTyped()
+          return
+        case 'popupNav': {
+          ev.preventDefault()
+          const step = ev.key === 'ArrowUp' ? -1 : 1
+          setSelected((current) => (current + step + matches.length) % matches.length)
+          return
+        }
+        case 'popupAccept': {
+          ev.preventDefault()
+          if (!mention) return
+          const result = applyMention(draft, mention.start, caret, matches[selected])
+          setDraft(tabId, result.text)
+          setCaret(result.caret)
+          requestAnimationFrame(() => areaRef.current?.setSelectionRange(result.caret, result.caret))
+          return
+        }
+        case 'closePopup':
+          ev.preventDefault()
+          setMatches([])
           return
         case 'toggleFocus':
           ev.preventDefault()
@@ -133,7 +184,7 @@ export function Composer({
           return
       }
     },
-    [draft, history, markTyped, menuActive, onToggleFocus, passthrough, send, setDraft, tabId]
+    [draft, history, markTyped, matches, menuActive, mention, onToggleFocus, passthrough, popupOpen, selected, send, setDraft, tabId]
   )
 
   const onPaste = useCallback(
@@ -167,6 +218,19 @@ export function Composer({
       data-testid="composer"
       onMouseDown={onRequestFocus}
     >
+      {popupOpen && mention && (
+        <MentionPopup
+          items={matches}
+          selected={selected}
+          onPick={(path) => {
+            const result = applyMention(draft, mention.start, caret, path)
+            setDraft(tabId, result.text)
+            setCaret(result.caret)
+            areaRef.current?.focus()
+            requestAnimationFrame(() => areaRef.current?.setSelectionRange(result.caret, result.caret))
+          }}
+        />
+      )}
       {passthrough && (
         <div className="composer-mode" data-testid="passthrough-indicator">
           команда уходит в агента — меню рисует он
@@ -180,7 +244,11 @@ export function Composer({
         spellCheck={false}
         placeholder="напиши тут…"
         value={draft}
-        onChange={(e) => setDraft(tabId, e.target.value)}
+        onChange={(e) => {
+          setDraft(tabId, e.target.value)
+          setCaret(e.target.selectionStart ?? e.target.value.length)
+        }}
+        onSelect={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
         onFocus={onRequestFocus}

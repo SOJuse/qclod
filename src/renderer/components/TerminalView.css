@@ -1,0 +1,50 @@
+/*
+ * The visual hierarchy of spec 6.4 — the agent's own prompt reads as a dim
+ * echo, the composer below is the bright, focused element — is produced here
+ * rather than in the xterm palette: the CLI paints with truecolor SGR, so there
+ * are no palette slots to dim (probe note 3). Dimming the whole surface is also
+ * sturdier: it does not care what colours the CLI chooses.
+ */
+
+.terminal-surface {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 10px 12px 4px;
+  opacity: 0.74;
+  transition: opacity var(--dur) var(--ease);
+}
+
+/* When you are actually working in the terminal it comes fully forward. */
+.terminal-surface.is-focused {
+  opacity: 1;
+}
+
+.terminal-host {
+  height: 100%;
+  width: 100%;
+}
+
+.terminal-host .xterm {
+  height: 100%;
+  padding: 0;
+}
+
+.terminal-host .xterm-viewport {
+  background-color: transparent !important;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.terminal-host .xterm-viewport::-webkit-scrollbar {
+  width: 9px;
+}
+
+.terminal-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+}
+
+.terminal-host .xterm-screen {
+  background-color: transparent;
+}

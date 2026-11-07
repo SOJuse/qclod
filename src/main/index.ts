@@ -2,7 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { homedir } from 'node:os'
 import { createMainWindow, hardenWebContents, RENDERER_ENTRY } from './window'
 import { registerBaseIpc } from './ipc'
-import { loadSettings } from './store/settingsStore'
+import { loadSettings, saveSettings } from './store/settingsStore'
 import { IMPLICIT_TAB_ID, wireSessions } from './sessions/wiring'
 import { readUserHooks } from './store/userHooks'
 
@@ -26,7 +26,15 @@ app.whenReady().then(() => {
   const userData = app.getPath('userData')
   let settings = loadSettings(userData)
 
-  registerBaseIpc(() => mainWindow)
+  registerBaseIpc({
+    getWindow: () => mainWindow,
+    getSettings: () => settings,
+    setSettings: (patch) => {
+      settings = { ...settings, ...patch, defaults: { ...settings.defaults, ...patch.defaults } }
+      saveSettings(userData, settings)
+      return settings
+    }
+  })
 
   const pipePath = `\\\\.\\pipe\\qclod-${process.pid}`
   const sessions = wireSessions(

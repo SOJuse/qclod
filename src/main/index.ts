@@ -55,6 +55,8 @@ app.whenReady().then(() => {
   loadRenderer(mainWindow)
 
   // Tabs come up only once the renderer can receive their output.
+  void sessions.startHooks()
+
   mainWindow.webContents.once('did-finish-load', () => {
     sessions.tabs.restore()
   })

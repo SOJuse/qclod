@@ -49,8 +49,8 @@ export function hookHelperPath(): string {
   return join(root, 'bin', 'qclod-hook.js')
 }
 
-function command(tabId: TabId, pipePath: string, helper = hookHelperPath()): string {
-  return `"${process.execPath}" "${helper}" "${pipePath}" "${tabId}"`
+function command(tabId: TabId, pipePath: string, launcher: string): string {
+  return `"${launcher}" "${pipePath}" "${tabId}"`
 }
 
 /**
@@ -65,9 +65,9 @@ export function buildHookSettings(
   tabId: TabId,
   pipePath: string,
   userHooks: unknown,
-  helper = hookHelperPath()
+  launcher = hookHelperPath()
 ): string {
-  const ours = command(tabId, pipePath, helper)
+  const ours = command(tabId, pipePath, launcher)
   const existing: Record<string, unknown> =
     typeof userHooks === 'object' && userHooks !== null && !Array.isArray(userHooks)
       ? { ...(userHooks as Record<string, unknown>) }

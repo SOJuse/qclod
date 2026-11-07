@@ -1,4 +1,5 @@
 import { app, clipboard, dialog, ipcMain, type BrowserWindow } from 'electron'
+import { join } from 'node:path'
 import { CHANNELS } from '../../shared/channels'
 import type { AppSettings, TabId, TabState } from '../../shared/types'
 import { SessionManager } from './SessionManager'
@@ -6,12 +7,20 @@ import { TabController } from '../tabs/TabController'
 import { sanitizeOverrides, sanitizeTabPatch } from '../tabs/sanitize'
 import { buildFileIndex } from '../files/fileIndex'
 import { cleanupPasteDir, saveImageBuffer } from '../files/imagePaste'
+import { startHookServer, type HookServer } from './hookServer'
+import { writeHookLauncher } from './hookLauncher'
+import { BUSY_TIMEOUT_MS, reduceStatus, mayNotify, type StatusState } from './sessionStatus'
 
 export interface SessionWiring {
   manager: SessionManager
   tabs: TabController
+  startHooks: () => Promise<void>
   disposeAll: () => Promise<void>
 }
+
+const CARRIAGE_RETURN = String.fromCharCode(13)
+
+export type NotifyFn = (tabId: TabId, state: StatusState, tabTitle: string) => void
 
 /**
  * Tests substitute the fake agent through the environment, so the e2e suite
@@ -32,15 +41,23 @@ export function wireSessions(
   getUserHooks: () => unknown,
   pipePath: string,
   storeDir: string,
-  defaultCwd: string
+  defaultCwd: string,
+  notify: NotifyFn = () => undefined
 ): SessionWiring {
   const resolved = agentFromEnv(getSettings())
+
+  const hookLauncher = writeHookLauncher(
+    storeDir,
+    process.execPath,
+    join(app.getAppPath(), 'bin', 'qclod-hook.js')
+  )
 
   const manager = new SessionManager({
     getSettings: () => ({ ...getSettings(), agentPath: resolved.path }),
     getUserHooks,
     pipePath,
-    prefixArgs: resolved.prefixArgs
+    prefixArgs: resolved.prefixArgs,
+    hookHelper: hookLauncher
   })
 
   function send(channel: string, payload: unknown): void {
@@ -57,6 +74,43 @@ export function wireSessions(
     onChanged: (list: TabState[]) => send(CHANNELS.tabsChanged, list)
   })
 
+  // ---- per-tab status, driven by hooks (spec 6.9) ----
+  const statuses = new Map<TabId, StatusState>()
+  const timers = new Map<TabId, ReturnType<typeof setTimeout>>()
+
+  function applyStatus(tabId: TabId, input: Parameters<typeof reduceStatus>[1]): void {
+    const current = statuses.get(tabId) ?? { status: 'idle' as const, degraded: false }
+    const next = reduceStatus(current, input)
+    if (next.status === current.status && next.degraded === current.degraded) return
+
+    statuses.set(tabId, next)
+    tabs.setStatus(tabId, next.status, next.degraded)
+    send(CHANNELS.sessionStatus, { tabId, status: next.status, degraded: next.degraded })
+
+    clearTimeout(timers.get(tabId))
+    if (next.status === 'busy') {
+      // If no hook arrives in time, fall back to guessing rather than lying.
+      timers.set(
+        tabId,
+        setTimeout(() => applyStatus(tabId, { kind: 'timeout' }), BUSY_TIMEOUT_MS)
+      )
+    }
+
+    const title = tabs.list().find((t) => t.id === tabId)?.title ?? ''
+    if (mayNotify(next)) notify(tabId, next, title)
+  }
+
+  let hooks: HookServer | undefined
+  async function startHooks(): Promise<void> {
+    try {
+      hooks = await startHookServer(pipePath, (event) => {
+        if (event.tabId) applyStatus(event.tabId, { kind: 'hook', event })
+      })
+    } catch {
+      // Without the pipe every tab simply runs in the degraded mode of 6.9.
+    }
+  }
+
   ipcMain.handle(CHANNELS.tabsList, () => tabs.list())
   ipcMain.handle(CHANNELS.tabsCreate, (_e, cwd: unknown, overrides: unknown) =>
     typeof cwd === 'string' && cwd !== '' ? tabs.create(cwd, sanitizeOverrides(overrides)) : null
@@ -69,6 +123,8 @@ export function wireSessions(
 
   ipcMain.handle(CHANNELS.sessionWrite, (_e, tabId: TabId, data: string) => {
     manager.get(tabId)?.write(data)
+    // A submitted line is the one moment we know work started without a hook.
+    if (data.includes(CARRIAGE_RETURN)) applyStatus(tabId, { kind: 'sent' })
   })
   ipcMain.handle(CHANNELS.sessionResize, (_e, tabId: TabId, cols: number, rows: number) => {
     manager.get(tabId)?.resize(cols, rows)
@@ -115,5 +171,15 @@ export function wireSessions(
     void manager.disposeAll().then(() => app.exit(0))
   })
 
-  return { manager, tabs, disposeAll: () => manager.disposeAll() }
+  return {
+    manager,
+    tabs,
+    startHooks,
+    disposeAll: async () => {
+      for (const timer of timers.values()) clearTimeout(timer)
+      timers.clear()
+      await hooks?.close()
+      await manager.disposeAll()
+    }
+  }
 }

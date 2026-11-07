@@ -4,6 +4,7 @@ import { resolveTerminalKey } from '../terminal/keymap'
 import { chunkForPty } from '../input/encode'
 import { detectMenu, detectMenuLikely } from '../terminal/menuDetect'
 import { SelectionCopyGate } from '../terminal/selectionCopy'
+import { nextPtySize, type Size } from '../terminal/ptySize'
 import type { TabId } from '../../shared/types'
 import './TerminalView.css'
 
@@ -33,6 +34,7 @@ export function TerminalView({
   const [query, setQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const handleRef = useRef<TerminalHandle | null>(null)
+  const lastSize = useRef<Size | null>(null)
   // Keep the latest callbacks reachable from the terminal's own listeners,
   // which are attached once for the terminal's lifetime.
   const actions = useRef({ onToggleFocus, onFontSize, fontSize, onMenuActive, openSearch: () => setSearchOpen(true) })
@@ -152,8 +154,15 @@ export function TerminalView({
     window.addEventListener('mouseup', onMouseUp)
 
     const syncSize = (): void => {
-      const { cols, rows } = handle.fit()
-      void window.qclod.resize(tabId, cols, rows)
+      const measured = handle.fit()
+      const next = nextPtySize(
+        { width: host.clientWidth, height: host.clientHeight },
+        measured,
+        lastSize.current
+      )
+      if (!next) return
+      lastSize.current = next
+      void window.qclod.resize(tabId, next.cols, next.rows)
     }
     syncSize()
 
@@ -180,8 +189,16 @@ export function TerminalView({
     const handle = handleRef.current
     if (!handle) return
     handle.term.options.fontSize = fontSize
-    const { cols, rows } = handle.fit()
-    void window.qclod.resize(tabId, cols, rows)
+    const host = hostRef.current
+    if (!host) return
+    const next = nextPtySize(
+      { width: host.clientWidth, height: host.clientHeight },
+      handle.fit(),
+      lastSize.current
+    )
+    if (!next) return
+    lastSize.current = next
+    void window.qclod.resize(tabId, next.cols, next.rows)
   }, [fontSize, tabId])
 
   useEffect(() => {

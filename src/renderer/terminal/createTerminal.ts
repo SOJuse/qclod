@@ -36,6 +36,12 @@ export function createTerminal(el: HTMLElement, fontSize: number): TerminalHandl
   term.open(el)
 
   const fit = (): { cols: number; rows: number } => {
+    // A hidden tab's host is 0x0 and xterm would measure a degenerate size,
+    // rewrapping its whole scrollback to ten columns and back on every switch.
+    // Leave it exactly as it was until the element is on screen again.
+    if (el.clientWidth <= 0 || el.clientHeight <= 0) {
+      return { cols: term.cols, rows: term.rows }
+    }
     try {
       fitAddon.fit()
     } catch {

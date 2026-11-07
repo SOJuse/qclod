@@ -93,6 +93,17 @@ function submit() {
     setTimeout(() => process.exit(Number.isNaN(code) ? 0 : code), 30)
     return
   }
+  if (text.startsWith('/spam')) {
+    // Fills the scrollback so tab-switch cost can be measured.
+    const n = Number.parseInt(text.slice('/spam'.length).trim(), 10) || 2000
+    const NL = String.fromCharCode(13) + String.fromCharCode(10)
+    for (let i = 0; i < n; i++) {
+      out(NL + String(i).padStart(5, '0') + ' ' + 'x'.repeat(100))
+    }
+    out(NL + 'spam-done ' + n + NL)
+    prompt()
+    return
+  }
   if (text.startsWith('/menu')) {
     openMenu()
     return

@@ -35,8 +35,14 @@ async function run(label, prompt, extra = {}) {
     options: {
       cwd: root,
       pathToClaudeCodeExecutable: AGENT,
-      permissionMode: 'bypassPermissions',
       maxTurns: 2,
+      // Unattended, so nothing may block on a prompt — but an unattended agent
+      // with bypassPermissions is an agent with no brakes. Read is the only
+      // tool this probe needs; everything else is denied explicitly.
+      canUseTool: async (toolName, input) =>
+        toolName === 'Read'
+          ? { behavior: 'allow', updatedInput: input }
+          : { behavior: 'deny', message: `probe allows Read only, not ${toolName}` },
       ...extra
     }
   })

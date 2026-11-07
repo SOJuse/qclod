@@ -60,17 +60,30 @@ export function parseExtraFlags(text: string | undefined): ParsedFlags {
     if (FORBIDDEN.includes(name.toLowerCase())) {
       rejected.push(token)
       // Skip its value too, so a refused flag cannot leave an orphan behind.
-      if (equals === -1 && tokens[i + 1] !== undefined && !tokens[i + 1]!.startsWith('--')) i++
+      if (equals === -1 && tokens[i + 1] !== undefined && !tokens[i + 1]!.startsWith('-')) i++
       continue
     }
 
     if (equals !== -1) {
-      args[name] = token.slice(equals + 1)
+      const value = token.slice(equals + 1)
+
+      // A value that looks like a flag is refused. Today the SDK joins such a
+      // value into `--name=value`, one argv token, so it cannot become a flag
+      // of its own — but that is behaviour read out of a minified bundle, not
+      // a promise, and a version that passed the pair as two tokens would turn
+      // `--foo=--dangerously-skip-permissions` into a real bypass.
+      if (value.startsWith('-')) {
+        rejected.push(token)
+        continue
+      }
+      args[name] = value
       continue
     }
 
+    // In the spaced form a dash-leading token is simply the next flag, never
+    // this one's value, so a bare flag stays a bare flag.
     const next = tokens[i + 1]
-    if (next !== undefined && !next.startsWith('--')) {
+    if (next !== undefined && !next.startsWith('-')) {
       args[name] = next
       i++
     } else {

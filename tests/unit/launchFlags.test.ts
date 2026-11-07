@@ -70,3 +70,30 @@ describe('parseExtraFlags', () => {
     expect(result.rejected).toEqual(['--dangerously-skip-permissions'])
   })
 })
+
+describe('parseExtraFlags: значение, похожее на флаг', () => {
+  test('значение с дефисом отклоняется в обеих записях', () => {
+    // Belt and braces: the SDK currently joins such a value into one argv
+    // token, but a version that stops doing so would make this a real bypass.
+    expect(parseExtraFlags('--foo=--dangerously-skip-permissions')).toEqual({
+      args: {},
+      rejected: ['--foo=--dangerously-skip-permissions']
+    })
+    // In the spaced form a dash-leading token is the next flag, not a value.
+    expect(parseExtraFlags('--verbose --fallback-model opus').args).toEqual({
+      verbose: null,
+      'fallback-model': 'opus'
+    })
+  })
+
+  test('отклонённое значение не превращается в отдельный флаг', () => {
+    const result = parseExtraFlags('--foo=-x --verbose')
+    expect(result.args).toEqual({ verbose: null })
+  })
+
+  test('обычное значение без дефиса по-прежнему проходит', () => {
+    expect(parseExtraFlags('--fallback-model sonnet').args).toEqual({
+      'fallback-model': 'sonnet'
+    })
+  })
+})

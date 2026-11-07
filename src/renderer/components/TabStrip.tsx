@@ -6,6 +6,7 @@ interface Props {
   onActivate: (id: TabId) => void
   onClose: (id: TabId) => void
   onCreate: () => void
+  onConfigure: (id: TabId) => void
 }
 
 const STATUS_LABEL: Record<SessionStatus, string> = {
@@ -17,7 +18,14 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
   error: 'ошибка'
 }
 
-export function TabStrip({ tabs, activeTabId, onActivate, onClose, onCreate }: Props): JSX.Element {
+export function TabStrip({
+  tabs,
+  activeTabId,
+  onActivate,
+  onClose,
+  onCreate,
+  onConfigure
+}: Props): JSX.Element {
   return (
     <div className="tab-strip" data-testid="tab-strip">
       {tabs.map((tab) => (
@@ -28,6 +36,10 @@ export function TabStrip({ tabs, activeTabId, onActivate, onClose, onCreate }: P
             tab.badge ? ' has-badge' : ''
           }`}
           title={`${tab.cwd}\n${STATUS_LABEL[tab.status]}${tab.degraded ? ' (оценочно)' : ''}`}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            onConfigure(tab.id)
+          }}
           onMouseDown={(e) => {
             if (e.button === 1) {
               e.preventDefault()

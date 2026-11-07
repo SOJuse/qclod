@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { TerminalView } from '../components/TerminalView'
 import { Composer } from '../components/Composer'
 import { TitleBar } from '../components/TitleBar'
+import { SettingsScreen } from '../components/SettingsScreen'
+import { TabSettingsDialog } from '../components/TabSettingsDialog'
 import { useAppStore } from '../state/useAppStore'
 import { shouldStealFocus } from '../input/focusSteal'
 import { useTabShortcuts } from './useTabShortcuts'
@@ -22,6 +24,8 @@ export function App(): JSX.Element {
   const setMenuActive = useAppStore((s) => s.setMenuActive)
   const menuActive = useAppStore((s) => s.menuActiveByTab[s.activeTabId] ?? false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [configuringTab, setConfiguringTab] = useState<TabId | null>(null)
+  const [version, setVersion] = useState('')
 
   useEffect(() => {
     void window.qclod.getSettings().then(setSettings)
@@ -36,6 +40,19 @@ export function App(): JSX.Element {
   useEffect(() => {
     return window.qclod.onActivateTab(setActiveTabId)
   }, [setActiveTabId])
+
+  useEffect(() => {
+    void window.qclod.appVersion().then(setVersion)
+  }, [])
+
+  const patchGlobalSettings = useCallback(
+    (patch: Partial<typeof settings>) => {
+      if (!patch) return
+      patchSettings(patch as never)
+      void window.qclod.setSettings(patch as never)
+    },
+    [patchSettings]
+  )
 
   const setFontSize = useCallback(
     (fontSize: number) => {
@@ -103,6 +120,7 @@ export function App(): JSX.Element {
         onActivate={activateTab}
         onClose={(id) => void closeTab(id)}
         onCreate={() => void createTab()}
+        onConfigure={setConfiguringTab}
         onOpenSettings={() => setSettingsOpen((open) => !open)}
       />
       <span hidden>Qclod</span>
@@ -134,7 +152,29 @@ export function App(): JSX.Element {
           />
         </>
       )}
-      {settingsOpen && <div data-testid="settings-placeholder" hidden />}
+      {settingsOpen && settings && (
+        <SettingsScreen
+          settings={settings}
+          version={version}
+          onPatch={patchGlobalSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+      {configuringTab !== null && settings && (() => {
+        const tab = tabs.find((t) => t.id === configuringTab)
+        if (!tab) return null
+        return (
+          <TabSettingsDialog
+            tab={tab}
+            globalDefaults={settings.defaults}
+            onSave={(overrides) => {
+              void window.qclod.updateTab(tab.id, { overrides })
+              setConfiguringTab(null)
+            }}
+            onClose={() => setConfiguringTab(null)}
+          />
+        )
+      })()}
     </div>
   )
 }

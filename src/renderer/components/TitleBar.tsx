@@ -8,6 +8,7 @@ interface Props {
   onActivate: (id: TabId) => void
   onClose: (id: TabId) => void
   onCreate: () => void
+  onConfigure: (id: TabId) => void
   onOpenSettings: () => void
 }
 
@@ -17,6 +18,7 @@ export function TitleBar({
   onActivate,
   onClose,
   onCreate,
+  onConfigure,
   onOpenSettings
 }: Props): JSX.Element {
   return (
@@ -28,6 +30,7 @@ export function TitleBar({
         onActivate={onActivate}
         onClose={onClose}
         onCreate={onCreate}
+        onConfigure={onConfigure}
       />
       <div className="title-bar-spacer" />
       <div className="window-controls">

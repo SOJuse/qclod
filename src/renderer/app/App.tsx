@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { CommandInfo, HotkeyRegistration } from '../../shared/types'
+import type { CommandInfo, HotkeyRegistration, SessionSummary } from '../../shared/types'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { TitleBar } from '../components/TitleBar'
 import { Ribbon } from '../components/Ribbon'
 import { Composer } from '../components/Composer'
 import { CommandPalette } from '../components/CommandPalette'
 import { SidePanel } from '../components/SidePanel'
+import { HistoryScreen } from '../components/HistoryScreen'
 import { markUnavailable } from '../../shared/commandFilter'
 import { SettingsScreen } from '../components/SettingsScreen'
 import './App.css'
@@ -22,6 +23,8 @@ export function App(): JSX.Element {
   const [version, setVersion] = useState('')
   const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
   const [focusToken, setFocusToken] = useState(0)
   const [commands, setCommands] = useState<CommandInfo[]>([])
   const [recentCommands, setRecentCommands] = useState<string[]>([])
@@ -74,17 +77,27 @@ export function App(): JSX.Element {
     if (next && activeTabId) void window.qclod.panel(activeTabId)
   }, [activeTabId, setSettings])
 
-  // Ctrl+ folds the panel away, and the choice is remembered (spec 6.5).
+  const openHistory = useCallback((): void => {
+    if (!activeTabId) return
+    setSessions(null)
+    setHistoryOpen(true)
+    void window.qclod.listHistory(activeTabId).then(setSessions)
+  }, [activeTabId])
+
+  // Ctrl+Backslash folds the panel away, Ctrl+H opens the history.
   useEffect(() => {
     const onKey = (ev: KeyboardEvent): void => {
       if (ev.ctrlKey && ev.code === 'Backslash') {
         ev.preventDefault()
         togglePanel()
+      } else if (ev.ctrlKey && ev.code === 'KeyH') {
+        ev.preventDefault()
+        openHistory()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [togglePanel])
+  }, [togglePanel, openHistory])
 
   // The file index backs @-mentions; it is per folder, so it is fetched once
   // per tab rather than on every keystroke.
@@ -241,6 +254,22 @@ export function App(): JSX.Element {
             void window.qclod.send(activeTabId, {
               text: `/${command.name}`,
               attachments: []
+            })
+          }}
+        />
+      )}
+      {historyOpen && (
+        <HistoryScreen
+          cwd={tabs.find((t) => t.id === activeTabId)?.cwd ?? ''}
+          sessions={sessions}
+          onClose={() => {
+            setHistoryOpen(false)
+            setFocusToken((n) => n + 1)
+          }}
+          onOpen={(session) => {
+            setHistoryOpen(false)
+            void window.qclod.openHistory(activeTabId, session.id, session.title).then((tab) => {
+              if (tab) activate(tab.id)
             })
           }}
         />

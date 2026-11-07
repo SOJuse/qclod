@@ -119,6 +119,21 @@ export class TabController {
     return { ...tab }
   }
 
+  /**
+   * Opens a past conversation in its own tab.
+   *
+   * The tab is created already pointing at that session, so the usual resume
+   * path brings the ribbon back — there is no second way to load a
+   * conversation that could drift from the first.
+   */
+  openHistory(cwd: string, sessionId: string, title?: string): TabState {
+    const tab = this.create(cwd, {}, title)
+    const created = this.tabs.find((t) => t.id === tab.id)
+    if (created) created.lastSessionId = sessionId
+    void this.deps.manager.close(tab.id).then(() => this.ensureSession(tab.id))
+    return { ...tab, lastSessionId: sessionId }
+  }
+
   async activate(id: TabId): Promise<void> {
     if (!this.tabs.some((tab) => tab.id === id)) return
     this.activeId = id

@@ -33,6 +33,9 @@ export function sanitizeOverrides(value: unknown): LaunchOverrides {
     // the SDK and be rejected there, far from where it was introduced.
     if (key === 'permissionMode') {
       if (!(PERMISSION_MODES as readonly string[]).includes(candidate)) continue
+      // A tab's stored launch options are not a place to turn the permission
+      // gate off: that one mode is reached only through the confirmation.
+      if (candidate === 'bypassPermissions') continue
       out.permissionMode = candidate as PermissionMode
       continue
     }

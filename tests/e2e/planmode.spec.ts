@@ -72,7 +72,8 @@ test('выбранный режим переживает перезапуск в
 
 test('в режиме плана агент показывает план и ждёт подтверждения', async () => {
   const { app, profile } = await launch({
-    steps: [{ kind: 'askPermission', name: 'ExitPlanMode', input: { plan: PLAN } }]
+    steps: [{ kind: 'askPermission', name: 'ExitPlanMode', input: { plan: PLAN } }],
+    init: { permissionMode: 'plan' }
   })
   try {
     const win = await app.firstWindow()
@@ -94,7 +95,8 @@ test('подтверждение плана переводит в рабочий
     steps: [
       { kind: 'askPermission', name: 'ExitPlanMode', input: { plan: PLAN } },
       { kind: 'text', text: 'приступаю' }
-    ]
+    ],
+    init: { permissionMode: 'plan' }
   })
   try {
     const win = await app.firstWindow()
@@ -119,7 +121,8 @@ test('отклонение плана возвращает к обсуждени
     steps: [
       { kind: 'askPermission', name: 'ExitPlanMode', input: { plan: PLAN } },
       { kind: 'text', text: 'хорошо, подумаю ещё' }
-    ]
+    ],
+    init: { permissionMode: 'plan' }
   })
   try {
     const win = await app.firstWindow()

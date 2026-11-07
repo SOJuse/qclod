@@ -81,13 +81,9 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!isString(id) || !isString(mode)) return
     if (!(PERMISSION_MODES as readonly string[]).includes(mode)) return
 
-    // One mode turns Qclod's own gate off entirely. Every other mode still
-    // asks about something; this one asks about nothing, so it is confirmed
-    // here, in the main process, where the renderer cannot answer for the
-    // user. The user can still choose it — they just cannot arrive in it by
-    // a stray click or a bug in the window.
-    if (mode === 'bypassPermissions' && !(await confirmBypass(deps.getWindow()))) return
-
+    // bypassPermissions is confirmed inside the session, which is the one
+    // place every path to it passes through — this channel, a tab's stored
+    // overrides, and a settings default alike.
     await manager.get(id)?.setPermissionMode(mode)
   })
 
@@ -135,6 +131,13 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     return controller.history(id)
   })
 
+  ipcMain.handle(CHANNELS.historyOpen, (_e, id: unknown, sessionId: unknown, title: unknown) => {
+    if (!isString(id) || !isString(sessionId)) return null
+    const tab = controller.list().find((t) => t.id === id)
+    if (!tab) return null
+    return controller.openHistory(tab.cwd, sessionId, isString(title) ? title : undefined)
+  })
+
   // A native file dialog cannot be driven from a test, so an e2e run answers
   // it from the environment — the same kind of seam as QCLOD_FAKE_SDK, and
   // never set in a real install.
@@ -157,32 +160,6 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] })
     return result.canceled ? [] : result.filePaths
   })
-}
-
-/**
- * Asks, in a window the renderer cannot script, whether the user really means
- * to let the agent act without being asked again.
- */
-async function confirmBypass(win: BrowserWindow | null): Promise<boolean> {
-  // An e2e run cannot click a native dialog, and a modal one would hang the
-  // run rather than fail it; this is the same kind of seam as QCLOD_FAKE_SDK
-  // and is never set in a real install.
-  const stubbed = process.env['QCLOD_CONFIRM_BYPASS']
-  if (stubbed !== undefined) return stubbed === 'allow'
-  if (!win) return false
-
-  const { response } = await dialog.showMessageBox(win, {
-    type: 'warning',
-    buttons: ['Отмена', 'Включить'],
-    defaultId: 0,
-    cancelId: 0,
-    title: 'Режим без проверок',
-    message: 'Агент перестанет спрашивать разрешение на инструменты',
-    detail:
-      'Он сможет менять файлы и запускать команды в этой папке без вопросов, ' +
-      'пока вы не вернёте другой режим.'
-  })
-  return response === 1
 }
 
 export type { LaunchOverrides, TabId }

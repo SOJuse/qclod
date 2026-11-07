@@ -356,3 +356,90 @@ describe('AgentSession: разрешения', () => {
     expect(rec.items.filter((i) => i.kind === 'permission')[0]).toMatchObject({ state: 'denied' })
   })
 })
+
+describe('AgentSession: режим без проверок', () => {
+  test('без подтверждения режим не включается', async () => {
+    const { session } = makeSession({ steps: [] }, { confirmBypass: async () => false })
+
+    await session.start()
+    await settle(session)
+    await session.setPermissionMode('bypassPermissions')
+
+    expect(session.panel.permissionMode).not.toBe('bypassPermissions')
+  })
+
+  test('без обработчика подтверждения режим не включается вовсе', async () => {
+    // A session wired without the confirmation must refuse, not assume consent.
+    const { session } = makeSession({ steps: [] })
+
+    await session.start()
+    await settle(session)
+    await session.setPermissionMode('bypassPermissions')
+
+    expect(session.panel.permissionMode).not.toBe('bypassPermissions')
+  })
+
+  test('с подтверждением режим включается', async () => {
+    const { session, driver } = makeSession({ steps: [] }, { confirmBypass: async () => true })
+
+    await session.start()
+    await settle(session)
+    await session.setPermissionMode('bypassPermissions')
+
+    expect(session.panel.permissionMode).toBe('bypassPermissions')
+    expect(driver.permissionMode).toBe('bypassPermissions')
+  })
+
+  test('сохранённый в настройках вкладки режим тоже проходит через подтверждение', async () => {
+    // A stale tabs.json or a settings default must not walk around the dialog.
+    const { session } = makeSession(
+      { steps: [] },
+      {
+        overrides: { permissionMode: 'bypassPermissions' },
+        confirmBypass: async () => false
+      }
+    )
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+
+    expect(session.panel.permissionMode).toBe('default')
+    const notice = rec.items.find((i) => i.kind === 'notice') as { text: string } | undefined
+    expect(notice?.text).toContain('не подтверждён')
+  })
+})
+
+describe('AgentSession: план', () => {
+  test('ExitPlanMode вне режима плана — обычный инструмент, а не карточка плана', async () => {
+    // Otherwise a tool call could switch the permission mode by itself.
+    const asked: string[] = []
+    const { session } = makeSession(
+      { steps: [{ kind: 'askPermission', name: 'ExitPlanMode', input: { plan: 'что-то' } }] },
+      {
+        askPermission: async (request) => {
+          asked.push(request.toolName)
+          return { behavior: 'deny' as const }
+        }
+      }
+    )
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+
+    expect(asked).toEqual(['ExitPlanMode'])
+    expect(rec.items.filter((i) => i.kind === 'plan')).toHaveLength(0)
+  })
+
+  test('ответ на несуществующий план ничего не помечает', async () => {
+    const { session } = makeSession({ steps: [] })
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+    await session.answerPlan('нет-такого-плана', true)
+
+    expect(rec.changes.filter((c) => c.kind === 'update')).toHaveLength(0)
+  })
+})

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain } from 'electron'
 import { homedir } from 'node:os'
 import { createMainWindow, hardenWebContents, RENDERER_ENTRY } from './window'
 import { registerBaseIpc } from './ipc'
@@ -18,6 +18,37 @@ import { RibbonBatcher } from './ribbonBatcher'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
+
+/**
+ * Asks, in a window the renderer cannot script, whether the user really means
+ * to let the agent act without being asked again.
+ *
+ * Every other permission mode still asks about something; this one asks about
+ * nothing, so arriving in it by a stray click, a stale tabs.json or a bug in
+ * the window is the failure worth preventing. Choosing it deliberately still
+ * works.
+ */
+async function confirmBypass(win: BrowserWindow | null): Promise<boolean> {
+  // An e2e run cannot click a native dialog, and a modal one would hang the
+  // run rather than fail it. Honoured only in a development build: a packaged
+  // install always shows the real dialog.
+  const stubbed = process.env['QCLOD_CONFIRM_BYPASS']
+  if (stubbed !== undefined && !app.isPackaged) return stubbed === 'allow'
+  if (!win || win.isDestroyed()) return false
+
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Отмена', 'Включить'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Режим без проверок',
+    message: 'Агент перестанет спрашивать разрешение на инструменты',
+    detail:
+      'Он сможет менять файлы и запускать команды в этой папке без вопросов, ' +
+      'пока вы не вернёте другой режим.'
+  })
+  return response === 1
+}
 let quitting = false
 
 function loadRenderer(win: BrowserWindow): void {
@@ -95,11 +126,26 @@ app.whenReady().then(async () => {
     getAgentPath: () => settings.agentPath,
     createDriver: createDriverFactory(),
     askPermission: (request) =>
-      broker.request(request.tabId, request.toolName, request.input, request.requestId)
+      broker.request(request.tabId, request.toolName, request.input, request.requestId),
+    confirmBypass: () => confirmBypass(mainWindow)
   })
 
+  // Under the fixture the past conversations come from the environment too,
+  // so a history test never touches anyone's real session files.
+  const fakeHistory = process.env['QCLOD_FAKE_HISTORY']
   const history = process.env['QCLOD_FAKE_SDK']
-    ? new SessionHistory({ listSessions: async () => [], getSessionMessages: async () => [] })
+    ? (() => {
+        const script = fakeHistory
+          ? (JSON.parse(fakeHistory) as {
+              sessions?: Array<Record<string, unknown>>
+              messages?: Record<string, unknown[]>
+            })
+          : {}
+        return new SessionHistory({
+          listSessions: async () => (script.sessions ?? []) as never,
+          getSessionMessages: async (id: string) => script.messages?.[id] ?? []
+        })
+      })()
     : await import('./agent/sessionHistory').then((m) => m.createSessionHistory())
 
   const ribbonBatcher = new RibbonBatcher((event) => send(CHANNELS.ribbonChanged, event))

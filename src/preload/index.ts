@@ -67,10 +67,10 @@ const api = {
   answerQuestion: (id: TabId, toolUseId: string, choice: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.questionAnswer, id, toolUseId, choice),
 
-  listHistory: (cwd: string): Promise<SessionSummary[]> =>
-    ipcRenderer.invoke(CHANNELS.historyList, cwd),
-  openHistory: (cwd: string, sessionId: string): Promise<TabState | null> =>
-    ipcRenderer.invoke(CHANNELS.historyOpen, cwd, sessionId),
+  listHistory: (tabId: TabId): Promise<SessionSummary[]> =>
+    ipcRenderer.invoke(CHANNELS.historyList, tabId),
+  openHistory: (tabId: TabId, sessionId: string, title?: string): Promise<TabState | null> =>
+    ipcRenderer.invoke(CHANNELS.historyOpen, tabId, sessionId, title),
 
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.dialogPickFolder),
   pickFiles: (): Promise<string[]> => ipcRenderer.invoke(CHANNELS.dialogPickFiles),

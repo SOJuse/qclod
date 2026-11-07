@@ -32,6 +32,12 @@ export interface AgentSessionOptions {
    * missed wire-up would silently disable every permission prompt in the app.
    */
   askPermission: (request: PermissionRequest) => Promise<PermissionAnswer>
+  /**
+   * Asks the person, outside the window, whether they really mean to turn the
+   * permission gate off. Required: a session built without it refuses
+   * `bypassPermissions` outright rather than assuming consent.
+   */
+  confirmBypass?: () => Promise<boolean>
 }
 
 type ChangeListener = (changes: RibbonChange[]) => void
@@ -180,19 +186,22 @@ export class AgentSession {
    * Approving also leaves plan mode, because staying in it would stop the
    * agent from doing the very thing that was just approved.
    */
-  answerPlan(requestId: string, approve: boolean): void {
-    this.emit(this.builder.resolvePlan(requestId, approve ? 'approved' : 'rejected'))
-
+  async answerPlan(requestId: string, approve: boolean): Promise<void> {
+    // (4) Nothing is marked answered until there is something to answer: a
+    // card with no pending plan behind it must not look settled.
     const waiting = this.pendingPlans.get(requestId)
     if (!waiting) return
     this.pendingPlans.delete(requestId)
 
-    if (approve) {
-      void this.setPermissionMode('acceptEdits')
-      waiting({ behavior: 'allow' })
-    } else {
+    this.emit(this.builder.resolvePlan(requestId, approve ? 'approved' : 'rejected'))
+    if (!approve) {
       waiting({ behavior: 'deny' })
+      return
     }
+
+    // The mode must be in place before the tool runs, not racing it.
+    await this.setPermissionMode('acceptEdits')
+    waiting({ behavior: 'allow' })
   }
 
   /** Something Qclod itself needs to say — a crash, a session that would not resume. */
@@ -204,6 +213,20 @@ export class AgentSession {
     if (this.driver) return
     this.setStatus('starting')
     this.failure = undefined
+
+    // A tab could carry bypassPermissions in its stored overrides, from a
+    // settings default or an older tabs.json. Starting in it unasked would
+    // walk around the confirmation entirely, so the check lives here too.
+    if (!(await this.allowMode(this.mode))) {
+      this.mode = 'default'
+      this.emit(
+        this.builder.notice(
+          'Режим «без проверок» не подтверждён — сессия запущена в обычном режиме.',
+          'info'
+        )
+      )
+      this.emitPanel(this.collector.setPermissionMode('default'))
+    }
 
     let executablePath: string
     try {
@@ -249,6 +272,7 @@ export class AgentSession {
   }
 
   async setPermissionMode(mode: string): Promise<void> {
+    if (!(await this.allowMode(mode))) return
     this.mode = mode
     this.emitPanel(this.collector.setPermissionMode(mode))
     if (!this.driver) return
@@ -289,6 +313,14 @@ export class AgentSession {
 
   // ------------------------------------------------------------- the pump
 
+  /** Only one mode needs asking about, and it is asked about every time. */
+  private async allowMode(mode: string): Promise<boolean> {
+    if (mode !== 'bypassPermissions') return true
+    const confirm = this.options.confirmBypass
+    if (!confirm) return false
+    return confirm()
+  }
+
   private async readMessages(driver: AgentDriver): Promise<void> {
     try {
       for await (const message of driver.messages) {
@@ -304,7 +336,12 @@ export class AgentSession {
   private onMessage(message: unknown): void {
     this.emit(this.builder.apply(message))
     const panel = this.collector.apply(message)
-    if (panel) this.emitPanel(panel)
+    if (panel) {
+      // The collector is the one place that knows the current mode — it also
+      // knows not to let a restart overrule what the user chose.
+      this.mode = this.collector.data.permissionMode
+      this.emitPanel(panel)
+    }
     const todo = this.builder.todo
     if (todo) this.todoItems = todo
 
@@ -368,7 +405,7 @@ export class AgentSession {
     // A plan is a document to read, not a tool call to wave through. In plan
     // mode the agent finishes by calling ExitPlanMode with what it intends to
     // do, and that is the moment the user decides (spec 6.4).
-    if (toolName === 'ExitPlanMode') return this.askPlan(input, opts)
+    if (toolName === 'ExitPlanMode' && this.mode === 'plan') return this.askPlan(input, opts)
 
     const requestId = opts.toolUseId ?? `${this.options.tabId}:${Date.now()}`
     const target = displayTarget(input)

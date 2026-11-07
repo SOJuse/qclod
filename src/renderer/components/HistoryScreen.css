@@ -1,0 +1,129 @@
+.history-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 9vh;
+  background: rgba(5, 6, 12, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.history {
+  width: min(640px, calc(100% - 48px));
+  max-height: 74vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), var(--glow-soft);
+  overflow: hidden;
+}
+
+.history-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+}
+
+.history-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.history-cwd {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+
+.history-head button {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.history-head button:hover {
+  color: var(--text);
+}
+
+.history-query {
+  margin: 0 16px 10px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.history-query:focus {
+  border-color: var(--border-accent);
+}
+
+.history-query::placeholder {
+  color: var(--text-faint);
+}
+
+.history-list {
+  margin: 0;
+  padding: 0 8px 10px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.history-item {
+  padding: 9px 11px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.history-item:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.history-title {
+  color: var(--text);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-first {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-when {
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.history-empty {
+  padding: 26px 16px 32px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 12px;
+}

@@ -8,8 +8,6 @@ interface Props {
   onDone: () => void
 }
 
-const NODE_URL = 'https://nodejs.org/en/download'
-
 /**
  * What a machine needs before Qclod is any use, and how to get there.
  *
@@ -30,8 +28,6 @@ export function SetupScreen({ report, onRecheck, onDone }: Props): JSX.Element {
     tail.current?.scrollTo({ top: tail.current.scrollHeight })
   }, [log])
 
-  const canInstall = report.npm.found && !installing
-
   async function install(): Promise<void> {
     setInstalling(true)
     setLog([])
@@ -46,40 +42,44 @@ export function SetupScreen({ report, onRecheck, onDone }: Props): JSX.Element {
         <h1 className="setup-title">Qclod</h1>
         <p className="setup-lead">
           Qclod — окно для Claude Code. Он запускает <b>ваш</b> Claude Code: ваш вход, ваши
-          настройки, ваши плагины. Поэтому его нужно поставить один раз.
+          настройки, ваши плагины. Одна кнопка ниже скачает и поставит его, если его ещё нет.
         </p>
 
         <ul className="setup-list">
-          <Row
-            label="Node.js"
-            report={report.node}
-            missing="Нужен, чтобы поставить Claude Code"
-            action={
-              report.node.found ? null : (
-                <button type="button" onClick={() => void window.qclod.openExternal(NODE_URL)}>
-                  Скачать
-                </button>
-              )
-            }
-          />
-          <Row
-            label="Claude Code"
-            report={report.agent}
-            missing="Сам агент — без него Qclod пустое окно"
-            action={
-              report.agent.found ? null : (
-                <button
-                  type="button"
-                  data-testid="setup-install"
-                  disabled={!canInstall}
-                  onClick={() => void install()}
-                >
-                  {installing ? 'Ставлю…' : 'Установить'}
-                </button>
-              )
-            }
-          />
+          <li
+            className={`setup-row${report.agent.found ? ' is-found' : ''}`}
+            data-testid="setup-agent"
+          >
+            <span className="setup-mark" aria-hidden>
+              {report.agent.found ? '✓' : '•'}
+            </span>
+            <span className="setup-name">Claude Code</span>
+            <span className="setup-detail">
+              {report.agent.found
+                ? (report.agent.version ?? report.agent.path ?? 'на месте')
+                : installing
+                  ? 'ставлю…'
+                  : 'не установлен'}
+            </span>
+            {!report.agent.found && (
+              <button
+                type="button"
+                data-testid="setup-install"
+                disabled={installing || report.installMethod === null}
+                onClick={() => void install()}
+              >
+                {installing ? 'Ставлю…' : 'Установить'}
+              </button>
+            )}
+          </li>
         </ul>
+
+        {!report.agent.found && report.installMethod === null && (
+          <p className="setup-note" data-testid="setup-no-method">
+            На этой машине нечем установить: нужен либо winget (он есть в Windows 10 и 11), либо
+            Node.js. Либо поставьте Claude Code сами и укажите путь к нему в настройках Qclod.
+          </p>
+        )}
 
         {log.length > 0 && (
           <pre className="setup-log" data-testid="setup-log" ref={tail}>
@@ -125,30 +125,5 @@ export function SetupScreen({ report, onRecheck, onDone }: Props): JSX.Element {
         )}
       </div>
     </div>
-  )
-}
-
-function Row({
-  label,
-  report,
-  missing,
-  action
-}: {
-  label: string
-  report: { found: boolean; version?: string; path?: string }
-  missing: string
-  action: JSX.Element | null
-}): JSX.Element {
-  return (
-    <li className={`setup-row${report.found ? ' is-found' : ''}`} data-testid={`setup-${label}`}>
-      <span className="setup-mark" aria-hidden>
-        {report.found ? '✓' : '•'}
-      </span>
-      <span className="setup-name">{label}</span>
-      <span className="setup-detail">
-        {report.found ? (report.version ?? report.path ?? 'на месте') : missing}
-      </span>
-      {action}
-    </li>
   )
 }

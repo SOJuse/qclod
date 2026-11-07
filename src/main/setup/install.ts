@@ -1,43 +1,99 @@
-import { spawn, type ChildProcess } from 'node:child_process'
-import { resolveExecutable } from '../agent/resolveExecutable'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { promisify } from 'node:util'
 
-/** The package that provides the `claude` executable. */
-export const AGENT_PACKAGE = '@anthropic-ai/claude-code'
+const run = promisify(execFile)
 
-export const NODE_DOWNLOAD_URL = 'https://nodejs.org/en/download'
+/** The official Windows package. Verified against the live winget source. */
+export const WINGET_ID = 'Anthropic.ClaudeCode'
+
+/** The npm package, for machines without winget but with Node. */
+export const NPM_PACKAGE = '@anthropic-ai/claude-code'
+
+export type InstallMethod = 'winget' | 'npm'
 
 export interface InstallHandle {
   cancel: () => void
 }
 
 /**
- * Installs Claude Code with the user's own npm.
+ * Can this command be run at all?
  *
- * Deliberately not bundled into Qclod: the agent is a program the user logs
- * into and keeps up to date, and shipping a second copy inside an Electron app
- * would mean two versions, two logins and an update path nobody asked for.
- * What Qclod can do is run the one command for them and show what it says.
+ * Asked by running it, not by looking for its file. `winget` on Windows is a
+ * Store app execution alias: the path on PATH cannot even be `stat`ed by a
+ * process without package identity — it answers EACCES — yet spawning it
+ * works perfectly. Probing the filesystem would conclude Windows has no
+ * winget, which is wrong on every Windows 11 machine.
+ */
+async function canRun(command: string): Promise<boolean> {
+  try {
+    await run(command, ['--version'], {
+      timeout: 20000,
+      windowsHide: true,
+      shell: process.platform === 'win32'
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * How this machine can get Claude Code, best option first.
+ *
+ * winget comes with Windows and needs nothing else — no Node, no npm, no
+ * developer setup — which is the whole point: someone handed this app should
+ * be able to run it and work, not go shopping for prerequisites first.
+ */
+export async function detectInstallMethod(): Promise<InstallMethod | null> {
+  if (process.platform === 'win32' && (await canRun('winget'))) return 'winget'
+  if (await canRun('npm')) return 'npm'
+  return null
+}
+
+function commandFor(method: InstallMethod): { command: string; args: string[]; label: string } {
+  if (method === 'winget') {
+    return {
+      command: 'winget',
+      args: [
+        'install',
+        '--id',
+        WINGET_ID,
+        '-e',
+        '--accept-package-agreements',
+        '--accept-source-agreements',
+        '--disable-interactivity'
+      ],
+      label: `winget install --id ${WINGET_ID}`
+    }
+  }
+  return {
+    command: 'npm',
+    args: ['install', '-g', NPM_PACKAGE],
+    label: `npm install -g ${NPM_PACKAGE}`
+  }
+}
+
+/**
+ * Installs Claude Code and reports what the installer says as it says it.
+ *
+ * Qclod does not bundle the agent: it is a program the user logs into and
+ * keeps up to date, and a second copy inside an Electron app would mean two
+ * versions and two logins. Fetching it on demand is the honest middle: one
+ * button, no shopping list.
  */
 export function installAgent(
+  method: InstallMethod,
   onOutput: (line: string) => void,
   onDone: (ok: boolean) => void
 ): InstallHandle {
-  let npm: string
-  try {
-    npm = resolveExecutable('npm', process.env)
-  } catch {
-    onOutput('npm не найден. Сначала поставьте Node.js, затем повторите.')
-    onDone(false)
-    return { cancel: () => undefined }
-  }
-
-  onOutput(`npm install -g ${AGENT_PACKAGE}`)
+  const plan = commandFor(method)
+  onOutput(plan.label)
 
   let child: ChildProcess
   try {
-    child = spawn(npm, ['install', '-g', AGENT_PACKAGE], {
+    child = spawn(plan.command, plan.args, {
       windowsHide: true,
-      // npm on Windows is a .cmd; without a shell the spawn fails outright.
+      // Both winget (a Store alias) and npm (a .cmd) need the shell to resolve.
       shell: process.platform === 'win32'
     })
   } catch (error) {
@@ -47,8 +103,11 @@ export function installAgent(
   }
 
   const forward = (chunk: Buffer): void => {
-    for (const line of chunk.toString('utf8').split(/\r?\n/)) {
-      if (line.trim() !== '') onOutput(line)
+    // winget draws progress with carriage returns; one line per repaint would
+    // bury the few lines that mean something.
+    for (const line of chunk.toString('utf8').split(/\r?\n|\r/)) {
+      const text = line.trim()
+      if (text !== '' && !/^[\s▒█▓░■\-\\|/]+$/.test(text)) onOutput(text)
     }
   }
 
@@ -61,7 +120,7 @@ export function installAgent(
   })
 
   child.on('close', (code) => {
-    onOutput(code === 0 ? 'Готово.' : `npm вышел с кодом ${code}.`)
+    onOutput(code === 0 ? 'Готово.' : `Установщик вышел с кодом ${code}.`)
     onDone(code === 0)
   })
 

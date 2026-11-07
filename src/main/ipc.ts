@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { checkEnvironment } from './setup/environment'
-import { installAgent, type InstallHandle } from './setup/install'
+import { detectInstallMethod, installAgent, type InstallHandle } from './setup/install'
 import { CHANNELS } from '../shared/channels'
 import type { AppSettings } from '../shared/types'
 
@@ -35,8 +35,18 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
 
   ipcMain.handle(CHANNELS.setupInstall, async () => {
     const win = getWindow()
+    const method = await detectInstallMethod()
+    if (!method) {
+      win?.webContents.send(
+        CHANNELS.setupOutput,
+        'Не нашёл, чем установить: нужен либо winget (есть в Windows 10 и 11), либо Node.js.'
+      )
+      return false
+    }
+
     return new Promise<boolean>((resolve) => {
       install = installAgent(
+        method,
         (line) => {
           if (win && !win.isDestroyed()) win.webContents.send(CHANNELS.setupOutput, line)
         },

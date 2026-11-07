@@ -46,15 +46,19 @@ test('без Claude Code встречает экран установки, а н
   }
 })
 
-test('Node.js на этой машине показан найденным', async () => {
+test('кнопка установки активна — ставить есть чем, и ничего больше не просят', async () => {
   const { app, profile } = await launch('такого-файла-нет-12345')
   try {
     const win = await app.firstWindow()
-    const node = win.locator('[data-testid="setup-Node.js"]')
+    const row = win.locator('[data-testid="setup-agent"]')
 
-    await expect(node).toBeVisible({ timeout: 20000 })
-    await expect(node).toHaveClass(/is-found/)
-    await expect(node).toContainText(/\d+\.\d+\.\d+/)
+    await expect(row).toBeVisible({ timeout: 20000 })
+    await expect(row).toContainText('не установлен')
+    await expect(win.locator('[data-testid="setup-install"]')).toBeEnabled({ timeout: 20000 })
+
+    // winget ships with Windows, so no shopping list is shown.
+    await expect(win.locator('[data-testid="setup-no-method"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="setup-screen"]')).not.toContainText('Node.js')
   } finally {
     await close(app, profile)
   }

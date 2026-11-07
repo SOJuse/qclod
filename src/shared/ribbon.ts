@@ -178,6 +178,8 @@ function imageAttachment(block: Record<string, unknown>): Attachment | null {
 export class RibbonBuilder {
   private readonly list: RibbonItem[] = []
   private readonly byToolUseId = new Map<string, string>()
+  /** When each subagent card was placed, for timing it ourselves. */
+  private readonly startedAt = new Map<string, number>()
   private readonly openBlocks = new Map<number, OpenBlock>()
   /** Message ids whose text already reached the ribbon as deltas. */
   private readonly streamed = new Set<string>()
@@ -501,6 +503,7 @@ export class RibbonBuilder {
     if (name === 'Agent' || name === 'Task') {
       const id = this.nextId()
       this.byToolUseId.set(toolUseId, id)
+      this.startedAt.set(id, this.now())
       return [
         this.append({
           kind: 'subagent',
@@ -604,6 +607,16 @@ export class RibbonBuilder {
       const patch: Partial<RibbonItem> = { state: 'done', summary: clip(text, 160) }
       const stats = subagentStats(result)
       Object.assign(patch, stats)
+
+      // The tool reports tokens but not how long it took, so the ribbon times
+      // it from the card it placed.
+      const began = this.startedAt.get(item.id)
+      if (stats.durationMs === undefined && began !== undefined) {
+        const measured = this.now() - began
+        // A card that finished within the same millisecond has no duration
+        // worth printing; «0 с» reads as a broken number.
+        if (measured > 0) patch.durationMs = measured
+      }
       Object.assign(item, patch)
       return [this.update(item.id, patch)]
     }

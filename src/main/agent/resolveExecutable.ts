@@ -34,7 +34,6 @@ function isFile(path: string): boolean {
  */
 function findIn(dir: string, base: string, exts: string[]): string | undefined {
   const entries = listFiles(dir)
-  if (entries.length === 0) return undefined
   const candidates = extname(base) !== '' ? [base] : [base, ...exts.map((ext) => base + ext)]
 
   for (const candidate of candidates) {
@@ -42,6 +41,15 @@ function findIn(dir: string, base: string, exts: string[]): string | undefined {
     const actual = entries.find((entry) => entry.toLowerCase() === wanted)
     if (actual === undefined) continue
     const full = join(dir, actual)
+    if (isFile(full)) return full
+  }
+
+  // A directory that cannot be listed is not a directory without the file in
+  // it. WindowsApps — where Windows keeps winget and other app aliases —
+  // refuses to be read but answers about a named file perfectly well, so the
+  // candidates are tried directly before giving up.
+  for (const candidate of candidates) {
+    const full = join(dir, candidate)
     if (isFile(full)) return full
   }
   return undefined

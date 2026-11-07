@@ -246,9 +246,9 @@ export interface ToolReport {
 
 /** What the machine has, for the setup screen. */
 export interface EnvironmentReport {
-  node: ToolReport
-  npm: ToolReport
   agent: ToolReport
+  /** How this machine can install the agent, if it has to. */
+  installMethod: 'winget' | 'npm' | null
   ready: boolean
 }
 

@@ -447,7 +447,7 @@ describe('RibbonBuilder: цифры подагента', () => {
 
     const card = only(b.items, 'subagent')[0]!
     expect(card.tokens).toBeUndefined()
-    expect(card.durationMs).toBeUndefined()
+    expect(card.toolCalls).toBeUndefined()
   })
 })
 
@@ -494,5 +494,44 @@ describe('RibbonBuilder: подагент называется Agent', () => {
       assistant([{ type: 'tool_use', id: 'a1', name: 'Agent', input: { description: 'что-то' } }])
     )
     expect(only(b.items, 'subagent')[0]!.name).toBe('подагент')
+  })
+})
+
+describe('RibbonBuilder: время подагента', () => {
+  test('если инструмент не сказал длительность, её меряет лента', () => {
+    // The real Agent output carries tokens but no duration.
+    let clock = 1000
+    const b = new RibbonBuilder({ now: () => clock })
+    b.apply(
+      assistant([{ type: 'tool_use', id: 'a1', name: 'Agent', input: { description: 'искать' } }])
+    )
+
+    clock = 26000
+    b.apply(
+      userMessage([{ type: 'tool_result', tool_use_id: 'a1', content: 'нашёл' }], {
+        tool_use_result: { usage: { input_tokens: 20000, output_tokens: 9000 } }
+      })
+    )
+
+    const card = only(b.items, 'subagent')[0]!
+    expect(card.durationMs).toBe(25000)
+    expect(card.tokens).toBe(29000)
+  })
+
+  test('если длительность пришла, она сильнее нашей', () => {
+    let clock = 1000
+    const b = new RibbonBuilder({ now: () => clock })
+    b.apply(
+      assistant([{ type: 'tool_use', id: 'a1', name: 'Agent', input: { description: 'искать' } }])
+    )
+
+    clock = 99000
+    b.apply(
+      userMessage([{ type: 'tool_result', tool_use_id: 'a1', content: 'нашёл' }], {
+        tool_use_result: { durationMs: 42000 }
+      })
+    )
+
+    expect(only(b.items, 'subagent')[0]!.durationMs).toBe(42000)
   })
 })

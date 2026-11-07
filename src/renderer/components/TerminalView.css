@@ -48,3 +48,8 @@
 .terminal-host .xterm-screen {
   background-color: transparent;
 }
+
+/* Inactive tabs stay mounted so their scrollback survives a switch. */
+.terminal-surface.is-hidden {
+  display: none;
+}

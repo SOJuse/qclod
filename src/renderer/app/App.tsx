@@ -1,8 +1,11 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { TerminalView } from '../components/TerminalView'
 import { Composer } from '../components/Composer'
+import { TitleBar } from '../components/TitleBar'
 import { useAppStore } from '../state/useAppStore'
 import { shouldStealFocus } from '../input/focusSteal'
+import { useTabShortcuts } from './useTabShortcuts'
+import type { TabId } from '../../shared/types'
 import './App.css'
 
 export function App(): JSX.Element {
@@ -13,9 +16,12 @@ export function App(): JSX.Element {
   const setFocusTarget = useAppStore((s) => s.setFocusTarget)
   const toggleFocusTarget = useAppStore((s) => s.toggleFocusTarget)
   const activeTabId = useAppStore((s) => s.activeTabId)
-  const menuActive = useAppStore((s) => s.menuActiveByTab[s.activeTabId] ?? false)
-
+  const setActiveTabId = useAppStore((s) => s.setActiveTabId)
+  const tabs = useAppStore((s) => s.tabs)
   const setTabs = useAppStore((s) => s.setTabs)
+  const setMenuActive = useAppStore((s) => s.setMenuActive)
+  const menuActive = useAppStore((s) => s.menuActiveByTab[s.activeTabId] ?? false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
     void window.qclod.getSettings().then(setSettings)
@@ -27,6 +33,10 @@ export function App(): JSX.Element {
     return window.qclod.onTabsChanged(setTabs)
   }, [setTabs])
 
+  useEffect(() => {
+    return window.qclod.onActivateTab(setActiveTabId)
+  }, [setActiveTabId])
+
   const setFontSize = useCallback(
     (fontSize: number) => {
       patchSettings({ fontSize })
@@ -35,16 +45,15 @@ export function App(): JSX.Element {
     [patchSettings]
   )
 
-  const setMenuActive = useAppStore((s) => s.setMenuActive)
   const autoFocusOnMenu = settings?.autoFocusOnMenu ?? true
 
   const onMenuActive = useCallback(
     (active: boolean) => {
       setMenuActive(activeTabId, active)
-      // Convenience only — the Ctrl+` toggle and the empty-field key rules
-      // work regardless, and this can be switched off in settings (spec 6.4).
       if (!active) return
       const { draftByTab, lastTypedAt } = useAppStore.getState()
+      // Terminal output is attacker-influenceable, so the keyboard only moves
+      // when the person is clearly not mid-sentence. See focusSteal.ts.
       const allowed = shouldStealFocus({
         autoFocusOnMenu,
         draft: draftByTab[activeTabId] ?? '',
@@ -55,22 +64,67 @@ export function App(): JSX.Element {
     [activeTabId, autoFocusOnMenu, setFocusTarget, setMenuActive]
   )
 
+  const createTab = useCallback(async () => {
+    const cwd = await window.qclod.pickFolder()
+    if (!cwd) return
+    const tab = await window.qclod.createTab(cwd)
+    setActiveTabId(tab.id)
+    setFocusTarget('composer')
+  }, [setActiveTabId, setFocusTarget])
+
+  const closeTab = useCallback(
+    async (id: TabId) => {
+      await window.qclod.closeTab(id)
+    },
+    []
+  )
+
+  const activateTab = useCallback(
+    (id: TabId) => {
+      setActiveTabId(id)
+      void window.qclod.activateTab(id)
+    },
+    [setActiveTabId]
+  )
+
+  useTabShortcuts({
+    tabs,
+    activeTabId,
+    onCreate: () => void createTab(),
+    onClose: (id) => void closeTab(id),
+    onActivate: activateTab
+  })
+
   return (
     <div className="app" data-testid="app-root">
-      <header className="app-bar">
-        <span className="app-name">Qclod</span>
-      </header>
+      <TitleBar
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onActivate={activateTab}
+        onClose={(id) => void closeTab(id)}
+        onCreate={() => void createTab()}
+        onOpenSettings={() => setSettingsOpen((open) => !open)}
+      />
+      <span hidden>Qclod</span>
       {settings && activeTabId !== '' && (
         <>
-          <TerminalView
-            tabId={activeTabId}
-            fontSize={settings.fontSize}
-            focused={focusTarget === 'terminal'}
-            onRequestFocus={() => setFocusTarget('terminal')}
-            onToggleFocus={toggleFocusTarget}
-            onFontSize={setFontSize}
-            onMenuActive={onMenuActive}
-          />
+          {/*
+            Every tab keeps its own live terminal, hidden rather than unmounted:
+            re-creating it on each switch would throw away that tab's scrollback.
+          */}
+          {tabs.map((tab) => (
+            <TerminalView
+              key={tab.id}
+              tabId={tab.id}
+              hidden={tab.id !== activeTabId}
+              fontSize={settings.fontSize}
+              focused={focusTarget === 'terminal' && tab.id === activeTabId}
+              onRequestFocus={() => setFocusTarget('terminal')}
+              onToggleFocus={toggleFocusTarget}
+              onFontSize={setFontSize}
+              onMenuActive={onMenuActive}
+            />
+          ))}
           <Composer
             tabId={activeTabId}
             focused={focusTarget === 'composer'}
@@ -80,6 +134,7 @@ export function App(): JSX.Element {
           />
         </>
       )}
+      {settingsOpen && <div data-testid="settings-placeholder" hidden />}
     </div>
   )
 }

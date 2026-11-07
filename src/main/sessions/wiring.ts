@@ -1,8 +1,9 @@
 import { app, dialog, ipcMain, type BrowserWindow } from 'electron'
 import { CHANNELS } from '../../shared/channels'
-import type { AppSettings, LaunchOverrides, TabId, TabState } from '../../shared/types'
+import type { AppSettings, TabId, TabState } from '../../shared/types'
 import { SessionManager } from './SessionManager'
 import { TabController } from '../tabs/TabController'
+import { sanitizeOverrides, sanitizeTabPatch } from '../tabs/sanitize'
 
 export interface SessionWiring {
   manager: SessionManager
@@ -55,13 +56,13 @@ export function wireSessions(
   })
 
   ipcMain.handle(CHANNELS.tabsList, () => tabs.list())
-  ipcMain.handle(CHANNELS.tabsCreate, (_e, cwd: string, overrides?: LaunchOverrides) =>
-    tabs.create(cwd, overrides ?? {})
+  ipcMain.handle(CHANNELS.tabsCreate, (_e, cwd: unknown, overrides: unknown) =>
+    typeof cwd === 'string' && cwd !== '' ? tabs.create(cwd, sanitizeOverrides(overrides)) : null
   )
   ipcMain.handle(CHANNELS.tabsClose, (_e, tabId: TabId) => tabs.close(tabId))
   ipcMain.handle(CHANNELS.tabsActivate, (_e, tabId: TabId) => tabs.activate(tabId))
-  ipcMain.handle(CHANNELS.tabsUpdate, (_e, tabId: TabId, patch: Partial<TabState>) =>
-    tabs.update(tabId, patch)
+  ipcMain.handle(CHANNELS.tabsUpdate, (_e, tabId: TabId, patch: unknown) =>
+    tabs.update(tabId, sanitizeTabPatch(patch))
   )
 
   ipcMain.handle(CHANNELS.sessionWrite, (_e, tabId: TabId, data: string) => {
@@ -73,6 +74,9 @@ export function wireSessions(
   ipcMain.handle(CHANNELS.sessionRestart, (_e, tabId: TabId) => tabs.restart(tabId))
 
   ipcMain.handle(CHANNELS.dialogPickFolder, async () => {
+    // Tests cannot click a native dialog, so they name the folder up front.
+    const scripted = process.env['QCLOD_PICK_FOLDER']
+    if (scripted) return scripted
     const win = getWindow()
     const result = win
       ? await dialog.showOpenDialog(win, { properties: ['openDirectory'] })

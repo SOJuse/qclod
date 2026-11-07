@@ -8,6 +8,7 @@ import './TerminalView.css'
 
 interface Props {
   tabId: TabId
+  hidden?: boolean
   fontSize: number
   focused: boolean
   onRequestFocus: () => void
@@ -18,6 +19,7 @@ interface Props {
 
 export function TerminalView({
   tabId,
+  hidden = false,
   fontSize,
   focused,
   onRequestFocus,
@@ -154,7 +156,7 @@ export function TerminalView({
 
   return (
     <div
-      className={`terminal-surface${focused ? ' is-focused' : ''}`}
+      className={`terminal-surface${focused ? ' is-focused' : ''}${hidden ? ' is-hidden' : ''}`}
       data-testid="terminal"
       onMouseDown={onRequestFocus}
     >

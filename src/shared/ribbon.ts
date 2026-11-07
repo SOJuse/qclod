@@ -140,6 +140,30 @@ export class RibbonBuilder {
     return [this.append({ kind: 'user', id: this.nextId(), text, attachments })]
   }
 
+  /**
+   * A permission question, shown where the tool's own card will go (spec 6.4),
+   * so the user sees what is about to happen in its place in the story.
+   */
+  addPermission(requestId: string, toolName: string, target: string): RibbonChange[] {
+    return [
+      this.append({
+        kind: 'permission',
+        id: this.nextId(),
+        requestId,
+        toolName,
+        target,
+        state: 'pending'
+      })
+    ]
+  }
+
+  resolvePermission(requestId: string, state: 'allowed' | 'denied'): RibbonChange[] {
+    const item = this.list.find((i) => i.kind === 'permission' && i.requestId === requestId)
+    if (!item || item.kind !== 'permission') return []
+    item.state = state
+    return [this.update(item.id, { state })]
+  }
+
   /** Records the user's answer to a question card. */
   answerQuestion(toolUseId: string, answer: string): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)

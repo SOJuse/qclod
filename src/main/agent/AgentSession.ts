@@ -31,6 +31,15 @@ type ChangeListener = (changes: RibbonChange[]) => void
 type PanelListener = (patch: Partial<PanelData>) => void
 type StatusListener = (status: SessionStatus) => void
 
+/** What the permission card says the tool will touch. */
+function permissionTarget(input: Record<string, unknown>): string {
+  for (const key of ['file_path', 'path', 'notebook_path', 'command', 'url', 'pattern']) {
+    const value = input[key]
+    if (typeof value === 'string' && value !== '') return value
+  }
+  return ''
+}
+
 function splitArgs(flags: string | undefined): string[] {
   if (!flags) return []
   return flags.match(/"[^"]*"|\S+/g)?.map((a) => a.replace(/^"|"$/g, '')) ?? []
@@ -292,16 +301,24 @@ export class AgentSession {
     const ask = this.options.askPermission
     if (!ask) return { behavior: 'allow' }
 
+    const requestId = opts.toolUseId ?? `${this.options.tabId}:${Date.now()}`
+    const target = permissionTarget(input)
+    this.emit(this.builder.addPermission(requestId, toolName, target))
+
     const previous = this.state
     this.setStatus('waiting')
     try {
-      return await ask({
-        requestId: opts.toolUseId ?? `${this.options.tabId}:${Date.now()}`,
+      const answer = await ask({
+        requestId,
         tabId: this.options.tabId,
         toolName,
-        target: '',
+        target,
         input
       })
+      this.emit(
+        this.builder.resolvePermission(requestId, answer.behavior === 'allow' ? 'allowed' : 'denied')
+      )
+      return answer
     } finally {
       this.setStatus(previous === 'waiting' ? 'busy' : previous)
     }

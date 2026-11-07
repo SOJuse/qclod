@@ -30,14 +30,26 @@ function makeSession(
   script: FakeScript = {},
   overrides: Partial<ConstructorParameters<typeof AgentSession>[0]> = {}
 ): { session: AgentSession; driver: ReturnType<typeof createFakeSdk> } {
-  const driver = createFakeSdk(script)
+  // The fixture asks about tools through whatever canUseTool it was built with;
+  // the session supplies its own only when it starts, so route through a holder.
+  const gate = {
+    ask: async (_name: string, _input: Record<string, unknown>) =>
+      ({ behavior: 'allow' }) as { behavior: 'allow' | 'deny' }
+  }
+  const driver = createFakeSdk({
+    ...script,
+    canUseTool: (name, input) => gate.ask(name, input)
+  })
   const session = new AgentSession({
     tabId: 't1',
     cwd: 'C:/проект',
     overrides: {},
     agentPath: 'claude',
     resolveAgent: () => 'C:/bin/claude.exe',
-    createDriver: () => driver as unknown as AgentDriver,
+    createDriver: (options) => {
+      gate.ask = (name, input) => options.canUseTool(name, input, {})
+      return driver as unknown as AgentDriver
+    },
     ...overrides
   })
   return { session, driver }
@@ -279,5 +291,47 @@ describe('AgentSessionManager', () => {
 
     expect(manager.get('tab-1')).toBeUndefined()
     expect(manager.get('tab-2')).toBeUndefined()
+  })
+})
+
+describe('AgentSession: разрешения', () => {
+  test('вопрос о разрешении появляется в ленте и закрывается ответом', async () => {
+    const { session } = makeSession(
+      { steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }] },
+      { askPermission: async () => ({ behavior: 'allow' as const }) }
+    )
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+
+    const cards = rec.items.filter((i) => i.kind === 'permission')
+    expect(cards).toHaveLength(1)
+    expect(cards[0]).toMatchObject({ toolName: 'Bash', target: 'npm test', state: 'allowed' })
+  })
+
+  test('отказ помечает карточку отклонённой, инструмент не выполняется', async () => {
+    const { session, driver } = makeSession(
+      { steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'rm -rf /' } }] },
+      { askPermission: async () => ({ behavior: 'deny' as const }) }
+    )
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+
+    expect(rec.items.filter((i) => i.kind === 'permission')[0]).toMatchObject({ state: 'denied' })
+    expect(driver.executedTools).not.toContain('Bash')
+  })
+
+  test('без обработчика разрешений инструмент не блокируется молча', async () => {
+    const { session, driver } = makeSession({
+      steps: [{ kind: 'askPermission', name: 'Read', input: { file_path: 'a.ts' } }]
+    })
+
+    await session.start()
+    await settle(session)
+
+    expect(driver.executedTools).toContain('Read')
   })
 })

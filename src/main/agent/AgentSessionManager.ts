@@ -7,7 +7,7 @@ export interface AgentSessionManagerOptions {
   getAgentPath: () => string
   resolveAgent?: (requested: string) => string
   createDriver: DriverFactory
-  askPermission?: (request: PermissionRequest) => Promise<PermissionAnswer>
+  askPermission: (request: PermissionRequest) => Promise<PermissionAnswer>
 }
 
 /**
@@ -33,7 +33,7 @@ export class AgentSessionManager {
       agentPath: this.options.getAgentPath(),
       ...(this.options.resolveAgent ? { resolveAgent: this.options.resolveAgent } : {}),
       createDriver: this.options.createDriver,
-      ...(this.options.askPermission ? { askPermission: this.options.askPermission } : {})
+      askPermission: this.options.askPermission
     })
     this.sessions.set(tabId, session)
     return session

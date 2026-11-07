@@ -23,8 +23,12 @@ export interface AgentSessionOptions {
   agentPath: string
   resolveAgent?: (requested: string) => string
   createDriver: DriverFactory
-  /** Asks the user about a tool. Supplied by the permission layer (Task 6). */
-  askPermission?: (request: PermissionRequest) => Promise<PermissionAnswer>
+  /**
+   * Asks the user about a tool. Required, not optional: a session built
+   * without a gate would answer every `canUseTool` with «allow», and a single
+   * missed wire-up would silently disable every permission prompt in the app.
+   */
+  askPermission: (request: PermissionRequest) => Promise<PermissionAnswer>
 }
 
 type ChangeListener = (changes: RibbonChange[]) => void
@@ -299,8 +303,6 @@ export class AgentSession {
     opts: { toolUseId?: string }
   ): Promise<PermissionAnswer> {
     const ask = this.options.askPermission
-    if (!ask) return { behavior: 'allow' }
-
     const requestId = opts.toolUseId ?? `${this.options.tabId}:${Date.now()}`
     const target = permissionTarget(input)
     this.emit(this.builder.addPermission(requestId, toolName, target))
@@ -308,13 +310,13 @@ export class AgentSession {
     const previous = this.state
     this.setStatus('waiting')
     try {
-      const answer = await ask({
-        requestId,
-        tabId: this.options.tabId,
-        toolName,
-        target,
-        input
-      })
+      let answer: PermissionAnswer
+      try {
+        answer = await ask({ requestId, tabId: this.options.tabId, toolName, target, input })
+      } catch {
+        // A gate that failed is not a gate that said yes.
+        answer = { behavior: 'deny' }
+      }
       this.emit(
         this.builder.resolvePermission(requestId, answer.behavior === 'allow' ? 'allowed' : 'denied')
       )

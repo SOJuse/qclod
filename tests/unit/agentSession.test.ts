@@ -46,6 +46,7 @@ function makeSession(
     overrides: {},
     agentPath: 'claude',
     resolveAgent: () => 'C:/bin/claude.exe',
+    askPermission: async () => ({ behavior: 'allow' as const }),
     createDriver: (options) => {
       gate.ask = (name, input) => options.canUseTool(name, input, {})
       return driver as unknown as AgentDriver
@@ -246,6 +247,7 @@ describe('AgentSessionManager', () => {
     return new AgentSessionManager({
       getAgentPath: () => 'claude',
       resolveAgent: () => 'C:/bin/claude.exe',
+      askPermission: async () => ({ behavior: 'deny' as const }),
       createDriver: () => createFakeSdk({ steps: [] }) as unknown as AgentDriver
     })
   }
@@ -324,14 +326,22 @@ describe('AgentSession: разрешения', () => {
     expect(driver.executedTools).not.toContain('Bash')
   })
 
-  test('без обработчика разрешений инструмент не блокируется молча', async () => {
-    const { session, driver } = makeSession({
-      steps: [{ kind: 'askPermission', name: 'Read', input: { file_path: 'a.ts' } }]
-    })
+  test('упавший обработчик разрешений отклоняет, а не разрешает', async () => {
+    const { session, driver } = makeSession(
+      { steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }] },
+      {
+        askPermission: async () => {
+          throw new Error('окно закрылось')
+        }
+      }
+    )
+    const rec = watch(session)
 
     await session.start()
     await settle(session)
 
-    expect(driver.executedTools).toContain('Read')
+    // A gate that failed is not a gate that said yes.
+    expect(driver.executedTools).not.toContain('Bash')
+    expect(rec.items.filter((i) => i.kind === 'permission')[0]).toMatchObject({ state: 'denied' })
   })
 })

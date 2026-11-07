@@ -2,6 +2,12 @@ import { useEffect, useState } from 'react'
 import type { AppSettings, HotkeyRegistration } from '../../shared/types'
 import './SettingsScreen.css'
 
+interface PermissionRuleView {
+  id: string
+  toolName: string
+  target?: string
+}
+
 interface Props {
   settings: AppSettings
   version: string
@@ -11,10 +17,15 @@ interface Props {
 
 export function SettingsScreen({ settings, version, onPatch, onClose }: Props): JSX.Element {
   const [hotkeyStatus, setHotkeyStatus] = useState<HotkeyRegistration | null>(null)
+  const [rules, setRules] = useState<PermissionRuleView[]>([])
 
   useEffect(() => {
     void window.qclod.hotkeyStatus().then(setHotkeyStatus)
   }, [settings.globalHotkey])
+
+  useEffect(() => {
+    void window.qclod.permissionRules().then(setRules)
+  }, [])
 
   return (
     <div className="settings-backdrop" data-testid="settings" onMouseDown={onClose}>
@@ -119,6 +130,39 @@ export function SettingsScreen({ settings, version, onPatch, onClose }: Props): 
                 onBlur={(e) => onPatch({ defaults: { extraFlags: e.target.value } })}
               />
             </Field>
+          </Group>
+
+          <Group title="Разрешено без вопросов">
+            {rules.length === 0 ? (
+              <p className="settings-note" data-testid="rules-empty">
+                Пока ничего. Кнопка «Разрешить всё такое» в диалоге добавит сюда правило.
+              </p>
+            ) : (
+              <ul className="settings-rules" data-testid="permission-rules">
+                {rules.map((rule) => (
+                  <li key={rule.id} data-testid="permission-rule">
+                    <span className="settings-rule-tool">{rule.toolName}</span>
+                    {rule.target && <span className="settings-rule-target">{rule.target}</span>}
+                    <button
+                      type="button"
+                      data-testid="permission-rule-delete"
+                      aria-label={`Забыть правило для ${rule.toolName}`}
+                      onClick={() => {
+                        void window.qclod
+                          .deletePermissionRule(rule.id)
+                          .then(() => window.qclod.permissionRules())
+                          .then(setRules)
+                      }}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="settings-note">
+              Правила живут в хранилище Qclod. В папке вашего проекта ничего не меняется.
+            </p>
           </Group>
 
           <p className="settings-version">Qclod {version} · обновления ставятся вручную</p>

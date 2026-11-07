@@ -15,6 +15,8 @@ export const EMPTY_PANEL: PanelData = Object.freeze({
   cost: null,
   limits: { fiveHour: null, sevenDay: null },
   model: null,
+  models: [],
+  effort: null,
   permissionMode: 'default',
   mcp: [],
   projectSettings: null

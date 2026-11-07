@@ -15,6 +15,7 @@
  * @typedef {{kind:'textStream', pieces:string[], pauseMs?:number}} TextStreamStep
  * @typedef {{kind:'thinking', text?:string, ms?:number}} ThinkingStep
  * @typedef {{kind:'tool', name:string, input?:object, result?:string}} ToolStep
+ * @typedef {{kind:'toolRunning', name:string, input?:object}} ToolRunningStep
  * @typedef {{kind:'toolError', name:string, input?:object, error:string}} ToolErrorStep
  * @typedef {{kind:'askPermission', name:string, input?:object}} AskPermissionStep
  * @typedef {{kind:'askQuestion', question:string, header?:string, options:string[]}} AskQuestionStep
@@ -65,6 +66,8 @@ export function createFakeSdk(script = {}) {
     permissionRequests: [],
     executedTools: [],
     permissionMode: script.init?.permissionMode ?? 'default',
+    model: script.init?.model ?? 'claude-opus-5',
+    effort: null,
     interrupted: false,
     disposed: false,
     contextPercent: script.contextPercent ?? 21
@@ -146,6 +149,14 @@ export function createFakeSdk(script = {}) {
           }
           break
         }
+
+        // A tool call with no result: what the stream looks like when the
+        // agent dies between asking for a tool and getting its answer.
+        case 'toolRunning':
+          yield assistant([
+            { type: 'tool_use', id: randomUUID(), name: step.name, input: step.input ?? {} }
+          ])
+          break
 
         case 'toolError': {
           const id = randomUUID()
@@ -346,6 +357,30 @@ export function createFakeSdk(script = {}) {
     async supportedCommands() {
       return script.init?.commands ?? DEFAULT_COMMANDS
     },
+    async supportedModels() {
+      return (
+        script.init?.models ?? [
+          {
+            value: 'claude-opus-5',
+            displayName: 'Opus 5',
+            description: 'самая способная',
+            supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max']
+          },
+          {
+            value: 'claude-sonnet-5',
+            displayName: 'Sonnet 5',
+            description: 'быстрее и дешевле',
+            supportedEffortLevels: ['low', 'medium', 'high']
+          }
+        ]
+      )
+    },
+    async setModel(model) {
+      state.model = model
+    },
+    async setEffort(level) {
+      state.effort = level
+    },
     async mcpServerStatus() {
       return script.init?.mcpServers ?? []
     },
@@ -381,6 +416,12 @@ export function createFakeSdk(script = {}) {
     },
     get permissionMode() {
       return state.permissionMode
+    },
+    get model() {
+      return state.model
+    },
+    get effort() {
+      return state.effort
     },
     get interrupted() {
       return state.interrupted

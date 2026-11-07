@@ -28,18 +28,23 @@ interface Harness {
   changed: TabState[][]
   ribbon: RibbonEvent[]
   resumedWith: Array<string | undefined>
+  /** Every driver the manager actually built, in order. */
+  created: Array<{ resume: string | undefined; driver: ReturnType<typeof createFakeSdk> }>
 }
 
 function makeController(
   options: {
     script?: Parameters<typeof createFakeSdk>[0]
     resumeFails?: boolean
+    resumeFailsSync?: boolean
+    defaults?: { model?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan' }
     historyMessages?: unknown[]
   } = {}
 ): Harness {
   const changed: TabState[][] = []
   const ribbon: RibbonEvent[] = []
   const resumedWith: Array<string | undefined> = []
+  const created: Harness['created'] = []
 
   const manager = new AgentSessionManager({
     getAgentPath: () => 'claude',
@@ -47,10 +52,20 @@ function makeController(
     askPermission: async () => ({ behavior: 'deny' as const }),
     createDriver: (driverOptions) => {
       resumedWith.push(driverOptions.resume)
-      if (options.resumeFails && driverOptions.resume) {
+      if (options.resumeFailsSync && driverOptions.resume) {
         throw new Error(`Сессия ${driverOptions.resume} не открывается`)
       }
-      return createFakeSdk(options.script ?? { steps: [] }) as unknown as AgentDriver
+      // The real driver only builds the query object here; the CLI is spawned
+      // and the resume attempted while the stream is read. A failure therefore
+      // surfaces asynchronously, which is the shape that must be handled.
+      if (options.resumeFails && driverOptions.resume) {
+        return createFakeSdk({
+          steps: [{ kind: 'crash', message: `Сессия ${driverOptions.resume} не открывается` }]
+        }) as unknown as AgentDriver
+      }
+      const driver = createFakeSdk(options.script ?? { steps: [] })
+      created.push({ resume: driverOptions.resume, driver })
+      return driver as unknown as AgentDriver
     }
   })
 
@@ -58,6 +73,7 @@ function makeController(
     manager,
     storeDir: store,
     defaultCwd: projectA,
+    getDefaults: () => options.defaults ?? {},
     history: {
       list: async () => [],
       messages: async () => options.historyMessages ?? []
@@ -69,7 +85,7 @@ function makeController(
     onCommands: () => undefined
   })
 
-  return { controller, changed, ribbon, resumedWith }
+  return { controller, changed, ribbon, resumedWith, created }
 }
 
 function writeStoredTabs(tabs: unknown[]): void {
@@ -181,8 +197,8 @@ describe('TabController', () => {
     expect(resumedWith).toContain('вчерашняя-сессия')
   })
 
-  test('сессию возобновить не удалось — чистая вкладка и строка в ленте', async () => {
-    const { controller } = makeController({ resumeFails: true })
+  test('сессию возобновить не удалось синхронно — чистая вкладка и строка в ленте', async () => {
+    const { controller } = makeController({ resumeFailsSync: true })
     writeStoredTabs([
       { id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая-сессия' }
     ])
@@ -201,6 +217,31 @@ describe('TabController', () => {
     expect(controller.sessionIdOf('a')).toBeTruthy()
   })
 
+  test('сессию возобновить не удалось на лету — чистая вкладка и строка в ленте', async () => {
+    // The shape every real failure takes: the CLI starts, then rejects the
+    // transcript. Checking the status right after start() sees «starting».
+    const { controller } = makeController({ resumeFails: true })
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая-сессия' }
+    ])
+
+    await controller.restore()
+    await controller.whenSettled()
+
+    const tab = controller.list()[0]!
+    expect(tab.status).not.toBe('error')
+
+    const notices = controller.itemsOf('a').filter((i) => i.kind === 'notice')
+    expect((notices[0] as { text: string } | undefined)?.text).toContain('не открывается')
+    expect(controller.sessionIdOf('a')).toBeTruthy()
+
+    // And the dead id is forgotten, or every later launch retries it.
+    const stored = JSON.parse(
+      require('node:fs').readFileSync(join(store, TABS_FILE), 'utf8')
+    ) as Array<Record<string, unknown>>
+    expect(stored[0]!['lastSessionId']).not.toBe('пропавшая-сессия')
+  })
+
   test('вкладка с исчезнувшей папкой помечается и не поднимает сессию', async () => {
     const gone = join(store, 'исчезнувшая')
     mkdirSync(gone)
@@ -214,6 +255,15 @@ describe('TabController', () => {
     const tab = controller.list()[0]!
     expect(tab.missingCwd).toBe(true)
     expect(tab.status).toBe('stopped')
+  })
+
+  test('новая вкладка начинается с настроек по умолчанию', async () => {
+    // Otherwise «Модель по умолчанию» in settings is a field that does nothing.
+    const { controller } = makeController({ defaults: { model: 'claude-haiku-4-5' } })
+    await controller.restore()
+    await controller.whenSettled()
+
+    expect(controller.list()[0]!.overrides.model).toBe('claude-haiku-4-5')
   })
 
   test('закрытие последней вкладки открывает новую', async () => {
@@ -238,6 +288,25 @@ describe('TabController', () => {
 
     expect(controller.list().map((t) => t.id)).toEqual([second])
     expect(controller.sessionIdOf(second)).toBeTruthy()
+  })
+
+  test('открытие из истории поднимает ровно одну сессию', async () => {
+    // Creating the tab and then closing and recreating its session leaves the
+    // first one running: an orphan agent process whose own init overwrites the
+    // tab's stored session id with a throwaway one.
+    const { controller, created } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    const before = created.length
+
+    controller.openHistory(projectB, 'вчерашняя-сессия', 'Вчера')
+    await controller.whenSettled()
+
+    expect(created.length - before).toBe(1)
+
+    const tab = controller.list().at(-1)!
+    expect(tab.cwd).toBe(projectB)
+    expect(created.at(-1)!.resume).toBe('вчерашняя-сессия')
   })
 
   test('restart поднимает новую сессию вместо прежней', async () => {

@@ -5,6 +5,7 @@ export type FakeStep =
   | { kind: 'textStream'; pieces: string[]; pauseMs?: number }
   | { kind: 'thinking'; text?: string; ms?: number }
   | { kind: 'tool'; name: string; input?: object; result?: string }
+  | { kind: 'toolRunning'; name: string; input?: object }
   | { kind: 'toolError'; name: string; input?: object; error: string }
   | { kind: 'askPermission'; name: string; input?: object }
   | { kind: 'askQuestion'; question: string; header?: string; options: string[] }
@@ -41,6 +42,12 @@ export interface FakeScript {
     permissionMode?: string
     mcpServers?: Array<{ name: string; status: string }>
     slashCommands?: string[]
+    models?: Array<{
+      value: string
+      displayName: string
+      description: string
+      supportedEffortLevels?: string[]
+    }>
     commands?: Array<{
       name: string
       description: string
@@ -58,6 +65,16 @@ export interface FakeDriver {
   supportedCommands(): Promise<
     Array<{ name: string; description: string; argumentHint: string; builtin?: boolean }>
   >
+  supportedModels(): Promise<
+    Array<{
+      value: string
+      displayName: string
+      description: string
+      supportedEffortLevels?: string[]
+    }>
+  >
+  setModel(model: string): Promise<void>
+  setEffort(level: string): Promise<void>
   mcpServerStatus(): Promise<Array<{ name: string; status: string }>>
   getContextUsage(): Promise<{
     totalTokens: number
@@ -71,6 +88,8 @@ export interface FakeDriver {
   readonly permissionRequests: Array<{ name: string; input: object }>
   readonly executedTools: string[]
   readonly permissionMode: string
+  readonly model: string
+  readonly effort: string | null
   readonly interrupted: boolean
   readonly disposed: boolean
 }

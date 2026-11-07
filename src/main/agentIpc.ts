@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { CHANNELS } from '../shared/channels'
-import { PERMISSION_MODES } from '../shared/types'
-import type { LaunchOverrides, TabId } from '../shared/types'
+import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
+import type { EffortLevel, LaunchOverrides, TabId } from '../shared/types'
 import { buildFileIndex } from './files/fileIndex'
 import type { TabController } from './tabs/TabController'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
@@ -86,6 +86,19 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     // place every path to it passes through — this channel, a tab's stored
     // overrides, and a settings default alike.
     await manager.get(id)?.setPermissionMode(mode)
+  })
+
+  ipcMain.handle(CHANNELS.agentModel, async (_e, id: unknown, model: unknown) => {
+    if (!isString(id) || !isString(model) || model === '') return
+    await manager.get(id)?.setModel(model)
+  })
+
+  // The levels are an enum, not free text: an unknown one would be refused
+  // deep inside the SDK, far from here.
+  ipcMain.handle(CHANNELS.agentEffort, async (_e, id: unknown, level: unknown) => {
+    if (!isString(id) || !isString(level)) return
+    if (!(EFFORT_LEVELS as readonly string[]).includes(level)) return
+    await manager.get(id)?.setEffort(level as EffortLevel)
   })
 
   ipcMain.handle(CHANNELS.agentCommands, async (_e, id: unknown) => {

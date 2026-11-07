@@ -7,7 +7,7 @@ import { Composer } from '../components/Composer'
 import { CommandPalette } from '../components/CommandPalette'
 import { SidePanel } from '../components/SidePanel'
 import { HistoryScreen } from '../components/HistoryScreen'
-import { markUnavailable } from '../../shared/commandFilter'
+import { isLocalCommand, markUnavailable, needsArgument } from '../../shared/commandFilter'
 import { SettingsScreen } from '../components/SettingsScreen'
 import './App.css'
 
@@ -76,6 +76,22 @@ export function App(): JSX.Element {
     // Live MCP state is only worth asking for while someone is looking.
     if (next && activeTabId) void window.qclod.panel(activeTabId)
   }, [activeTabId, setSettings])
+
+  /** Opens the panel if needed and puts the cursor on the control. */
+  const revealPanelControl = useCallback(
+    async (testId: string): Promise<void> => {
+      if (!useAppStore.getState().settings?.panelOpen) {
+        const next = await window.qclod.setSettings({ panelOpen: true })
+        setSettings(next)
+      }
+      requestAnimationFrame(() => {
+        const control = document.querySelector<HTMLSelectElement>(`[data-testid="${testId}"]`)
+        control?.focus()
+        control?.scrollIntoView({ block: 'center' })
+      })
+    },
+    [setSettings]
+  )
 
   const openHistory = useCallback((): void => {
     if (!activeTabId) return
@@ -173,6 +189,7 @@ export function App(): JSX.Element {
         onConfigure={() => setSettingsOpen(true)}
         hotkey={hotkey}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenHistory={openHistory}
       />
       <div className="app-body">
         <div className="app-main">
@@ -198,6 +215,7 @@ export function App(): JSX.Element {
           }}
           onInterrupt={() => void window.qclod.interrupt(activeTabId)}
           onCycleMode={cycleMode}
+          onRestart={() => void window.qclod.restartTab(activeTabId)}
           onOpenPalette={() => {
             setPaletteOpen(true)
             void window.qclod.commands(activeTabId).then(setCommands)
@@ -220,6 +238,12 @@ export function App(): JSX.Element {
             started={(tabs.find((t) => t.id === activeTabId)?.status ?? 'stopped') !== 'stopped'}
             onSetMode={(mode) => {
               if (activeTabId) void window.qclod.setPermissionMode(activeTabId, mode)
+            }}
+            onSetModel={(model) => {
+              if (activeTabId) void window.qclod.setModel(activeTabId, model)
+            }}
+            onSetEffort={(level) => {
+              if (activeTabId) void window.qclod.setEffort(activeTabId, level)
             }}
             onClose={togglePanel}
           />
@@ -246,10 +270,29 @@ export function App(): JSX.Element {
           }}
           onPick={(command) => {
             setPaletteOpen(false)
-            setFocusToken((n) => n + 1)
             setRecentCommands((names) =>
               [command.name, ...names.filter((n) => n !== command.name)].slice(0, 6)
             )
+
+            // Some commands are ours to answer. /resume opens an interactive
+            // picker the terminal has and a headless session does not; /model
+            // and /effort need a value, and the panel already knows the real
+            // list to choose from.
+            if (isLocalCommand(command.name)) {
+              if (command.name === 'resume') openHistory()
+              else void revealPanelControl(command.name === 'model' ? 'panel-model' : 'panel-effort')
+              return
+            }
+
+            // A command that needs an argument is put in the input rather than
+            // sent half-finished.
+            if (needsArgument(command)) {
+              setDraft(activeTabId, `/${command.name} `)
+              setFocusToken((n) => n + 1)
+              return
+            }
+
+            setFocusToken((n) => n + 1)
             void window.qclod.send(activeTabId, {
               text: `/${command.name}`,
               attachments: []

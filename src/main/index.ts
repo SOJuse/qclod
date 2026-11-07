@@ -154,6 +154,8 @@ app.whenReady().then(async () => {
     manager,
     storeDir: userData,
     defaultCwd: process.cwd() || homedir(),
+    // «По умолчанию» in settings means exactly that: a new tab starts with it.
+    getDefaults: () => ({ ...settings.defaults }),
     history: {
       list: (cwd) => history.list(cwd),
       messages: (sessionId) => history.messages(sessionId)

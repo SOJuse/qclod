@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
+  EffortLevel,
   McpServerInfo,
+  ModelOption,
   PanelData,
   PermissionMode,
   ProjectSettingsInfo
@@ -17,6 +19,8 @@ export const EMPTY_PANEL: PanelData = {
   cost: null,
   limits: { fiveHour: null, sevenDay: null },
   model: null,
+  models: [],
+  effort: null,
   permissionMode: 'default',
   mcp: [],
   projectSettings: null
@@ -75,6 +79,19 @@ export class PanelCollector {
           .map((c) => ({ name: c.name, tokens: c.tokens }))
       }
     })
+  }
+
+  setModels(models: ModelOption[]): Partial<PanelData> {
+    return this.patch({ models })
+  }
+
+  setModel(model: string): Partial<PanelData> {
+    return this.patch({ model })
+  }
+
+  /** Session-scoped, like the permission mode: ours to remember and show. */
+  setEffort(effort: EffortLevel): Partial<PanelData> {
+    return this.patch({ effort })
   }
 
   setProjectSettings(info: ProjectSettingsInfo | null): Partial<PanelData> {

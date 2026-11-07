@@ -25,6 +25,8 @@ export interface TabControllerDeps {
   storeDir: string
   /** Where a tab lands when nothing else is known. */
   defaultCwd: string
+  /** Launch options a new tab starts with, from settings. */
+  getDefaults: () => LaunchOverrides
   history: TabHistory
   onChanged: (tabs: TabState[]) => void
   onRibbon: (event: RibbonEvent) => void
@@ -101,12 +103,19 @@ export class TabController {
     return this.list()
   }
 
-  create(cwd: string, overrides: LaunchOverrides = {}, title?: string): TabState {
+  create(
+    cwd: string,
+    overrides: LaunchOverrides = this.deps.getDefaults(),
+    title?: string,
+    /** A conversation to continue, set before the session is ever started. */
+    lastSessionId?: string
+  ): TabState {
     const tab: TabState = {
       id: randomUUID(),
       cwd,
       title: title ?? basename(cwd) ?? cwd,
       overrides,
+      ...(lastSessionId ? { lastSessionId } : {}),
       status: 'stopped',
       badge: false,
       missingCwd: !isDirectory(cwd)
@@ -127,11 +136,11 @@ export class TabController {
    * conversation that could drift from the first.
    */
   openHistory(cwd: string, sessionId: string, title?: string): TabState {
-    const tab = this.create(cwd, {}, title)
-    const created = this.tabs.find((t) => t.id === tab.id)
-    if (created) created.lastSessionId = sessionId
-    void this.deps.manager.close(tab.id).then(() => this.ensureSession(tab.id))
-    return { ...tab, lastSessionId: sessionId }
+    // The pointer is set as the tab is made, so the one session it starts is
+    // already the right one. Creating a tab and then swapping its session
+    // leaves the first one running: an orphan agent whose own init overwrites
+    // the stored id with a throwaway.
+    return this.create(cwd, {}, title, sessionId)
   }
 
   async activate(id: TabId): Promise<void> {
@@ -210,6 +219,11 @@ export class TabController {
    */
   private async resume(id: TabId, session: AgentSession, resumeId: string): Promise<void> {
     await session.start(resumeId)
+    // start() returns as soon as the driver is built; the CLI is spawned and
+    // the transcript read while the stream runs, so a resume that will not
+    // open fails here, not above. Checking the status any earlier only ever
+    // sees «starting» and the recovery below never runs.
+    await session.whenIdle()
 
     if (session.status === 'error') {
       const reason = session.error ?? 'неизвестная причина'

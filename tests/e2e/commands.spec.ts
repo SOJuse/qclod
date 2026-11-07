@@ -121,3 +121,85 @@ test('Esc закрывает палитру и возвращает текст',
     await close(app, profile)
   }
 })
+
+test('/model открывает выбор модели в панели, а не уходит пустым', async () => {
+  const { app, profile } = await launch({
+    steps: [],
+    init: {
+      commands: [
+        { name: 'model', description: 'Сменить модель', argumentHint: '<model>', builtin: true }
+      ]
+    }
+  })
+  try {
+    const win = await app.firstWindow()
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.waitFor({ timeout: 15000 })
+
+    await input.click()
+    await input.press('/')
+    await win.locator('[data-testid="palette-item"]').first().click()
+
+    const picker = win.locator('[data-testid="panel-model"]')
+    await expect(picker).toBeFocused()
+    // Sending "/model" with no argument would have done nothing at all.
+    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
+
+    // The real list, from the session.
+    await expect(picker.locator('option')).toHaveCount(2)
+    await picker.selectOption('claude-sonnet-5')
+    await expect(picker).toHaveValue('claude-sonnet-5')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('усилие выбирается из уровней, которые поддерживает модель', async () => {
+  const { app, profile } = await launch({ steps: [] })
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+
+    const effort = win.locator('[data-testid="panel-effort"]')
+    await expect(effort).toBeVisible()
+    await effort.selectOption('high')
+    await expect(effort).toHaveValue('high')
+
+    // Sonnet offers three levels where Opus offers five.
+    await win.locator('[data-testid="panel-model"]').selectOption('claude-sonnet-5')
+    await expect(effort.locator('option')).toHaveCount(3)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('команда с параметром подставляется в поле, а не отправляется половиной', async () => {
+  const { app, profile } = await launch({
+    steps: [],
+    init: {
+      commands: [
+        { name: 'rename', description: 'Переименовать сессию', argumentHint: '<название>' }
+      ]
+    }
+  })
+  try {
+    const win = await app.firstWindow()
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.waitFor({ timeout: 15000 })
+
+    await input.click()
+    await input.press('/')
+    await win.locator('[data-testid="palette-item"]').first().click()
+
+    await expect(input).toHaveValue('/rename ')
+    await expect(input).toBeFocused()
+    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
+
+    // And finishing it sends the whole thing.
+    await input.type('переезд на SDK')
+    await input.press('Enter')
+    await expect(win.locator('[data-testid="ribbon-user"]')).toContainText('/rename переезд на SDK')
+  } finally {
+    await close(app, profile)
+  }
+})

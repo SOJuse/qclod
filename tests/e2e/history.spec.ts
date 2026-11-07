@@ -42,7 +42,15 @@ async function launch(history: unknown): Promise<{ app: ElectronApplication; pro
     env: {
       ...process.env,
       QCLOD_USER_DATA: profile,
-      QCLOD_FAKE_SDK_SCRIPT: JSON.stringify({ steps: [] }),
+      QCLOD_FAKE_SDK_SCRIPT: JSON.stringify({
+        steps: [],
+        init: {
+          commands: [
+            { name: 'resume', description: 'Resume a conversation', argumentHint: '', builtin: true },
+            { name: 'compact', description: 'Сжать контекст', argumentHint: '', builtin: true }
+          ]
+        }
+      }),
       QCLOD_FAKE_HISTORY: JSON.stringify(history)
     } as Record<string, string>
   })
@@ -131,6 +139,45 @@ test('открытие сессии поднимает её в новой вкл
     const ribbon = win.locator('[data-testid="ribbon"]')
     await expect(ribbon).toContainText('вставка файлов не работает', { timeout: 15000 })
     await expect(ribbon).toContainText('clipboardData.files')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('кнопка в заголовке открывает историю', async () => {
+  // A hotkey nobody told you about is not a feature.
+  const { app, profile } = await launch(HISTORY)
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+
+    await win.locator('[data-testid="open-history"]').click()
+
+    await expect(win.locator('[data-testid="history-screen"]')).toBeVisible()
+    await expect(win.locator('[data-testid="history-item"]')).toHaveCount(2)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('/resume из палитры открывает историю, а не уходит агенту', async () => {
+  const { app, profile } = await launch(HISTORY)
+  try {
+    const win = await app.firstWindow()
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.waitFor({ timeout: 15000 })
+
+    await input.click()
+    await input.press('/')
+    await win.locator('[data-testid="palette-query"]').fill('resume')
+
+    const item = win.locator('[data-testid="palette-item"]').first()
+    await expect(item).toContainText('Открыть прошлый разговор')
+    await item.click()
+
+    await expect(win.locator('[data-testid="history-screen"]')).toBeVisible()
+    // Forwarding it would have shown "/resume" in the ribbon and done nothing.
+    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
   } finally {
     await close(app, profile)
   }

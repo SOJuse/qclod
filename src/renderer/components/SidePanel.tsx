@@ -1,4 +1,12 @@
-import { PERMISSION_MODES, type LimitWindow, type McpServerInfo, type PanelData, type PermissionMode } from '../../shared/types'
+import {
+  EFFORT_LEVELS,
+  PERMISSION_MODES,
+  type EffortLevel,
+  type LimitWindow,
+  type McpServerInfo,
+  type PanelData,
+  type PermissionMode
+} from '../../shared/types'
 import './SidePanel.css'
 
 interface Props {
@@ -6,6 +14,8 @@ interface Props {
   started: boolean
   onClose: () => void
   onSetMode: (mode: PermissionMode) => void
+  onSetModel: (model: string) => void
+  onSetEffort: (level: EffortLevel) => void
 }
 
 const MCP_LABEL: Record<McpServerInfo['status'], string> = {
@@ -15,6 +25,14 @@ const MCP_LABEL: Record<McpServerInfo['status'], string> = {
   'needs-auth': 'требует входа',
   pending: 'ждёт',
   disabled: 'выключен'
+}
+
+const EFFORT_LABEL: Record<string, string> = {
+  low: 'низкое — быстро',
+  medium: 'среднее',
+  high: 'высокое',
+  xhigh: 'очень высокое',
+  max: 'максимум — долго'
 }
 
 const MODE_LABEL: Record<string, string> = {
@@ -48,7 +66,18 @@ function until(resetsAt: number): string {
  * between «nothing has happened» and «it is zero» matters to someone deciding
  * whether to keep going.
  */
-export function SidePanel({ data, started, onClose, onSetMode }: Props): JSX.Element {
+export function SidePanel({
+  data,
+  started,
+  onClose,
+  onSetMode,
+  onSetModel,
+  onSetEffort
+}: Props): JSX.Element {
+  // Effort is a property of the chosen model: Opus offers more levels than
+  // Sonnet, so the list follows the model rather than being fixed.
+  const chosen = data.models.find((m) => m.value === data.model)
+  const efforts = chosen?.supportedEffortLevels ?? EFFORT_LEVELS
   return (
     <aside className="panel" data-testid="side-panel">
       <header className="panel-head">
@@ -103,10 +132,46 @@ export function SidePanel({ data, started, onClose, onSetMode }: Props): JSX.Ele
       </Section>
 
       <Section title="Модель">
-        {data.model ? (
+        {data.models.length > 0 ? (
+          <select
+            className="panel-mode"
+            data-testid="panel-model"
+            value={data.model ?? ''}
+            onChange={(e) => onSetModel(e.target.value)}
+          >
+            {data.model && !data.models.some((m) => m.value === data.model) && (
+              <option value={data.model}>{data.model}</option>
+            )}
+            {data.models.map((model) => (
+              <option key={model.value} value={model.value} title={model.description}>
+                {model.displayName}
+              </option>
+            ))}
+          </select>
+        ) : data.model ? (
           <div className="panel-line" data-testid="panel-model">
             <span>{data.model}</span>
           </div>
+        ) : (
+          <Empty started={started} />
+        )}
+      </Section>
+
+      <Section title="Усилие">
+        {started ? (
+          <select
+            className="panel-mode"
+            data-testid="panel-effort"
+            value={data.effort ?? ''}
+            onChange={(e) => onSetEffort(e.target.value as EffortLevel)}
+          >
+            {data.effort === null && <option value="">как у модели</option>}
+            {efforts.map((level) => (
+              <option key={level} value={level}>
+                {EFFORT_LABEL[level] ?? level}
+              </option>
+            ))}
+          </select>
         ) : (
           <Empty started={started} />
         )}

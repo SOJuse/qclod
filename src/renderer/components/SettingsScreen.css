@@ -162,3 +162,59 @@
   background: rgba(110, 139, 255, 0.3);
   box-shadow: var(--glow-accent);
 }
+
+.settings-rules {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-rules li {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.settings-rules li:nth-child(odd) {
+  background: var(--surface-sunken);
+}
+
+.settings-rule-tool {
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.settings-rule-target {
+  flex: 1 1 auto;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-rules button {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 50%;
+}
+
+.settings-rules button:hover {
+  color: var(--danger);
+  background: var(--border);
+}
+
+.settings-note {
+  margin: 6px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}

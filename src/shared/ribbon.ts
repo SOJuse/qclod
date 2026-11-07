@@ -135,8 +135,10 @@ export class RibbonBuilder {
    * The user's own message, when it is not coming back from the SDK as an echo
    * — a replayed history entry arrives as a `user` message instead.
    */
-  addUser(text: string, attachments: Attachment[] = []): RibbonChange[] {
-    this.pendingEchoes.push(text)
+  addUser(text: string, attachments: Attachment[] = [], echoKey = text): RibbonChange[] {
+    // What is shown and what will be echoed are not always the same string:
+    // an attached file reaches the agent as an @-mention appended to the text.
+    this.pendingEchoes.push(echoKey)
     return [this.append({ kind: 'user', id: this.nextId(), text, attachments })]
   }
 
@@ -181,6 +183,29 @@ export class RibbonBuilder {
     const item = this.list.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)
     if (!item) return []
     return [this.update(item.id, { answer })]
+  }
+
+  /**
+   * Settles everything still shown as in progress.
+   *
+   * Called when the session ends without finishing: streaming text stops
+   * blinking and a running tool stops claiming to run.
+   */
+  closeOpen(): RibbonChange[] {
+    const changes = this.closeOpenBlocks()
+    for (const item of this.list) {
+      if (item.kind === 'tool' && item.state === 'running') {
+        item.state = 'done'
+        item.summary = 'не закончил'
+        changes.push(this.update(item.id, { state: 'done', summary: item.summary }))
+      }
+      if (item.kind === 'subagent' && item.state === 'running') {
+        item.state = 'done'
+        item.summary = 'не закончил'
+        changes.push(this.update(item.id, { state: 'done', summary: item.summary }))
+      }
+    }
+    return changes
   }
 
   apply(message: unknown): RibbonChange[] {

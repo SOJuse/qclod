@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'vitest'
-import { filterCommands, markUnavailable } from '../../src/shared/commandFilter'
+import {
+  filterCommands,
+  isLocalCommand,
+  markUnavailable
+} from '../../src/shared/commandFilter'
 import type { CommandInfo } from '../../src/shared/types'
 
 function cmd(name: string, extra: Partial<CommandInfo> = {}): CommandInfo {
@@ -78,5 +82,23 @@ describe('markUnavailable', () => {
   test('псевдонимы той же команды тоже помечаются', () => {
     const marked = markUnavailable([cmd('rc'), cmd('remote-control')])
     expect(marked.every((c) => c.unavailableReason)).toBe(true)
+  })
+})
+
+describe('команды, которые Qclod выполняет сам', () => {
+  test('/resume помечен как открывающий историю, а не отправляемый агенту', () => {
+    const marked = markUnavailable([cmd('resume', { description: 'Resume a conversation' })])
+
+    expect(isLocalCommand('resume')).toBe(true)
+    expect(marked[0]!.description).toBe('Открыть прошлый разговор')
+    // Not «unavailable»: it works, just not by forwarding it.
+    expect(marked[0]!.unavailableReason).toBeUndefined()
+  })
+
+  test('остальные команды уходят агенту как есть', () => {
+    expect(isLocalCommand('compact')).toBe(false)
+    expect(markUnavailable([cmd('compact', { description: 'Сжать контекст' })])[0]!.description).toBe(
+      'Сжать контекст'
+    )
   })
 })

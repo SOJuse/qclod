@@ -1,4 +1,11 @@
-import type { CommandInfo, McpServerInfo, PermissionAnswer, UserInput } from '../../shared/types'
+import type {
+  CommandInfo,
+  EffortLevel,
+  McpServerInfo,
+  ModelOption,
+  PermissionAnswer,
+  UserInput
+} from '../../shared/types'
 
 /**
  * Everything Qclod needs from an agent session, and nothing more.
@@ -18,6 +25,10 @@ export interface AgentDriver {
   supportedCommands(): Promise<CommandInfo[]>
   mcpServerStatus(): Promise<McpServerInfo[]>
   getContextUsage(): Promise<ContextUsage>
+  supportedModels(): Promise<ModelOption[]>
+  setModel(model: string): Promise<void>
+  /** Session-scoped: never written to the user's settings files. */
+  setEffort(level: EffortLevel): Promise<void>
   dispose(): Promise<void>
 }
 

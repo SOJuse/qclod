@@ -50,6 +50,12 @@ const api = {
   interrupt: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.agentInterrupt, id),
   setPermissionMode: (id: TabId, mode: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.agentPermissionMode, id, mode),
+  setModel: (id: TabId, model: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.agentModel, id, model),
+
+  setEffort: (id: TabId, level: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.agentEffort, id, level),
+
   commands: (id: TabId): Promise<CommandInfo[]> => ipcRenderer.invoke(CHANNELS.agentCommands, id),
   /** Everything already in this tab's ribbon — used when a tab is opened. */
   ribbon: (id: TabId): Promise<RibbonItem[]> => ipcRenderer.invoke(CHANNELS.agentRibbon, id),

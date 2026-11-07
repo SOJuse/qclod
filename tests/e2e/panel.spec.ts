@@ -50,7 +50,9 @@ test('панель показывает контекст, лимиты, моде
     await expect(panel.locator('[data-testid="panel-context"]')).toContainText('37%', {
       timeout: 15000
     })
-    await expect(panel.locator('[data-testid="panel-model"]')).toContainText('claude-opus-5')
+    // The picker shows what a person reads and carries the id as its value.
+    await expect(panel.locator('[data-testid="panel-model"]')).toHaveValue('claude-opus-5')
+    await expect(panel.locator('[data-testid="panel-model"]')).toContainText('Opus 5')
     await expect(panel.locator('[data-testid="panel-cost"]')).toContainText('$0.1234')
 
     // Both subscription windows — the thing the first spec draft said was

@@ -27,6 +27,7 @@ interface Props {
   onInterrupt: () => void
   onOpenPalette: () => void
   onCycleMode: () => void
+  onRestart: () => void
   onPickFiles: () => void
 }
 
@@ -53,6 +54,7 @@ export function Composer({
   onInterrupt,
   onOpenPalette,
   onCycleMode,
+  onRestart,
   onPickFiles
 }: Props): JSX.Element {
   const field = useRef<HTMLTextAreaElement | null>(null)
@@ -180,6 +182,7 @@ export function Composer({
 
       case 'submit':
         ev.preventDefault()
+        if (dead) return
         void submit()
         return
 
@@ -195,6 +198,9 @@ export function Composer({
   }
 
   const busy = status === 'busy' || status === 'waiting'
+  // A crashed session cannot carry a message: accepting one would show it in
+  // the ribbon, set the tab working, and deliver it nowhere (spec 6.10).
+  const dead = status === 'error'
 
   return (
     <div
@@ -208,6 +214,15 @@ export function Composer({
         )
       }}
     >
+      {dead && (
+        <div className="composer-dead" data-testid="composer-dead">
+          <span>Сессия прервалась</span>
+          <button type="button" data-testid="composer-restart" onClick={onRestart}>
+            Запустить заново
+          </button>
+        </div>
+      )}
+
       {attachments.length > 0 && (
         <div className="composer-chips" data-testid="composer-chips">
           {attachments.map((item, index) => (
@@ -246,7 +261,10 @@ export function Composer({
           className="composer-input"
           data-testid="composer-input"
           rows={1}
-          placeholder={busy ? 'Агент работает — Esc прерывает' : 'Что делаем?'}
+          disabled={dead}
+          placeholder={
+            dead ? 'Сессия прервалась — запустите заново' : busy ? 'Агент работает — Esc прерывает' : 'Что делаем?'
+          }
           value={draft}
           onChange={(ev) => {
             onDraftChange(ev.target.value)
@@ -270,6 +288,7 @@ export function Composer({
           className={`composer-send${busy ? ' is-busy' : ''}`}
           data-testid={busy ? 'composer-stop' : 'composer-send'}
           aria-label={busy ? 'Прервать' : 'Отправить'}
+          disabled={dead}
           onClick={() => (busy ? onInterrupt() : void submit())}
         >
           {busy ? '■' : '↑'}

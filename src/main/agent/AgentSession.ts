@@ -1,6 +1,8 @@
 import { RibbonBuilder } from '../../shared/ribbon'
 import type {
   CommandInfo,
+  EffortLevel,
+  ModelOption,
   LaunchOverrides,
   McpServerInfo,
   PanelData,
@@ -15,6 +17,7 @@ import type {
 } from '../../shared/types'
 import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
 import { parseExtraFlags } from './launchFlags'
+import { composeText } from './userMessage'
 import { PanelCollector, readProjectSettings } from './panelData'
 import { displayTarget } from './permissionStore'
 import { resolveExecutable } from './resolveExecutable'
@@ -39,6 +42,17 @@ export interface AgentSessionOptions {
    * `bypassPermissions` outright rather than assuming consent.
    */
   confirmBypass?: () => Promise<boolean>
+}
+
+/**
+ * Turns what the SDK said into something worth reading. «Claude Code process
+ * exited with code 1» tells the user nothing they can act on (spec 6.10).
+ */
+function explain(message: string): string {
+  if (/exited with code|process exited|stream closed|ECONNRESET/i.test(message)) {
+    return `Агент перестал отвечать и сессия закрылась. Подробности: ${message}`
+  }
+  return message
 }
 
 type ChangeListener = (changes: RibbonChange[]) => void
@@ -71,6 +85,7 @@ export class AgentSession {
   private mode: string
   private todoItems: TodoItem[] = []
   private readonly idleWaiters: Array<() => void> = []
+  private disposed = false
   /** Questions the agent asked through canUseTool, waiting on the user. */
   private readonly pendingQuestions = new Map<string, (answer: PermissionAnswer) => void>()
   private readonly pendingPlans = new Map<string, (answer: PermissionAnswer) => void>()
@@ -206,7 +221,7 @@ export class AgentSession {
   }
 
   async start(resumeId?: string): Promise<void> {
-    if (this.driver) return
+    if (this.driver || this.disposed) return
     this.setStatus('starting')
     this.failure = undefined
 
@@ -257,12 +272,21 @@ export class AgentSession {
       canUseTool: (toolName, input, opts) => this.onToolPermission(toolName, input, opts)
     }
 
+    let driver: AgentDriver
     try {
-      this.driver = await this.options.createDriver(driverOptions)
+      driver = await this.options.createDriver(driverOptions)
     } catch (err) {
       this.fail(err)
       return
     }
+
+    // Disposed while we were starting: whoever disposed it is entitled to
+    // believe it is gone, so the driver is closed rather than adopted.
+    if (this.disposed) {
+      await driver.dispose().catch(() => undefined)
+      return
+    }
+    this.driver = driver
 
     this.pump = this.readMessages(this.driver)
     this.emitPanel(this.collector.setProjectSettings(readProjectSettings(this.options.cwd)))
@@ -270,9 +294,14 @@ export class AgentSession {
 
   send(input: UserInput): void {
     if (!this.driver) return
-    this.emit(this.builder.addUser(input.text, input.attachments))
+
+    // The text is composed once, here. The ribbon shows what the user typed
+    // with their files as chips; the agent — and therefore the echo that comes
+    // back — gets the composed version, which is what the dedup must match.
+    const text = composeText(input)
+    this.emit(this.builder.addUser(input.text, input.attachments, text))
     this.setStatus('busy')
-    this.driver.send(input)
+    this.driver.send({ ...input, text })
   }
 
   async interrupt(): Promise<void> {
@@ -282,7 +311,14 @@ export class AgentSession {
   }
 
   async setPermissionMode(mode: string): Promise<void> {
-    if (!(await this.allowMode(mode))) return
+    if (!(await this.allowMode(mode))) {
+      // The panel's select is controlled on what the panel knows, so a refusal
+      // must still be reported — otherwise it keeps showing the mode the user
+      // picked while the session is in another one, and the panel's whole
+      // premise is that it shows the truth (spec 6.5).
+      this.emitPanel({ permissionMode: this.collector.data.permissionMode })
+      return
+    }
     this.mode = mode
     this.emitPanel(this.collector.setPermissionMode(mode))
     if (!this.driver) return
@@ -292,6 +328,32 @@ export class AgentSession {
   async commands(): Promise<ReturnType<AgentDriver['supportedCommands']>> {
     if (!this.driver) return []
     return this.driver.supportedCommands().catch(() => [])
+  }
+
+  /**
+   * The models this session can switch to, asked for once it is up.
+   *
+   * Applied through the SDK rather than by sending «/model …» as text: the
+   * command needs an argument the user has to pick from somewhere, and the
+   * somewhere may as well be the real list.
+   */
+  async setModel(model: string): Promise<void> {
+    if (!this.driver) return
+    await this.driver.setModel(model).catch(() => undefined)
+    this.emitPanel(this.collector.setModel(model))
+  }
+
+  async setEffort(level: EffortLevel): Promise<void> {
+    if (!this.driver) return
+    await this.driver.setEffort(level).catch(() => undefined)
+    this.emitPanel(this.collector.setEffort(level))
+  }
+
+  private async refreshModels(): Promise<void> {
+    const driver = this.driver
+    if (!driver) return
+    const models = await driver.supportedModels().catch((): ModelOption[] => [])
+    if (models.length > 0) this.emitPanel(this.collector.setModels(models))
   }
 
   /** Live MCP state, asked for only while the panel is open (spec 6.5). */
@@ -307,6 +369,7 @@ export class AgentSession {
   }
 
   async dispose(): Promise<void> {
+    this.disposed = true
     // A question nobody can answer any more must not hold the agent open.
     for (const [, resolve] of this.pendingQuestions) resolve({ behavior: 'deny' })
     this.pendingQuestions.clear()
@@ -375,6 +438,7 @@ export class AgentSession {
   private onInit(m: Record<string, unknown>): void {
     this.session = typeof m['session_id'] === 'string' ? m['session_id'] : this.session
     this.setStatus('idle')
+    void this.refreshModels()
   }
 
   private onCommandsChanged(m: Record<string, unknown>): void {
@@ -488,10 +552,21 @@ export class AgentSession {
 
   // --------------------------------------------------------------- plumbing
 
+  /**
+   * The session is over and could not finish.
+   *
+   * The driver is dropped, so nothing can be sent into a dead session — a
+   * message accepted there would show in the ribbon, set the tab working, and
+   * never arrive anywhere. Rows that were mid-flight stop pretending to still
+   * be happening: a blinking caret and a card reading «работает…» describe an
+   * agent that no longer exists.
+   */
   private fail(err: unknown): void {
     const text = err instanceof Error ? err.message : String(err)
+    this.driver = null
     this.failure = text
-    this.emit(this.builder.notice(text, 'error'))
+    this.emit(this.builder.closeOpen())
+    this.emit(this.builder.notice(explain(text), 'error'))
     this.setStatus('error')
   }
 

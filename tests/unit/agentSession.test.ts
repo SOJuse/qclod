@@ -184,13 +184,20 @@ describe('AgentSession', () => {
   })
 
   test('исполняемый файл ищется на каждом старте, а не один раз', async () => {
+    // The setting can change without restarting the app, so the path is
+    // resolved when a session starts — never pinned once at launch. A restart
+    // is a new session, which is how the manager does it.
     const resolveAgent = vi.fn(() => 'C:/bin/claude.exe')
-    const { session } = makeSession({ steps: [] }, { resolveAgent })
+    const manager = new AgentSessionManager({
+      getAgentPath: () => 'claude',
+      resolveAgent,
+      askPermission: async () => ({ behavior: 'deny' as const }),
+      createDriver: () => createFakeSdk({ steps: [] }) as unknown as AgentDriver
+    })
 
-    await session.start()
-    await settle(session)
-    await session.dispose()
-    await session.start()
+    await manager.create('t1', 'C:/проект', {}).start()
+    await manager.close('t1')
+    await manager.create('t1', 'C:/проект', {}).start()
 
     expect(resolveAgent).toHaveBeenCalledTimes(2)
   })
@@ -484,5 +491,122 @@ describe('AgentSession: дополнительные флаги', () => {
     expect(seen!.extraArgs).toEqual({ verbose: null })
     const notice = rec.items.find((i) => i.kind === 'notice') as { text: string } | undefined
     expect(notice?.text).toContain('--dangerously-skip-permissions')
+  })
+})
+
+describe('AgentSession: после падения агента', () => {
+  test('сообщение в мёртвую сессию не принимается молча', async () => {
+    const { session, driver } = makeSession({
+      steps: [{ kind: 'text', text: 'успел сказать' }, { kind: 'crash', message: 'агент умер' }]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+    expect(rec.statuses.at(-1)).toBe('error')
+
+    session.send({ text: 'а теперь продолжи', attachments: [] })
+
+    // Nothing is accepted into a session that cannot carry it: no user bubble
+    // that will never be answered, no "busy" that never ends.
+    expect(driver.sent).toHaveLength(0)
+    expect(rec.items.filter((i) => i.kind === 'user')).toHaveLength(0)
+    expect(rec.statuses.at(-1)).toBe('error')
+  })
+
+  test('незавершённые элементы не продолжают притворяться живыми', async () => {
+    const { session } = makeSession({
+      steps: [
+        { kind: 'toolRunning', name: 'Bash', input: { command: 'npm test' } },
+        { kind: 'crash', message: 'агент умер' }
+      ]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+
+    const tools = rec.items.filter((i) => i.kind === 'tool') as Array<{
+      state: string
+      summary: string
+    }>
+    expect(tools).toHaveLength(1)
+    expect(tools[0]!.state).toBe('done')
+    expect(tools[0]!.summary).toBe('не закончил')
+  })
+
+  test('перезапуск после падения поднимает рабочую сессию', async () => {
+    let turn = 0
+    const manager = new AgentSessionManager({
+      getAgentPath: () => 'claude',
+      resolveAgent: () => 'C:/bin/claude.exe',
+      askPermission: async () => ({ behavior: 'deny' as const }),
+      createDriver: () =>
+        createFakeSdk(
+          turn++ === 0
+            ? { steps: [{ kind: 'crash', message: 'агент умер' }] }
+            : { steps: [{ kind: 'text', text: 'снова на связи' }] }
+        ) as unknown as AgentDriver
+    })
+
+    const crashed = manager.create('t1', 'C:/проект', {})
+    await crashed.start()
+    await crashed.whenIdle()
+    expect(crashed.status).toBe('error')
+
+    // What the retry button does: close the dead one, start a fresh session.
+    await manager.close('t1')
+    const fresh = manager.create('t1', 'C:/проект', {})
+    await fresh.start()
+    await fresh.whenIdle()
+
+    expect(fresh.status).toBe('idle')
+    expect(texts(fresh.items)).toContain('снова на связи')
+  })
+})
+
+describe('AgentSession: сообщение с вложением', () => {
+  test('файл доходит до агента @-упоминанием, а в ленте остаётся чистый текст', async () => {
+    const { session, driver } = makeSession({ steps: [], nextTurn: [] })
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+
+    session.send({
+      text: 'посмотри этот файл',
+      attachments: [{ kind: 'file', path: 'C:/Мои проекты/файл 1.ts' }]
+    })
+    await settle(session)
+
+    // What the agent got: the text plus a quoted mention, one path, not pieces.
+    expect(driver.sent[0]!.text).toBe('посмотри этот файл\n@"C:/Мои проекты/файл 1.ts"')
+
+    // What the user sees: what they typed, with the file as a chip.
+    const users = rec.items.filter((i) => i.kind === 'user') as Array<{
+      text: string
+      attachments: unknown[]
+    }>
+    expect(users).toHaveLength(1)
+    expect(users[0]!.text).toBe('посмотри этот файл')
+    expect(users[0]!.attachments).toHaveLength(1)
+  })
+
+  test('эхо составленного сообщения не показывается вторым разом', async () => {
+    const { session } = makeSession({ steps: [], nextTurn: [] })
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+
+    session.send({
+      text: 'глянь',
+      attachments: [{ kind: 'file', path: 'C:/проект/auth.ts' }]
+    })
+    await settle(session)
+
+    // The CLI echoes what it received — the composed text. Without a shared
+    // composition the echo never matched and landed as a second bubble.
+    expect(rec.items.filter((i) => i.kind === 'user')).toHaveLength(1)
   })
 })

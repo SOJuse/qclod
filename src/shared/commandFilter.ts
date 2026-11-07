@@ -13,10 +13,38 @@ const UNAVAILABLE: Record<string, string> = {
   rc: 'Remote Control работает только в терминале, не в Qclod'
 }
 
+/**
+ * Commands Qclod answers itself instead of forwarding.
+ *
+ * `/resume` in the terminal opens an interactive picker that does not exist in
+ * a headless session — forwarding it would do nothing at all. Qclod has the
+ * same thing as a screen, so the command opens that.
+ */
+export const LOCAL_COMMANDS: Record<string, string> = {
+  resume: 'Открыть прошлый разговор',
+  model: 'Выбрать модель в панели',
+  effort: 'Выбрать усилие в панели'
+}
+
+/**
+ * A command that needs an argument cannot simply be sent: «/model» on its own
+ * does nothing useful. Either Qclod answers it itself (above), or the command
+ * is put into the input for the user to finish.
+ */
+export function needsArgument(command: CommandInfo): boolean {
+  return command.argumentHint.trim() !== '' && !isLocalCommand(command.name)
+}
+
+export function isLocalCommand(name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(LOCAL_COMMANDS, name)
+}
+
 export function markUnavailable(commands: CommandInfo[]): CommandInfo[] {
   return commands.map((command) => {
     const reason = UNAVAILABLE[command.name]
-    return reason ? { ...command, unavailableReason: reason } : command
+    if (reason) return { ...command, unavailableReason: reason }
+    const local = LOCAL_COMMANDS[command.name]
+    return local ? { ...command, description: local } : command
   })
 }
 

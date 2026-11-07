@@ -1,6 +1,12 @@
 import type { query as queryFn } from '@anthropic-ai/claude-agent-sdk'
 import { importEsm } from '../esm'
-import type { CommandInfo, McpServerInfo, UserInput } from '../../shared/types'
+import type {
+  CommandInfo,
+  EffortLevel,
+  McpServerInfo,
+  ModelOption,
+  UserInput
+} from '../../shared/types'
 import type { AgentDriver, ContextUsage, DriverOptions } from './driver'
 
 /** `@путь` with quotes when it contains spaces — the convention the probe confirmed. */
@@ -151,6 +157,29 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
         percentage: usage.percentage,
         categories: usage.categories.map((c) => ({ name: c.name, tokens: c.tokens, kind: c.kind }))
       }
+    },
+
+    async supportedModels(): Promise<ModelOption[]> {
+      const models = await session.supportedModels()
+      return models.map((m) => ({
+        value: m.value,
+        displayName: m.displayName,
+        description: m.description,
+        ...(m.supportedEffortLevels
+          ? { supportedEffortLevels: m.supportedEffortLevels as ModelOption['supportedEffortLevels'] }
+          : {})
+      }))
+    },
+
+    async setModel(model: string): Promise<void> {
+      await session.setModel(model)
+    },
+
+    async setEffort(level: EffortLevel): Promise<void> {
+      // applyFlagSettings is session-scoped. The sibling that writes a settings
+      // FILE is deliberately not used: the user's settings are never modified
+      // (constraint 5).
+      await session.applyFlagSettings({ effortLevel: level })
     },
 
     async dispose(): Promise<void> {

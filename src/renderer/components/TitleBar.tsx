@@ -11,6 +11,7 @@ interface Props {
   onConfigure: (id: TabId) => void
   hotkey: HotkeyRegistration | null
   onOpenSettings: () => void
+  onOpenHistory: () => void
 }
 
 export function TitleBar({
@@ -21,7 +22,8 @@ export function TitleBar({
   onCreate,
   onConfigure,
   hotkey,
-  onOpenSettings
+  onOpenSettings,
+  onOpenHistory
 }: Props): JSX.Element {
   return (
     <header className="title-bar" data-testid="title-bar">
@@ -47,6 +49,16 @@ export function TitleBar({
         </button>
       )}
       <div className="window-controls">
+        <button
+          type="button"
+          className="window-button"
+          data-testid="open-history"
+          aria-label="Прошлые разговоры"
+          title="Прошлые разговоры (Ctrl+H)"
+          onClick={onOpenHistory}
+        >
+          ⟲
+        </button>
         <button
           type="button"
           className="window-button"

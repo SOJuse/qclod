@@ -142,11 +142,25 @@ export interface ProjectSettingsInfo {
   mcpServers: string[]
 }
 
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+export type EffortLevel = (typeof EFFORT_LEVELS)[number]
+
+/** A model the session offers, as `supportedModels()` reports it. */
+export interface ModelOption {
+  value: string
+  displayName: string
+  description: string
+  supportedEffortLevels?: EffortLevel[]
+}
+
 export interface PanelData {
   context: ContextInfo | null
   cost: CostInfo | null
   limits: { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null }
   model: string | null
+  /** What the user may switch to, asked for once per session. */
+  models: ModelOption[]
+  effort: EffortLevel | null
   permissionMode: PermissionMode
   mcp: McpServerInfo[]
   projectSettings: ProjectSettingsInfo | null

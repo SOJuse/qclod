@@ -14,6 +14,8 @@ interface Props {
   started: boolean
   onClose: () => void
   onSetMode: (mode: PermissionMode) => void
+  /** Subagents this session has run, newest last. */
+  agents: AgentRun[]
   onSetModel: (model: string) => void
   onSetEffort: (level: EffortLevel) => void
 }
@@ -44,6 +46,28 @@ const MODE_LABEL: Record<string, string> = {
   bypassPermissions: 'без проверок'
 }
 
+export interface AgentRun {
+  id: string
+  name: string
+  task: string
+  state: 'running' | 'done'
+  tokens?: number
+  durationMs?: number
+}
+
+function shortDuration(ms: number): string {
+  const total = Math.round(ms / 1000)
+  if (total < 60) return `${total} с`
+  const minutes = Math.floor(total / 60)
+  return total % 60 === 0 ? `${minutes} мин` : `${minutes} мин ${total % 60} с`
+}
+
+function shortNumber(value: number): string {
+  if (value < 1000) return String(value)
+  if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`
+  return `${(value / 1_000_000).toFixed(1)}M`
+}
+
 function money(value: number): string {
   return `$${value.toFixed(value < 1 ? 4 : 2)}`
 }
@@ -69,6 +93,7 @@ function until(resetsAt: number): string {
 export function SidePanel({
   data,
   started,
+  agents,
   onClose,
   onSetMode,
   onSetModel,
@@ -190,6 +215,32 @@ export function SidePanel({
             </option>
           ))}
         </select>
+      </Section>
+
+      <Section title="Агенты">
+        {agents.length === 0 ? (
+          <Empty started={started} text="подагентов не было" />
+        ) : (
+          <ul className="panel-agents" data-testid="panel-agents">
+            {agents.map((agent) => (
+              <li key={agent.id} className={`is-${agent.state}`}>
+                <div className="panel-line">
+                  <span className="panel-agent-kind">{agent.name}</span>
+                  <span className="panel-dim">
+                    {agent.state === 'running' ? 'работает' : 'готов'}
+                  </span>
+                </div>
+                <div className="panel-agent-task">{agent.task}</div>
+                {(agent.durationMs || agent.tokens) && (
+                  <div className="panel-line panel-dim panel-agent-stats">
+                    <span>{agent.durationMs ? shortDuration(agent.durationMs) : ''}</span>
+                    <span>{agent.tokens ? `${shortNumber(agent.tokens)} токенов` : ''}</span>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </Section>
 
       <Section title="MCP и плагины">

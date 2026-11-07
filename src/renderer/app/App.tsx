@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CommandInfo, HotkeyRegistration, SessionSummary } from '../../shared/types'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { TitleBar } from '../components/TitleBar'
-import { Ribbon } from '../components/Ribbon'
-import { Composer } from '../components/Composer'
+import { ChatPane } from '../components/ChatPane'
 import { CommandPalette } from '../components/CommandPalette'
 import { SidePanel } from '../components/SidePanel'
 import { HistoryScreen } from '../components/HistoryScreen'
@@ -26,15 +25,55 @@ export function App(): JSX.Element {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
   const [focusToken, setFocusToken] = useState(0)
+  const splitTabId = useAppStore((s) => s.splitTabId)
+  const setSplitTabId = useAppStore((s) => s.setSplitTabId)
+
+  // The session's subagents, read from the ribbon it already holds.
+  const activeRibbon = useAppStore((state) => state.ribbonByTab[state.activeTabId])
+  const agentRuns = useMemo(
+    () =>
+      (activeRibbon ?? [])
+        .filter((item) => item.kind === 'subagent')
+        .map((item) => {
+          const run = item as Extract<typeof item, { kind: 'subagent' }>
+          return {
+            id: run.id,
+            name: run.name,
+            task: run.task,
+            state: run.state,
+            ...(run.tokens ? { tokens: run.tokens } : {}),
+            ...(run.durationMs ? { durationMs: run.durationMs } : {})
+          }
+        }),
+    [activeRibbon]
+  )
+
+  const swapPanes = useCallback((): void => {
+    const state = useAppStore.getState()
+    const other = state.splitTabId
+    if (!other) return
+    setSplitTabId(state.activeTabId)
+    state.setActiveTabId(other)
+    setFocusToken((n) => n + 1)
+  }, [setSplitTabId])
+
+  /** Opens the conversation beside this one, or closes the second pane. */
+  const toggleSplit = useCallback((): void => {
+    const state = useAppStore.getState()
+    if (state.splitTabId) {
+      setSplitTabId(null)
+      return
+    }
+    const other = state.tabs.find((t) => t.id !== state.activeTabId)
+    if (!other) return
+    setSplitTabId(other.id)
+    void window.qclod.activateTab(other.id)
+  }, [setSplitTabId])
   const [commands, setCommands] = useState<CommandInfo[]>([])
   const [recentCommands, setRecentCommands] = useState<string[]>([])
   const settings = useAppStore((s) => s.settings)
   const tabs = useAppStore((s) => s.tabs)
   const activeTabId = useAppStore((s) => s.activeTabId)
-  const ribbonByTab = useAppStore((s) => s.ribbonByTab)
-  const todoByTab = useAppStore((s) => s.todoByTab)
-  const draftByTab = useAppStore((s) => s.draftByTab)
-  const attachmentsByTab = useAppStore((s) => s.attachmentsByTab)
   const fileIndexByTab = useAppStore((s) => s.fileIndexByTab)
   const panelByTab = useAppStore((s) => s.panelByTab)
 
@@ -44,8 +83,6 @@ export function App(): JSX.Element {
   const setRibbon = useAppStore((s) => s.setRibbon)
   const applyRibbon = useAppStore((s) => s.applyRibbon)
   const applyPanel = useAppStore((s) => s.applyPanel)
-  const setDraft = useAppStore((s) => s.setDraft)
-  const setAttachments = useAppStore((s) => s.setAttachments)
   const setFileIndex = useAppStore((s) => s.setFileIndex)
 
   useEffect(() => {
@@ -109,11 +146,14 @@ export function App(): JSX.Element {
       } else if (ev.ctrlKey && ev.code === 'KeyH') {
         ev.preventDefault()
         openHistory()
+      } else if (ev.ctrlKey && ev.shiftKey && ev.code === 'Enter') {
+        ev.preventDefault()
+        toggleSplit()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [togglePanel, openHistory])
+  }, [togglePanel, openHistory, toggleSplit])
 
   // The file index backs @-mentions; it is per folder, so it is fetched once
   // per tab rather than on every keystroke.
@@ -146,22 +186,7 @@ export function App(): JSX.Element {
     [setActiveTabId, setRibbon]
   )
 
-  const answerPermission = useCallback(
-    (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => {
-      void window.qclod.answerPermission(requestId, {
-        behavior,
-        ...(remember ? { remember: true } : {})
-      })
-    },
-    []
-  )
 
-  const answerPlan = useCallback(
-    (requestId: string, approve: boolean) => {
-      if (activeTabId) void window.qclod.answerPlan(activeTabId, requestId, approve)
-    },
-    [activeTabId]
-  )
 
   /** Shift+Tab walks the everyday modes; «без проверок» is not on the ring. */
   const cycleMode = useCallback((): void => {
@@ -172,12 +197,6 @@ export function App(): JSX.Element {
     void window.qclod.setPermissionMode(activeTabId, ring[(at + 1) % ring.length]!)
   }, [activeTabId])
 
-  const answerQuestion = useCallback(
-    (toolUseId: string, choice: string) => {
-      if (activeTabId) void window.qclod.answerQuestion(activeTabId, toolUseId, choice)
-    },
-    [activeTabId]
-  )
 
   return (
     <div className="app" data-testid="app-root">
@@ -198,52 +217,45 @@ export function App(): JSX.Element {
         hotkey={hotkey}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenHistory={openHistory}
+        onToggleSplit={toggleSplit}
+        splitOpen={splitTabId !== null}
       />
-      <div className="app-body">
-        <div className="app-main">
-      <Ribbon
-        key={activeTabId}
-        items={ribbonByTab[activeTabId] ?? []}
-        todo={todoByTab[activeTabId] ?? []}
-        onAnswerPermission={answerPermission}
-        onAnswerQuestion={answerQuestion}
-        onAnswerPlan={answerPlan}
-      />
-      {activeTabId && (
-        <Composer
-          tabId={activeTabId}
-          status={tabs.find((t) => t.id === activeTabId)?.status ?? 'stopped'}
-          draft={draftByTab[activeTabId] ?? ''}
-          attachments={attachmentsByTab[activeTabId] ?? []}
-          fileIndex={fileIndexByTab[activeTabId] ?? []}
-          focusToken={focusToken}
-          onDraftChange={(text) => setDraft(activeTabId, text)}
-          onAttachmentsChange={(items) => setAttachments(activeTabId, items)}
-          onSubmit={(text, attachments) => {
-            void window.qclod.send(activeTabId, { text, attachments })
-          }}
-          onInterrupt={() => void window.qclod.interrupt(activeTabId)}
-          onCycleMode={cycleMode}
-          onRestart={() => void window.qclod.restartTab(activeTabId)}
-          onOpenPalette={() => {
-            setPaletteOpen(true)
-            void window.qclod.commands(activeTabId).then(setCommands)
-          }}
-          onPickFiles={() => {
-            void window.qclod.pickFiles().then((paths) => {
-              if (paths.length === 0) return
-              setAttachments(activeTabId, [
-                ...(useAppStore.getState().attachmentsByTab[activeTabId] ?? []),
-                ...paths.map((path) => ({ kind: 'file' as const, path }))
-              ])
-            })
-          }}
-        />
-      )}
+      <div className={`app-body${splitTabId ? ' app-split' : ''}`}>
+        <div className="app-panes">
+          <ChatPane
+            tabId={activeTabId}
+            focused={true}
+            focusToken={focusToken}
+            title={tabs.find((t) => t.id === activeTabId)?.title ?? ''}
+            showTitle={splitTabId !== null}
+            onFocus={() => undefined}
+            onCycleMode={cycleMode}
+            onOpenPalette={() => {
+              setPaletteOpen(true)
+              void window.qclod.commands(activeTabId).then(setCommands)
+            }}
+          />
+          {splitTabId && (
+            <ChatPane
+              tabId={splitTabId}
+              focused={false}
+              focusToken={focusToken}
+              title={tabs.find((t) => t.id === splitTabId)?.title ?? ''}
+              showTitle
+              // Clicking the other pane makes it the one everything acts on.
+              onFocus={() => swapPanes()}
+              onCycleMode={cycleMode}
+              onOpenPalette={() => {
+                setPaletteOpen(true)
+                void window.qclod.commands(splitTabId).then(setCommands)
+              }}
+            />
+          )}
         </div>
         {settings?.panelOpen && (
           <SidePanel
             data={panelByTab[activeTabId] ?? EMPTY_PANEL}
+            agents={agentRuns}
             started={(tabs.find((t) => t.id === activeTabId)?.status ?? 'stopped') !== 'stopped'}
             onSetMode={(mode) => {
               if (activeTabId) void window.qclod.setPermissionMode(activeTabId, mode)
@@ -296,7 +308,7 @@ export function App(): JSX.Element {
             // A command that needs an argument is put in the input rather than
             // sent half-finished.
             if (needsArgument(command)) {
-              setDraft(activeTabId, `/${command.name} `)
+              useAppStore.getState().setDraft(activeTabId, `/${command.name} `)
               setFocusToken((n) => n + 1)
               return
             }

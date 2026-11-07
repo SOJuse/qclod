@@ -25,6 +25,8 @@ export const EMPTY_PANEL: PanelData = Object.freeze({
 interface AppState {
   settings: AppSettings | null
   activeTabId: TabId
+  /** The conversation shown beside the active one, when the view is split. */
+  splitTabId: TabId | null
   tabs: TabState[]
   ribbonByTab: Record<TabId, RibbonItem[]>
   todoByTab: Record<TabId, TodoItem[]>
@@ -37,6 +39,7 @@ interface AppState {
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
   setActiveTabId: (id: TabId) => void
+  setSplitTabId: (id: TabId | null) => void
   setTabs: (tabs: TabState[]) => void
   setRibbon: (id: TabId, items: RibbonItem[]) => void
   applyRibbon: (id: TabId, changes: RibbonChange[]) => void
@@ -82,6 +85,7 @@ export function reduceRibbon(
 export const useAppStore = create<AppState>((set) => ({
   settings: null,
   activeTabId: '',
+  splitTabId: null,
   tabs: [],
   ribbonByTab: {},
   todoByTab: {},
@@ -94,6 +98,7 @@ export const useAppStore = create<AppState>((set) => ({
   patchSettings: (patch) =>
     set((state) => (state.settings ? { settings: { ...state.settings, ...patch } } : state)),
   setActiveTabId: (activeTabId) => set({ activeTabId }),
+  setSplitTabId: (splitTabId) => set({ splitTabId }),
 
   setTabs: (tabs) =>
     set((state) => ({
@@ -101,7 +106,9 @@ export const useAppStore = create<AppState>((set) => ({
       // Keep a valid selection if the active tab went away.
       activeTabId: tabs.some((t) => t.id === state.activeTabId)
         ? state.activeTabId
-        : (tabs[0]?.id ?? '')
+        : (tabs[0]?.id ?? ''),
+      // A pane whose tab was closed stops being a pane.
+      splitTabId: tabs.some((t) => t.id === state.splitTabId) ? state.splitTabId : null
     })),
 
   setRibbon: (id, items) => set((state) => ({ ribbonByTab: { ...state.ribbonByTab, [id]: items } })),

@@ -21,6 +21,8 @@ interface Props {
   fileIndex: string[]
   /** Bumped by whoever took focus away, to hand it back. */
   focusToken: number
+  /** False for a pane that is on screen but not the one being typed into. */
+  autoFocus?: boolean
   onDraftChange: (text: string) => void
   onAttachmentsChange: (items: PendingAttachment[]) => void
   onSubmit: (text: string, attachments: Attachment[]) => void
@@ -48,6 +50,7 @@ export function Composer({
   attachments,
   fileIndex,
   focusToken,
+  autoFocus = true,
   onDraftChange,
   onAttachmentsChange,
   onSubmit,
@@ -90,8 +93,11 @@ export function Composer({
   // Switching tabs, or closing something that stole focus, puts the cursor
   // back where the work happens.
   useEffect(() => {
+    // A second pane must never take focus by itself: the focused pane would
+    // hand it straight back, and the two would trade it forever.
+    if (!autoFocus) return
     field.current?.focus()
-  }, [tabId, focusToken])
+  }, [tabId, focusToken, autoFocus])
 
   const addAttachments = useCallback(
     (items: PendingAttachment[]) => {

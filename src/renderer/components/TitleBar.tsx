@@ -12,6 +12,8 @@ interface Props {
   hotkey: HotkeyRegistration | null
   onOpenSettings: () => void
   onOpenHistory: () => void
+  onToggleSplit: () => void
+  splitOpen: boolean
 }
 
 export function TitleBar({
@@ -23,7 +25,9 @@ export function TitleBar({
   onConfigure,
   hotkey,
   onOpenSettings,
-  onOpenHistory
+  onOpenHistory,
+  onToggleSplit,
+  splitOpen
 }: Props): JSX.Element {
   return (
     <header className="title-bar" data-testid="title-bar">
@@ -49,6 +53,16 @@ export function TitleBar({
         </button>
       )}
       <div className="window-controls">
+        <button
+          type="button"
+          className={`window-button${splitOpen ? ' is-on' : ''}`}
+          data-testid="toggle-split"
+          aria-label="Два разговора рядом"
+          title="Два разговора рядом (Ctrl+Shift+Enter)"
+          onClick={onToggleSplit}
+        >
+          ⫿
+        </button>
         <button
           type="button"
           className="window-button"

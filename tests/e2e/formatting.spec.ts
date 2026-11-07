@@ -219,3 +219,64 @@ test('переключение вкладок возвращает к концу
     rmSync(other, { recursive: true, force: true })
   }
 })
+
+test('два разговора рядом: пишешь в один — второй не трогается', async () => {
+  const other = mkdtempSync(join(tmpdir(), 'qclod-split-'))
+  writeFileSync(join(other, 'файл.ts'), 'x', 'utf8')
+
+  const { app, profile } = await launch(
+    { steps: [{ kind: 'text', text: 'первый чат' }], nextTurn: [{ kind: 'text', text: 'ответ слева' }] },
+    { QCLOD_PICK_FOLDER: other }
+  )
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').first().waitFor({ timeout: 15000 })
+
+    // A second tab, then both at once.
+    await win.locator('[data-testid="tab-new"]').click()
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+
+    await win.locator('[data-testid="toggle-split"]').click()
+    await expect(win.locator('[data-testid="chat-pane"]')).toHaveCount(2)
+    await expect(win.locator('[data-testid="pane-title"]')).toHaveCount(2)
+
+    // Typing goes to the focused pane and nowhere else.
+    const left = win.locator('[data-testid="chat-pane"]').first()
+    const right = win.locator('[data-testid="chat-pane"]').last()
+
+    await left.locator('[data-testid="composer-input"]').fill('левый черновик')
+    await expect(right.locator('[data-testid="composer-input"]')).toHaveValue('')
+
+    await win.locator('[data-testid="toggle-split"]').click()
+    await expect(win.locator('[data-testid="chat-pane"]')).toHaveCount(1)
+  } finally {
+    await close(app, profile)
+    rmSync(other, { recursive: true, force: true })
+  }
+})
+
+test('панель показывает агентов сессии', async () => {
+  const { app, profile } = await launch({
+    steps: [
+      {
+        kind: 'subagent',
+        name: 'перебрать зависимости',
+        agentType: 'Explore',
+        stats: { durationMs: 12000, usage: { input_tokens: 4000, output_tokens: 1000 } },
+        steps: [{ kind: 'tool', name: 'Glob', input: { pattern: '*.ts' }, result: 'нашёл' }]
+      }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    const agents = win.locator('[data-testid="panel-agents"]')
+
+    await expect(agents).toBeVisible({ timeout: 15000 })
+    await expect(agents).toContainText('Explore')
+    await expect(agents).toContainText('перебрать зависимости')
+    await expect(agents).toContainText('12 с')
+    await expect(agents).toContainText('5.0k токенов')
+  } finally {
+    await close(app, profile)
+  }
+})

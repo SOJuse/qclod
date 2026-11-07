@@ -335,3 +335,65 @@ describe('TabController', () => {
     expect(ribbon.length).toBeGreaterThan(0)
   })
 })
+
+describe('TabController: возобновление не ждёт агента', () => {
+  test('переписка показывается, даже если сессия молчит до первого вопроса', async () => {
+    // What the real CLI does on --resume: it starts and says nothing at all,
+    // not even system/init, until it is given something to answer. Waiting for
+    // it left the tab blank until you typed — and the message you typed was
+    // the thing that unblocked it.
+    const silent = {
+      messages: (async function* () {
+        await new Promise(() => undefined)
+      })(),
+      send: () => undefined,
+      interrupt: async () => undefined,
+      setPermissionMode: async () => undefined,
+      supportedCommands: async () => [],
+      mcpServerStatus: async () => [],
+      getContextUsage: async () => ({ totalTokens: 0, maxTokens: 1, percentage: 0, categories: [] }),
+      dispose: async () => undefined
+    }
+
+    const manager = new AgentSessionManager({
+      getAgentPath: () => 'claude',
+      resolveAgent: () => 'C:/bin/claude.exe',
+      askPermission: async () => ({ behavior: 'deny' as const }),
+      createDriver: () => silent as unknown as AgentDriver
+    })
+
+    const controller = new TabController({
+      manager,
+      storeDir: store,
+      defaultCwd: projectA,
+      getDefaults: () => ({}),
+      history: {
+        list: async () => [],
+        messages: async () => [
+          { type: 'user', message: { role: 'user', content: 'что было вчера' } },
+          {
+            type: 'assistant',
+            message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'вот что' }] }
+          }
+        ]
+      },
+      onChanged: () => undefined,
+      onRibbon: () => undefined,
+      onPanel: () => undefined,
+      onStatus: () => undefined,
+      onCommands: () => undefined
+    })
+
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'вчерашняя' }
+    ])
+    await controller.restore()
+    // Deliberately not whenSettled(): this session never settles, and the
+    // conversation must not be waiting on it.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const items = controller.itemsOf('a')
+    expect(items.filter((i) => i.kind === 'user')).toHaveLength(1)
+    expect(items.filter((i) => i.kind === 'agentText')[0]).toMatchObject({ text: 'вот что' })
+  })
+})

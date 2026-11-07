@@ -76,6 +76,7 @@ export class AgentSession {
   private readonly panelListeners: PanelListener[] = []
   private readonly statusListeners: StatusListener[] = []
   private readonly commandListeners: Array<(commands: CommandInfo[]) => void> = []
+  private readonly sessionListeners: Array<(sessionId: string) => void> = []
 
   private driver: AgentDriver | null = null
   private pump: Promise<void> | null = null
@@ -129,6 +130,11 @@ export class AgentSession {
 
   onCommands(cb: (commands: CommandInfo[]) => void): void {
     this.commandListeners.push(cb)
+  }
+
+  /** Fires when the conversation's own id becomes known (system/init). */
+  onSession(cb: (sessionId: string) => void): void {
+    this.sessionListeners.push(cb)
   }
 
   /** Resolves when the session is no longer working: idle, stopped or failed. */
@@ -289,6 +295,7 @@ export class AgentSession {
     this.driver = driver
 
     this.pump = this.readMessages(this.driver)
+    this.setStatus('idle')
     this.emitPanel(this.collector.setProjectSettings(readProjectSettings(this.options.cwd)))
   }
 
@@ -436,7 +443,14 @@ export class AgentSession {
   }
 
   private onInit(m: Record<string, unknown>): void {
-    this.session = typeof m['session_id'] === 'string' ? m['session_id'] : this.session
+    const id = typeof m['session_id'] === 'string' ? m['session_id'] : null
+    if (id && id !== this.session) {
+      this.session = id
+      // The tab remembers the conversation by this id. It used to be picked up
+      // from the status change init caused — but a session is already idle by
+      // then, and a status that does not change notifies nobody.
+      for (const listener of this.sessionListeners) listener(id)
+    }
     this.setStatus('idle')
     void this.refreshModels()
   }

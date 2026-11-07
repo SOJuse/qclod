@@ -12,7 +12,11 @@ export const DEFAULT_SETTINGS: AppSettings = Object.freeze({
   fontSize: 13,
   closeToTray: true,
   panelOpen: true,
-  defaults: {}
+  // A new tab accepts edits without asking: the permission card for every
+  // single file change is what makes the app feel like it is in the way. The
+  // commands a tool runs are still asked about, and the mode is one click away
+  // in the panel.
+  defaults: { permissionMode: 'acceptEdits' as const }
 })
 
 /**

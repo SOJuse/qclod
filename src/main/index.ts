@@ -171,6 +171,7 @@ app.whenReady().then(async () => {
       send(CHANNELS.statusChanged, event)
       const tab = controller.list().find((t) => t.id === event.tabId)
       if (!tab) return
+      if (!event.finished && event.status !== 'waiting' && event.status !== 'error') return
       notifyIfNeeded({
         settings,
         tab,

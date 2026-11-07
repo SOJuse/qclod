@@ -6,6 +6,7 @@ import type {
   PanelEvent,
   RibbonEvent,
   RibbonItem,
+  SessionStatus,
   SessionSummary,
   StatusEvent,
   TabId,
@@ -48,6 +49,7 @@ export class TabController {
   private tabs: TabState[] = []
   private activeId: TabId | null = null
   private readonly pending = new Set<Promise<unknown>>()
+  private readonly lastStatus = new Map<TabId, SessionStatus>()
 
   constructor(private readonly deps: TabControllerDeps) {}
 
@@ -219,44 +221,62 @@ export class TabController {
    */
   private async resume(id: TabId, session: AgentSession, resumeId: string): Promise<void> {
     await session.start(resumeId)
-    // start() returns as soon as the driver is built; the CLI is spawned and
-    // the transcript read while the stream runs, so a resume that will not
-    // open fails here, not above. Checking the status any earlier only ever
-    // sees «starting» and the recovery below never runs.
-    await session.whenIdle()
 
-    if (session.status === 'error') {
-      const reason = session.error ?? 'неизвестная причина'
-      const tab = this.tabs.find((t) => t.id === id)
-      if (tab) delete tab.lastSessionId
-
-      await this.deps.manager.close(id)
-      const fresh = this.deps.manager.create(id, tab?.cwd ?? this.deps.defaultCwd, tab?.overrides ?? {})
-      this.wire(id, fresh)
-      this.emitRibbon(id, fresh.notice(`Прошлую переписку открыть не удалось: ${reason}`))
-      await fresh.start()
-      this.rememberSession(id, fresh)
-      return
-    }
-
-    // The conversation itself is read back from where the CLI keeps it.
+    // The conversation is read from the CLI's own transcript on disk, so it
+    // can be shown at once. Waiting for the session to settle first — which
+    // is what this did — left the tab blank: a resumed CLI sends nothing at
+    // all, not even `system/init`, until it is given something to answer. The
+    // conversation only appeared after you typed, and whatever you typed was
+    // the thing that unblocked it.
     const messages = await this.deps.history.messages(resumeId)
     if (messages.length > 0) this.emitRibbon(id, session.replay(messages))
+
+    // A resume that will not open fails while the stream runs, long after
+    // start() returned, so the recovery waits for that rather than for a
+    // status that is still «starting».
+    void session.whenIdle().then(() => {
+      if (session.status === 'error') void this.recoverFromDeadSession(id, session)
+    })
+  }
+
+  /** The stored conversation would not open: give the tab a clean session. */
+  private async recoverFromDeadSession(id: TabId, dead: AgentSession): Promise<void> {
+    if (this.deps.manager.get(id) !== dead) return
+    const reason = dead.error ?? 'неизвестная причина'
+    const tab = this.tabs.find((t) => t.id === id)
+    if (tab) delete tab.lastSessionId
+
+    await this.deps.manager.close(id)
+    const fresh = this.deps.manager.create(
+      id,
+      tab?.cwd ?? this.deps.defaultCwd,
+      tab?.overrides ?? {}
+    )
+    this.wire(id, fresh)
+    this.emitRibbon(id, fresh.notice(`Прошлую переписку открыть не удалось: ${reason}`))
+    await fresh.start()
+    this.rememberSession(id, fresh)
   }
 
   private wire(id: TabId, session: AgentSession): void {
     session.onChange((changes) => this.deps.onRibbon({ tabId: id, changes }))
     session.onPanel((patch) => this.deps.onPanel({ tabId: id, patch }))
     session.onCommands((commands) => this.deps.onCommands({ tabId: id, commands }))
+    session.onSession(() => this.rememberSession(id, session))
     session.onStatus((status) => {
       const patch: Partial<TabState> = { status }
       if (session.error !== undefined) patch.error = session.error
       if (status === 'waiting' || status === 'idle') {
         if (this.activeId !== id) patch.badge = true
       }
+      const was = this.lastStatus.get(id)
+      this.lastStatus.set(id, status)
+
       this.patch(id, patch)
       this.rememberSession(id, session)
       const event: StatusEvent = { tabId: id, status }
+      // Only a turn that ran and ended counts as finished.
+      if (status === 'idle' && (was === 'busy' || was === 'waiting')) event.finished = true
       if (session.error !== undefined) event.error = session.error
       this.deps.onStatus(event)
     })

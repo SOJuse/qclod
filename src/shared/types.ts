@@ -258,4 +258,6 @@ export interface StatusEvent {
   tabId: TabId
   status: SessionStatus
   error?: string
+  /** The agent was working and has stopped — the only state worth a chime. */
+  finished?: boolean
 }

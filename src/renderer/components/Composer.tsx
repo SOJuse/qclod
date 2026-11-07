@@ -117,6 +117,7 @@ export function Composer({
       text: draft,
       popupOpen,
       hasSelection: el ? el.selectionStart !== el.selectionEnd : false,
+      hasAttachments: attachments.length > 0,
       caretAtStart: el ? el.selectionStart === 0 : true,
       caretAtEnd: el ? el.selectionEnd === draft.length : true
     }

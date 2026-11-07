@@ -104,3 +104,15 @@ describe('resolveComposerKey', () => {
     expect(resolveComposerKey(key({ key: 'а', code: 'KeyF' }), ctx())).toBe('insert')
   })
 })
+
+describe('resolveComposerKey: вложение без текста', () => {
+  test('Enter отправляет, когда прикреплён файл и текста нет', () => {
+    expect(
+      resolveComposerKey(key({ key: 'Enter' }), ctx({ text: '', hasAttachments: true }))
+    ).toBe('submit')
+  })
+
+  test('пустое поле без вложений по-прежнему ничего не отправляет', () => {
+    expect(resolveComposerKey(key({ key: 'Enter' }), ctx({ text: '' }))).toBe('insert')
+  })
+})

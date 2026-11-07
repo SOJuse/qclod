@@ -22,6 +22,8 @@ export interface ComposerContext {
   /** The composer's own popup — mentions or the command palette — is open. */
   popupOpen: boolean
   hasSelection: boolean
+  /** A file is attached, so there is something to send even with no text. */
+  hasAttachments?: boolean
   caretAtStart: boolean
   caretAtEnd: boolean
 }
@@ -81,7 +83,12 @@ const RULES: Rule[] = [
   (ev) => (ev.key === '@' && !ev.ctrlKey && !ev.altKey ? 'openMentions' : undefined),
 
   (ev) => (ev.key === 'Enter' && ev.shiftKey ? 'newline' : undefined),
-  (ev, ctx) => (ev.key === 'Enter' ? (ctx.text === '' ? 'insert' : 'submit') : undefined),
+  (ev, ctx) =>
+    ev.key === 'Enter'
+      ? ctx.text === '' && !ctx.hasAttachments
+        ? 'insert'
+        : 'submit'
+      : undefined,
 
   // Horizontal movement is always just movement inside the field.
   (ev) =>

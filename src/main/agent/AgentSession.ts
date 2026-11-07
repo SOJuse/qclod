@@ -297,6 +297,15 @@ export class AgentSession {
     this.pump = this.readMessages(this.driver)
     this.setStatus('idle')
     this.emitPanel(this.collector.setProjectSettings(readProjectSettings(this.options.cwd)))
+
+    // The panel is filled now rather than after the first answer. `system/init`
+    // arrives only once the CLI has been given something to answer, so a tab
+    // that has not been written in yet used to show «появится после первого
+    // ответа» in every row — including a second tab, which looked broken.
+    // These three are control requests: they answer straight away.
+    void this.refreshContext()
+    void this.refreshMcp()
+    void this.refreshModels()
   }
 
   send(input: UserInput): void {

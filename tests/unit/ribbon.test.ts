@@ -450,3 +450,49 @@ describe('RibbonBuilder: цифры подагента', () => {
     expect(card.durationMs).toBeUndefined()
   })
 })
+
+describe('RibbonBuilder: подагент называется Agent', () => {
+  test('Agent даёт карточку подагента, а не обычный вызов', () => {
+    // The tool is «Agent» in this SDK; «Task» does not exist in it.
+    const b = new RibbonBuilder()
+    b.apply(
+      assistant([
+        {
+          type: 'tool_use',
+          id: 'a1',
+          name: 'Agent',
+          input: { description: 'перебрать зависимости', subagent_type: 'Explore' }
+        }
+      ])
+    )
+
+    const cards = only(b.items, 'subagent')
+    expect(cards).toHaveLength(1)
+    expect(cards[0]!.name).toBe('Explore')
+    expect(cards[0]!.task).toBe('перебрать зависимости')
+    expect(only(b.items, 'tool')).toHaveLength(0)
+  })
+
+  test('его вложенные вызовы уходят внутрь карточки', () => {
+    const b = new RibbonBuilder()
+    b.apply(
+      assistant([{ type: 'tool_use', id: 'a1', name: 'Agent', input: { description: 'искать' } }])
+    )
+    b.apply(
+      assistant([{ type: 'tool_use', id: 'n1', name: 'Grep', input: { pattern: 'x' } }], {
+        parent_tool_use_id: 'a1'
+      })
+    )
+
+    const card = only(b.items, 'subagent')[0]!
+    expect(only(b.items, 'tool')[0]!.parentId).toBe(card.id)
+  })
+
+  test('без subagent_type в имени остаётся понятное слово', () => {
+    const b = new RibbonBuilder()
+    b.apply(
+      assistant([{ type: 'tool_use', id: 'a1', name: 'Agent', input: { description: 'что-то' } }])
+    )
+    expect(only(b.items, 'subagent')[0]!.name).toBe('подагент')
+  })
+})

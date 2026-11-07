@@ -493,7 +493,12 @@ export class RibbonBuilder {
       ]
     }
 
-    if (name === 'Task') {
+    // The subagent tool is «Agent». «Task» was a guess from older docs and
+    // does not exist in this SDK at all — which is why a running subagent
+    // showed up as an ordinary tool card and the panel's agent list stayed
+    // empty while one was working. Both names are accepted: an older CLI is
+    // cheaper to tolerate than to detect.
+    if (name === 'Agent' || name === 'Task') {
       const id = this.nextId()
       this.byToolUseId.set(toolUseId, id)
       return [

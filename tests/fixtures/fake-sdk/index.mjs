@@ -228,7 +228,8 @@ export function createFakeSdk(script = {}) {
             {
               type: 'tool_use',
               id,
-              name: 'Task',
+              // The real subagent tool: «Task» does not exist in this SDK.
+              name: 'Agent',
               input: {
                 description: step.name,
                 ...(step.agentType ? { subagent_type: step.agentType } : {})

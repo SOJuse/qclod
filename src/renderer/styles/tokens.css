@@ -1,0 +1,65 @@
+/* Qclod design tokens — glass / neon, dark only (spec 6.2). */
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('../assets/fonts/GeistMono.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces sit on top of the window's acrylic material. */
+  --surface: rgba(14, 16, 28, 0.72);
+  --surface-raised: rgba(24, 27, 44, 0.78);
+  --surface-sunken: rgba(9, 10, 19, 0.62);
+
+  --accent: #6e8bff;
+  --glow: #b07cff;
+  --ok: #67d8a0;
+  --warn: #ffc46b;
+  --danger: #ff7a7a;
+
+  --text: #e6e8f2;
+  --text-dim: #99a0bd;
+  --text-faint: #666e8c;
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-accent: rgba(110, 139, 255, 0.55);
+
+  --glow-accent: 0 0 0 1px rgba(110, 139, 255, 0.45), 0 0 18px rgba(110, 139, 255, 0.22);
+  --glow-soft: 0 0 24px rgba(176, 124, 255, 0.14);
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --titlebar-height: 38px;
+
+  --font-mono: 'Geist Mono', 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+  --font-size-terminal: 13px;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow: hidden;
+  user-select: none;
+}

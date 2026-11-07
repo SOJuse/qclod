@@ -1,4 +1,5 @@
-import { query } from '@anthropic-ai/claude-agent-sdk'
+import type { query as queryFn } from '@anthropic-ai/claude-agent-sdk'
+import { importEsm } from '../esm'
 import type { CommandInfo, McpServerInfo, UserInput } from '../../shared/types'
 import type { AgentDriver, ContextUsage, DriverOptions } from './driver'
 
@@ -50,7 +51,9 @@ function toSdkMessage(input: UserInput): Record<string, unknown> {
  * Never exercised by the test suite: every automated run talks to the fixture
  * instead, by project constraint. Keep it thin enough to read.
  */
-export function createSdkDriver(options: DriverOptions): AgentDriver {
+export async function createSdkDriver(options: DriverOptions): Promise<AgentDriver> {
+  const { query } = await importEsm<{ query: typeof queryFn }>('@anthropic-ai/claude-agent-sdk')
+
   const inbox: Array<Record<string, unknown>> = []
   let wake: (() => void) | null = null
   let closed = false

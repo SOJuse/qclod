@@ -22,12 +22,20 @@ test('собранное приложение запускается и подн
   const app = await electron.launch({
     executablePath: exe,
     args: [],
-    env: { ...process.env, QCLOD_USER_DATA: profile, QCLOD_HEADLESS: '1' } as Record<string, string>
+    env: {
+      ...process.env,
+      QCLOD_USER_DATA: profile,
+      QCLOD_HEADLESS: '1',
+      QCLOD_FAKE_SDK_SCRIPT: JSON.stringify({
+        steps: [],
+        nextTurn: [{ kind: 'text', text: 'собрано' }]
+      })
+    } as Record<string, string>
   })
 
   try {
     const win = await app.firstWindow()
-    await win.locator('[data-testid="app-ready"]').waitFor({ timeout: 30000 })
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 30000 })
 
     const version = await win.evaluate(() =>
       (window as never as { qclod: { appVersion(): Promise<string> } }).qclod.appVersion()

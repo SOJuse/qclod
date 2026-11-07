@@ -2,6 +2,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { CHANNELS } from '../shared/channels'
 import { PERMISSION_MODES } from '../shared/types'
 import type { LaunchOverrides, TabId } from '../shared/types'
+import { buildFileIndex } from './files/fileIndex'
 import type { TabController } from './tabs/TabController'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
 import type { PermissionBroker } from './agent/permissions'
@@ -141,6 +142,13 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   // A native file dialog cannot be driven from a test, so an e2e run answers
   // it from the environment — the same kind of seam as QCLOD_FAKE_SDK, and
   // never set in a real install.
+  ipcMain.handle(CHANNELS.filesIndex, async (_e, id: unknown) => {
+    if (!isString(id)) return []
+    const tab = controller.list().find((t) => t.id === id)
+    if (!tab || tab.missingCwd) return []
+    return buildFileIndex(tab.cwd)
+  })
+
   ipcMain.handle(CHANNELS.dialogPickFolder, async () => {
     const stubbed = process.env['QCLOD_PICK_FOLDER']
     if (stubbed) return stubbed

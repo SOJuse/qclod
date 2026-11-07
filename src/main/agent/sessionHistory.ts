@@ -1,3 +1,4 @@
+import { importEsm } from '../esm'
 import type { SessionSummary } from '../../shared/types'
 
 interface SdkSessionInfo {
@@ -53,7 +54,9 @@ export class SessionHistory {
 
 /** The real one, talking to the SDK's session files. */
 export async function createSessionHistory(): Promise<SessionHistory> {
-  const sdk = await import('@anthropic-ai/claude-agent-sdk')
+  const sdk = await importEsm<typeof import('@anthropic-ai/claude-agent-sdk')>(
+    '@anthropic-ai/claude-agent-sdk'
+  )
   return new SessionHistory({
     listSessions: (options) => sdk.listSessions(options) as Promise<SdkSessionInfo[]>,
     getSessionMessages: (sessionId) =>

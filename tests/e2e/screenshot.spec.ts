@@ -9,7 +9,7 @@ test.skip(process.env['QCLOD_SHOT'] !== '1', 'снимок делается то
 test('снимок окна', async () => {
   const app = await electron.launch({ args: ['.'] })
   const win = await app.firstWindow()
-  await win.locator('[data-testid="app-ready"]').waitFor()
+  await win.locator('[data-testid="composer-input"]').waitFor()
   await win.waitForTimeout(800)
 
   await win.screenshot({ path: 'tests/.artifacts/qclod.png' })

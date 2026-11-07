@@ -174,7 +174,6 @@ export function App(): JSX.Element {
         hotkey={hotkey}
         onOpenSettings={() => setSettingsOpen(true)}
       />
-      {settings && <div className="app-ready" data-testid="app-ready" hidden />}
       <div className="app-body">
         <div className="app-main">
       <Ribbon

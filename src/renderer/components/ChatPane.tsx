@@ -1,6 +1,7 @@
 import { useAppStore } from '../state/useAppStore'
 import { Ribbon } from './Ribbon'
 import { Composer } from './Composer'
+import { Working } from './Working'
 import './ChatPane.css'
 
 interface Props {
@@ -42,6 +43,7 @@ export function ChatPane({
   const setDraft = useAppStore((s) => s.setDraft)
   const setAttachments = useAppStore((s) => s.setAttachments)
 
+  const busySinceByTab = useAppStore((s) => s.busySinceByTab)
   const status = tabs.find((t) => t.id === tabId)?.status ?? 'stopped'
 
   return (
@@ -74,6 +76,8 @@ export function ChatPane({
           void window.qclod.answerPlan(tabId, requestId, approve)
         }
       />
+
+      <Working status={status} since={busySinceByTab[tabId]} items={ribbonByTab[tabId] ?? []} />
 
       <Composer
         tabId={tabId}

@@ -31,6 +31,8 @@ interface AppState {
   ribbonByTab: Record<TabId, RibbonItem[]>
   todoByTab: Record<TabId, TodoItem[]>
   panelByTab: Record<TabId, PanelData>
+  /** When the current turn started, per tab — epoch ms. */
+  busySinceByTab: Record<TabId, number>
   /** Unsent text and files per tab — switching tabs must never lose them. */
   draftByTab: Record<TabId, string>
   attachmentsByTab: Record<TabId, PendingAttachment[]>
@@ -90,6 +92,7 @@ export const useAppStore = create<AppState>((set) => ({
   ribbonByTab: {},
   todoByTab: {},
   panelByTab: {},
+  busySinceByTab: {},
   draftByTab: {},
   attachmentsByTab: {},
   fileIndexByTab: {},
@@ -103,6 +106,13 @@ export const useAppStore = create<AppState>((set) => ({
   setTabs: (tabs) =>
     set((state) => ({
       tabs,
+      busySinceByTab: tabs.reduce<Record<TabId, number>>((acc, tab) => {
+        const working = tab.status === 'busy' || tab.status === 'waiting'
+        const previous = state.tabs.find((t) => t.id === tab.id)
+        const wasWorking = previous?.status === 'busy' || previous?.status === 'waiting'
+        if (working) acc[tab.id] = wasWorking ? (state.busySinceByTab[tab.id] ?? Date.now()) : Date.now()
+        return acc
+      }, {}),
       // Keep a valid selection if the active tab went away.
       activeTabId: tabs.some((t) => t.id === state.activeTabId)
         ? state.activeTabId

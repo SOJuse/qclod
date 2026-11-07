@@ -280,3 +280,56 @@ test('панель показывает агентов сессии', async () =
     await close(app, profile)
   }
 })
+
+test('пока агент работает, видно что именно он делает и сколько уже', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'text', text: 'слушаю' }],
+    nextTurn: [
+      { kind: 'textStream', pieces: ['думаю', ' дальше'], pauseMs: 2500 },
+      { kind: 'text', text: 'готово' }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.waitFor({ timeout: 15000 })
+
+    // Nothing is happening yet, so nothing claims to be.
+    await expect(win.locator('[data-testid="working"]')).toHaveCount(0)
+
+    await input.click()
+    await input.fill('сделай')
+    await input.press('Enter')
+
+    const working = win.locator('[data-testid="working"]')
+    await expect(working).toBeVisible({ timeout: 15000 })
+    await expect(working).toContainText('Esc')
+    await expect(working.locator('[data-testid="working-time"]')).toContainText('секунд')
+
+    // The clock runs.
+    const first = await working.locator('[data-testid="working-time"]').innerText()
+    await win.waitForTimeout(2200)
+    const later = await working.locator('[data-testid="working-time"]').innerText()
+    expect(later).not.toBe(first)
+
+    // And it goes away when the turn ends.
+    await expect(win.locator('[data-testid="working"]')).toHaveCount(0, { timeout: 20000 })
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('пока агент ждёт разрешения, строка говорит именно это', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
+  })
+  try {
+    const win = await app.firstWindow()
+    const working = win.locator('[data-testid="working"]')
+
+    await expect(working).toBeVisible({ timeout: 15000 })
+    await expect(working.locator('[data-testid="working-what"]')).toContainText('ждёт вашего ответа')
+  } finally {
+    await close(app, profile)
+  }
+})

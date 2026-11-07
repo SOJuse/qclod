@@ -16,7 +16,7 @@
  * @typedef {{kind:'tool', name:string, input?:object, result?:string}} ToolStep
  * @typedef {{kind:'toolError', name:string, input?:object, error:string}} ToolErrorStep
  * @typedef {{kind:'askPermission', name:string, input?:object}} AskPermissionStep
- * @typedef {{kind:'askQuestion', question:string, options:string[]}} AskQuestionStep
+ * @typedef {{kind:'askQuestion', question:string, header?:string, options:string[]}} AskQuestionStep
  * @typedef {{kind:'todo', items:Array<{content:string,status:string}>}} TodoStep
  * @typedef {{kind:'subagent', name:string, steps:Array<object>}} SubagentStep
  * @typedef {{kind:'compact', preTokens:number, postTokens:number, trigger?:'auto'|'manual'}} CompactStep
@@ -144,7 +144,17 @@ export function createFakeSdk(script = {}) {
               type: 'tool_use',
               id,
               name: 'AskUserQuestion',
-              input: { question: step.question, options: step.options }
+              // Real AskUserQuestionInput shape, from the SDK's own sdk-tools.d.ts:
+              // questions[].options are objects with a label, not bare strings.
+              input: {
+                questions: [
+                  {
+                    question: step.question,
+                    header: step.header ?? 'Вопрос',
+                    options: step.options.map((label) => ({ label, description: '' }))
+                  }
+                ]
+              }
             }
           ])
           break

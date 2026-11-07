@@ -6,7 +6,7 @@ export type FakeStep =
   | { kind: 'tool'; name: string; input?: object; result?: string }
   | { kind: 'toolError'; name: string; input?: object; error: string }
   | { kind: 'askPermission'; name: string; input?: object }
-  | { kind: 'askQuestion'; question: string; options: string[] }
+  | { kind: 'askQuestion'; question: string; header?: string; options: string[] }
   | { kind: 'todo'; items: Array<{ content: string; status: string }> }
   | { kind: 'subagent'; name: string; steps: FakeStep[] }
   | { kind: 'compact'; preTokens: number; postTokens: number; trigger?: 'auto' | 'manual' }

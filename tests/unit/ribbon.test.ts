@@ -1,0 +1,335 @@
+import { describe, expect, test } from 'vitest'
+import { RibbonBuilder } from '../../src/shared/ribbon'
+import type { RibbonItem } from '../../src/shared/types'
+
+// Message shapes below are the SDK's own, taken from node_modules/.../sdk.d.ts
+// and from the live probe (docs/superpowers/notes/2026-11-07-sdk-probe-results.md).
+// A fixture that lies is worse than no fixture.
+
+let seq = 0
+const uuid = (): string => `u${++seq}`
+
+function assistant(content: unknown[], extra: Record<string, unknown> = {}): unknown {
+  return {
+    type: 'assistant',
+    uuid: uuid(),
+    session_id: 's1',
+    parent_tool_use_id: null,
+    message: { id: `msg_${seq}`, role: 'assistant', content },
+    ...extra
+  }
+}
+
+function userMessage(content: unknown, extra: Record<string, unknown> = {}): unknown {
+  return {
+    type: 'user',
+    uuid: uuid(),
+    session_id: 's1',
+    parent_tool_use_id: null,
+    message: { role: 'user', content },
+    ...extra
+  }
+}
+
+function toolResult(toolUseId: string, content: string, isError = false): unknown {
+  return userMessage([{ type: 'tool_result', tool_use_id: toolUseId, content, is_error: isError }])
+}
+
+function textDelta(messageId: string, text: string): unknown {
+  return {
+    type: 'stream_event',
+    uuid: uuid(),
+    session_id: 's1',
+    parent_tool_use_id: null,
+    event: {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'text_delta', text }
+    },
+    message_id: messageId
+  }
+}
+
+function messageStart(messageId: string): unknown {
+  return {
+    type: 'stream_event',
+    uuid: uuid(),
+    session_id: 's1',
+    parent_tool_use_id: null,
+    event: { type: 'message_start', message: { id: messageId, role: 'assistant', content: [] } }
+  }
+}
+
+function only<K extends RibbonItem['kind']>(items: RibbonItem[], kind: K): Array<RibbonItem & { kind: K }> {
+  return items.filter((i) => i.kind === kind) as Array<RibbonItem & { kind: K }>
+}
+
+describe('RibbonBuilder', () => {
+  test('текст агента дописывается в один элемент, а не плодит новые', () => {
+    const b = new RibbonBuilder()
+    b.apply(messageStart('msg_a'))
+    b.apply(textDelta('msg_a', 'Привет'))
+    b.apply(textDelta('msg_a', ', мир'))
+
+    const texts = only(b.items, 'agentText')
+    expect(texts).toHaveLength(1)
+    expect(texts[0]!.text).toBe('Привет, мир')
+    expect(texts[0]!.streaming).toBe(true)
+
+    // The complete assistant message always follows a stream and must not
+    // duplicate what the deltas already showed.
+    b.apply(
+      assistant([{ type: 'text', text: 'Привет, мир' }], {
+        message: { id: 'msg_a', role: 'assistant', content: [{ type: 'text', text: 'Привет, мир' }] }
+      })
+    )
+
+    const after = only(b.items, 'agentText')
+    expect(after).toHaveLength(1)
+    expect(after[0]!.text).toBe('Привет, мир')
+    expect(after[0]!.streaming).toBe(false)
+  })
+
+  test('вызов инструмента и его результат — один элемент, а не два', () => {
+    const b = new RibbonBuilder()
+    b.apply(assistant([{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'C:/p/auth.ts' } }]))
+
+    let tools = only(b.items, 'tool')
+    expect(tools).toHaveLength(1)
+    expect(tools[0]!.name).toBe('Read')
+    expect(tools[0]!.target).toBe('auth.ts')
+    expect(tools[0]!.state).toBe('running')
+
+    const changes = b.apply(toolResult('t1', 'строка 1\nстрока 2\nстрока 3'))
+    expect(changes).toEqual([
+      { kind: 'update', id: tools[0]!.id, patch: { state: 'done', summary: '3 строки', detail: 'строка 1\nстрока 2\nстрока 3' } }
+    ])
+
+    tools = only(b.items, 'tool')
+    expect(tools).toHaveLength(1)
+    expect(tools[0]!.state).toBe('done')
+    expect(b.items).toHaveLength(1)
+  })
+
+  test('ошибка инструмента даёт элемент toolError с текстом ошибки', () => {
+    const b = new RibbonBuilder()
+    b.apply(assistant([{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } }]))
+    b.apply(toolResult('t1', 'npm ERR! тесты упали', true))
+
+    expect(only(b.items, 'tool')).toHaveLength(0)
+    const errors = only(b.items, 'toolError')
+    expect(errors).toHaveLength(1)
+    expect(errors[0]!.name).toBe('Bash')
+    expect(errors[0]!.target).toBe('npm test')
+    expect(errors[0]!.error).toBe('npm ERR! тесты упали')
+  })
+
+  test('размышления сворачиваются в один элемент с длительностью', () => {
+    let clock = 1000
+    const b = new RibbonBuilder({ now: () => clock })
+
+    b.apply(messageStart('msg_t'))
+    b.apply({
+      type: 'stream_event',
+      uuid: uuid(),
+      session_id: 's1',
+      parent_tool_use_id: null,
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'взвешиваю' } }
+    })
+    clock = 4500
+    b.apply({
+      type: 'stream_event',
+      uuid: uuid(),
+      session_id: 's1',
+      parent_tool_use_id: null,
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: ' варианты' } }
+    })
+    clock = 6000
+    b.apply(assistant([{ type: 'text', text: 'готово' }]))
+
+    const thinking = only(b.items, 'thinking')
+    expect(thinking).toHaveLength(1)
+    expect(thinking[0]!.text).toBe('взвешиваю варианты')
+    expect(thinking[0]!.done).toBe(true)
+    expect(thinking[0]!.durationMs).toBe(5000)
+  })
+
+  test('TodoWrite не попадает в ленту, а обновляет список задач', () => {
+    const b = new RibbonBuilder()
+    const changes = b.apply(
+      assistant([
+        {
+          type: 'tool_use',
+          id: 't1',
+          name: 'TodoWrite',
+          input: { todos: [{ content: 'починить вставку', status: 'in_progress', activeForm: 'чиню вставку' }] }
+        }
+      ])
+    )
+
+    expect(changes).toEqual([
+      { kind: 'todo', items: [{ content: 'починить вставку', status: 'in_progress' }] }
+    ])
+    expect(b.items).toHaveLength(0)
+    expect(b.todo).toEqual([{ content: 'починить вставку', status: 'in_progress' }])
+
+    // Its result must not leave an orphan card behind either.
+    b.apply(toolResult('t1', 'ok'))
+    expect(b.items).toHaveLength(0)
+  })
+
+  test('повторный TodoWrite заменяет список целиком, а не дублирует', () => {
+    const b = new RibbonBuilder()
+    b.apply(
+      assistant([
+        { type: 'tool_use', id: 't1', name: 'TodoWrite', input: { todos: [{ content: 'раз', status: 'pending' }] } }
+      ])
+    )
+    b.apply(
+      assistant([
+        {
+          type: 'tool_use',
+          id: 't2',
+          name: 'TodoWrite',
+          input: {
+            todos: [
+              { content: 'раз', status: 'completed' },
+              { content: 'два', status: 'in_progress' }
+            ]
+          }
+        }
+      ])
+    )
+
+    expect(b.todo).toEqual([
+      { content: 'раз', status: 'completed' },
+      { content: 'два', status: 'in_progress' }
+    ])
+    expect(b.items).toHaveLength(0)
+  })
+
+  test('Task даёт элемент subagent, его вложенные инструменты — внутрь него', () => {
+    const b = new RibbonBuilder()
+    b.apply(
+      assistant([
+        { type: 'tool_use', id: 'task1', name: 'Task', input: { description: 'найти утечку', subagent_type: 'Explore' } }
+      ])
+    )
+
+    const subagents = only(b.items, 'subagent')
+    expect(subagents).toHaveLength(1)
+    expect(subagents[0]!.name).toBe('найти утечку')
+    expect(subagents[0]!.state).toBe('running')
+
+    b.apply(
+      assistant([{ type: 'tool_use', id: 'n1', name: 'Grep', input: { pattern: 'leak' } }], {
+        parent_tool_use_id: 'task1'
+      })
+    )
+
+    const nested = only(b.items, 'tool')
+    expect(nested).toHaveLength(1)
+    expect(nested[0]!.parentId).toBe(subagents[0]!.id)
+
+    b.apply(toolResult('task1', 'подагент закончил'))
+    expect(only(b.items, 'subagent')[0]!.state).toBe('done')
+    expect(only(b.items, 'subagent')[0]!.summary).toBe('подагент закончил')
+  })
+
+  test('AskUserQuestion даёт элемент question с вариантами, а не permission', () => {
+    const b = new RibbonBuilder()
+    b.apply(
+      assistant([
+        {
+          type: 'tool_use',
+          id: 'q1',
+          name: 'AskUserQuestion',
+          input: {
+            questions: [
+              {
+                question: 'Какой вариант панели?',
+                header: 'Панель',
+                options: [
+                  { label: 'Справа', description: 'как в приложении' },
+                  { label: 'Снизу', description: 'как в терминале' }
+                ]
+              }
+            ]
+          }
+        }
+      ])
+    )
+
+    expect(only(b.items, 'permission')).toHaveLength(0)
+    const questions = only(b.items, 'question')
+    expect(questions).toHaveLength(1)
+    expect(questions[0]!.toolUseId).toBe('q1')
+    expect(questions[0]!.question).toBe('Какой вариант панели?')
+    expect(questions[0]!.options).toEqual(['Справа', 'Снизу'])
+    expect(questions[0]!.answer).toBeNull()
+  })
+
+  test('compact_boundary даёт элемент compaction с числом освобождённых токенов', () => {
+    const b = new RibbonBuilder()
+    const changes = b.apply({
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: uuid(),
+      session_id: 's1',
+      compact_metadata: { trigger: 'auto', pre_tokens: 150000, post_tokens: 42000, duration_ms: 1200 }
+    })
+
+    expect(changes).toHaveLength(1)
+    const item = only(b.items, 'compaction')[0]!
+    expect(item.trigger).toBe('auto')
+    expect(item.freedTokens).toBe(108000)
+  })
+
+  test('реплика пользователя попадает в ленту, а tool_result — нет', () => {
+    const b = new RibbonBuilder()
+    b.apply(userMessage('сделай рефактор auth.ts'))
+    b.apply(userMessage([{ type: 'text', text: 'и прогони тесты' }]))
+
+    const users = only(b.items, 'user')
+    expect(users).toHaveLength(2)
+    expect(users[0]!.text).toBe('сделай рефактор auth.ts')
+    expect(users[1]!.text).toBe('и прогони тесты')
+  })
+
+  test('неизвестный тип сообщения игнорируется и не роняет сборку', () => {
+    const b = new RibbonBuilder()
+    expect(b.apply({ type: 'session_state_changed', uuid: uuid(), session_id: 's1' })).toEqual([])
+    expect(b.apply({ type: 'hook_started' })).toEqual([])
+    expect(b.apply({})).toEqual([])
+    expect(b.apply(null)).toEqual([])
+    expect(b.apply('мусор')).toEqual([])
+    expect(b.items).toHaveLength(0)
+  })
+
+  test('результат хода закрывает открытый поток текста', () => {
+    const b = new RibbonBuilder()
+    b.apply(messageStart('msg_r'))
+    b.apply(textDelta('msg_r', 'думаю вслух'))
+    expect(only(b.items, 'agentText')[0]!.streaming).toBe(true)
+
+    b.apply({ type: 'result', subtype: 'success', uuid: uuid(), session_id: 's1', is_error: false })
+    expect(only(b.items, 'agentText')[0]!.streaming).toBe(false)
+  })
+
+  test('каждое изменение ссылается на существующий элемент', () => {
+    const b = new RibbonBuilder()
+    const changes = [
+      ...b.apply(assistant([{ type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'a.ts' } }])),
+      ...b.apply(toolResult('t1', 'ok'))
+    ]
+
+    for (const change of changes) {
+      if (change.kind === 'update') {
+        expect(b.items.some((i) => i.id === change.id)).toBe(true)
+      }
+      if (change.kind === 'append') {
+        expect(b.items.some((i) => i.id === change.item.id)).toBe(true)
+      }
+    }
+  })
+})

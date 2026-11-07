@@ -49,7 +49,7 @@ export type ToolState = 'running' | 'done'
 export type RibbonItem =
   | (RibbonBase & { kind: 'user'; text: string; attachments: Attachment[] })
   | (RibbonBase & { kind: 'agentText'; text: string; streaming: boolean })
-  | (RibbonBase & { kind: 'thinking'; text: string; done: boolean })
+  | (RibbonBase & { kind: 'thinking'; text: string; done: boolean; durationMs: number })
   | (RibbonBase & {
       kind: 'tool'
       toolUseId: string

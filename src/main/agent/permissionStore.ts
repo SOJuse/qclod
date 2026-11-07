@@ -56,17 +56,46 @@ export function saveRules(dir: string, rules: PermissionRule[]): void {
   writeFileSync(join(dir, RULES_FILE), JSON.stringify(rules, null, 2), 'utf8')
 }
 
+const TARGET_KEYS = ['file_path', 'path', 'notebook_path', 'command', 'url', 'pattern']
+
+/** Key order does not change the fingerprint, so the same call matches itself. */
+function canonical(input: Record<string, unknown>): string | undefined {
+  const keys = Object.keys(input).sort()
+  if (keys.length === 0) return undefined
+  try {
+    return JSON.stringify(keys.map((key) => [key, input[key]]))
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * What the tool is acting on, as a rule records it: the whole path or the whole
  * command, never a prefix. A rule remembered for one file must not quietly
  * cover its neighbours.
+ *
+ * When no familiar key is there — an MCP tool, say — the whole input becomes
+ * the target rather than nothing. «Разрешить всё такое» must mean this call
+ * again, not every future call of that tool whatever it is handed; only a tool
+ * invoked with no arguments at all can produce a rule that matches broadly.
  */
 export function ruleTarget(input: Record<string, unknown>): string | undefined {
-  for (const key of ['file_path', 'path', 'notebook_path', 'command', 'url']) {
+  for (const key of TARGET_KEYS) {
     const value = input[key]
     if (typeof value === 'string' && value !== '') return value
   }
-  return undefined
+  return canonical(input)
+}
+
+/** The same target, shortened for the card the user reads before answering. */
+export function displayTarget(input: Record<string, unknown>): string {
+  for (const key of TARGET_KEYS) {
+    const value = input[key]
+    if (typeof value === 'string' && value !== '') return value
+  }
+  const keys = Object.keys(input).sort()
+  if (keys.length === 0) return ''
+  return keys.map((key) => `${key}: ${String(input[key]).slice(0, 40)}`).join(', ')
 }
 
 /**

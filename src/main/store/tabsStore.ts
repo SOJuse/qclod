@@ -31,9 +31,12 @@ function sanitizeOverrides(value: unknown): LaunchOverrides {
 }
 
 /**
- * Only what the spec says survives a restart: working directory, title and
- * launch overrides. Session content is never written to disk (constraint 5.4),
- * and sessions start fresh — `--resume` is deliberately not used (spec 6.3).
+ * Only what the spec says survives a restart: working directory, title, launch
+ * overrides and the id of the conversation the tab was last in.
+ *
+ * The id is a pointer, not content: the messages themselves live where the CLI
+ * already keeps them, and Qclod never writes a word of the conversation to
+ * disk (constraint 5.4).
  */
 export function saveTabs(dir: string, tabs: PersistedTab[]): void {
   mkdirSync(dir, { recursive: true })
@@ -41,7 +44,8 @@ export function saveTabs(dir: string, tabs: PersistedTab[]): void {
     id: tab.id,
     cwd: tab.cwd,
     title: tab.title,
-    overrides: sanitizeOverrides(tab.overrides)
+    overrides: sanitizeOverrides(tab.overrides),
+    ...(typeof tab.lastSessionId === 'string' ? { lastSessionId: tab.lastSessionId } : {})
   }))
   writeFileSync(join(dir, TABS_FILE), JSON.stringify(minimal, null, 2), 'utf8')
 }
@@ -65,6 +69,9 @@ export function loadTabs(dir: string): LoadedTab[] {
       cwd: record['cwd'],
       title: typeof record['title'] === 'string' ? record['title'] : record['cwd'],
       overrides: sanitizeOverrides(record['overrides']),
+      ...(typeof record['lastSessionId'] === 'string'
+        ? { lastSessionId: record['lastSessionId'] }
+        : {}),
       missingCwd: !isDirectory(record['cwd'])
     })
   }

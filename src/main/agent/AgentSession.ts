@@ -13,6 +13,7 @@ import type {
   UserInput
 } from '../../shared/types'
 import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
+import { displayTarget } from './permissionStore'
 import { resolveExecutable } from './resolveExecutable'
 
 export interface AgentSessionOptions {
@@ -34,15 +35,6 @@ export interface AgentSessionOptions {
 type ChangeListener = (changes: RibbonChange[]) => void
 type PanelListener = (patch: Partial<PanelData>) => void
 type StatusListener = (status: SessionStatus) => void
-
-/** What the permission card says the tool will touch. */
-function permissionTarget(input: Record<string, unknown>): string {
-  for (const key of ['file_path', 'path', 'notebook_path', 'command', 'url', 'pattern']) {
-    const value = input[key]
-    if (typeof value === 'string' && value !== '') return value
-  }
-  return ''
-}
 
 function splitArgs(flags: string | undefined): string[] {
   if (!flags) return []
@@ -123,6 +115,25 @@ export class AgentSession {
 
   private settled(): boolean {
     return this.state === 'idle' || this.state === 'stopped' || this.state === 'error'
+  }
+
+  /**
+   * Rebuilds the ribbon from a past conversation's messages.
+   *
+   * Replay must never be mistaken for live traffic: it adds items and touches
+   * nothing else — no status change, no panel update, no cost counted twice.
+   */
+  replay(messages: unknown[]): RibbonChange[] {
+    const changes: RibbonChange[] = []
+    for (const message of messages) changes.push(...this.builder.apply(message))
+    const todo = this.builder.todo
+    if (todo) this.todoItems = todo
+    return changes
+  }
+
+  /** Something Qclod itself needs to say — a crash, a session that would not resume. */
+  notice(text: string, tone: 'info' | 'error' = 'info'): RibbonChange[] {
+    return this.builder.notice(text, tone)
   }
 
   async start(resumeId?: string): Promise<void> {
@@ -304,7 +315,7 @@ export class AgentSession {
   ): Promise<PermissionAnswer> {
     const ask = this.options.askPermission
     const requestId = opts.toolUseId ?? `${this.options.tabId}:${Date.now()}`
-    const target = permissionTarget(input)
+    const target = displayTarget(input)
     this.emit(this.builder.addPermission(requestId, toolName, target))
 
     const previous = this.state

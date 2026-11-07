@@ -93,3 +93,39 @@ describe('tabsStore', () => {
 function readFile(path: string): string {
   return require('node:fs').readFileSync(path, 'utf8') as string
 }
+
+describe('tabsStore: идентификатор последней сессии', () => {
+  test('lastSessionId сохраняется и читается', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qclod-tabs-session-'))
+    try {
+      saveTabs(dir, [
+        {
+          id: 'a',
+          cwd: dir,
+          title: 'A',
+          overrides: {},
+          lastSessionId: '11111111-1111-1111-1111-111111111111'
+        }
+      ])
+
+      expect(loadTabs(dir)[0]!.lastSessionId).toBe('11111111-1111-1111-1111-111111111111')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('нестроковый lastSessionId отбрасывается', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qclod-tabs-session-'))
+    try {
+      writeFileSync(
+        join(dir, TABS_FILE),
+        JSON.stringify([{ id: 'a', cwd: dir, title: 'A', overrides: {}, lastSessionId: 42 }]),
+        'utf8'
+      )
+
+      expect(loadTabs(dir)[0]!.lastSessionId).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

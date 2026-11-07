@@ -2,7 +2,14 @@ import { describe, expect, test, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadRules, matchRule, saveRules, RULES_FILE } from '../../src/main/agent/permissionStore'
+import {
+  displayTarget,
+  loadRules,
+  matchRule,
+  ruleTarget,
+  saveRules,
+  RULES_FILE
+} from '../../src/main/agent/permissionStore'
 
 let dir = ''
 let project = ''
@@ -80,5 +87,36 @@ describe('permissionStore', () => {
 
   test('отсутствующий файл правил — пустой список', () => {
     expect(loadRules(dir)).toEqual([])
+  })
+})
+
+describe('permissionStore: цель без привычного ключа', () => {
+  test('«запомнить» для MCP-инструмента не становится джокером', () => {
+    const rules = [
+      { id: 'r1', toolName: 'mcp__github__search', target: '[["query","утечка"]]', behavior: 'allow' as const }
+    ]
+
+    expect(matchRule(rules, 'mcp__github__search', { query: 'утечка' })).toBe('allow')
+    // A different call of the same tool is a different question.
+    expect(matchRule(rules, 'mcp__github__search', { query: 'пароли' })).toBeNull()
+  })
+
+  test('порядок ключей не меняет совпадение', () => {
+    const first = ruleTarget({ owner: 'qclod', repo: 'app' })
+    const second = ruleTarget({ repo: 'app', owner: 'qclod' })
+    expect(first).toBe(second)
+  })
+
+  test('инструмент совсем без аргументов даёт правило на весь инструмент', () => {
+    expect(ruleTarget({})).toBeUndefined()
+    expect(matchRule([{ id: 'r1', toolName: 'ListMcp', behavior: 'allow' }], 'ListMcp', {})).toBe(
+      'allow'
+    )
+  })
+
+  test('карточка показывает читаемую цель, а не JSON', () => {
+    expect(displayTarget({ file_path: 'C:/проект/auth.ts' })).toBe('C:/проект/auth.ts')
+    expect(displayTarget({ query: 'утечка' })).toBe('query: утечка')
+    expect(displayTarget({})).toBe('')
   })
 })

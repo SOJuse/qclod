@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:unit": "vitest run",
     "test:e2e": "npm run build && playwright test",
-    "dist": "npm run build && electron-builder --win nsis --x64"
+    "dist": "npm run icon && npm run build && electron-builder --win nsis --x64",
+    "icon": "node scripts/make-icon.mjs"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.18",

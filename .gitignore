@@ -6,3 +6,5 @@ dist/
 tests/.artifacts/
 playwright-report/
 test-results/
+dist/
+build/icon.png

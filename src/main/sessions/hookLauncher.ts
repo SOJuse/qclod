@@ -23,3 +23,25 @@ export function writeHookLauncher(dir: string, execPath: string, scriptPath: str
   writeFileSync(path, body, 'utf8')
   return path
 }
+
+/**
+ * Maps a path inside the packaged `app.asar` to its unpacked twin.
+ * ELECTRON_RUN_AS_NODE runs plain Node, which cannot read a script out of an
+ * asar archive, so `bin/` is unpacked at build time.
+ */
+export function unpackedPath(path: string): string {
+  if (path.includes('app.asar.unpacked')) return path
+
+  // Built from its code point rather than written as an escape: a lone
+  // backslash in source is too easy to lose in transit.
+  const BACKSLASH = String.fromCharCode(92)
+  for (const separator of ['/', BACKSLASH]) {
+    const needle = `app.asar${separator}`
+    const at = path.indexOf(needle)
+    if (at === -1) continue
+    return (
+      path.slice(0, at) + `app.asar.unpacked${separator}` + path.slice(at + needle.length)
+    )
+  }
+  return path
+}

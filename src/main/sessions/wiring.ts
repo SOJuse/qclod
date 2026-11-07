@@ -8,7 +8,7 @@ import { sanitizeOverrides, sanitizeTabPatch } from '../tabs/sanitize'
 import { buildFileIndex } from '../files/fileIndex'
 import { cleanupPasteDir, saveImageBuffer } from '../files/imagePaste'
 import { startHookServer, type HookServer } from './hookServer'
-import { writeHookLauncher } from './hookLauncher'
+import { unpackedPath, writeHookLauncher } from './hookLauncher'
 import { BUSY_TIMEOUT_MS, reduceStatus, mayNotify, type StatusState } from './sessionStatus'
 
 export interface SessionWiring {
@@ -49,7 +49,7 @@ export function wireSessions(
   const hookLauncher = writeHookLauncher(
     storeDir,
     process.execPath,
-    join(app.getAppPath(), 'bin', 'qclod-hook.js')
+    unpackedPath(join(app.getAppPath(), 'bin', 'qclod-hook.js'))
   )
 
   const manager = new SessionManager({

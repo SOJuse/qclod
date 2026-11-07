@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { HOOK_LAUNCHER_NAME, writeHookLauncher } from '@main/sessions/hookLauncher'
+import {
+  HOOK_LAUNCHER_NAME,
+  unpackedPath,
+  writeHookLauncher
+} from '@main/sessions/hookLauncher'
 
 let dir: string
 
@@ -45,5 +49,30 @@ describe('writeHookLauncher', () => {
     writeHookLauncher(dir, 'a.exe', 'a.js')
     const path = writeHookLauncher(dir, 'b.exe', 'b.js')
     expect(readFileSync(path, 'utf8')).toContain('"b.exe"')
+  })
+})
+
+describe('unpackedPath', () => {
+  test('путь внутри asar переводится в распакованный', () => {
+    // ELECTRON_RUN_AS_NODE does not read scripts out of an asar archive, so
+    // bin/ is unpacked at build time and the path has to follow.
+    expect(unpackedPath('C:/Program Files/Qclod/resources/app.asar/bin/qclod-hook.js')).toBe(
+      'C:/Program Files/Qclod/resources/app.asar.unpacked/bin/qclod-hook.js'
+    )
+  })
+
+  test('обычный путь не меняется', () => {
+    expect(unpackedPath('C:/dev/qclod/bin/qclod-hook.js')).toBe('C:/dev/qclod/bin/qclod-hook.js')
+  })
+
+  test('обратные слеши тоже обрабатываются', () => {
+    const windowsStyle = ['C:', 'app', 'resources', 'app.asar', 'bin', 'hook.js'].join('\\')
+    const expected = ['C:', 'app', 'resources', 'app.asar.unpacked', 'bin', 'hook.js'].join('\\')
+    expect(unpackedPath(windowsStyle)).toBe(expected)
+  })
+
+  test('уже распакованный путь не ломается', () => {
+    const path = 'C:/app/resources/app.asar.unpacked/bin/hook.js'
+    expect(unpackedPath(path)).toBe(path)
   })
 })

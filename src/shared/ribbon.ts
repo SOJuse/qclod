@@ -111,6 +111,11 @@ export class RibbonBuilder {
   /** Message ids whose text already reached the ribbon as deltas. */
   private readonly streamed = new Set<string>()
   private todoList: TodoItem[] | null = null
+  /**
+   * Text already shown because the user just typed it. The CLI echoes every
+   * message back, and the echo must not become a second copy of it on screen.
+   */
+  private readonly pendingEchoes: string[] = []
   private seq = 0
   private readonly now: () => number
 
@@ -131,6 +136,7 @@ export class RibbonBuilder {
    * — a replayed history entry arrives as a `user` message instead.
    */
   addUser(text: string, attachments: Attachment[] = []): RibbonChange[] {
+    this.pendingEchoes.push(text)
     return [this.append({ kind: 'user', id: this.nextId(), text, attachments })]
   }
 
@@ -396,7 +402,8 @@ export class RibbonBuilder {
     const content = inner['content']
 
     if (typeof content === 'string') {
-      return message['isSynthetic'] === true ? [] : this.addUser(content)
+      if (message['isSynthetic'] === true || this.consumeEcho(content)) return []
+      return this.appendUser(content)
     }
 
     const blocks = asArray(content).filter(isObject)
@@ -419,7 +426,8 @@ export class RibbonBuilder {
       .filter((a): a is Attachment => a !== null)
 
     if (!text && attachments.length === 0) return []
-    return this.addUser(text, attachments)
+    if (this.consumeEcho(text)) return []
+    return this.appendUser(text, attachments)
   }
 
   private onToolResult(block: Record<string, unknown>): RibbonChange[] {
@@ -477,6 +485,18 @@ export class RibbonBuilder {
   }
 
   // -------------------------------------------------------------- mechanics
+
+  /** True when this text is the echo of a message we have already shown. */
+  private consumeEcho(text: string): boolean {
+    const at = this.pendingEchoes.indexOf(text)
+    if (at === -1) return false
+    this.pendingEchoes.splice(at, 1)
+    return true
+  }
+
+  private appendUser(text: string, attachments: Attachment[] = []): RibbonChange[] {
+    return [this.append({ kind: 'user', id: this.nextId(), text, attachments })]
+  }
 
   private parentOf(message: Record<string, unknown>): string | undefined {
     const parent = str(message['parent_tool_use_id'])

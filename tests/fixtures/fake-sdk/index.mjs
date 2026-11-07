@@ -54,6 +54,11 @@ export function createFakeSdk(script = {}) {
   const sessionId = script.sessionId ?? randomUUID()
   const canUseTool = script.canUseTool ?? (async () => ({ behavior: 'allow' }))
 
+  /** Sends waiting to be played as their own turn. */
+  const inbox = []
+  let wake = null
+  let closed = false
+
   const state = {
     sent: [],
     permissionRequests: [],
@@ -232,7 +237,34 @@ export function createFakeSdk(script = {}) {
     )
 
     yield* play(steps)
+    yield* finishTurn()
 
+    // A real session does not end after its first answer: it waits for the
+    // next message. Without this the app could never be driven past turn one.
+    while (!closed) {
+      if (inbox.length === 0) {
+        await new Promise((resolve) => {
+          wake = resolve
+        })
+      }
+      if (closed) break
+      const input = inbox.shift()
+      if (!input) continue
+
+      // The CLI echoes the message back before answering it.
+      yield {
+        type: 'user',
+        uuid: randomUUID(),
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        message: { role: 'user', content: input.text }
+      }
+      yield* play(script.nextTurn ?? [])
+      yield* finishTurn()
+    }
+  }
+
+  async function* finishTurnImpl() {
     yield {
       type: 'result',
       subtype: 'success',
@@ -252,10 +284,18 @@ export function createFakeSdk(script = {}) {
     }
   }
 
+  const finishTurn = finishTurnImpl
+
   return {
     messages: stream(),
     send(input) {
       state.sent.push(input)
+      inbox.push(input)
+      if (wake) {
+        const resume = wake
+        wake = null
+        resume()
+      }
     },
     async interrupt() {
       state.interrupted = true
@@ -282,6 +322,12 @@ export function createFakeSdk(script = {}) {
     },
     async dispose() {
       state.disposed = true
+      closed = true
+      if (wake) {
+        const resume = wake
+        wake = null
+        resume()
+      }
     },
 
     get sent() {

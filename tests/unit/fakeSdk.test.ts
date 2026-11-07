@@ -1,11 +1,21 @@
 import { describe, expect, test } from 'vitest'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 
-async function collect(driver: {
-  messages: AsyncIterable<Record<string, unknown>>
-}): Promise<Array<Record<string, unknown>>> {
+/**
+ * One turn's worth of messages. The stream does not end after an answer — a
+ * real session waits for the next message — so a consumer reads up to the
+ * turn's `result` and stops there.
+ */
+async function collect(
+  driver: { messages: AsyncIterable<Record<string, unknown>> },
+  turns = 1
+): Promise<Array<Record<string, unknown>>> {
   const out: Array<Record<string, unknown>> = []
-  for await (const m of driver.messages) out.push(m)
+  let seen = 0
+  for await (const m of driver.messages) {
+    out.push(m)
+    if (m['type'] === 'result' && ++seen === turns) break
+  }
   return out
 }
 
@@ -132,5 +142,51 @@ describe('createFakeSdk', () => {
     expect(driver.permissionMode).toBe('plan')
     await driver.interrupt()
     expect(driver.interrupted).toBe(true)
+  })
+})
+
+describe('createFakeSdk: следующий ход', () => {
+  test('send проигрывает nextTurn и эхо сообщения пользователя', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'text', text: 'первый ход' }],
+      nextTurn: [{ kind: 'text', text: 'второй ход' }]
+    })
+
+    const out: Array<Record<string, unknown>> = []
+    let results = 0
+    const reader = (async () => {
+      for await (const m of driver.messages) {
+        out.push(m)
+        if (m['type'] === 'result' && ++results === 2) break
+      }
+    })()
+
+    driver.send({ text: 'продолжай', attachments: [] })
+    await reader
+
+    const echo = out.find(
+      (m) => m['type'] === 'user' && (m['message'] as { content: unknown }).content === 'продолжай'
+    )
+    expect(echo).toBeDefined()
+
+    const said = out
+      .filter((m) => m['type'] === 'assistant')
+      .flatMap((m) => ((m['message'] as { content: Array<{ text?: string }> }).content ?? []))
+      .map((b) => b.text)
+    expect(said).toEqual(['первый ход', 'второй ход'])
+  })
+
+  test('dispose отпускает поток, ждущий следующего сообщения', async () => {
+    const driver = createFakeSdk({ steps: [] })
+    const seen: string[] = []
+    const reader = (async () => {
+      for await (const m of driver.messages) seen.push(String(m['type']))
+    })()
+
+    await driver.dispose()
+    await reader
+
+    expect(seen.at(-1)).toBe('result')
+    expect(driver.disposed).toBe(true)
   })
 })

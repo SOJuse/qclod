@@ -333,3 +333,31 @@ describe('RibbonBuilder', () => {
     }
   })
 })
+
+describe('RibbonBuilder: эхо пользовательских сообщений', () => {
+  test('эхо уже показанной реплики не создаёт вторую копию', () => {
+    const b = new RibbonBuilder()
+    b.addUser('сделай рефактор auth.ts')
+    expect(only(b.items, 'user')).toHaveLength(1)
+
+    // The CLI echoes every message back; the user already sees their own words.
+    const changes = b.apply(userMessage('сделай рефактор auth.ts'))
+    expect(changes).toEqual([])
+    expect(only(b.items, 'user')).toHaveLength(1)
+  })
+
+  test('эхо гасится один раз — повторённая реплика видна дважды', () => {
+    const b = new RibbonBuilder()
+    b.addUser('ещё раз')
+    b.apply(userMessage('ещё раз'))
+    b.apply(userMessage('ещё раз'))
+
+    expect(only(b.items, 'user')).toHaveLength(2)
+  })
+
+  test('реплика из истории показывается, её никто не гасил', () => {
+    const b = new RibbonBuilder()
+    b.apply(userMessage('это пришло из истории'))
+    expect(only(b.items, 'user')).toHaveLength(1)
+  })
+})

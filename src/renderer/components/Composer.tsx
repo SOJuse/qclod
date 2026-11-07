@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent as ClipboardEventBase,
+  type DragEvent as DragEventBase,
   type KeyboardEvent
 } from 'react'
 import { chunkForPty } from '../input/encode'
@@ -13,7 +14,13 @@ import { resolveComposerKey } from '../input/keyPrecedence'
 import { nextPassthrough } from '../input/passthrough'
 import { useAppStore } from '../state/useAppStore'
 import { toSequence } from '../input/keySequence'
-import { applyMention, findMentionQuery } from '../input/mentions'
+import {
+  applyMention,
+  clipboardHasImage,
+  dropTextFor,
+  findMentionQuery,
+  formatPathsForInput
+} from '../input/mentions'
 import { filterPaths } from '../../shared/fuzzy'
 import { MentionPopup } from './MentionPopup'
 import type { TabId } from '../../shared/types'
@@ -187,9 +194,45 @@ export function Composer({
     [draft, history, markTyped, matches, menuActive, mention, onToggleFocus, passthrough, popupOpen, selected, send, setDraft, tabId]
   )
 
+  const insertAtCaret = useCallback(
+    (insert: string) => {
+      const area = areaRef.current
+      const start = area?.selectionStart ?? draft.length
+      const end = area?.selectionEnd ?? draft.length
+      const next = draft.slice(0, start) + insert + draft.slice(end)
+      setDraft(tabId, next)
+      const at = start + insert.length
+      setCaret(at)
+      requestAnimationFrame(() => area?.setSelectionRange(at, at))
+    },
+    [draft, setDraft, tabId]
+  )
+
+  const onDrop = useCallback(
+    (ev: DragEventBase<HTMLTextAreaElement>) => {
+      const text = dropTextFor(Array.from(ev.dataTransfer?.files ?? []), (file) =>
+        window.qclod.pathForFile(file)
+      )
+      if (text === '') return
+      ev.preventDefault()
+      insertAtCaret(text)
+    },
+    [insertAtCaret]
+  )
+
   const onPaste = useCallback(
     (ev: ClipboardEventBase<HTMLTextAreaElement>) => {
+      const hasImage = clipboardHasImage(Array.from(ev.clipboardData?.items ?? []))
       const text = ev.clipboardData?.getData('text/plain') ?? ''
+
+      if (hasImage && text === '') {
+        // The agent reads a file, not clipboard bytes: save it and mention it.
+        ev.preventDefault()
+        void window.qclod.clipboardImage().then((path) => {
+          if (path) insertAtCaret(formatPathsForInput([path]) + ' ')
+        })
+        return
+      }
       if (text === '') return
       ev.preventDefault()
 
@@ -200,16 +243,9 @@ export function Composer({
         return
       }
 
-      const area = ev.currentTarget
-      const start = area.selectionStart ?? draft.length
-      const end = area.selectionEnd ?? draft.length
-      setDraft(tabId, draft.slice(0, start) + text + draft.slice(end))
-      requestAnimationFrame(() => {
-        const caret = start + text.length
-        area.setSelectionRange(caret, caret)
-      })
+      insertAtCaret(text)
     },
-    [draft, passthrough, setDraft, tabId]
+    [draft, insertAtCaret, passthrough, setDraft, tabId]
   )
 
   return (
@@ -251,6 +287,8 @@ export function Composer({
         onSelect={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
+        onDrop={onDrop}
+        onDragOver={(e) => e.preventDefault()}
         onFocus={onRequestFocus}
       />
       <div className="composer-hint">

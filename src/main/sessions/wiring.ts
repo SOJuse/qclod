@@ -1,10 +1,11 @@
-import { app, dialog, ipcMain, type BrowserWindow } from 'electron'
+import { app, clipboard, dialog, ipcMain, type BrowserWindow } from 'electron'
 import { CHANNELS } from '../../shared/channels'
 import type { AppSettings, TabId, TabState } from '../../shared/types'
 import { SessionManager } from './SessionManager'
 import { TabController } from '../tabs/TabController'
 import { sanitizeOverrides, sanitizeTabPatch } from '../tabs/sanitize'
 import { buildFileIndex } from '../files/fileIndex'
+import { cleanupPasteDir, saveImageBuffer } from '../files/imagePaste'
 
 export interface SessionWiring {
   manager: SessionManager
@@ -85,6 +86,15 @@ export function wireSessions(
     const index = await buildFileIndex(tab.cwd)
     indexCache.set(tabId, index)
     return index
+  })
+
+  // Screenshot-heavy use would otherwise fill the disk over time.
+  cleanupPasteDir(storeDir)
+
+  ipcMain.handle(CHANNELS.clipboardImage, () => {
+    const image = clipboard.readImage()
+    if (image.isEmpty()) return null
+    return saveImageBuffer(storeDir, image.toPNG())
   })
 
   ipcMain.handle(CHANNELS.dialogPickFolder, async () => {

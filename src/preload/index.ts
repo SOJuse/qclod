@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { CHANNELS } from '../shared/channels'
 import type {
   AppSettings,
@@ -47,6 +47,16 @@ const api = {
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.dialogPickFolder),
   fileIndex: (id: TabId): Promise<string[]> => ipcRenderer.invoke(CHANNELS.filesIndex, id),
   clipboardImage: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.clipboardImage),
+
+  // File.path was removed in Electron 32; webUtils is the supported way to
+  // learn where a dropped file lives on disk.
+  pathForFile: (file: File): string | null => {
+    try {
+      return webUtils.getPathForFile(file) || null
+    } catch {
+      return null
+    }
+  },
 
   minimize: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowMinimize),
   toggleMaximize: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.windowMaximize),

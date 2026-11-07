@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest'
-import { applyMention, findMentionQuery, quotePath } from '@renderer/input/mentions'
+import {
+  applyMention,
+  clipboardHasImage,
+  dropTextFor,
+  findMentionQuery,
+  formatPathsForInput,
+  quotePath
+} from '@renderer/input/mentions'
 
 describe('findMentionQuery', () => {
   test('@ в начале строки открывает запрос', () => {
@@ -70,5 +77,68 @@ describe('applyMention', () => {
   test('путь с пробелами подставляется в кавычках', () => {
     const result = applyMention('@fa', 0, 3, 'Мои документы/файл 1.ts')
     expect(result.text).toBe('@"Мои документы/файл 1.ts" ')
+  })
+})
+
+describe('formatPathsForInput', () => {
+  test('один путь подставляется как @путь', () => {
+    expect(formatPathsForInput(['C:/проекты/app.ts'])).toBe('@C:/проекты/app.ts')
+  })
+
+  test('несколько путей разделяются пробелом', () => {
+    expect(formatPathsForInput(['a.ts', 'b.ts'])).toBe('@a.ts @b.ts')
+  })
+
+  test('путь с пробелами не разваливается по пробелу', () => {
+    // Review Focus 2: dropping a file from "Мои проекты" must still read as one path.
+    expect(formatPathsForInput(['C:/Мои проекты/файл 1.ts'])).toBe(
+      '@"C:/Мои проекты/файл 1.ts"'
+    )
+  })
+
+  test('пустой список даёт пустую строку', () => {
+    expect(formatPathsForInput([])).toBe('')
+  })
+})
+
+describe('dropTextFor', () => {
+  const file = (name: string): File => ({ name }) as File
+
+  test('складывает пути всех перетащенных файлов', () => {
+    const resolve = (f: File): string => `C:/проекты/${f.name}`
+    expect(dropTextFor([file('a.ts'), file('b.ts')], resolve)).toBe(
+      '@C:/проекты/a.ts @C:/проекты/b.ts '
+    )
+  })
+
+  test('файлы без пути пропускаются', () => {
+    const resolve = (f: File): string | null => (f.name === 'ok.ts' ? 'C:/ok.ts' : null)
+    expect(dropTextFor([file('ok.ts'), file('нет.ts')], resolve)).toBe('@C:/ok.ts ')
+  })
+
+  test('ничего не разрешилось — пустая строка, вставлять нечего', () => {
+    expect(dropTextFor([file('x')], () => null)).toBe('')
+  })
+
+  test('путь с пробелами остаётся одним токеном', () => {
+    expect(dropTextFor([file('f')], () => 'C:/Мои проекты/файл 1.ts')).toBe(
+      '@"C:/Мои проекты/файл 1.ts" '
+    )
+  })
+})
+
+describe('clipboardHasImage', () => {
+  const item = (type: string): DataTransferItem => ({ type }) as DataTransferItem
+
+  test('картинка в буфере распознаётся', () => {
+    expect(clipboardHasImage([item('image/png')])).toBe(true)
+  })
+
+  test('только текст — не картинка', () => {
+    expect(clipboardHasImage([item('text/plain')])).toBe(false)
+  })
+
+  test('пустой буфер — не картинка', () => {
+    expect(clipboardHasImage([])).toBe(false)
   })
 })

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { createTerminal, type TerminalHandle } from '../terminal/createTerminal'
 import { resolveTerminalKey } from '../terminal/keymap'
+import { encodeForPty } from '../input/encode'
 import type { TabId } from '../../shared/types'
 import './TerminalView.css'
 
@@ -57,7 +58,9 @@ export function TerminalView({
         }
         case 'paste':
           void navigator.clipboard.readText().then((text) => {
-            if (text) void window.qclod.write(tabId, bracket(text))
+            // encodeForPty strips paste markers and control characters, so
+            // clipboard content cannot break out of the paste block.
+            if (text) void window.qclod.write(tabId, encodeForPty(text))
           })
           return false
         case 'selectAll':
@@ -133,6 +136,3 @@ export function TerminalView({
   )
 }
 
-function bracket(text: string): string {
-  return `[200~${text}[201~`
-}

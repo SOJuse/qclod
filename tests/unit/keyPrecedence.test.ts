@@ -72,6 +72,16 @@ describe('таблица приоритетов: строки сверху вн�
     expect(resolveComposerKey(key('Tab', { shift: true }), ctx({ text: 'что-то' }))).toBe('toPty')
   })
 
+  test('сам символ / в пустом поле уже уходит агенту', () => {
+    // Otherwise the slash stays in our field, the CLI never sees it, and the
+    // command arrives as "menu" instead of "/menu".
+    expect(resolveComposerKey(key('/'), ctx({ text: '' }))).toBe('toPty')
+  })
+
+  test('/ в середине текста остаётся обычным вводом', () => {
+    expect(resolveComposerKey(key('/'), ctx({ text: 'src' }))).toBe('insert')
+  })
+
   test('печатная клавиша в режиме проброса даёт toPty', () => {
     expect(resolveComposerKey(key('c'), ctx({ text: '/', passthrough: true }))).toBe('toPty')
     expect(resolveComposerKey(key('Backspace'), ctx({ text: '/c', passthrough: true }))).toBe(

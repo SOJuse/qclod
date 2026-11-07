@@ -66,6 +66,11 @@ const RULES: Rule[] = [
   // Shift+Tab / Tab switch the agent's modes.
   (ev) => (ev.key === 'Tab' ? 'toPty' : undefined),
 
+  // The "/" that turns passthrough on must itself reach the CLI, or the
+  // command would arrive one character short.
+  (ev, ctx) =>
+    ev.key === '/' && ctx.text === '' && !ev.ctrlKey && !ev.altKey ? 'toPty' : undefined,
+
   // In passthrough the text lives in the CLI, so editing keys belong to it too.
   (_ev, ctx) => (ctx.passthrough ? 'toPty' : undefined),
 

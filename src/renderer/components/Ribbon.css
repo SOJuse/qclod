@@ -17,8 +17,9 @@
 }
 
 .ribbon-row {
-  max-width: 920px;
+  max-width: 820px;
   margin: 0 auto;
+  font-size: 14px;
 }
 
 /* ---------------------------------------------------------- the user's turn */
@@ -35,6 +36,8 @@
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text);
+  font-size: 14px;
+  line-height: 1.55;
 }
 
 .row-user-files {
@@ -55,14 +58,11 @@
 /* ------------------------------------------------------------- the answer */
 
 .row-agent {
-  margin: 8px 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.6;
+  margin: 10px 0 14px;
   color: var(--text);
 }
 
-.row-agent.is-streaming::after {
+.row-agent.is-streaming .md > :last-child::after {
   content: '▍';
   margin-left: 2px;
   opacity: 0.5;
@@ -79,7 +79,7 @@
 
 .row-thinking {
   margin: 6px 0;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-dim);
 }
 
@@ -105,12 +105,33 @@
 /* ------------------------------------------------------------- tool cards */
 
 .tool-card {
-  margin: 4px 0;
+  margin: 5px 0;
   border: 1px solid var(--border);
+  border-left: 2px solid var(--tool-accent, var(--border-strong));
   border-radius: 8px;
   background: var(--surface-raised);
-  font-size: 12px;
+  font-size: 13px;
   overflow: hidden;
+}
+
+.tool-read { --tool-accent: #6da8ff; }
+.tool-write { --tool-accent: #ffc46b; }
+.tool-run { --tool-accent: #67d8a0; }
+.tool-web { --tool-accent: #7fd4ff; }
+.tool-agent { --tool-accent: var(--glow); }
+.tool-plan { --tool-accent: #b9a6ff; }
+.tool-mcp { --tool-accent: #ff9ed2; }
+
+.tool-icon {
+  flex: 0 0 auto;
+  width: 15px;
+  text-align: center;
+  color: var(--tool-accent, var(--text-dim));
+  font-size: 12px;
+}
+
+.tool-spinner {
+  color: var(--tool-accent, var(--text-dim));
 }
 
 .tool-head {
@@ -129,12 +150,12 @@
 
 .tool-name {
   font-weight: 600;
-  color: var(--text);
+  color: var(--tool-accent, var(--text));
   flex: 0 0 auto;
 }
 
 .tool-target {
-  color: var(--text-dim);
+  color: var(--text);
   flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -149,14 +170,14 @@
 
 .tool-detail {
   margin: 0;
-  padding: 9px 12px;
+  padding: 10px 13px;
   border-top: 1px solid var(--border);
   max-height: 320px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 11.5px;
-  line-height: 1.5;
+  font-size: 12.5px;
+  line-height: 1.55;
   color: var(--text-dim);
 }
 
@@ -177,18 +198,19 @@
 /* ---------------------------------------------------------------- subagent */
 
 .row-subagent {
-  margin: 6px 0;
+  margin: 8px 0;
   border: 1px solid var(--border);
+  border-left: 2px solid var(--glow);
   border-radius: 8px;
   background: var(--surface-raised);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .row-subagent > summary {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 11px;
+  align-items: baseline;
+  gap: 9px;
+  padding: 8px 12px;
   cursor: pointer;
   list-style: none;
 }
@@ -202,13 +224,33 @@
   opacity: 0.7;
 }
 
-.row-subagent-name {
-  font-weight: 600;
-  flex: 1 1 auto;
+.row-subagent-kind {
+  flex: 0 0 auto;
+  font-weight: 650;
+  color: var(--glow);
 }
 
-.row-subagent-summary {
+.row-subagent-task {
+  flex: 1 1 auto;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-subagent-stats {
+  flex: 0 0 auto;
   color: var(--text-dim);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-subagent-working {
+  color: var(--glow);
+}
+
+.row-subagent.is-running {
+  border-color: color-mix(in srgb, var(--glow) 40%, var(--border));
 }
 
 .row-subagent-body {
@@ -317,9 +359,9 @@
 
 .row-notice {
   margin: 10px 0;
-  padding: 9px 12px;
+  padding: 10px 13px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 13px;
   background: var(--surface-raised);
   color: var(--text-dim);
 }

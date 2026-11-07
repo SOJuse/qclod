@@ -218,7 +218,9 @@ describe('RibbonBuilder', () => {
 
     const subagents = only(b.items, 'subagent')
     expect(subagents).toHaveLength(1)
-    expect(subagents[0]!.name).toBe('найти утечку')
+    // What it is, and separately what it was asked to do.
+    expect(subagents[0]!.name).toBe('Explore')
+    expect(subagents[0]!.task).toBe('найти утечку')
     expect(subagents[0]!.state).toBe('running')
 
     b.apply(
@@ -359,5 +361,92 @@ describe('RibbonBuilder: эхо пользовательских сообщен�
     const b = new RibbonBuilder()
     b.apply(userMessage('это пришло из истории'))
     expect(only(b.items, 'user')).toHaveLength(1)
+  })
+})
+
+describe('RibbonBuilder: мусор, вставленный не пользователем', () => {
+  test('system-reminder не попадает в ленту', () => {
+    const b = new RibbonBuilder()
+    b.apply(
+      userMessage(
+        'посмотри auth.ts\n<system-reminder>Это напоминание системы, не ответ пользователю.</system-reminder>'
+      )
+    )
+
+    const users = only(b.items, 'user')
+    expect(users).toHaveLength(1)
+    expect(users[0]!.text).toBe('посмотри auth.ts')
+  })
+
+  test('сообщение целиком из вставок не создаёт пустой реплики', () => {
+    const b = new RibbonBuilder()
+    b.apply(userMessage('<system-reminder>только напоминание</system-reminder>'))
+    b.apply(userMessage('<local-command-stdout>вывод команды</local-command-stdout>'))
+
+    expect(only(b.items, 'user')).toHaveLength(0)
+  })
+
+  test('оборванная вставка не тянет за собой хвост', () => {
+    // A resumed transcript can be cut mid-block.
+    const b = new RibbonBuilder()
+    b.apply(userMessage('сделай рефактор\n<system-reminder>начало напоминания без конца'))
+
+    expect(only(b.items, 'user')[0]!.text).toBe('сделай рефактор')
+  })
+
+  test('то же самое в блоках, а не в строке', () => {
+    const b = new RibbonBuilder()
+    b.apply(
+      userMessage([
+        { type: 'text', text: 'привет' },
+        { type: 'text', text: '<system-reminder>шум</system-reminder>' }
+      ])
+    )
+
+    expect(only(b.items, 'user')[0]!.text).toBe('привет')
+  })
+})
+
+describe('RibbonBuilder: цифры подагента', () => {
+  test('по окончании видно сколько времени и токенов он съел', () => {
+    const b = new RibbonBuilder()
+    b.apply(
+      assistant([
+        {
+          type: 'tool_use',
+          id: 'task1',
+          name: 'Task',
+          input: { description: 'найти утечку', subagent_type: 'Explore' }
+        }
+      ])
+    )
+
+    b.apply(
+      userMessage([{ type: 'tool_result', tool_use_id: 'task1', content: 'нашёл в трёх местах' }], {
+        tool_use_result: {
+          durationMs: 42000,
+          usage: { input_tokens: 12000, output_tokens: 3000 },
+          toolUseCount: 7
+        }
+      })
+    )
+
+    const card = only(b.items, 'subagent')[0]!
+    expect(card.state).toBe('done')
+    expect(card.durationMs).toBe(42000)
+    expect(card.tokens).toBe(15000)
+    expect(card.toolCalls).toBe(7)
+  })
+
+  test('без цифр карточка просто без них, а не с нулями', () => {
+    const b = new RibbonBuilder()
+    b.apply(
+      assistant([{ type: 'tool_use', id: 'task1', name: 'Task', input: { description: 'что-то' } }])
+    )
+    b.apply(toolResult('task1', 'готово'))
+
+    const card = only(b.items, 'subagent')[0]!
+    expect(card.tokens).toBeUndefined()
+    expect(card.durationMs).toBeUndefined()
   })
 })

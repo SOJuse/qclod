@@ -96,6 +96,8 @@ const api = {
   toggleMaximize: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.windowMaximize),
   closeWindow: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowClose),
 
+  openExternal: (url: string): Promise<void> => ipcRenderer.invoke(CHANNELS.openExternal, url),
+
   onRibbon: (cb: (e: RibbonEvent) => void) => on(CHANNELS.ribbonChanged, cb),
   onPanel: (cb: (e: PanelEvent) => void) => on(CHANNELS.panelChanged, cb),
   onStatus: (cb: (e: StatusEvent) => void) => on(CHANNELS.statusChanged, cb),

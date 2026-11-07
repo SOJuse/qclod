@@ -4,6 +4,7 @@ import { PermissionCard } from './PermissionCard'
 import { PlanCard } from './PlanCard'
 import { QuestionCard } from './QuestionCard'
 import { ToolCard } from './ToolCard'
+import { Markdown } from '../markdown/Markdown'
 
 interface Props {
   item: Item
@@ -12,6 +13,31 @@ interface Props {
   onAnswerPermission: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
   onAnswerQuestion: (toolUseId: string, choice: string) => void
   onAnswerPlan: (requestId: string, approve: boolean) => void
+}
+
+/** «42 с», «3 мин 20 с» — a length a person reads, not milliseconds. */
+function duration(ms: number): string {
+  const total = Math.round(ms / 1000)
+  if (total < 60) return `${total} с`
+  const minutes = Math.floor(total / 60)
+  const rest = total % 60
+  return rest === 0 ? `${minutes} мин` : `${minutes} мин ${rest} с`
+}
+
+/** 15000 → «15k»: the magnitude is what matters, not the digits. */
+function compact(value: number): string {
+  if (value < 1000) return String(value)
+  if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`
+  return `${(value / 1_000_000).toFixed(1)}M`
+}
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const tens = n % 100
+  const ones = n % 10
+  if (tens >= 11 && tens <= 14) return many
+  if (ones === 1) return one
+  if (ones >= 2 && ones <= 4) return few
+  return many
 }
 
 function seconds(ms: number): string {
@@ -77,7 +103,9 @@ export function RibbonRow({
 
       case 'agentText':
         return (
-          <div className={`row-agent${item.streaming ? ' is-streaming' : ''}`}>{item.text}</div>
+          <div className={`row-agent${item.streaming ? ' is-streaming' : ''}`}>
+            <Markdown text={item.text} />
+          </div>
         )
 
       case 'thinking':
@@ -98,11 +126,23 @@ export function RibbonRow({
 
       case 'subagent':
         return (
-          <details className="row-subagent">
+          <details className={`row-subagent is-${item.state}`}>
             <summary data-testid="subagent-head">
-              <span className="row-subagent-name">{item.name}</span>
-              <span className="row-subagent-summary">
-                {item.state === 'running' ? 'работает…' : item.summary}
+              <span className="row-subagent-kind">{item.name}</span>
+              <span className="row-subagent-task">{item.task}</span>
+              <span className="row-subagent-stats" data-testid="subagent-stats">
+                {item.state === 'running' ? (
+                  <span className="row-subagent-working">работает…</span>
+                ) : (
+                  [
+                    item.durationMs ? duration(item.durationMs) : null,
+                    item.tokens ? `${compact(item.tokens)} токенов` : null,
+                    item.toolCalls ? `${item.toolCalls} ${plural(item.toolCalls, 'вызов', 'вызова', 'вызовов')}` : null,
+                    `${children.length} в ленте`
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                )}
               </span>
             </summary>
             <div className="row-subagent-body">

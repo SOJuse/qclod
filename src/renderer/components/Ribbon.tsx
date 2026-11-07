@@ -89,6 +89,17 @@ export function Ribbon({
     return () => observer.disconnect()
   }, [])
 
+  // A tab opens at the end of its conversation, which is where the work is.
+  // The component is keyed by tab, so this runs once per tab rather than
+  // carrying the previous tab's position into the new one.
+  useLayoutEffect(() => {
+    const el = viewport.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    setScrollTop(el.scrollTop)
+    stickToBottom.current = true
+  }, [])
+
   useLayoutEffect(() => {
     const el = viewport.current
     if (!el || !stickToBottom.current) return

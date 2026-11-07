@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { CHANNELS } from '../shared/channels'
 import type { AppSettings } from '../shared/types'
 
@@ -34,6 +34,15 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
     if (win.isMaximized()) win.unmaximize()
     else win.maximize()
     return win.isMaximized()
+  })
+
+  // A link in an answer opens in the browser. The window itself must never
+  // navigate: it is the app, and a page loaded into it would run beside the
+  // preload bridge.
+  ipcMain.handle(CHANNELS.openExternal, async (_e, url: unknown) => {
+    if (typeof url !== 'string') return
+    if (!/^https?:\/\//i.test(url)) return
+    await shell.openExternal(url)
   })
 
   ipcMain.handle(CHANNELS.windowClose, () => {

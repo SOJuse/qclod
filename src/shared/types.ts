@@ -69,9 +69,16 @@ export type RibbonItem =
   | (RibbonBase & {
       kind: 'subagent'
       toolUseId: string
+      /** The agent kind, e.g. Explore — what it is. */
       name: string
+      /** The task it was given — what it is doing. */
+      task: string
       state: ToolState
       summary: string
+      /** Set when it finishes, from the tool's own run totals. */
+      tokens?: number
+      durationMs?: number
+      toolCalls?: number
     })
   | (RibbonBase & {
       kind: 'permission'

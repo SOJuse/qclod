@@ -20,7 +20,7 @@
  * @typedef {{kind:'askPermission', name:string, input?:object}} AskPermissionStep
  * @typedef {{kind:'askQuestion', question:string, header?:string, options:string[]}} AskQuestionStep
  * @typedef {{kind:'todo', items:Array<{content:string,status:string}>}} TodoStep
- * @typedef {{kind:'subagent', name:string, steps:Array<object>}} SubagentStep
+ * @typedef {{kind:'subagent', name:string, agentType?:string, stats?:object, steps:Array<object>}} SubagentStep
  * @typedef {{kind:'compact', preTokens:number, postTokens:number, trigger?:'auto'|'manual'}} CompactStep
  * @typedef {{kind:'crash', message:string}} CrashStep
  */
@@ -225,7 +225,15 @@ export function createFakeSdk(script = {}) {
         case 'subagent': {
           const id = randomUUID()
           yield assistant([
-            { type: 'tool_use', id, name: 'Task', input: { description: step.name } }
+            {
+              type: 'tool_use',
+              id,
+              name: 'Task',
+              input: {
+                description: step.name,
+                ...(step.agentType ? { subagent_type: step.agentType } : {})
+              }
+            }
           ])
           for await (const nested of play(step.steps ?? [])) {
             yield { ...nested, parent_tool_use_id: id }
@@ -237,7 +245,9 @@ export function createFakeSdk(script = {}) {
             message: {
               role: 'user',
               content: [{ type: 'tool_result', tool_use_id: id, content: 'подагент закончил' }]
-            }
+            },
+            // The Task tool's structured output: the run totals a card shows.
+            ...(step.stats ? { tool_use_result: step.stats } : {})
           }
           break
         }

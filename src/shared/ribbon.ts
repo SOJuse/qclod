@@ -94,6 +94,77 @@ function resultText(content: unknown): string {
     .join('\n')
 }
 
+/**
+ * What a finished subagent cost, from the Task tool's structured output.
+ *
+ * The shape is the subagent's report plus run totals; field names have moved
+ * between CLI versions, so every known spelling is tried and anything missing
+ * is simply absent rather than guessed at.
+ */
+function subagentStats(result: unknown): {
+  tokens?: number
+  durationMs?: number
+  toolCalls?: number
+} {
+  if (!isObject(result)) return {}
+  const usage = isObject(result['usage']) ? result['usage'] : {}
+  const totals = isObject(result['totals']) ? result['totals'] : {}
+
+  const num = (...candidates: unknown[]): number | undefined => {
+    for (const value of candidates) if (typeof value === 'number' && value > 0) return value
+    return undefined
+  }
+
+  const tokens = num(
+    result['totalTokens'],
+    totals['totalTokens'],
+    usage['total_tokens'],
+    (Number(usage['input_tokens'] ?? 0) || 0) + (Number(usage['output_tokens'] ?? 0) || 0)
+  )
+  const durationMs = num(result['durationMs'], result['duration_ms'], totals['durationMs'])
+  const toolCalls = num(result['toolUseCount'], result['tool_use_count'], totals['toolCalls'])
+
+  return {
+    ...(tokens ? { tokens } : {}),
+    ...(durationMs ? { durationMs } : {}),
+    ...(toolCalls ? { toolCalls } : {})
+  }
+}
+
+/**
+ * Everything the CLI injects into a user message that the user never typed.
+ *
+ * A resumed conversation is full of it: reminders the harness adds, the echo
+ * of a slash command, the stdout of a local command. Replaying it verbatim is
+ * why reopening an old chat showed a wall of XML nobody wrote.
+ */
+const INJECTED_TAGS = [
+  'system-reminder',
+  'command-name',
+  'command-message',
+  'command-args',
+  'local-command-stdout',
+  'local-command-stderr',
+  'user-prompt-submit-hook'
+]
+
+const INJECTED = INJECTED_TAGS.map(
+  (tag) => new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`, 'g')
+)
+
+/** An opener with no closer: the block was cut off mid-stream. */
+const TRUNCATED = new RegExp(`<(${INJECTED_TAGS.join('|')})>`)
+
+/** Strips the injected blocks and returns what the person actually said. */
+export function userText(raw: string): string {
+  let text = raw
+  for (const pattern of INJECTED) text = text.replace(pattern, '')
+  // A lone unclosed opener means the block was truncated; drop the remainder.
+  const opener = text.search(TRUNCATED)
+  if (opener !== -1) text = text.slice(0, opener)
+  return text.trim()
+}
+
 function imageAttachment(block: Record<string, unknown>): Attachment | null {
   const source = block['source']
   if (!isObject(source) || source['type'] !== 'base64') return null
@@ -430,7 +501,8 @@ export class RibbonBuilder {
           kind: 'subagent',
           id,
           toolUseId,
-          name: str(input['description']) || str(input['subagent_type']) || 'подагент',
+          name: str(input['subagent_type']) || 'подагент',
+          task: str(input['description']) || clip(str(input['prompt']), 120),
           state: 'running' as ToolState,
           summary: '',
           ...(parentId ? { parentId } : {})
@@ -464,23 +536,28 @@ export class RibbonBuilder {
 
     if (typeof content === 'string') {
       if (message['isSynthetic'] === true || this.consumeEcho(content)) return []
-      return this.appendUser(content)
+      const text = userText(content)
+      return text === '' ? [] : this.appendUser(text)
     }
 
     const blocks = asArray(content).filter(isObject)
     const results = blocks.filter((b) => b['type'] === 'tool_result')
     if (results.length > 0) {
       const changes: RibbonChange[] = []
-      for (const block of results) changes.push(...this.onToolResult(block))
+      // tool_use_result sits on the message, beside the blocks: the tool's own
+      // structured output, which for Task carries the run totals.
+      for (const block of results) changes.push(...this.onToolResult(block, message['tool_use_result']))
       return changes
     }
 
     if (message['isSynthetic'] === true) return []
 
-    const text = blocks
-      .filter((b) => b['type'] === 'text')
-      .map((b) => str(b['text']))
-      .join('\n')
+    const text = userText(
+      blocks
+        .filter((b) => b['type'] === 'text')
+        .map((b) => str(b['text']))
+        .join('\n')
+    )
     const attachments = blocks
       .filter((b) => b['type'] === 'image')
       .map(imageAttachment)
@@ -491,7 +568,10 @@ export class RibbonBuilder {
     return this.appendUser(text, attachments)
   }
 
-  private onToolResult(block: Record<string, unknown>): RibbonChange[] {
+  private onToolResult(
+    block: Record<string, unknown>,
+    result?: unknown
+  ): RibbonChange[] {
     const itemId = this.byToolUseId.get(str(block['tool_use_id']))
     if (!itemId) return []
     const item = this.find(itemId)
@@ -516,9 +596,11 @@ export class RibbonBuilder {
     }
 
     if (item.kind === 'subagent') {
-      item.state = 'done'
-      item.summary = clip(text, 120)
-      return [this.update(item.id, { state: 'done', summary: item.summary })]
+      const patch: Partial<RibbonItem> = { state: 'done', summary: clip(text, 160) }
+      const stats = subagentStats(result)
+      Object.assign(patch, stats)
+      Object.assign(item, patch)
+      return [this.update(item.id, patch)]
     }
 
     if (item.kind === 'tool') {

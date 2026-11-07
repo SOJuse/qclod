@@ -131,9 +131,17 @@ export function App(): JSX.Element {
     (id: string) => {
       setActiveTabId(id)
       void window.qclod.activateTab(id)
-      // A tab being switched to draws itself from what it already has, rather
-      // than replaying the session.
-      void window.qclod.ribbon(id).then((items) => setRibbon(id, items))
+
+      // Only a tab we have never drawn needs its ribbon fetched. Fetching it
+      // on every switch raced the live stream: the snapshot is taken when the
+      // request is made and applied when it returns, so anything that arrived
+      // in between — a replayed conversation, or the message you just typed —
+      // was wiped by a picture of the past.
+      if (useAppStore.getState().ribbonByTab[id] === undefined) {
+        void window.qclod.ribbon(id).then((items) => {
+          if (useAppStore.getState().ribbonByTab[id] === undefined) setRibbon(id, items)
+        })
+      }
     },
     [setActiveTabId, setRibbon]
   )
@@ -194,6 +202,7 @@ export function App(): JSX.Element {
       <div className="app-body">
         <div className="app-main">
       <Ribbon
+        key={activeTabId}
         items={ribbonByTab[activeTabId] ?? []}
         todo={todoByTab[activeTabId] ?? []}
         onAnswerPermission={answerPermission}

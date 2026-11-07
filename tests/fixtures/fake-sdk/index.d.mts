@@ -10,7 +10,7 @@ export type FakeStep =
   | { kind: 'askPermission'; name: string; input?: object }
   | { kind: 'askQuestion'; question: string; header?: string; options: string[] }
   | { kind: 'todo'; items: Array<{ content: string; status: string }> }
-  | { kind: 'subagent'; name: string; steps: FakeStep[] }
+  | { kind: 'subagent'; name: string; agentType?: string; stats?: object; steps: FakeStep[] }
   | { kind: 'compact'; preTokens: number; postTokens: number; trigger?: 'auto' | 'manual' }
   | { kind: 'crash'; message: string }
 

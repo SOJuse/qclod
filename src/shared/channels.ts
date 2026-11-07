@@ -44,6 +44,7 @@ export const CHANNELS = Object.freeze({
   windowMinimize: 'window:minimize',
   windowMaximize: 'window:maximize',
   windowClose: 'window:close',
+  openExternal: 'window:openExternal',
 
   // main -> renderer (events)
   ribbonChanged: 'ribbon:changed',
@@ -88,7 +89,8 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.filesIndex,
   CHANNELS.windowMinimize,
   CHANNELS.windowMaximize,
-  CHANNELS.windowClose
+  CHANNELS.windowClose,
+  CHANNELS.openExternal
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([

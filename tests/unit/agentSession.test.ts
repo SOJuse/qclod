@@ -443,3 +443,46 @@ describe('AgentSession: план', () => {
     expect(rec.changes.filter((c) => c.kind === 'update')).toHaveLength(0)
   })
 })
+
+describe('AgentSession: дополнительные флаги', () => {
+  test('обычные флаги доходят до драйвера', async () => {
+    let seen: DriverOptions | null = null
+    const { session } = makeSession(
+      { steps: [] },
+      {
+        overrides: { extraFlags: '--verbose --fallback-model sonnet' },
+        createDriver: (options: DriverOptions) => {
+          seen = options
+          return createFakeSdk({ steps: [] }) as unknown as AgentDriver
+        }
+      }
+    )
+
+    await session.start()
+    await settle(session)
+
+    expect(seen!.extraArgs).toEqual({ verbose: null, 'fallback-model': 'sonnet' })
+  })
+
+  test('флаг, выключающий разрешения, до драйвера не доходит и о нём сказано', async () => {
+    let seen: DriverOptions | null = null
+    const { session } = makeSession(
+      { steps: [] },
+      {
+        overrides: { extraFlags: '--dangerously-skip-permissions --verbose' },
+        createDriver: (options: DriverOptions) => {
+          seen = options
+          return createFakeSdk({ steps: [] }) as unknown as AgentDriver
+        }
+      }
+    )
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+
+    expect(seen!.extraArgs).toEqual({ verbose: null })
+    const notice = rec.items.find((i) => i.kind === 'notice') as { text: string } | undefined
+    expect(notice?.text).toContain('--dangerously-skip-permissions')
+  })
+})

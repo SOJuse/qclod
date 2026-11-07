@@ -34,7 +34,8 @@ export interface DriverOptions {
   executablePath: string
   model?: string | undefined
   permissionMode?: string | undefined
-  extraArgs?: string[] | undefined
+  /** Extra CLI arguments, already filtered: name (without --) to value. */
+  extraArgs?: Record<string, string | null> | undefined
   /** Session id to continue, when the tab is picking a conversation back up. */
   resume?: string | undefined
   /** Called before a tool runs; the answer decides whether it does. */

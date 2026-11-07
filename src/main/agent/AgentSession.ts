@@ -14,6 +14,7 @@ import type {
   UserInput
 } from '../../shared/types'
 import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
+import { parseExtraFlags } from './launchFlags'
 import { PanelCollector, readProjectSettings } from './panelData'
 import { displayTarget } from './permissionStore'
 import { resolveExecutable } from './resolveExecutable'
@@ -43,11 +44,6 @@ export interface AgentSessionOptions {
 type ChangeListener = (changes: RibbonChange[]) => void
 type PanelListener = (patch: Partial<PanelData>) => void
 type StatusListener = (status: SessionStatus) => void
-
-function splitArgs(flags: string | undefined): string[] {
-  if (!flags) return []
-  return flags.match(/"[^"]*"|\S+/g)?.map((a) => a.replace(/^"|"$/g, '')) ?? []
-}
 
 /**
  * One tab's conversation with the agent.
@@ -237,12 +233,26 @@ export class AgentSession {
       return
     }
 
+    // The «дополнительные флаги» setting is honoured, minus anything that
+    // would reach around the permission gate — and the user is told, rather
+    // than left with a setting that quietly does nothing.
+    const flags = parseExtraFlags(this.options.overrides.extraFlags)
+    if (flags.rejected.length > 0) {
+      this.emit(
+        this.builder.notice(
+          `Не переданы агенту: ${flags.rejected.join(', ')} — эти флаги управляют разрешениями, ` +
+            'режим меняется в панели.',
+          'info'
+        )
+      )
+    }
+
     const driverOptions: DriverOptions = {
       cwd: this.options.cwd,
       executablePath,
       model: this.options.overrides.model,
       permissionMode: this.mode,
-      extraArgs: splitArgs(this.options.overrides.extraFlags),
+      extraArgs: flags.args,
       resume: resumeId,
       canUseTool: (toolName, input, opts) => this.onToolPermission(toolName, input, opts)
     }

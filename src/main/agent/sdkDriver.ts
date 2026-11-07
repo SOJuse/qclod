@@ -84,6 +84,9 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
         ? { permissionMode: options.permissionMode as 'default' }
         : {}),
       ...(options.resume ? { resume: options.resume } : {}),
+      ...(options.extraArgs && Object.keys(options.extraArgs).length > 0
+        ? { extraArgs: options.extraArgs }
+        : {}),
       // Project settings load with no trust gate — the user's explicit choice,
       // recorded in spec §5 with its consequence.
       settingSources: ['user', 'project', 'local'],

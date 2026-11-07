@@ -1,5 +1,6 @@
 import { RibbonBuilder } from '../../shared/ribbon'
 import type {
+  CommandInfo,
   LaunchOverrides,
   McpServerInfo,
   PanelData,
@@ -56,6 +57,7 @@ export class AgentSession {
   private readonly changeListeners: ChangeListener[] = []
   private readonly panelListeners: PanelListener[] = []
   private readonly statusListeners: StatusListener[] = []
+  private readonly commandListeners: Array<(commands: CommandInfo[]) => void> = []
 
   private driver: AgentDriver | null = null
   private pump: Promise<void> | null = null
@@ -103,6 +105,10 @@ export class AgentSession {
 
   onStatus(cb: StatusListener): void {
     this.statusListeners.push(cb)
+  }
+
+  onCommands(cb: (commands: CommandInfo[]) => void): void {
+    this.commandListeners.push(cb)
   }
 
   /** Resolves when the session is no longer working: idle, stopped or failed. */
@@ -276,6 +282,7 @@ export class AgentSession {
     switch (m['type']) {
       case 'system':
         if (m['subtype'] === 'init') this.onInit(m)
+        else if (m['subtype'] === 'commands_changed') this.onCommandsChanged(m)
         break
       case 'rate_limit_event':
         this.onRateLimit(m)
@@ -304,6 +311,17 @@ export class AgentSession {
     }
     this.emitPanel(patch)
     this.setStatus('idle')
+  }
+
+  private onCommandsChanged(m: Record<string, unknown>): void {
+    if (!Array.isArray(m['commands'])) return
+    const commands = (m['commands'] as Array<Record<string, unknown>>).map((c) => ({
+      name: String(c['name'] ?? ''),
+      description: String(c['description'] ?? ''),
+      argumentHint: String(c['argumentHint'] ?? ''),
+      ...(c['builtin'] === undefined ? {} : { builtin: Boolean(c['builtin']) })
+    }))
+    for (const listener of this.commandListeners) listener(commands)
   }
 
   private onRateLimit(m: Record<string, unknown>): void {

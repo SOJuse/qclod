@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { HotkeyRegistration } from '../../shared/types'
+import type { CommandInfo, HotkeyRegistration } from '../../shared/types'
 import { useAppStore } from '../state/useAppStore'
 import { TitleBar } from '../components/TitleBar'
 import { Ribbon } from '../components/Ribbon'
 import { Composer } from '../components/Composer'
+import { CommandPalette } from '../components/CommandPalette'
+import { markUnavailable } from '../../shared/commandFilter'
 import { SettingsScreen } from '../components/SettingsScreen'
 import './App.css'
 
@@ -18,6 +20,10 @@ export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [version, setVersion] = useState('')
   const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [focusToken, setFocusToken] = useState(0)
+  const [commands, setCommands] = useState<CommandInfo[]>([])
+  const [recentCommands, setRecentCommands] = useState<string[]>([])
   const settings = useAppStore((s) => s.settings)
   const tabs = useAppStore((s) => s.tabs)
   const activeTabId = useAppStore((s) => s.activeTabId)
@@ -48,7 +54,11 @@ export function App(): JSX.Element {
       window.qclod.onTabsChanged(setTabs),
       window.qclod.onActivateTab((id) => setActiveTabId(id)),
       window.qclod.onRibbon((event) => applyRibbon(event.tabId, event.changes)),
-      window.qclod.onPanel((event) => applyPanel(event.tabId, event.patch))
+      window.qclod.onPanel((event) => applyPanel(event.tabId, event.patch)),
+      // The list is live: a plugin installed mid-session changes it.
+      window.qclod.onCommandsChanged((event) => {
+        if (event.tabId === useAppStore.getState().activeTabId) setCommands(event.commands)
+      })
     ]
     return () => {
       for (const off of unsubscribers) off()
@@ -128,13 +138,17 @@ export function App(): JSX.Element {
           draft={draftByTab[activeTabId] ?? ''}
           attachments={attachmentsByTab[activeTabId] ?? []}
           fileIndex={fileIndexByTab[activeTabId] ?? []}
+          focusToken={focusToken}
           onDraftChange={(text) => setDraft(activeTabId, text)}
           onAttachmentsChange={(items) => setAttachments(activeTabId, items)}
           onSubmit={(text, attachments) => {
             void window.qclod.send(activeTabId, { text, attachments })
           }}
           onInterrupt={() => void window.qclod.interrupt(activeTabId)}
-          onOpenPalette={() => undefined}
+          onOpenPalette={() => {
+            setPaletteOpen(true)
+            void window.qclod.commands(activeTabId).then(setCommands)
+          }}
           onPickFiles={() => {
             void window.qclod.pickFiles().then((paths) => {
               if (paths.length === 0) return
@@ -142,6 +156,27 @@ export function App(): JSX.Element {
                 ...(useAppStore.getState().attachmentsByTab[activeTabId] ?? []),
                 ...paths.map((path) => ({ kind: 'file' as const, path }))
               ])
+            })
+          }}
+        />
+      )}
+      {paletteOpen && (
+        <CommandPalette
+          commands={markUnavailable(commands)}
+          recent={recentCommands}
+          onClose={() => {
+            setPaletteOpen(false)
+            setFocusToken((n) => n + 1)
+          }}
+          onPick={(command) => {
+            setPaletteOpen(false)
+            setFocusToken((n) => n + 1)
+            setRecentCommands((names) =>
+              [command.name, ...names.filter((n) => n !== command.name)].slice(0, 6)
+            )
+            void window.qclod.send(activeTabId, {
+              text: `/${command.name}`,
+              attachments: []
             })
           }}
         />

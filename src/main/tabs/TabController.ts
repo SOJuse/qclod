@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import type {
+  CommandInfo,
   LaunchOverrides,
   PanelEvent,
   RibbonEvent,
@@ -29,6 +30,7 @@ export interface TabControllerDeps {
   onRibbon: (event: RibbonEvent) => void
   onPanel: (event: PanelEvent) => void
   onStatus: (event: StatusEvent) => void
+  onCommands: (event: { tabId: TabId; commands: CommandInfo[] }) => void
 }
 
 /**
@@ -216,6 +218,7 @@ export class TabController {
   private wire(id: TabId, session: AgentSession): void {
     session.onChange((changes) => this.deps.onRibbon({ tabId: id, changes }))
     session.onPanel((patch) => this.deps.onPanel({ tabId: id, patch }))
+    session.onCommands((commands) => this.deps.onCommands({ tabId: id, commands }))
     session.onStatus((status) => {
       const patch: Partial<TabState> = { status }
       if (session.error !== undefined) patch.error = session.error

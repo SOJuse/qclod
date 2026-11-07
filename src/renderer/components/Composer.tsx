@@ -19,6 +19,8 @@ interface Props {
   draft: string
   attachments: PendingAttachment[]
   fileIndex: string[]
+  /** Bumped by whoever took focus away, to hand it back. */
+  focusToken: number
   onDraftChange: (text: string) => void
   onAttachmentsChange: (items: PendingAttachment[]) => void
   onSubmit: (text: string, attachments: Attachment[]) => void
@@ -43,6 +45,7 @@ export function Composer({
   draft,
   attachments,
   fileIndex,
+  focusToken,
   onDraftChange,
   onAttachmentsChange,
   onSubmit,
@@ -80,10 +83,11 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 260)}px`
   }, [draft])
 
-  // Switching tabs puts the cursor back where work happens.
+  // Switching tabs, or closing something that stole focus, puts the cursor
+  // back where the work happens.
   useEffect(() => {
     field.current?.focus()
-  }, [tabId])
+  }, [tabId, focusToken])
 
   const addAttachments = useCallback(
     (items: PendingAttachment[]) => {

@@ -118,6 +118,7 @@ app.whenReady().then(async () => {
     },
     onRibbon: (event) => ribbonBatcher.push(event),
     onPanel: (event) => send(CHANNELS.panelChanged, event),
+    onCommands: (event) => send(CHANNELS.commandsChanged, event),
     onStatus: (event) => {
       send(CHANNELS.statusChanged, event)
       const tab = controller.list().find((t) => t.id === event.tabId)

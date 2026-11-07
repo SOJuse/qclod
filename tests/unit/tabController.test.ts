@@ -65,7 +65,8 @@ function makeController(
     onChanged: (tabs) => changed.push(tabs),
     onRibbon: (event) => ribbon.push(event),
     onPanel: () => undefined,
-    onStatus: () => undefined
+    onStatus: () => undefined,
+    onCommands: () => undefined
   })
 
   return { controller, changed, ribbon, resumedWith }

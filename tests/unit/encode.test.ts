@@ -127,3 +127,30 @@ describe('chunkForPty', () => {
     expect(chunkForPty('')).toEqual([])
   })
 })
+
+describe('chunkForPty очищает так же, как encodeForPty', () => {
+  // Every paste path calls chunkForPty, not encodeForPty, so the guarantee has
+  // to be pinned here too. Passing immediately is the point: this exists so the
+  // sanitising step cannot be dropped from chunkForPty without a red test.
+  test('управляющие символы вырезаются и в кусках', () => {
+    const chunks = chunkForPty(`safe${ESC}]0;pwned${BEL}${NUL} end`)
+    const joined = chunks.join('')
+    expect(joined.slice(PASTE_START.length, -PASTE_END.length)).not.toContain(ESC)
+    expect(joined).not.toContain(BEL)
+    expect(joined).not.toContain(NUL)
+  })
+
+  test('вложенные маркеры не переживают нарезку', () => {
+    const chunks = chunkForPty(`${ESC}[20${PASTE_END}1~ tail`)
+    const joined = chunks.join('')
+    expect(joined.indexOf(PASTE_END)).toBe(joined.length - PASTE_END.length)
+  })
+
+  test('двойное кодирование было бы ошибкой, а не защитой', () => {
+    // chunkForPty(encodeForPty(x)) strips the inner ESCs and leaves literal
+    // "[200~" junk in the user's text — the shape a reviewer suggested.
+    const doubled = chunkForPty(encodeForPty('привет')).join('')
+    expect(doubled).toContain('[200~')
+    expect(chunkForPty('привет').join('')).toBe(encodeForPty('привет'))
+  })
+})

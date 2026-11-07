@@ -2,7 +2,6 @@ import { create } from 'zustand'
 import type {
   AppSettings,
   PanelData,
-  PermissionRequest,
   RibbonChange,
   RibbonItem,
   TabId,
@@ -29,7 +28,6 @@ interface AppState {
   panelByTab: Record<TabId, PanelData>
   /** Unsent text per tab — switching tabs must never lose it. */
   draftByTab: Record<TabId, string>
-  pendingPermissions: PermissionRequest[]
 
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
@@ -39,8 +37,6 @@ interface AppState {
   applyRibbon: (id: TabId, changes: RibbonChange[]) => void
   applyPanel: (id: TabId, patch: Partial<PanelData>) => void
   setDraft: (id: TabId, text: string) => void
-  addPermission: (request: PermissionRequest) => void
-  removePermission: (requestId: string) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -84,7 +80,6 @@ export const useAppStore = create<AppState>((set) => ({
   todoByTab: {},
   panelByTab: {},
   draftByTab: {},
-  pendingPermissions: [],
 
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
@@ -119,13 +114,6 @@ export const useAppStore = create<AppState>((set) => ({
       }
     })),
 
-  setDraft: (id, text) => set((state) => ({ draftByTab: { ...state.draftByTab, [id]: text } })),
+  setDraft: (id, text) => set((state) => ({ draftByTab: { ...state.draftByTab, [id]: text } }))
 
-  addPermission: (request) =>
-    set((state) => ({ pendingPermissions: [...state.pendingPermissions, request] })),
-
-  removePermission: (requestId) =>
-    set((state) => ({
-      pendingPermissions: state.pendingPermissions.filter((r) => r.requestId !== requestId)
-    }))
 }))

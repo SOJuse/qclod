@@ -72,7 +72,7 @@ app.whenReady().then(async () => {
     toggleWindow
   )
 
-  // The permission question goes to the window and comes back through IPC.
+  // The question is put in the tab's own ribbon and answered from there.
   // A window that is gone cannot answer, so the broker denies rather than
   // leaving the agent waiting forever.
   const broker = new PermissionBroker({
@@ -85,14 +85,17 @@ app.whenReady().then(async () => {
         return
       }
       showWindow()
-      send(CHANNELS.permissionAsked, request)
+      manager
+        .get(request.tabId)
+        ?.showPermissionCard(request.requestId, request.toolName, request.target)
     }
   })
 
   const manager = new AgentSessionManager({
     getAgentPath: () => settings.agentPath,
     createDriver: createDriverFactory(),
-    askPermission: (request) => broker.request(request.tabId, request.toolName, request.input)
+    askPermission: (request) =>
+      broker.request(request.tabId, request.toolName, request.input, request.requestId)
   })
 
   const history = process.env['QCLOD_FAKE_SDK']

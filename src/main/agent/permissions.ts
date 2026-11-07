@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { PermissionAnswer, PermissionRequest, TabId } from '../../shared/types'
-import { matchRule, ruleTarget, type PermissionRule } from './permissionStore'
+import { displayTarget, matchRule, ruleTarget, type PermissionRule } from './permissionStore'
 
 export interface PermissionBrokerOptions {
   loadRules: () => PermissionRule[]
@@ -40,15 +40,17 @@ export class PermissionBroker {
   async request(
     tabId: TabId,
     toolName: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    /** The id the asking side already used; a new one would not be answerable. */
+    knownRequestId?: string
   ): Promise<PermissionAnswer> {
     // Rules are read fresh every time: the user can delete one in settings
     // while an agent is mid-run, and the next call must respect that.
     const decided = matchRule(this.options.loadRules(), toolName, input)
     if (decided) return { behavior: decided }
 
-    const requestId = randomUUID()
-    const target = ruleTarget(input) ?? ''
+    const requestId = knownRequestId ?? randomUUID()
+    const target = displayTarget(input)
 
     return new Promise<PermissionAnswer>((resolve) => {
       this.pending.set(requestId, { tabId, toolName, input, resolve })

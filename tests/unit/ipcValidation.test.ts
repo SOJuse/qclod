@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'vitest'
-import { sanitizeTabPatch, sanitizeOverrides } from '@main/tabs/sanitize'
+import {
+  sanitizeAnswer,
+  sanitizeInput,
+  sanitizeOverrides,
+  sanitizeTabPatch
+} from '@main/tabs/sanitize'
 
 describe('sanitizeTabPatch', () => {
   test('заголовок проходит', () => {
@@ -81,5 +86,47 @@ describe('sanitizeOverrides', () => {
   test('мусор даёт пустой объект', () => {
     expect(sanitizeOverrides(undefined)).toEqual({})
     expect(sanitizeOverrides('строка')).toEqual({})
+  })
+})
+
+describe('agentIpc: проверка полезной нагрузки', () => {
+  test('ответ на разрешение по умолчанию — отказ', () => {
+    expect(sanitizeAnswer(undefined)).toEqual({ behavior: 'deny' })
+    expect(sanitizeAnswer({ behavior: 'что-то' })).toEqual({ behavior: 'deny' })
+    expect(sanitizeAnswer({ behavior: 'allow' })).toEqual({ behavior: 'allow' })
+    expect(sanitizeAnswer({ behavior: 'allow', remember: true })).toEqual({
+      behavior: 'allow',
+      remember: true
+    })
+    // Anything but a literal true is not a request to remember.
+    expect(sanitizeAnswer({ behavior: 'allow', remember: 'да' })).toEqual({ behavior: 'allow' })
+  })
+
+  test('сообщение пользователя чистится от чужих полей', () => {
+    expect(
+      sanitizeInput({
+        text: 'привет',
+        attachments: [
+          { kind: 'file', path: 'C:/проект/auth.ts' },
+          { kind: 'image', mediaType: 'image/png', dataBase64: 'AAAA' },
+          { kind: 'file' },
+          { kind: 'команда', path: 'C:/evil.exe' },
+          'мусор'
+        ],
+        tabId: 'чужое поле'
+      })
+    ).toEqual({
+      text: 'привет',
+      attachments: [
+        { kind: 'file', path: 'C:/проект/auth.ts' },
+        { kind: 'image', mediaType: 'image/png', dataBase64: 'AAAA' }
+      ]
+    })
+  })
+
+  test('мусор вместо сообщения даёт пустое сообщение', () => {
+    expect(sanitizeInput(null)).toEqual({ text: '', attachments: [] })
+    expect(sanitizeInput('строка')).toEqual({ text: '', attachments: [] })
+    expect(sanitizeInput({ attachments: 'не массив' })).toEqual({ text: '', attachments: [] })
   })
 })

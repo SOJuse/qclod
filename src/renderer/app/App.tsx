@@ -29,8 +29,6 @@ export function App(): JSX.Element {
   const setRibbon = useAppStore((s) => s.setRibbon)
   const applyRibbon = useAppStore((s) => s.applyRibbon)
   const applyPanel = useAppStore((s) => s.applyPanel)
-  const addPermission = useAppStore((s) => s.addPermission)
-  const removePermission = useAppStore((s) => s.removePermission)
 
   useEffect(() => {
     void window.qclod.getSettings().then(setSettings)
@@ -43,13 +41,12 @@ export function App(): JSX.Element {
       window.qclod.onTabsChanged(setTabs),
       window.qclod.onActivateTab((id) => setActiveTabId(id)),
       window.qclod.onRibbon((event) => applyRibbon(event.tabId, event.changes)),
-      window.qclod.onPanel((event) => applyPanel(event.tabId, event.patch)),
-      window.qclod.onPermissionAsked((request) => addPermission(request))
+      window.qclod.onPanel((event) => applyPanel(event.tabId, event.patch))
     ]
     return () => {
       for (const off of unsubscribers) off()
     }
-  }, [setSettings, setTabs, setActiveTabId, applyRibbon, applyPanel, addPermission])
+  }, [setSettings, setTabs, setActiveTabId, applyRibbon, applyPanel])
 
   // The first tab the main process reports is the one to show.
   useEffect(() => {
@@ -69,13 +66,12 @@ export function App(): JSX.Element {
 
   const answerPermission = useCallback(
     (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => {
-      removePermission(requestId)
       void window.qclod.answerPermission(requestId, {
         behavior,
         ...(remember ? { remember: true } : {})
       })
     },
-    [removePermission]
+    []
   )
 
   const answerQuestion = useCallback(

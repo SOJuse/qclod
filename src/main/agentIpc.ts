@@ -1,15 +1,16 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { CHANNELS } from '../shared/channels'
-import type {
-  LaunchOverrides,
-  PermissionAnswer,
-  TabId,
-  UserInput
-} from '../shared/types'
+import { PERMISSION_MODES } from '../shared/types'
+import type { LaunchOverrides, TabId } from '../shared/types'
 import type { TabController } from './tabs/TabController'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
 import type { PermissionBroker } from './agent/permissions'
-import { sanitizeOverrides, sanitizeTabPatch } from './tabs/sanitize'
+import {
+  sanitizeAnswer,
+  sanitizeInput,
+  sanitizeOverrides,
+  sanitizeTabPatch
+} from './tabs/sanitize'
 
 export interface AgentIpcDeps {
   getWindow: () => BrowserWindow | null
@@ -73,8 +74,12 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     await manager.get(id)?.interrupt()
   })
 
+  // The mode decides whether the agent asks at all, so an unknown string must
+  // never reach the session: it would be rejected deep inside the SDK, far
+  // from here, or silently mean something we did not intend.
   ipcMain.handle(CHANNELS.agentPermissionMode, async (_e, id: unknown, mode: unknown) => {
     if (!isString(id) || !isString(mode)) return
+    if (!(PERMISSION_MODES as readonly string[]).includes(mode)) return
     await manager.get(id)?.setPermissionMode(mode)
   })
 
@@ -98,6 +103,11 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   ipcMain.handle(CHANNELS.permissionAnswer, (_e, requestId: unknown, answer: unknown) => {
     if (!isString(requestId)) return
     broker.answer(requestId, sanitizeAnswer(answer))
+  })
+
+  ipcMain.handle(CHANNELS.questionAnswer, (_e, id: unknown, toolUseId: unknown, choice: unknown) => {
+    if (!isString(id) || !isString(toolUseId) || !isString(choice)) return
+    manager.get(id)?.answerQuestion(toolUseId, choice)
   })
 
   ipcMain.handle(CHANNELS.permissionRules, () => broker.rules())
@@ -124,46 +134,6 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] })
     return result.canceled ? [] : result.filePaths
   })
-}
-
-/** A message from the renderer is text plus attachments, and nothing else. */
-export function sanitizeInput(value: unknown): UserInput {
-  if (typeof value !== 'object' || value === null) return { text: '', attachments: [] }
-  const input = value as Record<string, unknown>
-  const text = isString(input['text']) ? input['text'] : ''
-
-  const attachments: UserInput['attachments'] = []
-  for (const entry of Array.isArray(input['attachments']) ? input['attachments'] : []) {
-    if (typeof entry !== 'object' || entry === null) continue
-    const attachment = entry as Record<string, unknown>
-    if (attachment['kind'] === 'file' && isString(attachment['path'])) {
-      attachments.push({ kind: 'file', path: attachment['path'] })
-    } else if (
-      attachment['kind'] === 'image' &&
-      isString(attachment['mediaType']) &&
-      isString(attachment['dataBase64'])
-    ) {
-      attachments.push({
-        kind: 'image',
-        mediaType: attachment['mediaType'],
-        dataBase64: attachment['dataBase64']
-      })
-    }
-  }
-  return { text, attachments }
-}
-
-/**
- * An answer is allow or deny — anything else is a deny. A malformed payload
- * must never widen a permission.
- */
-export function sanitizeAnswer(value: unknown): PermissionAnswer {
-  if (typeof value !== 'object' || value === null) return { behavior: 'deny' }
-  const answer = value as Record<string, unknown>
-  return {
-    behavior: answer['behavior'] === 'allow' ? 'allow' : 'deny',
-    ...(answer['remember'] === true ? { remember: true } : {})
-  }
 }
 
 export type { LaunchOverrides, TabId }

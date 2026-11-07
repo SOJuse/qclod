@@ -65,6 +65,8 @@ export class AgentSession {
   private mode: string
   private todoItems: TodoItem[] = []
   private readonly idleWaiters: Array<() => void> = []
+  /** Questions the agent asked through canUseTool, waiting on the user. */
+  private readonly pendingQuestions = new Map<string, (answer: PermissionAnswer) => void>()
 
   constructor(options: AgentSessionOptions) {
     this.options = options
@@ -129,6 +131,38 @@ export class AgentSession {
     const todo = this.builder.todo
     if (todo) this.todoItems = todo
     return changes
+  }
+
+  /**
+   * The user picked an option on a question card.
+   *
+   * The answer goes back as an ordinary message. The SDK's types do not say
+   * how an AskUserQuestion answer travels in a headless session, and inventing
+   * a protocol frame would be guessing; a message is what the user would have
+   * typed anyway, the agent reads it the same way, and nothing depends on a
+   * shape we have not verified.
+   */
+  answerQuestion(toolUseId: string, choice: string): void {
+    this.emit(this.builder.answerQuestion(toolUseId, choice))
+
+    const waiting = this.pendingQuestions.get(toolUseId)
+    if (waiting) {
+      this.pendingQuestions.delete(toolUseId)
+      waiting({ behavior: 'deny' })
+    }
+
+    this.send({ text: choice, attachments: [] })
+  }
+
+  /**
+   * Puts the question in the ribbon, where the tool's own card will go.
+   *
+   * Called by the permission layer at the moment it decides the person really
+   * has to answer. A request a saved rule settles never reaches here, so the
+   * ribbon shows a card only for questions that were actually asked.
+   */
+  showPermissionCard(requestId: string, toolName: string, target: string): void {
+    this.emit(this.builder.addPermission(requestId, toolName, target))
   }
 
   /** Something Qclod itself needs to say — a crash, a session that would not resume. */
@@ -205,6 +239,10 @@ export class AgentSession {
   }
 
   async dispose(): Promise<void> {
+    // A question nobody can answer any more must not hold the agent open.
+    for (const [, resolve] of this.pendingQuestions) resolve({ behavior: 'deny' })
+    this.pendingQuestions.clear()
+
     const driver = this.driver
     this.driver = null
     if (driver) await driver.dispose().catch(() => undefined)
@@ -314,9 +352,14 @@ export class AgentSession {
     opts: { toolUseId?: string }
   ): Promise<PermissionAnswer> {
     const ask = this.options.askPermission
+
+    // A question is not a permission: it has options, not «allow» and «deny»
+    // (spec 6.2). It arrives through the same channel, so it is split out here
+    // rather than shown as a permission the user cannot sensibly answer.
+    if (toolName === 'AskUserQuestion') return this.askQuestion(input, opts)
+
     const requestId = opts.toolUseId ?? `${this.options.tabId}:${Date.now()}`
     const target = displayTarget(input)
-    this.emit(this.builder.addPermission(requestId, toolName, target))
 
     const previous = this.state
     this.setStatus('waiting')
@@ -334,6 +377,35 @@ export class AgentSession {
       return answer
     } finally {
       this.setStatus(previous === 'waiting' ? 'busy' : previous)
+    }
+  }
+
+  private askQuestion(
+    input: Record<string, unknown>,
+    opts: { toolUseId?: string }
+  ): Promise<PermissionAnswer> {
+    const toolUseId = opts.toolUseId ?? `q-${Date.now()}`
+    this.emit(this.builder.apply(this.questionMessage(toolUseId, input)))
+
+    const previous = this.state
+    this.setStatus('waiting')
+    return new Promise<PermissionAnswer>((resolve) => {
+      this.pendingQuestions.set(toolUseId, (answer) => {
+        this.setStatus(previous === 'waiting' ? 'busy' : previous)
+        resolve(answer)
+      })
+    })
+  }
+
+  /** Reuses the ribbon translator so a question looks the same either way. */
+  private questionMessage(toolUseId: string, input: Record<string, unknown>): unknown {
+    return {
+      type: 'assistant',
+      message: {
+        id: `q-${toolUseId}`,
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: toolUseId, name: 'AskUserQuestion', input }]
+      }
     }
   }
 

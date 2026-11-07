@@ -49,8 +49,7 @@ export const CHANNELS = Object.freeze({
   tabsChanged: 'tabs:changed',
   activateTab: 'tabs:activateRequest',
   settingsChanged: 'settings:changed',
-  commandsChanged: 'commands:changed',
-  permissionAsked: 'permission:asked'
+  commandsChanged: 'commands:changed'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -93,6 +92,5 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.tabsChanged,
   CHANNELS.activateTab,
   CHANNELS.settingsChanged,
-  CHANNELS.commandsChanged,
-  CHANNELS.permissionAsked
+  CHANNELS.commandsChanged
 ])

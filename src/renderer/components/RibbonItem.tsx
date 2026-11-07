@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { RibbonItem as Item } from '../../shared/types'
+import { PermissionCard } from './PermissionCard'
+import { QuestionCard } from './QuestionCard'
 import { ToolCard } from './ToolCard'
 
 interface Props {
@@ -115,64 +117,10 @@ export function RibbonRow({
         )
 
       case 'permission':
-        return (
-          <div className={`row-permission is-${item.state}`} data-testid="permission-card">
-            <div className="row-permission-head">
-              <strong>{item.toolName}</strong>
-              <span className="row-permission-target">{item.target}</span>
-            </div>
-            {item.state === 'pending' ? (
-              <div className="row-permission-actions">
-                <button
-                  type="button"
-                  data-testid="permission-allow"
-                  onClick={() => onAnswerPermission(item.requestId, 'allow')}
-                >
-                  Разрешить
-                </button>
-                <button
-                  type="button"
-                  data-testid="permission-allow-all"
-                  onClick={() => onAnswerPermission(item.requestId, 'allow', true)}
-                >
-                  Разрешить всё такое
-                </button>
-                <button
-                  type="button"
-                  data-testid="permission-deny"
-                  onClick={() => onAnswerPermission(item.requestId, 'deny')}
-                >
-                  Отклонить
-                </button>
-              </div>
-            ) : (
-              <div className="row-permission-done">
-                {item.state === 'allowed' ? 'разрешено' : 'отклонено'}
-              </div>
-            )}
-          </div>
-        )
+        return <PermissionCard item={item} onAnswer={onAnswerPermission} />
 
       case 'question':
-        return (
-          <div className="row-question" data-testid="question-card">
-            <div className="row-question-text">{item.question}</div>
-            <div className="row-question-options">
-              {item.options.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  data-testid="question-option"
-                  className={item.answer === option ? 'is-chosen' : ''}
-                  disabled={item.answer !== null}
-                  onClick={() => onAnswerQuestion(item.toolUseId, option)}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
-          </div>
-        )
+        return <QuestionCard item={item} onAnswer={onAnswerQuestion} />
 
       case 'compaction':
         return (

@@ -20,7 +20,14 @@ export function createDriverFactory(): DriverFactory {
       }
       const script = process.env['QCLOD_FAKE_SDK_SCRIPT']
       const parsed = script ? (JSON.parse(script) as Record<string, unknown>) : {}
-      return module.createFakeSdk({ ...parsed, init: { cwd: options.cwd, ...(parsed['init'] as object) } })
+      return module.createFakeSdk({
+        ...parsed,
+        // The fixture must ask the same gate the real session asks, or an e2e
+        // run would approve everything by itself and prove nothing.
+        canUseTool: (toolName: string, input: Record<string, unknown>) =>
+          options.canUseTool(toolName, input, {}),
+        init: { cwd: options.cwd, ...(parsed['init'] as object) }
+      })
     }
   }
 

@@ -8,7 +8,6 @@ import type {
   PanelData,
   PanelEvent,
   PermissionAnswer,
-  PermissionRequest,
   PersistedTab,
   RibbonEvent,
   RibbonItem,
@@ -95,8 +94,7 @@ const api = {
   onActivateTab: (cb: (id: TabId) => void) => on(CHANNELS.activateTab, cb),
   onSettingsChanged: (cb: (s: AppSettings) => void) => on(CHANNELS.settingsChanged, cb),
   onCommandsChanged: (cb: (e: { tabId: TabId; commands: CommandInfo[] }) => void) =>
-    on(CHANNELS.commandsChanged, cb),
-  onPermissionAsked: (cb: (r: PermissionRequest) => void) => on(CHANNELS.permissionAsked, cb)
+    on(CHANNELS.commandsChanged, cb)
 }
 
 export type QclodApi = typeof api

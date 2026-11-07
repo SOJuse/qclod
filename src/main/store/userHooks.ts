@@ -24,44 +24,22 @@ function readHooksFrom(path: string): Record<string, unknown> | undefined {
 }
 
 /**
- * The hooks the user configured for themselves.
+ * The hooks the user configured for THEMSELVES, and only those.
+ *
+ * Qclod deliberately does not forward a project's own
+ * .claude/settings.json hooks. Those are commands written by whoever wrote
+ * the repository, and Claude Code gates them behind its folder-trust
+ * question. Handing them back through --settings would re-present them as
+ * the user's own configuration and could run a freshly cloned repository's
+ * command without that gate ever being asked.
+ *
+ * The cost is that a project's hooks may not fire inside Qclod if
+ * --settings replaces rather than merges (unverified — see the release
+ * checklist). Losing a hook is an inconvenience; running an untrusted
+ * repository's command is not.
  *
  * READ ONLY: Qclod never writes to anyone's Claude settings.
  */
 export function readUserHooks(home = homedir()): unknown {
   return readHooksFrom(join(home, '.claude', 'settings.json'))
-}
-
-/**
- * Every hook that would apply to a session in `cwd`, merged in the order
- * Claude Code resolves them: user, then project, then the project's local
- * overrides.
- *
- * `--settings` replaces a key outright, so Qclod has to hand back everything
- * it would otherwise displace. A repo's own `.claude/settings.json` hooks are
- * somebody's hooks exactly as much as the user's are, and spec 6.9 is explicit
- * that silently disabling them is unacceptable.
- */
-export function collectHooks(cwd: string, home = homedir()): unknown {
-  const sources = [
-    join(home, '.claude', 'settings.json'),
-    join(cwd, '.claude', 'settings.json'),
-    join(cwd, '.claude', 'settings.local.json')
-  ]
-
-  const merged: Record<string, unknown> = {}
-  let found = false
-
-  for (const path of sources) {
-    const hooks = readHooksFrom(path)
-    if (!hooks) continue
-    found = true
-    for (const [event, entries] of Object.entries(hooks)) {
-      const existing = merged[event]
-      merged[event] =
-        Array.isArray(existing) && Array.isArray(entries) ? [...existing, ...entries] : entries
-    }
-  }
-
-  return found ? merged : undefined
 }

@@ -5,10 +5,7 @@ import { Session } from './Session'
 
 export interface SessionManagerDeps {
   getSettings: () => AppSettings
-  /**
-   * Hooks that already apply in this folder — the user's and the project's —
-   * so ours are merged in rather than written over.
-   */
+  /** The user's own hooks, so ours are merged in rather than written over. */
   getUserHooks: (cwd: string) => unknown
   pipePath: string
   /** Arguments inserted before the agent's own flags. Tests use it to run node. */

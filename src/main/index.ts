@@ -4,7 +4,7 @@ import { createMainWindow, hardenWebContents, RENDERER_ENTRY } from './window'
 import { registerBaseIpc } from './ipc'
 import { loadSettings, saveSettings } from './store/settingsStore'
 import { wireSessions } from './sessions/wiring'
-import { collectHooks } from './store/userHooks'
+import { readUserHooks } from './store/userHooks'
 import { HotkeyRegistrar } from './hotkey/globalHotkey'
 import { notificationFor } from './notifications'
 import { createTray } from './tray'
@@ -84,7 +84,7 @@ app.whenReady().then(() => {
   const sessions = wireSessions(
     () => mainWindow,
     () => settings,
-    (cwd) => collectHooks(cwd),
+    () => readUserHooks(),
     pipePath,
     userData,
     homedir(),

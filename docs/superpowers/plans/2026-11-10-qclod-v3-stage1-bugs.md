@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Закрыть баги B1–B14 из аудита: ничего не виснет и не теряется, проверка типов чистая, юнит-тесты без unhandled rejection, тестовые лазейки есть только в сборке для e2e.
+**Goal:** Закрыть баги B1–B14 из аудита и P1–P8 правой панели: ничего не виснет и не теряется, проверка типов чистая, юнит-тесты без unhandled rejection, тестовые лазейки есть только в сборке для e2e; вошёл в сессию (новую или восстановленную) — сразу видишь контекст, лимиты, модель и подагентов с честными статусами.
 
-**Architecture:** Ядро v2 не меняется: SDK в главном процессе, `AgentSession` на вкладку, `PermissionBroker` между агентом и человеком. Чинится то, что лежит на стыках: какие поля SDK мы читаем (`toolUseID`, `signal`), как сессия считает ожидающие вопросы и отменяет их, как вкладка узнаёт о мёртвой сессии, какой файл запускается, в каком порядке события уходят в окно. Тестовые лазейки прячутся за флагом сборки `__QCLOD_TEST_SEAMS__`, который в релизной сборке равен `false` и вырезается бандлером.
+**Architecture:** Ядро v2 не меняется: SDK в главном процессе, `AgentSession` на вкладку, `PermissionBroker` между агентом и человеком. Чинится то, что лежит на стыках: какие поля SDK мы читаем (`toolUseID`, `signal`), как сессия считает ожидающие вопросы и отменяет их, как вкладка узнаёт о мёртвой сессии, какой файл запускается, в каком порядке события уходят в окно. Для панели — какие события подагентов мы слушаем, откуда берётся восстановленная лента (сам JSONL сессии, только чтение) и что панель спрашивает у процесса при старте, не дожидаясь первого ответа. Тестовые лазейки прячутся за флагом сборки `__QCLOD_TEST_SEAMS__`, который в релизной сборке равен `false` и вырезается бандлером.
 
 **Tech Stack:** Electron 33, electron-vite 2, React 18, TypeScript 5, zustand 5, `@anthropic-ai/claude-agent-sdk` 0.3.319, Vitest 2, Playwright (`_electron`), electron-builder 25.
 
-**Spec:** `docs/superpowers/specs/2026-11-10-qclod-v3-design.md` — раздел 4 «Этап 1 — баги» и решение раздела 7 о лазейках B14.
+**Spec:** `docs/superpowers/specs/2026-11-10-qclod-v3-design.md` — раздел 4 «Этап 1 — баги» и решение раздела 7 о лазейках B14. Задачи 2a–2h (P1–P8) — по жалобе владельца «подагенты в правой панели не работают, в восстановленных сессиях ещё хуже» и разбору причин против настоящего CLI 2.1.317 / SDK 0.3.319; решения владельца по ним записаны в самих задачах.
 
 ## Global Constraints
 
@@ -21,12 +21,15 @@
 - Тестовые лазейки (B14) работают только в сборке для e2e (флаг сборки), в релизной их нет (спека, раздел 7).
 - Формы сообщений и опций SDK берутся из `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` / `sdk-tools.d.ts`, а не придумываются.
 - Мелочи из `progress.md` (сырой текст ошибок, padTop, окно от фоновой вкладки, O(n·k) ленты) в этом этапе **не** чинятся — они уходят в этапы 2–3.
-- Сообщения коммитов короткие, без служебных подписей.
+- В сообщениях коммитов **нет** подписей соавторов и любых упоминаний Claude/ИИ (запрет владельца). Если в шаге ниже такая строка встречается — не добавлять её. Сообщения короткие, по-человечески, в стиле существующей истории (`fix: …`, `feat: …`).
+- Фейковый SDK ведёт себя как настоящий CLI: до первого сообщения не выдаёт ни `system/init`, ни `rate_limit_event`, ни `result` (Task 2a). Тест, который держался на обратном, не подгоняется под старое поведение.
+- Файлы сессий CLI (`~/.claude/projects/**/*.jsonl` и файлы подагентов) Qclod **только читает** (Task 2d) и никогда в них не пишет.
+- Порядок выполнения: Task 1, Task 2, Tasks 2a–2h, затем Task 3 и дальше. Номера задач 3–14 не менялись.
 - Ветка — `feat/qclod-v2`. Команды проверки: `npm run typecheck`, `npm run test:unit`, `npm run test:e2e`.
 
 ## Сверка с кодом
 
-Каждый баг перепроверен по коду ветки `feat/qclod-v2` (коммит `354bfe4`). Все четырнадцать настоящие; **отброшенных нет**. Уточнения к номерам строк аудита:
+Каждый баг перепроверен по коду ветки `feat/qclod-v2` (коммит `354bfe4`; P1–P8 — по коммиту `3324409`). Все настоящие; **отброшенных нет**. Уточнения к номерам строк аудита:
 
 | # | Что видно в коде |
 |---|---|
@@ -44,18 +47,29 @@
 | B12 | `useAppStore.ts:106-122`: `setTabs` чистит только `busySinceByTab`; `ribbonByTab`, `todoByTab`, `panelByTab`, `draftByTab`, `attachmentsByTab`, `fileIndexByTab` закрытых вкладок остаются. |
 | B13 | `index.ts:167` ленту батчит `RibbonBatcher` (16 мс), а `:168-171` панель и статус уходят сразу через `send` — «готов» обгоняет последний кусок текста. |
 | B14 | `createDriver.ts:13`, `index.ts:135-136` (`QCLOD_FAKE_SDK`, `QCLOD_FAKE_HISTORY`), `agentIpc.ts:169,179` (`QCLOD_PICK_FOLDER`, `QCLOD_PICK_FILES`) читаются в любой сборке. `QCLOD_CONFIRM_BYPASS` (`index.ts:35`) уже закрыт `!app.isPackaged`. |
+| P1 (фейк) | `tests/fixtures/fake-sdk/index.mjs:280-303`: `stream()` начинает с `system/init` и `rate_limit_event`, а при `steps: []` сразу же отдаёт `result` с `total_cost_usd: 0.0421` — до всякого сообщения. Фонового подагента фейк не умеет вовсе; шаг `subagent` отдаёт выдуманные `durationMs`/`toolUseCount`, и `ribbon.test.ts:427-429`, `formatting.spec.ts:91` проверяют ровно их. |
+| P2 (A, C, D) | `ribbon.ts:606-624`: любой `tool_result` карточки подагента ставит `done`, в том числе «Async agent launched…» с `toolUseResult.status: 'async_launched'` (`sdk-tools.d.ts:155`). `subagentStats` (`:124-125`) ищет `durationMs`/`toolUseCount`, а настоящие поля — `totalDurationMs`/`totalToolUseCount` (`sdk-tools.d.ts:113-115`; `totalTokens` читается верно). Ошибка подагента (`:590-604`) превращает карточку в `toolError`, и `App.tsx:52` (`kind === 'subagent'`) выкидывает её из списка панели. |
+| P3 (B, F) | `ribbon.ts:293-294` пропускает все `system`, кроме `compact_boundary`: `task_started`/`task_progress`/`task_notification`/`task_updated` (`sdk.d.ts:6430-6560`) не доходят. `INJECTED_TAGS` (`:143-151`) без `task-notification` — уведомление (`origin.kind: 'task-notification'`) становится пузырём пользователя. |
+| P4 (E, F) | `TabController.ts:246` берёт историю из `getSessionMessages`: нет `toolUseResult`, нет ничего до последнего сжатия, нет шагов подагентов (`sdk.d.ts:941`, `includeSystemMessages` по умолчанию `false`). Сводка сжатия в JSONL — `user` с `isCompactSummary: true`; `ribbon.ts:546,561` смотрят только `isSynthetic` — сводка становится пузырём. `compact_boundary` в JSONL пишет `compactMetadata.preTokens`, а `onCompaction` (`:634`) читает `compact_metadata.pre_tokens`. |
+| P5 (G, H) | `panelData.ts:46-61,101-146`: модель — только из `init`, лимиты — только из `rate_limit_event`, стоимость — только из `result`. При старте спрашиваются контекст, MCP и модели (`AgentSession.ts:316-318`), но не модель сессии (`getContextUsage().model`, `sdk.d.ts:4131`) и не лимиты (`usage_EXPERIMENTAL…`, `sdk.d.ts:3176`). Усилие вкладки нигде не хранится (`LaunchOverrides` без `effort`). После resume `total_cost_usd` считает только этот процесс; `cost-state` в JSONL тоже даёт `0`. |
+| P6 (I, J) | `panelData.ts:106-111`: `init` пишет `mcp` состоянием на старте (`pending`) поверх живого ответа `mcpServerStatus()`. MCP обновляется только при открытии панели (`App.tsx:130`). IPC `agentPanel` (`agentIpc.ts:119-122`) ничего не возвращает, хотя `preload/index.ts:63` ждёт `PanelData`. |
+| P7 (K) | `TabController.restore` (`:104`) поднимает только активную вкладку; лента фоновой (`itemsOf`, `:64`) и панель пусты до клика — «появится после запуска». |
 
-Требование раздела 9 спеки («агент стартует у вкладки при первом переходе, запущенная вкладка работает в фоне») сверено: `TabController.restore` поднимает только активную (`:104`), `activate` — по переходу (`:153`), переключение сессий не останавливает. Код ведёт себя так, правка не нужна.
+Требование раздела 9 спеки («агент стартует у вкладки при первом переходе, запущенная вкладка работает в фоне») сверено: `TabController.restore` поднимает только активную (`:104`), `activate` — по переходу (`:153`), переключение сессий не останавливает. Код ведёт себя так, правка не нужна. Task 2g это сохраняет: фоновая вкладка показывает ленту и панель из записи, но процесс у неё по-прежнему стартует только при переходе.
 
 ## Review Focus
 
-Пять случаев, которые спека подразумевает, но тесты отдельных багов сами бы не поймали. Тест на каждый добавлен в задачу, которой принадлежит код.
+Случаи, которые спека подразумевает, но тесты отдельных багов сами бы не поймали (1–5 — для B-задач, 6–9 — для панели). Тест на каждый добавлен в задачу, которой принадлежит код.
 
 1. **Путь npm с пробелом и кириллицей.** `C:\Users\Иван Петров\AppData\Roaming\npm\claude.cmd` — разворачивается в настоящий `claude.exe` и запускается. → Задача 5.
 2. **Свой префикс npm.** `npm config set prefix D:\tools\npm`: обёртка лежит не в `%APPDATA%\npm`, а где-то в PATH — всё равно находится настоящий exe, а не `.cmd`. → Задача 5.
 3. **Стоп в одной вкладке, пока вторая ждёт разрешения.** Ожидающий запрос соседней вкладки не отменяется и отвечается как обычно. → Задача 3.
 4. **Клик по варианту вопроса уже после «Стоп».** Не возвращает «работает» навсегда: выбор уходит обычным сообщением, ход заканчивается `idle`. → Задача 3.
 5. **«Отмена», затем сразу «Установить».** Вторая установка не стартует, пока первая не умерла целиком; после её смерти — стартует. → Задача 6.
+6. **Длинный путь проекта.** SDK укорачивает имя папки в `~/.claude/projects` хешем — транскрипт всё равно находится (поиск по всем папкам). → Задача 2d.
+7. **Перемотка в разговоре.** В JSONL остаётся отрезанная ветка — в восстановленной ленте её нет. → Задача 2d.
+8. **Повторное уведомление того же подагента.** Агента продолжили через `SendMessage`, он уведомил второй раз — карточка берёт последний статус, а не застревает на первом. → Задача 2c.
+9. **Уведомление внутри `system-reminder` настоящего сообщения пользователя.** Карточка закрывается, а то, что человек написал сам, остаётся пузырём. → Задача 2c.
 
 ---
 
@@ -210,6 +224,570 @@ git commit -m "fix: read the SDK's toolUseID and signal, answer questions in pla
 
 ---
 
+### Task 2a: P1 — фейк молчит до первого сообщения и умеет фоновых подагентов
+
+Первым из панельных задач: все находки P2–P8 воспроизводятся только на фейке, который ведёт себя как настоящий CLI 2.1.317. Сейчас он выдаёт `system/init`, `rate_limit_event` и `result` ($0.0421) сразу при старте (`index.mjs:280-303`) — и тесты панели зелёные, хотя у человека панель пуста до первого ответа.
+
+**Что значит «молчит».** Сценарий без `steps` (или с `steps: []`) не выдаёт **ничего**, пока не придёт первый `send()`; на первом `send` — `init`, `rate_limit_event`, эхо, `nextTurn`, `result`. Сценарий с непустыми `steps` по-прежнему играет их сразу — это ход, «уже отправленный» до старта; `init` и `rate_limit_event` идут в начале этого хода, как у настоящего CLI в начале первого хода. Так не приходится переписывать около сотни тестов со `steps`, а ложь «данные есть до первого сообщения» уходит (см. «Решения»).
+
+**Files:**
+- Modify: `tests/fixtures/fake-sdk/index.mjs`, `tests/fixtures/fake-sdk/index.d.mts`, `tests/fixtures/fake-sdk/README.md`
+- Create: `tests/fixtures/transcript.mjs`, `tests/fixtures/transcript.d.mts`
+- Test: `tests/unit/fakeSdk.test.ts`, `tests/unit/transcriptFixture.test.ts` (новый)
+
+**Interfaces:**
+- Consumes: фейковый `canUseTool(name, input, { toolUseID, signal })` (Task 2).
+- Produces:
+  - Новый шаг `{ kind: 'backgroundAgent'; name: string; agentType?: string; agentId?: string; pauseMs?: number; progress?: Array<{ tokens: number; toolUses: number; durationMs: number; lastTool?: string }>; finish?: { status: 'completed' | 'failed' | 'stopped'; summary: string; tokens: number; toolUses: number; durationMs: number } | null }`. Выдаёт по порядку: `assistant` с `tool_use` `Agent` (`input: { description: name, subagent_type, run_in_background: true }`); `user` с `tool_result` (текст начинается с `Async agent launched successfully.` и содержит `agentId: <id>`) и `tool_use_result: { isAsync: true, status: 'async_launched', agentId, description, outputFile }`; `system/task_started` (`task_id = agentId`, `tool_use_id`, `description`, `subagent_type`, `task_type: 'local_agent'`, `is_backgrounded: true`); по одному `system/task_progress` на элемент `progress` (`usage: { total_tokens, tool_uses, duration_ms }`, `last_tool_name`, `tool_use_id`); при `finish` — `system/task_notification` (`task_id`, `tool_use_id`, `status`, `summary`, `output_file`, `usage`), за ним `user` с `origin: { kind: 'task-notification' }` и строковым `content` вида `<task-notification>\n<task-id>…</task-id>\n<tool-use-id>…</tool-use-id>\n<output-file>…</output-file>\n<status>…</status>\n<summary>…</summary>\n<usage><subagent_tokens>…</subagent_tokens><tool_uses>…</tool_uses><duration_ms>…</duration_ms></usage>\n</task-notification>`. `finish: null` — агент так и не заканчивает. Между событиями — `pauseMs`, если задан. `agentId` по умолчанию — `a` + 16 hex.
+  - Шаг `subagent` отдаёт `tool_use_result` с настоящими полями `AgentOutput` (`sdk-tools.d.ts:96-150`): `{ status: 'completed', agentId, totalTokens, totalDurationMs, totalToolUseCount, content: [...] }`; в `stats` сценария — те же имена.
+  - `getContextUsage()` возвращает ещё `model: state.model` (`sdk.d.ts:4131`); `script.contextUsageDelayMs?: number` задерживает ответ.
+  - `planLimits(): Promise<{ fiveHour: LimitWindow | null; sevenDay: LimitWindow | null } | null>` — из `script.planLimits` (`null` → `null`), по умолчанию те же окна, что в `rate_limit_event` (0.13 и 0.38). Метод драйвера появится в Task 2e; фейк получает его сразу.
+  - `tests/fixtures/transcript.mjs`:
+    - `encodeProjectDir(cwd: string): string` — `cwd.replace(/[^a-zA-Z0-9]/g, '-')`, как `sl()` в `sdk.mjs`.
+    - `writeTranscript(configDir: string, cwd: string, sessionId: string, lines: object[], subagents?: Record<string, { meta: object; lines: object[] }>): string` — пишет `<configDir>/projects/<encodeProjectDir(cwd)>/<sessionId>.jsonl` и для каждого подагента `…/<sessionId>/subagents/agent-<agentId>.jsonl` + `.meta.json`; возвращает путь основного файла.
+    - `resumedSession(sessionId: string, cwd: string): { lines: object[]; subagents: Record<string, { meta: object; lines: object[] }> }` — готовая сессия для P4–P8, строки в форме сырого JSONL (camelCase: `parentUuid`, `isSidechain`, `toolUseResult`, `compactMetadata`, `logicalParentUuid`, `isCompactSummary`, `origin`, `attachment`), снятой с живых файлов CLI 2.1.268–2.1.317. Цепочка по `parentUuid`:
+      1. `user` «найди, где падает вставка» → `assistant` (`model: 'claude-opus-5'`) с текстом «смотрю».
+      2. Подагент `Explore` «Обзор вставки» на переднем плане: `tool_use` `Agent` → `tool_result` + `toolUseResult` `{ status: 'completed', agentId: 'a1…', totalTokens: 18000, totalDurationMs: 42000, totalToolUseCount: 7 }`; файл подагента — два шага (`Read`, текст).
+      3. `system/compact_boundary` (`parentUuid: null`, `logicalParentUuid` — предыдущая строка, `compactMetadata: { trigger: 'auto', preTokens: 180000, postTokens: 20000 }`) → `user` с `isCompactSummary: true`, `isVisibleInTranscriptOnly: true`, текст «This session is being continued from a previous conversation…».
+      4. `user` «теперь проверь тесты» → фоновый подагент `general-purpose` «Прогон тестов»: `tool_result` «Async agent launched successfully…» + `toolUseResult` `{ isAsync: true, status: 'async_launched', agentId: 'a2…' }`; позже `attachment` `{ type: 'queued_command', prompt: '<task-notification>…<status>completed</status><summary>Agent "Прогон тестов" finished</summary><usage><subagent_tokens>93175</subagent_tokens><tool_uses>18</tool_uses><duration_ms>110172</duration_ms></usage>…' }` и `user` с `origin: { kind: 'task-notification' }` с тем же текстом.
+      5. Подагент «Сборка» падает: `tool_result` `is_error: true`, текст «Agent type 'builder' not found».
+      6. Фоновый подагент «Долгий обзор» (`a3…`) запущен, уведомления нет.
+      7. `assistant` (`model: 'claude-opus-5'`, `usage: { input_tokens: 12, cache_creation_input_tokens: 1400, cache_read_input_tokens: 44022, output_tokens: 240 }`) с текстом «жду подагентов».
+      8. Строка-ветка, отрезанная перемоткой: `user` «старый вариант» с `parentUuid` строки из п. 1, на которую никто не ссылается дальше. В ленте её быть не должно.
+      Плюс по строке `file-history-snapshot`, `cost-state`, `queue-operation` (`enqueue`) с тем же уведомлением — читатель обязан их пропускать.
+
+- [ ] **Step 1: Падающие тесты фейка**
+
+```ts
+// tests/unit/fakeSdk.test.ts
+test('без steps фейк не выдаёт ничего, пока не пришло сообщение', async () => {
+  // const driver = createFakeSdk({}); собираем поток 100 мс → []
+  // driver.send({ text: 'привет', attachments: [] }) → kinds: ['system/init','rate_limit_event','user','result']
+})
+test('result до первого сообщения не приходит никогда', async () => {})
+test('getContextUsage знает модель', async () => {
+  // (await driver.getContextUsage()).model === 'claude-opus-5'
+})
+test('backgroundAgent: async_launched, потом task_started, progress и notification', async () => {
+  // steps: [{ kind:'backgroundAgent', name:'Прогон тестов', progress:[{tokens:500,toolUses:2,durationMs:3000,lastTool:'Bash'}],
+  //           finish:{ status:'completed', summary:'готово', tokens:900, toolUses:4, durationMs:9000 } }]
+  // порядок: assistant(tool_use Agent X) → user(tool_result X, tool_use_result.status 'async_launched')
+  //   → system/task_started(tool_use_id X) → system/task_progress(usage.total_tokens 500, last_tool_name 'Bash')
+  //   → system/task_notification(status 'completed', usage.tool_uses 4) → user(origin.kind 'task-notification', '<tool-use-id>X</tool-use-id>')
+})
+test('backgroundAgent с finish: null не присылает уведомления', async () => {})
+test('subagent отдаёт totalTokens/totalDurationMs/totalToolUseCount', async () => {})
+// tests/unit/transcriptFixture.test.ts
+test('writeTranscript кладёт файл туда, где его ищет CLI', () => {
+  // path === join(dir,'projects','C--Users-u-proj', `${id}.jsonl`) для cwd 'C:\\Users\\u\\proj'
+  // subagents/agent-<id>.jsonl и .meta.json рядом
+})
+```
+
+- [ ] **Step 2: Прогнать, убедиться что падают**
+
+Run: `npx vitest run tests/unit/fakeSdk.test.ts tests/unit/transcriptFixture.test.ts`
+Expected: FAIL — поток без `steps` начинается с `system/init`; `backgroundAgent` — «unknown step kind»; модуля `transcript.mjs` нет.
+
+- [ ] **Step 3: Научить фейк и написать фикстуру транскрипта**
+
+README: строка «Поток всегда начинается с `system/init`…» заменяется правилом «молчит до первого сообщения» выше; в таблицу шагов — `backgroundAgent`; раздел про `transcript.mjs`.
+
+- [ ] **Step 4: Прогнать весь набор и пометить тесты, которые держались на лжи**
+
+Run: `npm run test:unit && npm run test:e2e`
+Тест, упавший только потому, что ждал `init`/`rate_limit_event`/`result` до первого сообщения (модель, лимиты, стоимость, MCP из `init`, `lastSessionId` после старта со `steps: []`), не переписывается под старое поведение: он помечается `test.fails` (vitest) / `test.fail()` (Playwright) с комментарием `// снять в Task 2e` (панель) или `// снять в Task 2f` (MCP). Тест, который ждал `init` ради вещи, которую ни одна задача 2b–2h не чинит, переписывается так, чтобы сначала отправить сообщение. Список помеченных — в описании коммита.
+Expected: остальные PASS; помеченные «ожидаемо падают».
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add tests
+git commit -m "test: fake SDK stays silent until the first message, plays background agents (P1)"
+```
+
+---
+
+### Task 2b: P2 — карточка подагента: фоновый не «готов» сразу, итоги читаются, упавший остаётся в списке
+
+Находки A, C, D. Все три — в `RibbonBuilder.onToolResult` (`ribbon.ts:579-631`).
+
+**Files:**
+- Modify: `src/shared/types.ts` (карточка `subagent`), `src/shared/ribbon.ts:103-133,264-283,568-631`, `src/renderer/app/App.tsx:46-63`, `src/renderer/components/SidePanel.tsx:49-56,220-245`, `src/renderer/components/RibbonItem.tsx:127-150`
+- Test: `tests/unit/ribbon.test.ts`, `tests/e2e/formatting.spec.ts:91-105`
+
+**Interfaces:**
+- Consumes: шаги фейка `subagent` (с настоящими итогами) и `backgroundAgent` (Task 2a).
+- Produces:
+  - `export type SubagentState = 'running' | 'done' | 'failed' | 'stopped' | 'unfinished'` в `types.ts`; у карточки `subagent` `state: SubagentState` (у `tool` остаётся `ToolState`) и новые необязательные поля `background?: boolean`, `agentId?: string`, `taskId?: string`, `lastTool?: string`.
+  - `subagentStats` читает сначала `totalTokens`, `totalDurationMs`, `totalToolUseCount` (`sdk-tools.d.ts:113-115`), прежние написания остаются запасными.
+  - `tool_use_result.status === 'async_launched'` (или `isAsync === true`): карточка остаётся `running`, получает `background: true` и `agentId`; `summary` не трогается (текст «Async agent launched…» не показывается).
+  - `tool_result` с `is_error` у карточки `subagent`: карточка **остаётся** `kind: 'subagent'`, `state: 'failed'`, `summary: clip(error, 160)`; в `toolError` превращаются только обычные инструменты.
+  - `closeOpen()` ставит работающему подагенту `state: 'unfinished'`, `summary: 'не закончил'`.
+  - `AgentRun` (`SidePanel.tsx`) — `{ id; name; task; state: SubagentState; tokens?; durationMs?; toolCalls?; lastTool?; summary? }`; `App.tsx` кладёт все карточки `subagent`, включая упавшие. Подписи состояния в панели и в карточке ленты: `running` — «работает», `done` — «готов», `failed` — «ошибка», `stopped` — «остановлен», `unfinished` — «не закончил». У работающего панель показывает ещё `lastTool` и число инструментов, у закончившего — время и токены, у упавшего — `summary`.
+
+- [ ] **Step 1: Падающие тесты**
+
+```ts
+// tests/unit/ribbon.test.ts — сообщения берутся из прогона фейка (collect(createFakeSdk({ steps })))
+test('фоновый подагент после async_launched всё ещё работает', () => {
+  // steps: [backgroundAgent 'Прогон тестов', finish: null]
+  // карточка: state 'running', background true, agentId задан, summary не содержит 'Async agent launched'
+})
+test('итоги подагента читаются из totalTokens/totalDurationMs/totalToolUseCount', () => {
+  // subagent stats { totalTokens: 18000, totalDurationMs: 42000, totalToolUseCount: 7 }
+  // → tokens 18000, durationMs 42000, toolCalls 7
+})
+test('упавший подагент остаётся подагентом со статусом failed', () => {
+  // steps: [toolError name 'Agent', input { description:'Сборка', subagent_type:'builder' }, error 'Agent type…']
+  // only(items,'subagent').length === 1, state 'failed', summary начинается с 'Agent type'; toolError нет
+})
+test('подагент, работавший при закрытии, — не закончил', () => {
+  // backgroundAgent finish null; closeOpen() → state 'unfinished', summary 'не закончил'
+})
+```
+
+Тесты `ribbon.test.ts:427-436,531-535` и e2e `formatting.spec.ts:91` переводятся на настоящие имена полей.
+
+- [ ] **Step 2: Прогнать, убедиться что падают**
+
+Run: `npx vitest run tests/unit/ribbon.test.ts`
+Expected: FAIL — фоновая карточка `done`; `toolCalls` undefined; упавший стал `toolError`.
+
+- [ ] **Step 3: Починить по интерфейсам выше**
+
+- [ ] **Step 4: Прогнать тесты**
+
+Run: `npm run typecheck && npx vitest run tests/unit/ribbon.test.ts && npm run test:e2e -- formatting ribbon`
+Expected: PASS.
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add src/shared src/renderer tests
+git commit -m "fix: background agents stay running, real run totals, failed agents stay listed (P2)"
+```
+
+---
+
+### Task 2c: P3 — живые события подагента: токены, инструменты, итог
+
+Находки B и первая половина F. `apply()` пропускает всё `system`, кроме `compact_boundary` (`ribbon.ts:293-294`), а `<task-notification>` нет в `INJECTED_TAGS` (`ribbon.ts:143-151`) — уведомление о конце подагента становится пузырём пользователя.
+
+**Files:**
+- Modify: `src/shared/ribbon.ts:143-151,284-306,540-577`
+- Test: `tests/unit/ribbon.test.ts`, `tests/unit/agentSession.test.ts`
+
+**Interfaces:**
+- Consumes: `SubagentState`, поля `background`/`agentId`/`taskId`/`lastTool` (Task 2b); шаг `backgroundAgent` (Task 2a).
+- Produces:
+  - `export interface TaskNotice { taskId: string; toolUseId: string; status: 'completed' | 'failed' | 'stopped' | 'killed'; summary: string; usage?: { tokens: number; toolCalls: number; durationMs: number } }` и `export function parseTaskNotifications(text: string): TaskNotice[]` в `ribbon.ts` — все блоки `<task-notification>…</task-notification>` в тексте; теги `<task-id>`, `<tool-use-id>`, `<status>`, `<summary>`, `<usage><subagent_tokens>/<tool_uses>/<duration_ms>`; блок без `<tool-use-id>` и `<task-id>` пропускается.
+  - Статусы в карточку: `completed` → `done`, `failed` → `failed`, `stopped`/`killed` → `stopped`.
+  - `RibbonBuilder.apply` для `system`: `task_started` — карта `task_id → карточка` по `tool_use_id`, `taskId`, `background = is_backgrounded`; `task_progress` — `tokens = usage.total_tokens`, `toolCalls = usage.tool_uses`, `durationMs = usage.duration_ms`, `lastTool = last_tool_name`, `summary` из `summary`, если есть; `task_updated` — по `task_id`, `patch.status` `completed`/`failed`/`killed` закрывает карточку (`failed` — `summary = patch.error`, если есть), прочие статусы не трогают; `task_notification` — по `tool_use_id`, иначе по `task_id`: статус, `summary`, итоги из `usage`, `lastTool` убирается; `background_tasks_changed` принимается и **ничего не меняет** — порядок относительно уведомлений не обещан (`sdk.d.ts:3843`), закрывает карточку только уведомление или `task_updated`. События задач без карточки (`local_bash`, монитор) игнорируются.
+  - `onUser`: из строкового или текстового содержимого сначала извлекаются `parseTaskNotifications` и применяются к карточкам; `'task-notification'` добавляется в `INJECTED_TAGS`; сообщение с `origin.kind === 'task-notification'` пузыря не даёт никогда. Повторное уведомление того же `tool-use-id` (агент «может уведомить ещё раз») перезаписывает статус и итог.
+  - `result` не закрывает фоновые карточки (как сейчас — только `closeOpenBlocks`); тест это фиксирует.
+
+- [ ] **Step 1: Падающие тесты**
+
+```ts
+// tests/unit/ribbon.test.ts
+test('task_progress обновляет токены, число инструментов и последний инструмент', () => {
+  // backgroundAgent progress [{tokens:500,toolUses:2,durationMs:3000,lastTool:'Bash'}], finish null
+  // карточка: running, tokens 500, toolCalls 2, lastTool 'Bash'
+})
+test('task_notification закрывает карточку с итогом', () => {
+  // finish completed, summary 'готово', tokens 900 → state 'done', summary 'готово', tokens 900, toolCalls 4, lastTool undefined
+})
+test('уведомление failed и stopped дают свои статусы', () => {})
+test('уведомление пользователем не показывается', () => {
+  // ни одного item kind 'user' с текстом, содержащим 'task-notification' или 'Прогон тестов'
+})
+test('уведомление только сообщением пользователя тоже закрывает карточку', () => {
+  // убрать из потока system/task_notification, оставить user с origin task-notification → state 'done', tokens 93175 из <usage>
+})
+test('result посреди работы фонового агента не закрывает его', () => {})
+test('background_tasks_changed без агента в списке не меняет состояние', () => {})
+test('parseTaskNotifications читает блок внутри system-reminder', () => {})
+test('повторное уведомление того же агента перезаписывает статус', () => {
+  // Review Focus 8: completed, затем failed с тем же tool-use-id → state 'failed'
+})
+test('уведомление в system-reminder закрывает карточку, а текст человека остаётся', () => {
+  // Review Focus 9: user content 'посмотри ещё
+<system-reminder><task-notification>…</task-notification></system-reminder>'
+  // карточка done; пузырь user с текстом 'посмотри ещё'
+})
+// tests/unit/agentSession.test.ts
+test('ход кончается idle, а фоновый подагент в ленте всё ещё работает, пока не придёт уведомление', async () => {
+  // steps: [backgroundAgent pauseMs 30, finish completed]; сначала 'idle' и карточка running → затем done
+})
+```
+
+- [ ] **Step 2: Прогнать, убедиться что падают**
+
+Run: `npx vitest run tests/unit/ribbon.test.ts tests/unit/agentSession.test.ts`
+Expected: FAIL — `tokens` undefined, карточка не закрывается уведомлением, есть пузырь с `<task-notification>`.
+
+- [ ] **Step 3: Починить по интерфейсам выше**
+
+- [ ] **Step 4: Прогнать тесты**
+
+Run: `npm run typecheck && npm run test:unit && npm run test:e2e -- ribbon`
+Expected: PASS.
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add src/shared tests/unit
+git commit -m "fix: subagent cards follow task_started, task_progress and task_notification (P3)"
+```
+
+---
+
+### Task 2d: P4 — открытая заново сессия читается из её JSONL целиком
+
+Находка E и вторая половина F. `getSessionMessages` (`TabController.ts:237-247` через `sessionHistory.ts`) отдаёт урезанную цепочку: нет `toolUseResult`, нет ничего до последнего сжатия, нет шагов подагентов, нет системных строк. Решение владельца: ленту восстанавливаем, **читая** файл сессии напрямую. Это чтение, не запись: ограничение раздела 9 спеки («не пишет файлы настроек и учётные данные») не нарушается, а в эти файлы Qclod не пишет никогда.
+
+`SDKSessionInfo` пути к файлу не даёт (`sdk.d.ts:6217`), поэтому путь строится так же, как его строит SDK: `<CLAUDE_CONFIG_DIR или ~/.claude>/projects/<cwd с заменой [^a-zA-Z0-9] на '-'>/<sessionId>.jsonl` (`sl()` в `sdk.mjs`). Для длинных путей SDK укорачивает имя папки хешем — поэтому при промахе ищется `projects/*/<sessionId>.jsonl`, как `getSessionInfo` без `dir`.
+
+Шаги подагентов читаются из `<sessionId>/subagents/agent-<agentId>.jsonl` тем же разборщиком. `getSubagentMessages` в SDK есть (`sdk.d.ts:978`), но отдаёт такие же урезанные сообщения, а под фейком SDK не грузится — один путь чтения, проверяемый e2e, надёжнее.
+
+**Files:**
+- Create: `src/main/agent/transcript.ts`
+- Modify: `src/shared/types.ts` (карточка `compaction`), `src/shared/ribbon.ts:540-577,634-646` (`onUser`, `onCompaction`, `finishReplay`), `src/main/agent/AgentSession.ts:161-167` (`replay`), `src/main/tabs/TabController.ts:31,237-249` (`TabHistory`, `resume`), `src/main/index.ts:133-163`, `src/renderer/components/RibbonItem.tsx:171-180`
+- Test: `tests/unit/transcript.test.ts` (новый), `tests/unit/ribbon.test.ts`, `tests/unit/tabController.test.ts`, `tests/e2e/history.spec.ts`
+
+**Interfaces:**
+- Consumes: `writeTranscript`, `resumedSession`, `encodeProjectDir` (Task 2a); разбор уведомлений и статусы карточек (Tasks 2b–2c).
+- Produces:
+  - `transcript.ts`:
+    - `export function claudeConfigDir(env: NodeJS.ProcessEnv, home: string): string` — `env.CLAUDE_CONFIG_DIR || join(home, '.claude')`.
+    - `export function findTranscript(sessionId: string, cwd: string, configDir: string): string | null`.
+    - `export async function readTranscript(path: string): Promise<unknown[]>` — сообщения в форме потока SDK, по порядку цепочки.
+    - `export async function loadTranscript(sessionId: string, cwd: string, env?: NodeJS.ProcessEnv, home?: string): Promise<unknown[]>` — `[]`, если файла нет или он не читается; никогда не бросает.
+  - Правила `readTranscript`:
+    - Файл читается потоком (`createReadStream` + `readline`), только на чтение; строка, которая не парсится, пропускается.
+    - Цепочка: от последней строки `user`/`assistant`/`attachment` с `isSidechain !== true` идти по `parentUuid` назад; у `compact_boundary` с `parentUuid: null` продолжать по `logicalParentUuid`; развернуть. Ветки, отрезанные перемоткой, в цепочку не попадают.
+    - `user`/`assistant` → `{ type, uuid, message, parent_tool_use_id: null, ...(toolUseResult ? { tool_use_result: toolUseResult } : {}), ...флаги }`, где флаги — `isSynthetic`, `isMeta`, `isCompactSummary`, `origin`, если есть в строке.
+    - `system` с `subtype: 'compact_boundary'` → `{ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger, pre_tokens: compactMetadata.preTokens, post_tokens: compactMetadata.postTokens } }`; прочие `system` (`turn_duration`, `stop_hook_summary`, `away_summary`) пропускаются.
+    - `attachment` с `attachment.type === 'queued_command'` и `<task-notification>` в `attachment.prompt` → `{ type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: prompt } }`; прочие `attachment`, `queue-operation`, `file-history-*`, `cost-state`, `mode`, `ai-title` и неизвестные типы пропускаются.
+    - Сразу за `assistant`, где есть `tool_use` `Agent`/`Task`, вставляются шаги подагента: `agentId` берётся из `toolUseResult.agentId` ответа на этот `tool_use` (или из `meta.json` с тем же `toolUseId`), его файл читается теми же правилами (без вложенных подагентов), каждое сообщение получает `parent_tool_use_id` = id этого `tool_use`.
+  - `TabHistory.transcript(sessionId: string, cwd: string): Promise<unknown[]>` вместо `messages(sessionId)`. В `index.ts`: настоящая — `loadTranscript(id, cwd)`; под фейком — `script.messages?.[id]`, если есть (тесты `history`/`formatting` не меняются), иначе тот же `loadTranscript` (e2e подкладывает файл через `CLAUDE_CONFIG_DIR` — это переменная самого CLI, не лазейка Qclod).
+  - Карточка `compaction` получает `summary?: string`. `onUser`: сообщение с `isCompactSummary`, `isMeta` или `is_meta` пузыря не даёт; текст `isCompactSummary` записывается в `summary` последней карточки `compaction` (патч `update`). В ленте разделитель сжатия сворачиваемый: `<details>` «Что было до сжатия», внутри — сводка.
+  - `RibbonBuilder.finishReplay(): RibbonChange[]` — после проигрыша истории всё, что ещё `running` (подагенты, инструменты), закрывается как в `closeOpen()` (`unfinished` / «не закончил»): процесс, который их вёл, закрылся вместе с приложением. `AgentSession.replay` вызывает его в конце.
+  - Запись: ни одна функция `transcript.ts` не открывает файл на запись; тест проверяет, что содержимое и `mtimeMs` файла не меняются.
+
+- [ ] **Step 1: Падающие тесты**
+
+```ts
+// tests/unit/transcript.test.ts — configDir = mkdtemp, файлы из writeTranscript(resumedSession(...))
+test('путь ищется по cwd, а при промахе — во всех папках проектов', () => {
+  // Review Focus 6: файл лежит в projects/<другое-имя>/<id>.jsonl
+})
+test('CLAUDE_CONFIG_DIR важнее домашней папки', () => {})
+test('история до сжатия тоже читается, сжатие стоит между ними', async () => {
+  // первый user 'найди, где падает вставка' присутствует; compact_boundary с pre_tokens 180000 после него
+})
+test('toolUseResult доходит как tool_use_result', async () => {})
+test('шаги подагента приходят с parent_tool_use_id его вызова', async () => {})
+test('уведомление из queued_command становится сообщением task-notification', async () => {})
+test('ветка, отрезанная перемоткой, в историю не попадает', async () => {
+  // Review Focus 7: нет 'старый вариант'
+})
+test('битая строка и служебные типы пропускаются', async () => {})
+test('чтение не меняет файл', async () => {
+  // readFileSync + statSync().mtimeMs до и после равны
+})
+test('нет файла — пустой список, без исключения', async () => {})
+// tests/unit/ribbon.test.ts — builder.apply(…readTranscript…) + finishReplay()
+test('восстановленная сессия: три подагента и честные статусы', () => {
+  // 'Обзор вставки' done tokens 18000; 'Прогон тестов' done tokens 93175; 'Сборка' failed; 'Долгий обзор' unfinished
+})
+test('сводка сжатия — не пузырь, а часть разделителя', () => {
+  // нет user с 'This session is being continued'; compaction.summary начинается с этого текста
+})
+// tests/unit/tabController.test.ts
+test('resume читает транскрипт по cwd вкладки', async () => {
+  // history.transcript вызван с (lastSessionId, tab.cwd)
+})
+```
+
+В `tests/e2e/history.spec.ts` — тест «открытая из истории сессия показывает то, что было до сжатия»: `CLAUDE_CONFIG_DIR` = временная папка с `resumedSession`, `QCLOD_FAKE_HISTORY` с одной сессией без `messages`.
+
+- [ ] **Step 2: Прогнать, убедиться что падают**
+
+Run: `npx vitest run tests/unit/transcript.test.ts tests/unit/ribbon.test.ts tests/unit/tabController.test.ts`
+Expected: FAIL — модуля нет; сводка сжатия — пузырь; `finishReplay` нет.
+
+- [ ] **Step 3: Реализовать `transcript.ts` и переключить `resume` на него**
+
+`SessionHistory.messages` и `getSessionMessages` больше не используются для resume; `SessionHistory.list` остаётся.
+
+- [ ] **Step 4: Прогнать тесты**
+
+Run: `npm run typecheck && npm run test:unit && npm run test:e2e -- history formatting`
+Expected: PASS.
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add src tests
+git commit -m "fix: rebuild a resumed chat from its JSONL, compaction and subagents included (P4)"
+```
+
+---
+
+### Task 2e: P5 — панель полна сразу: контекст, модель, лимиты, усилие
+
+Находки G и H. Стоимость, лимиты и модель приходят только из `result`, `rate_limit_event` и `system/init` (`panelData.ts:46-61,101-146`), а настоящий CLI шлёт их лишь после первого сообщения. Контекст и список моделей уже спрашиваются при старте (`AgentSession.ts:316-318`); не хватает модели, лимитов и усилия.
+
+**Files:**
+- Modify: `src/main/agent/driver.ts`, `src/main/agent/sdkDriver.ts:147-183`, `src/main/agent/panelData.ts`, `src/main/agent/AgentSession.ts:230-319,366-384,500-509`, `src/main/agentIpc.ts:94-105`, `src/main/tabs/sanitize.ts:20-45`, `src/shared/types.ts` (`CostInfo`, `LaunchOverrides`), `src/renderer/components/SidePanel.tsx:136-200`
+- Test: `tests/unit/sdkDriver.test.ts`, `tests/unit/panelData.test.ts`, `tests/unit/agentSession.test.ts`, `tests/unit/ipcValidation.test.ts`, `tests/e2e/panel.spec.ts`
+
+**Interfaces:**
+- Consumes: фейковые `planLimits()`, `getContextUsage().model`, `contextUsageDelayMs`, «молчание до первого сообщения» (Task 2a); `mockQuery()` (Task 2).
+- Produces:
+  - `ContextUsage.model?: string`; `AgentDriver.planLimits(): Promise<PanelData['limits'] | null>`.
+  - `sdkDriver.planLimits()`: если у запроса нет функции `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET` (`sdk.d.ts:3176`) — `null`; иначе зовёт её с `{ skipBehaviors: true }`; `rate_limits_available === false` или `rate_limits === null` — `null`; окно `five_hour`/`seven_day` → `{ utilization: utilization / 100, resetsAt: Math.floor(Date.parse(resets_at) / 1000) }` (там 0–100 и ISO, у нас 0–1 и unix-секунды, как в `rate_limit_event`); окно с `utilization` или `resets_at` равным `null` → `null`; любое исключение → `null`, без записи в ленту.
+  - `getContextUsage()` в `sdkDriver` пробрасывает `model`.
+  - `AgentSession.start`: после `idle` — `refreshContext()` (ставит и `context`, и `model`, если ответ его принёс), `refreshModels()`, `refreshMcp()`, `refreshLimits()`; каждый вызов — с `.catch(() => undefined)` (Task 10 потом сведёт их в `background()`). Модель, пока неизвестна, берётся ещё из последнего `assistant` в истории (`message.model`) — через `PanelCollector.seedModel(model: string)` (зовёт `AgentSession.replay` после проигрыша истории), который не перезаписывает модель, уже пришедшую от процесса.
+  - `PanelCollector.setLimits(limits)`; `rate_limit_event` по-прежнему обновляет лимиты по ходу.
+  - Усилие: `LaunchOverrides.effort?: EffortLevel`; `sanitizeOverrides` пропускает только значения из `EFFORT_LEVELS`; IPC `agentEffort` после `setEffort` зовёт `controller.rememberOverride(id, { effort })`; `start()` при `overrides.effort` вызывает `driver.setEffort(effort)` и `collector.setEffort(effort)`. Хранится в `tabs.json` (файл Qclod), не в настройках пользователя.
+  - Стоимость после resume: `CostInfo { session: number; sinceOpen?: boolean }`; `PanelCollector.markResumed()` (зовёт `start(resumeId)`) — дальше `onResult` ставит `sinceOpen: true`. Панель подписывает строку «с момента открытия» вместо «за сессию».
+  - Выбор модели при `data.model === null`: первой стоит `<option value="" disabled>…</option>`, `value=''` — браузер не показывает чужую первую модель как выбранную. При `models.length === 0` и `model === null` — строка «…», не «появится после запуска», если сессия запущена.
+
+- [ ] **Step 1: Падающие тесты**
+
+```ts
+// tests/unit/sdkDriver.test.ts
+test('лимиты подписки спрашиваются с skipBehaviors и переводятся в 0..1 и unix-секунды', async () => {
+  // usage_EXPERIMENTAL…({ skipBehaviors: true }) → { rate_limits_available: true, rate_limits: {
+  //   five_hour: { utilization: 13, resets_at: '2026-11-10T15:00:00.000Z' }, seven_day: { utilization: 38, resets_at: '2026-11-14T00:00:00.000Z' } } }
+  // planLimits() → { fiveHour: { utilization: 0.13, resetsAt: 1794322800 }, sevenDay: { utilization: 0.38, resetsAt: 1794614400 } }
+})
+test('нет метода usage — null, без исключения', async () => {})
+test('rate_limits_available false — null', async () => {})
+// tests/unit/agentSession.test.ts — фейк со steps: [] (молчит)
+test('до первого сообщения панель знает контекст, модель, модели и лимиты', async () => {
+  // start(); vi.waitFor: panel.context.percent 21, panel.model 'claude-opus-5', panel.models.length 2,
+  // panel.limits.fiveHour.utilization 0.13; driver.sent пусто
+})
+test('сохранённое усилие вкладки применяется при старте и видно в панели', async () => {
+  // overrides { effort: 'high' } → driver.effort 'high', panel.effort 'high'
+})
+test('после resume стоимость помечена «с момента открытия»', async () => {
+  // start('old-id'); send; после result: panel.cost.sinceOpen === true
+})
+// tests/unit/panelData.test.ts
+test('seedModel не перезаписывает модель от процесса', () => {})
+// tests/unit/ipcValidation.test.ts
+test('sanitizeOverrides пропускает только известные уровни усилия', () => {})
+```
+
+`tests/e2e/panel.spec.ts`: снять пометки `// снять в Task 2e` из Task 2a; новый тест «пока модель неизвестна, выбор показывает „…“, потом настоящую» — `contextUsageDelayMs: 1500`, сначала `panel-model` имеет значение `''` и текст `…`, потом `claude-opus-5`.
+
+- [ ] **Step 2: Прогнать, убедиться что падают**
+
+Run: `npx vitest run tests/unit/sdkDriver.test.ts tests/unit/agentSession.test.ts tests/unit/panelData.test.ts tests/unit/ipcValidation.test.ts`
+Expected: FAIL — `planLimits` нет; `panel.model` и `limits` пусты до первого сообщения; усилие не сохраняется.
+
+- [ ] **Step 3: Починить по интерфейсам выше**
+
+- [ ] **Step 4: Прогнать тесты**
+
+Run: `npm run typecheck && npm run test:unit && npm run test:e2e -- panel`
+Expected: PASS, пометки `test.fails` с «Task 2e» сняты и тесты зелёные.
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add src tests
+git commit -m "fix: fill model, limits and effort in the panel before the first message (P5)"
+```
+
+---
+
+### Task 2f: P6 — MCP не откатывается на «ждёт», окно может забрать панель целиком
+
+Находки I и J. `system/init` перезаписывает живой ответ `mcpServerStatus` состоянием на момент старта (`pending`) (`panelData.ts:101-113`); MCP обновляется только при открытии панели (`App.tsx:130`). IPC `agentPanel` (`agentIpc.ts:119-122`) ничего не возвращает, хотя `preload` ждёт `PanelData` (`preload/index.ts:63`) — перезагруженное окно или пропущенное событие оставляет панель пустой.
+
+**Files:**
+- Modify: `src/main/agent/panelData.ts`, `src/main/agent/AgentSession.ts` (`onPanel`, `onMessage`, `refreshMcp`, `dispose`), `src/main/tabs/TabController.ts` (`panelOf`, `wire`), `src/main/agentIpc.ts:119-122`, `src/main/index.ts:168`, `src/preload/index.ts:63`, `src/shared/types.ts` (`PanelEvent`, `PanelSnapshot`), `src/renderer/state/useAppStore.ts:33,48,94,135-140`, `src/renderer/app/App.tsx:110-131,185-201`
+- Test: `tests/unit/panelData.test.ts`, `tests/unit/agentSession.test.ts`, `tests/unit/tabController.test.ts`, `tests/unit/appStore.test.ts` (новый; Task 11 потом его дополняет), `tests/e2e/panel.spec.ts`
+
+**Interfaces:**
+- Consumes: фейковые `init.mcpServers` и `mcpServerStatus()` (Task 2a); `PanelCollector` из Task 2e.
+- Produces:
+  - `PanelCollector.setMcp(list: McpServerInfo[]): Partial<PanelData>` — с первого живого ответа `onInit` поле `mcp` больше не трогает.
+  - `AgentSession` спрашивает `mcpServerStatus()`: при старте, сразу после `init`, на `system/commands_changed` и `system/plugin_install`; пока хоть один сервер `pending` или `connecting` — повтор каждые `MCP_POLL_MS = 2000` мс, не больше `MCP_POLL_MAX = 15` раз; таймер гасится в `dispose()`.
+  - Ревизии панели: в `panelData.ts` модульный счётчик `nextPanelRev()` — общий на процесс, чтобы новая сессия вкладки (restart, восстановление) не начинала с нуля. `PanelCollector.rev: number` — ревизия последнего патча. `PanelEvent { tabId; patch; rev: number }`. `export interface PanelSnapshot { rev: number; data: PanelData }`.
+  - `AgentSession.onPanel(cb: (patch: Partial<PanelData>, rev: number) => void)`; `AgentSession.panelSnapshot(): PanelSnapshot`.
+  - `TabController.panelOf(id: TabId): PanelSnapshot` — снимок сессии, иначе `{ rev: 0, data: EMPTY_PANEL }` (Task 2g добавит снимок превью).
+  - IPC `agentPanel(id)` возвращает `controller.panelOf(id)` сразу, а `refreshMcp()` запускает в фоне (ответ придёт событием). `preload.panel(id): Promise<PanelSnapshot>`.
+  - Стор: `panelRevByTab: Record<TabId, number>`; `applyPanel(id, patch, rev)` применяет патч и запоминает `rev`, если `rev` больше запомненного; `setPanelSnapshot(id, snapshot)` заменяет данные целиком, только если `snapshot.rev >= panelRevByTab[id] ?? -1`. Старый снимок не затирает свежие события — та же гонка, что описана у `ribbon` в `App.tsx:191-195`.
+  - `App.tsx`: снимок панели запрашивается при монтировании для активной вкладки (и вкладки сплита), при каждой смене активной вкладки и при открытии панели.
+
+- [ ] **Step 1: Падающие тесты**
+
+```ts
+// tests/unit/panelData.test.ts
+test('init не откатывает живой статус MCP на pending', () => {
+  // setMcp([{ name:'unity', status:'connected' }]); apply(init с mcp_servers [{ name:'unity', status:'pending' }])
+  // data.mcp[0].status === 'connected'
+})
+test('ревизия растёт и у новой сессии продолжается, а не начинается с нуля', () => {})
+// tests/unit/agentSession.test.ts
+test('после init MCP спрашивается заново', async () => {})
+test('сервер в pending опрашивается, пока не подключится', async () => {
+  // fake.mcpServerStatus: 1-й ответ pending, 2-й connected; MCP_POLL_MS подменён через опцию mcpPollMs: 10
+})
+// tests/unit/tabController.test.ts
+test('panelOf отдаёт полный снимок панели вкладки', async () => {})
+// tests/unit/appStore.test.ts
+test('старый снимок не затирает более свежий патч', () => {
+  // applyPanel('a', { model:'x' }, 5); setPanelSnapshot('a', { rev: 3, data: {...EMPTY_PANEL, model:'old'} }) → model 'x'
+})
+test('снимок новее — заменяет всё', () => {})
+```
+
+Для теста опроса — `AgentSessionOptions.mcpPollMs?: number` (по умолчанию `MCP_POLL_MS`).
+
+`tests/e2e/panel.spec.ts`: снять пометки `// снять в Task 2f`; новый тест «после перезагрузки окна панель снова полная» — `win.reload()`, без нового сообщения `panel-context` и `panel-model` снова заполнены.
+
+- [ ] **Step 2: Прогнать, убедиться что падают**
+
+Run: `npx vitest run tests/unit/panelData.test.ts tests/unit/agentSession.test.ts tests/unit/tabController.test.ts tests/unit/appStore.test.ts`
+Expected: FAIL — `connected` откатился на `pending`; `panelOf`, `setPanelSnapshot`, `rev` нет.
+
+- [ ] **Step 3: Починить по интерфейсам выше**
+
+- [ ] **Step 4: Прогнать тесты**
+
+Run: `npm run typecheck && npm run test:unit && npm run test:e2e -- panel launch`
+Expected: PASS.
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add src tests
+git commit -m "fix: live MCP status survives init; the window can fetch the whole panel (P6)"
+```
+
+---
+
+### Task 2g: P7 — фоновая восстановленная вкладка видна без запуска процесса
+
+Находка K. `TabController.restore` поднимает только активную вкладку (`:104`); остальные до клика пусты и пишут «появится после запуска». Раздел 9 спеки («агент стартует у вкладки при первом переходе») сохраняется: процесс не запускается, лента и панель строятся из транскрипта **чтением**.
+
+**Files:**
+- Modify: `src/main/tabs/TabController.ts` (`restore`, `ensureSession`, `resume`, `recoverFromDeadSession`, `itemsOf`, `panelOf`, `wire`), `src/main/agent/AgentSession.ts` (конструктор, `replay`), `src/main/agent/AgentSessionManager.ts:26`, `src/main/agent/panelData.ts`, `src/shared/types.ts` (`ContextInfo`), `src/renderer/components/SidePanel.tsx:115-133`
+- Test: `tests/unit/tabController.test.ts`, `tests/unit/panelData.test.ts`
+
+**Interfaces:**
+- Consumes: `TabHistory.transcript(sessionId, cwd)` и `RibbonBuilder.finishReplay()` (Task 2d); `seedModel`, `setLimits` (Task 2e); `PanelSnapshot`, `panelOf` (Task 2f).
+- Produces:
+  - `export interface SessionSeed { builder: RibbonBuilder; collector: PanelCollector }`. `AgentSessionOptions.seed?: SessionSeed` — сессия берёт эти builder и collector вместо новых; `AgentSessionManager.create(tabId, cwd, overrides, seed?: SessionSeed)`.
+  - `TabController`: `private readonly previews = new Map<TabId, SessionSeed>()`; `private async preview(id: TabId): Promise<SessionSeed | null>` — для вкладки с `lastSessionId` и без `missingCwd` читает транскрипт, проигрывает его в новый `RibbonBuilder` + `finishReplay()`, заполняет `PanelCollector` (`seedFromTranscript`), отдаёт в окно ленту (`onRibbon`, все элементы как `append`) и панель (`onPanel`). Повторный вызов отдаёт уже построенное.
+  - `restore()`: `preview` для **каждой** восстановленной вкладки (через `track`), процесс — только для активной, как сейчас.
+  - `ensureSession`: сначала `await this.preview(id)`, затем `manager.create(..., seed)` и `previews.delete(id)`; `resume()` транскрипт больше не читает и `replay` не зовёт — лента уже в окне, а новые элементы продолжают нумерацию того же builder-а, без повторов и без столкновения id.
+  - `recoverFromDeadSession`: новая сессия получает `{ builder: <builder мёртвой>, collector: new PanelCollector() }` через `AgentSession.successorSeed(): SessionSeed` — история остаётся на экране, id новых элементов не совпадают со старыми.
+  - `itemsOf(id)` и `panelOf(id)` при отсутствии сессии отдают данные превью.
+  - `PanelCollector.seedFromTranscript(messages: unknown[]): Partial<PanelData>` — модель из `message.model` последнего `assistant`; контекст-оценка из его `message.usage`: `used = input_tokens + cache_creation_input_tokens + cache_read_input_tokens + output_tokens`, `max = model.includes('[1m]') ? 1_000_000 : 200_000`, `percent = Math.round(used / max * 100)`, `categories: []`, `estimated: true`. `ContextInfo.estimated?: boolean`; панель показывает «≈ 23% из 200k · по записи», пока процесс не дал настоящий ответ (тот перезаписывает).
+  - Лимиты общие для аккаунта: когда любая вкладка получила патч с `limits`, `TabController` применяет тот же `limits` к collector-у каждого превью без сессии и шлёт `onPanel` для него.
+
+- [ ] **Step 1: Падающие тесты**
+
+```ts
+// tests/unit/tabController.test.ts — две вкладки в tabs.json с lastSessionId; history.transcript отдаёт readTranscript(resumedSession)
+test('фоновая вкладка показывает ленту и подагентов без запуска процесса', async () => {
+  // restore(); await whenSettled()
+  // manager.create вызван 1 раз (только активная); itemsOf('b') содержит 4 карточки subagent
+})
+test('панель фоновой вкладки знает модель и оценку контекста из записи', async () => {
+  // panelOf('b').data.model 'claude-opus-5'; context.estimated true; context.used 45674
+})
+test('переход на фоновую вкладку не дублирует ленту', async () => {
+  // activate('b'); после старта itemsOf('b') — те же id, без повторов; transcript для 'b' прочитан 1 раз
+})
+test('лимиты, узнанные активной вкладкой, видны и фоновой', async () => {})
+test('восстановление мёртвой сессии оставляет историю и не повторяет id', async () => {})
+// tests/unit/panelData.test.ts
+test('seedFromTranscript: окно 1M для модели с [1m]', () => {})
+```
+
+- [ ] **Step 2: Прогнать, убедиться что падают**
+
+Run: `npx vitest run tests/unit/tabController.test.ts tests/unit/panelData.test.ts`
+Expected: FAIL — `itemsOf('b')` пуст, `panelOf('b')` — пустая панель.
+
+- [ ] **Step 3: Починить по интерфейсам выше**
+
+- [ ] **Step 4: Прогнать тесты**
+
+Run: `npm run typecheck && npm run test:unit && npm run test:e2e -- history launch`
+Expected: PASS.
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add src tests/unit
+git commit -m "fix: restored background tabs show their chat and panel without starting (P7)"
+```
+
+---
+
+### Task 2h: P8 — сквозной тест «вошёл в сессию — всё видно сразу»
+
+Главная жалоба владельца одним тестом, против исправленного фейка: открыть восстановленную сессию и, **ничего не отправляя**, увидеть контекст, лимиты, модель и подагентов с верными статусами.
+
+**Files:**
+- Create: `tests/e2e/resumedPanel.spec.ts`
+
+**Interfaces:**
+- Consumes: `writeTranscript`, `resumedSession` (Task 2a); всё из Tasks 2b–2g. Формат `tabs.json` — `saveTabs` из `src/main/store/tabsStore.ts`.
+
+- [ ] **Step 1: Написать тест**
+
+Подготовка: профиль `QCLOD_USER_DATA` с `tabs.json` из двух вкладок (`cwd` — временная папка проекта, у обеих `lastSessionId`); `CLAUDE_CONFIG_DIR` — временная папка с `resumedSession` для обеих; `QCLOD_FAKE_SDK_SCRIPT` — `{ steps: [] }` (фейк молчит).
+
+```ts
+test('восстановленная сессия: панель и подагенты видны до первого сообщения', async () => {
+  // panel-context содержит '%'; panel-limits содержит '13%' и '38%'; panel-model имеет значение 'claude-opus-5'
+  // panel-agents li: 4 шт.; тексты состояний: 'готов' ×2, 'ошибка', 'не закончил'; у 'Прогон тестов' — '93k токенов'
+  // в ленте есть 'найди, где падает вставка' (до сжатия) и разделитель сжатия; ни одного пузыря пользователя
+  //   с 'task-notification' или 'This session is being continued'
+  // ни одного сообщения не отправлено: в ленте нет user-элементов, кроме двух из истории
+})
+test('вторая вкладка до клика уже содержит свою ленту и подагентов', async () => {
+  // переключение на вторую вкладку: panel-agents сразу 4 шт., без ожидания процесса
+})
+test('после перезагрузки окна всё на месте', async () => {
+  // win.reload(); снова те же проверки панели
+})
+```
+
+- [ ] **Step 2: Прогнать на коде до Tasks 2b–2g, убедиться что падает**
+
+Если задачи уже сделаны — проверить на `git stash` их правок или на коммите Task 2a: `git checkout <коммит 2a> -- src && npm run test:e2e -- resumedPanel`, затем `git checkout HEAD -- src`.
+Expected: FAIL — панель пуста, подагенты «готов» или пропали.
+
+- [ ] **Step 3: Прогнать на текущем коде**
+
+Run: `npm run test:e2e -- resumedPanel`
+Expected: PASS.
+
+- [ ] **Step 4: Полный прогон и коммит**
+
+Run: `npm run typecheck && npm run test:unit && npm run test:e2e`
+Expected: PASS, ни одной пометки `test.fails`/`test.fail()` из Task 2a не осталось (`git grep -n "снять в Task 2"` пуст).
+
+```bash
+git add tests/e2e/resumedPanel.spec.ts
+git commit -m "test: a resumed session shows its panel and subagents before any message (P8)"
+```
+
+---
+
 ### Task 3: B3 + B5 — ожидающие вопросы отменяются, статус считает их все
 
 **Files:**
@@ -284,10 +862,11 @@ git commit -m "fix: stop cancels pending asks, status counts every open ask (B3,
 ### Task 4: B4 — мёртвая сессия при resume заменяется и забывается
 
 **Files:**
-- Modify: `src/main/tabs/TabController.ts:173-179,237-274`, `src/main/agent/AgentSession.ts` (`onStatus` возвращает отписку)
+- Modify: `src/main/tabs/TabController.ts` (`restart`, `resume`, `recoverFromDeadSession` — номера строк сдвинуты Tasks 2d и 2g), `src/main/agent/AgentSession.ts` (`onStatus` возвращает отписку)
 - Test: `tests/unit/tabController.test.ts`
 
 **Interfaces:**
+- Consumes: после Task 2g `resume()` транскрипт не читает (лента уже построена превью), а `recoverFromDeadSession` создаёт новую сессию с `dead.successorSeed()` — сохранить это при переделке.
 - Produces: `AgentSession.onStatus(cb: StatusListener): () => void` — возвращает функцию отписки (остальные `on*` не меняются). В `TabController.resume`: если после `start(resumeId)` статус уже `error` — восстановить сразу; иначе подписаться на статус и восстановить на первом `error`, пока `session.sessionId === null` (сессия ещё не представилась `init`-ом); после `init` или восстановления — отписаться. `whenIdle()` отсюда уходит. `recoverFromDeadSession` и `restart` после `delete tab.lastSessionId` вызывают `this.persist()`; `recoverFromDeadSession` ставится через `this.track(...)`, а не `void`.
 
 - [ ] **Step 1: Падающие тесты**
@@ -593,7 +1172,7 @@ git commit -m "fix: attachments are mentioned to the agent once, not twice (B9)"
 - Test: `tests/unit/agentSession.test.ts`
 
 **Interfaces:**
-- Produces: `private background(work: Promise<unknown>): void` — вешает `.catch(() => undefined)`. Все `void this.refreshX()` в `AgentSession` идут через него. (`TabController` переведён на `track()` в Task 4.)
+- Produces: `private background(work: Promise<unknown>): void` — вешает `.catch(() => undefined)`. Все `void this.refreshX()` в `AgentSession` идут через него, включая добавленные в Tasks 2e–2f `refreshLimits`, `refreshMcp` после `init` и опрос MCP (там пока стоят `.catch(() => undefined)` на месте). (`TabController` переведён на `track()` в Task 4.)
 
 - [ ] **Step 1: Падающий тест**
 
@@ -631,10 +1210,10 @@ git commit -m "fix: background panel refreshes never surface as unhandled reject
 
 **Files:**
 - Modify: `src/renderer/state/useAppStore.ts:106-122`
-- Test: `tests/unit/appStore.test.ts` (новый; zustand работает в node без DOM)
+- Test: `tests/unit/appStore.test.ts` (создан в Task 2f; zustand работает в node без DOM)
 
 **Interfaces:**
-- Produces: `setTabs(tabs)` удаляет из `ribbonByTab`, `todoByTab`, `panelByTab`, `draftByTab`, `attachmentsByTab`, `fileIndexByTab` ключи вкладок, которые были в прежнем `state.tabs` и пропали из нового. Ключи вкладок, которых стор ещё не видел в `tabs`, не трогаются: события ленты новой вкладки могут прийти раньше списка, полученного по `tabsList`.
+- Produces: `setTabs(tabs)` удаляет из `ribbonByTab`, `todoByTab`, `panelByTab`, `panelRevByTab` (Task 2f), `draftByTab`, `attachmentsByTab`, `fileIndexByTab` ключи вкладок, которые были в прежнем `state.tabs` и пропали из нового. Ключи вкладок, которых стор ещё не видел в `tabs`, не трогаются: события ленты новой вкладки могут прийти раньше списка, полученного по `tabsList`.
 
 - [ ] **Step 1: Падающие тесты**
 
@@ -794,6 +1373,14 @@ Expected: `dist` собирается и проходит `check:seams`; `packag
   - «Новая вкладка» в установленном приложении открывается в домашней папке, а не в папке установки (B7).
   - «Лазейки закрыты» — `dist/win-unpacked/Qclod.exe`, запущенный с `QCLOD_FAKE_SDK=<путь к фикстуре>`, всё равно работает с настоящим агентом (или показывает экран установки), а не с фейком (B14).
   - «Закрытие приложения» во время работы агента завершается за несколько секунд, процесса `claude.exe` после выхода нет (B8).
+- Раздел «Правая панель» (P1–P8), на настоящем агенте:
+  - Новая вкладка: до первого сообщения видны контекст, модель, лимиты 5 ч / 7 дн.
+  - Открыть старую сессию с подагентами и сжатием: видны история до сжатия, сворачиваемая сводка сжатия, подагенты с итогами; ни одного пузыря `<task-notification>` или «This session is being continued…».
+  - Запустить фоновый подагент: карточка «работает», растут токены и число инструментов, по уведомлению — «готов»; упавший подагент остаётся в списке с «ошибка».
+  - Закрыть приложение, пока фоновый подагент работает, открыть снова: карточка «не закончил».
+  - Перезапуск с двумя вкладками: фоновая без клика показывает ленту и подагентов, процесса `claude.exe` у неё нет до перехода.
+  - После resume строка стоимости подписана «с момента открытия».
+  - Лимиты совпадают с `/usage` в терминале (проверка перевода 0–100 → 0–1).
   - Убрать строки про «Кнопка „Скачать“ открывает nodejs.org» и «вывод npm» как основной путь — их больше нет.
 
 - [ ] **Step 4: Коммит**
@@ -810,4 +1397,11 @@ git commit -m "docs: release smoke checklist for winget install and stage 1 fixe
 - **Ответ на `AskUserQuestion` через `updatedInput.answers`** (Task 2), а не отказом плюс отдельным сообщением. Основание — поле `answers` в `AskUserQuestionInput` из `sdk-tools.d.ts`. Настоящим агентом не проверено: автотесты ходят только в фейк. Проверка — пункт «Вопрос агента» в `release-smoke.md`. Если настоящий CLI это поле не примет, запасной путь (сообщение) уже есть в коде, вернуться к нему — одна строка.
 - **Фейковый `askPermission` не меняет порядок** «разрешение → инструмент». Настоящий CLI сначала показывает `tool_use`, но смена порядка меняет вид ленты, а это этап 2.
 - **Карточки отменённых запросов** помечаются существующими состояниями `denied` / `rejected`, нового состояния «отменено» не вводится — это тоже вид ленты, этап 2.
+- **Фейк «молчит» только без `steps`** (Task 2a). Сценарий с непустыми `steps` по-прежнему играет их сразу — как ход, отправленный до старта; `init` и `rate_limit_event` идут в начале этого хода. Строгий вариант (`steps` — ответ на первый `send`) требует переписать около сотни тестов на «сначала отправь сообщение» — это этап 2. Тесты, которые держались на `init` до сообщения, помечаются `test.fails` и снимаются задачами 2e/2f, а не подгоняются.
+- **Шаги подагентов читаются из их JSONL-файлов, а не через `getSubagentMessages`** (Task 2d): функция в SDK есть, но отдаёт урезанные сообщения и под фейком не грузится. Один путь чтения проверяет e2e.
+- **`background_tasks_changed` ничего не меняет в карточках** (Task 2c): SDK не обещает порядок относительно `task_notification`; карточку закрывает только уведомление или `task_updated`.
+- **Карточка подагента, работавшая при закрытии приложения, — новое состояние `unfinished` («не закончил»)** (Tasks 2b, 2d), а не `done` с подписью: иначе панель пишет «готов» про то, что не закончилось.
+- **Оценка контекста фоновой вкладки** (Task 2g) — по `usage` последнего ответа в записи, окно 200k или 1M по суффиксу `[1m]`; помечена «по записи» и заменяется настоящим ответом процесса после перехода. Настоящим агентом не сверено.
+- **Усилие хранится в `tabs.json` вкладки** (Task 2e): раньше оно нигде не хранилось, а показывать «из сохранённой настройки вкладки» без хранения нечего.
+- **Лимиты через `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`** (Task 2e) — с проверкой наличия метода и тихим откатом на `rate_limit_event`. Имя метода SDK обещает поменять; при обновлении SDK проверить.
 - **`QCLOD_USER_DATA` и `QCLOD_HEADLESS` остаются** в релизной сборке: они не обходят проверок и не подменяют агента.

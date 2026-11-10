@@ -18,7 +18,7 @@ import {
 } from '../input/attachments'
 import { applyMention, findMentionQuery } from '../input/mentions'
 import { InputHistory } from '../input/history'
-import { hint } from '../app/shortcuts'
+import { hint, hintKeys } from '../app/shortcuts'
 import {
   acceptCommand,
   commandItems,
@@ -535,7 +535,7 @@ export function Composer({
           className={`composer-send${busy ? ' is-busy' : ''}`}
           data-testid={busy ? 'composer-stop' : 'composer-send'}
           aria-label={busy ? 'Прервать' : 'Отправить'}
-          title={busy ? 'Прервать (Esc)' : 'Отправить (Enter)'}
+          title={busy ? hintKeys('Прервать', 'Esc') : hintKeys('Отправить', 'Enter')}
           disabled={dead}
           onClick={() => (busy ? onInterrupt() : void submit())}
         >

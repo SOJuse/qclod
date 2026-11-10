@@ -8,7 +8,6 @@ interface Props {
   onActivate: (id: TabId) => void
   onClose: (id: TabId) => void
   onCreate: () => void
-  onConfigure: (id: TabId) => void
 }
 
 const STATUS_LABEL: Record<SessionStatus, string> = {
@@ -25,8 +24,7 @@ export function TabStrip({
   activeTabId,
   onActivate,
   onClose,
-  onCreate,
-  onConfigure
+  onCreate
 }: Props): JSX.Element {
   return (
     <div className="tab-strip" data-testid="tab-strip">
@@ -38,10 +36,6 @@ export function TabStrip({
             tab.badge ? ' has-badge' : ''
           }`}
           title={`${tab.cwd}\n${STATUS_LABEL[tab.status]}`}
-          onContextMenu={(e) => {
-            e.preventDefault()
-            onConfigure(tab.id)
-          }}
           onMouseDown={(e) => {
             if (e.button === 1) {
               e.preventDefault()

@@ -47,10 +47,15 @@ export const APP_ACTIONS: AppActionInfo[] = [
   { id: 'reload', label: 'Перезагрузить окно', keys: 'Ctrl+R' }
 ]
 
+/** A tooltip with keys that are not a window action, such as Enter in the input. */
+export function hintKeys(label: string, keys: string): string {
+  return `${label} (${keys})`
+}
+
 /** A button's tooltip: «Новая вкладка (Ctrl+T)». */
 export function hint(label: string, id?: AppActionId): string {
   const keys = id ? APP_ACTIONS.find((a) => a.id === id)?.keys : undefined
-  return keys ? `${label} (${keys})` : label
+  return keys ? hintKeys(label, keys) : label
 }
 
 /** Ctrl+9 is the last tab, as in a browser: the runner reads index 8 that way. */

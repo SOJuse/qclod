@@ -38,7 +38,6 @@ export function TitleBar({
         onActivate={onActivate}
         onClose={onClose}
         onCreate={onCreate}
-        onConfigure={onOpenSettings}
       />
       <div className="title-bar-spacer" />
       {hotkey && !hotkey.ok && (

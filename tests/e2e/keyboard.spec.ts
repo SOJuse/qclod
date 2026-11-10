@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -249,6 +249,35 @@ test('Ctrl+= / Ctrl+- / Ctrl+0 меняют масштаб окна, строк�
     await expect(win.locator('[data-testid="action-item"]').first()).toContainText('Крупнее')
     await win.keyboard.press('Enter')
     await expect.poll(zoom).toBe(0.5)
+  } finally {
+    await close(app, profile, folder)
+  }
+})
+
+test('Ctrl+R: черновик, вложение и вторая панель возвращаются после перезагрузки окна', async () => {
+  const picked = join(mkdtempSync(join(tmpdir(), 'qclod-reload-')), 'мой файл.ts')
+  writeFileSync(picked, 'export const x = 1\n', 'utf8')
+  const { app, profile, folder } = await launch({ steps: [] }, { QCLOD_PICK_FILES: picked })
+  try {
+    const win = await app.firstWindow()
+    await ready(win)
+    await win.keyboard.press('Control+t')
+    await expect(tabs(win)).toHaveCount(2)
+    await win.keyboard.press('Control+Shift+Enter')
+    await expect(win.locator('[data-testid="chat-pane"]')).toHaveCount(2)
+
+    const input = win.locator('[data-testid="composer-input"]').first()
+    await input.click()
+    await input.pressSequentially('недописанная мысль')
+    await win.locator('[data-testid="composer-clip"]').first().click()
+    await expect(win.locator('[data-testid="composer-chip"]')).toHaveCount(1)
+
+    await win.keyboard.press('Control+r')
+    await win.waitForLoadState('domcontentloaded')
+
+    await expect(win.locator('[data-testid="chat-pane"]')).toHaveCount(2, { timeout: 15000 })
+    await expect(win.locator('[data-testid="composer-input"]').first()).toHaveValue('недописанная мысль')
+    await expect(win.locator('[data-testid="composer-chip"]')).toContainText('мой файл.ts')
   } finally {
     await close(app, profile, folder)
   }

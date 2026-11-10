@@ -61,6 +61,8 @@ export function ChatPane({
   const panel = useAppStore((s) => s.panelByTab[tabId]) ?? EMPTY_PANEL
 
   const busySinceByTab = useAppStore((s) => s.busySinceByTab)
+  // A tab with history is not empty just because its ribbon has not arrived yet.
+  const ribbonLoaded = useAppStore((s) => s.ribbonRevByTab[tabId] !== undefined)
   const tab = tabs.find((t) => t.id === tabId)
   const status = tab?.status ?? 'stopped'
   const draft = draftByTab[tabId] ?? ''
@@ -101,7 +103,7 @@ export function ChatPane({
         cwd={tab?.cwd ?? ''}
         tabId={tabId}
         whenEmpty={
-          tab ? (
+          tab && ribbonLoaded ? (
             <EmptyTab tabId={tabId} cwd={tab.cwd} onOpenSession={(s) => onOpenSession(tabId, s)} />
           ) : null
         }

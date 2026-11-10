@@ -277,3 +277,24 @@ test('в папке без разговоров пустая вкладка не
     await close(app, profile)
   }
 })
+
+test('с поддельным SDK или без него пустая вкладка не читает настоящие сессии из ~/.claude', async () => {
+  // A decoy in the config folder the real session store would read: it must
+  // never show up while the test seam is on, even without QCLOD_FAKE_SDK.
+  const configDir = mkdtempSync(join(tmpdir(), 'qclod-config-'))
+  const decoy = '0a0b0c0d-0e0f-4a0b-8c0d-0e0f0a0b0c0d'
+  const session = resumedSession(decoy, process.cwd())
+  writeTranscript(configDir, process.cwd(), decoy, session.lines, session.subagents)
+
+  const { app, profile } = await launch(HISTORY, { QCLOD_FAKE_SDK: '', CLAUDE_CONFIG_DIR: configDir })
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+    await expect(win.locator('[data-testid="empty-recent"]')).toHaveCount(2)
+    await expect(win.locator('[data-testid="empty-tab"]')).not.toContainText('Почему падает вставка')
+    await expect(win.locator('[data-testid="empty-tab"]')).not.toContainText('найди, где падает вставка')
+  } finally {
+    await close(app, profile)
+    rmSync(configDir, { recursive: true, force: true })
+  }
+})

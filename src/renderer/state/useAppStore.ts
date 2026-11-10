@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { PendingAttachment } from '../input/attachments'
+import { UI_KEY, loadUi, serializeUi } from './uiPersist'
 import type {
   AppSettings,
   CommandInfo,
@@ -85,6 +86,12 @@ function closedAfter(state: AppState, tabs: TabState[]): ReadonlySet<TabId> {
 function forgetClosed(state: AppState, tabs: TabState[]): Partial<AppState> {
   const open = new Set(tabs.map((t) => t.id))
   const closed = state.tabs.filter((t) => !open.has(t.id)).map((t) => t.id)
+  // The first list after a reload: what the window restored for tabs that are gone is stale.
+  if (state.tabs.length === 0) {
+    for (const id of [...Object.keys(state.draftByTab), ...Object.keys(state.attachmentsByTab)]) {
+      if (!open.has(id)) closed.push(id)
+    }
+  }
   if (closed.length === 0) return {}
   const next: Record<string, unknown> = {}
   for (const key of PER_TAB_KEYS) {
@@ -197,10 +204,21 @@ export function reduceRibbon(
   return { items: next, todo }
 }
 
+function ui(): Storage | null {
+  try {
+    return typeof sessionStorage === 'undefined' ? null : sessionStorage
+  } catch {
+    return null
+  }
+}
+
+/** What the window held before it was reloaded; a tab that is gone is dropped by setTabs. */
+const restored = loadUi(ui())
+
 export const useAppStore = create<AppState>((set) => ({
   settings: null,
-  activeTabId: '',
-  splitTabId: null,
+  activeTabId: restored.activeTabId,
+  splitTabId: restored.splitTabId,
   tabs: [],
   closedTabs: new Set(),
   ribbonByTab: {},
@@ -209,8 +227,8 @@ export const useAppStore = create<AppState>((set) => ({
   panelByTab: {},
   panelRevByTab: {},
   busySinceByTab: {},
-  draftByTab: {},
-  attachmentsByTab: {},
+  draftByTab: restored.draftByTab,
+  attachmentsByTab: restored.attachmentsByTab,
   fileIndexByTab: {},
   commandsByTab: {},
   pathsByTab: {},
@@ -334,3 +352,20 @@ export const useAppStore = create<AppState>((set) => ({
     }))
 
 }))
+
+// Written on change, so a reload (Ctrl+R) at any moment finds the latest.
+useAppStore.subscribe((state, before) => {
+  if (
+    state.draftByTab === before.draftByTab &&
+    state.attachmentsByTab === before.attachmentsByTab &&
+    state.splitTabId === before.splitTabId &&
+    state.activeTabId === before.activeTabId
+  ) {
+    return
+  }
+  try {
+    ui()?.setItem(UI_KEY, serializeUi(state))
+  } catch {
+    // Storage full or blocked: the draft just does not survive a reload.
+  }
+})

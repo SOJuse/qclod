@@ -161,7 +161,8 @@ app.whenReady().then(async () => {
   // Only the e2e build has any of this (buildFlags.d.ts); the flag is repeated
   // at each use so the release bundle drops every branch, not just the first.
   const fakeHistory = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_HISTORY'] : undefined
-  const fake = (__QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_SDK'] : undefined)
+  // A fixture history alone also switches the real session store off.
+  const fake = (__QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_SDK'] || process.env['QCLOD_FAKE_HISTORY'] : undefined)
     ? fakeHistory
       ? (JSON.parse(fakeHistory) as {
           sessions?: Array<Record<string, unknown>>

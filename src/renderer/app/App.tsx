@@ -336,6 +336,8 @@ export function App(): JSX.Element {
       if (!hit) return
       // Always ours, so no default (Close Window, Reload…) sees the key.
       ev.preventDefault()
+      // A held Ctrl+R must not reload again and again.
+      if (hit.id === 'reload' && ev.repeat) return
       // With the palette open only Ctrl+K (to close it) runs.
       if (paletteRef.current && hit.id !== 'actions') return
       runRef.current(hit.id, hit.index)

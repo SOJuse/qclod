@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Circle, CircleCheck } from 'lucide-react'
 import type { EnvironmentReport } from '../../shared/types'
 import './SetupScreen.css'
 
@@ -50,8 +51,12 @@ export function SetupScreen({ report, onRecheck, onDone }: Props): JSX.Element {
             className={`setup-row${report.agent.found ? ' is-found' : ''}`}
             data-testid="setup-agent"
           >
-            <span className="setup-mark" aria-hidden>
-              {report.agent.found ? '✓' : '•'}
+            <span className="setup-mark">
+              {report.agent.found ? (
+                <CircleCheck size={14} color="var(--status-ok)" role="img" aria-label="Найден" />
+              ) : (
+                <Circle size={14} color="var(--text-faint)" role="img" aria-label="Не найден" />
+              )}
             </span>
             <span className="setup-name">Claude Code</span>
             <span className="setup-detail">

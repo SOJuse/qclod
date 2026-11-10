@@ -115,16 +115,10 @@
   color: var(--text);
 }
 
+/* The icon wears its level's colour itself (LevelIcon). */
 .status-meter-alert {
   flex: 0 0 auto;
-}
-
-.status-meter.is-warn .status-meter-alert {
-  color: var(--status-warn);
-}
-
-.status-meter.is-critical .status-meter-alert {
-  color: var(--status-critical);
+  display: inline-flex;
 }
 
 /* ----------------------------------------------------------- context banner */
@@ -146,7 +140,7 @@
 
 .context-banner-icon {
   flex: 0 0 auto;
-  color: var(--status-critical);
+  display: inline-flex;
 }
 
 .context-banner-text {

@@ -373,3 +373,47 @@ test('двойной клик выделяет слово в ленте, выв�
     await app.close()
   }
 })
+
+// ---------------------------------------------------------------- icons (Task 8)
+
+test('значки кнопок окна одного размера', async () => {
+  const { app, win } = await launchQclod()
+  try {
+    const sizes = await win
+      .locator('[data-testid="title-bar"] .window-controls svg')
+      .evaluateAll((s) => s.map((x) => x.getAttribute('width')))
+    expect(sizes.length).toBeGreaterThanOrEqual(6)
+    expect(new Set(sizes).size).toBe(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('80% и 92% — разные значки уровня в панели и строке статуса', async () => {
+  const { app, win } = await launchQclod({ script: { steps: [], contextPercent: 10, contextPercentByTurn: [82, 92] } })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    const send = async (text: string): Promise<void> => {
+      await input.click()
+      await input.fill(text)
+      await input.press('Enter')
+    }
+    const panel = win.locator('[data-testid="panel-context"]')
+    const status = win.locator('[data-testid="status-context"]')
+    await expect(status).toContainText('10%', { timeout: 15000 })
+    await expect(panel.locator('[data-level-icon]')).toHaveCount(0)
+
+    await send('первый')
+    await expect(panel.locator('[data-level-icon="warn"]')).toHaveClass(/lucide-triangle-alert/, { timeout: 15000 })
+    await expect(status.locator('[data-level-icon="warn"]')).toHaveClass(/lucide-triangle-alert/)
+    await expect(status.locator('[data-level-icon="warn"]')).toHaveAttribute('aria-label', 'Контекст заполняется')
+
+    await send('второй')
+    await expect(panel.locator('[data-level-icon="critical"]')).toHaveClass(/lucide-octagon-alert/, { timeout: 15000 })
+    await expect(status.locator('[data-level-icon="critical"]')).toHaveAttribute('aria-label', 'Контекст почти заполнен')
+    await expect(win.locator('[data-testid="context-banner"] [data-level-icon="critical"]')).toBeVisible()
+    await shot(win, '08-levels')
+  } finally {
+    await app.close()
+  }
+})

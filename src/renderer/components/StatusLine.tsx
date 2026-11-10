@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { CircleAlert, Cpu, Gauge, ShieldCheck } from 'lucide-react'
+import { Cpu, Gauge, ShieldCheck } from 'lucide-react'
+import { LEVEL_LABEL, LevelIcon } from '../ui/icons'
 import {
   EFFORT_LEVELS,
   PERMISSION_MODES,
@@ -206,7 +207,9 @@ function Meter({
         {shown === null ? '—' : `${approximate ? '≈' : ''}${shown}%`}
       </span>
       {level !== 'ok' && (
-        <CircleAlert size={12} aria-hidden="true" className="status-meter-alert" data-testid={`${testId}-alert`} />
+        <span className="status-meter-alert" data-testid={`${testId}-alert`}>
+          <LevelIcon level={level} label={LEVEL_LABEL[primary ? 'context' : 'limit'][level]} size={12} />
+        </span>
       )}
     </span>
   )

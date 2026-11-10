@@ -1,4 +1,4 @@
-import { CircleAlert } from 'lucide-react'
+import { LEVEL_LABEL, LevelIcon } from '../ui/icons'
 import { contextLevel } from '../chat/contextLevel'
 import './StatusLine.css'
 
@@ -18,7 +18,9 @@ export function ContextBanner({ percent, onCompact, disabled = false }: Props): 
   if (contextLevel(percent) !== 'critical') return null
   return (
     <div className="context-banner" data-testid="context-banner" role="status">
-      <CircleAlert size={14} aria-hidden="true" className="context-banner-icon" />
+      <span className="context-banner-icon">
+        <LevelIcon level="critical" label={LEVEL_LABEL.context.critical} size={14} />
+      </span>
       <span className="context-banner-text">Контекст почти заполнен — {Math.round(percent)}%</span>
       <button
         type="button"

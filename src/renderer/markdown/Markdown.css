@@ -95,16 +95,14 @@ li.md-task {
   height: 13px;
   border: 1px solid var(--border-strong);
   border-radius: 3px;
-  font-size: var(--text-xs);
-  line-height: 1;
-  text-align: center;
-  color: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
+/* A done item is the same box with a tick in it; the tick is an icon, so it may be the status colour. */
 .md-check.is-done {
-  background: var(--status-ok);
-  border-color: var(--status-ok);
-  color: var(--on-accent);
+  color: var(--status-ok);
 }
 
 /* ------------------------------------------------------------- emphasis */

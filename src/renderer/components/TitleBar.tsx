@@ -1,5 +1,6 @@
 import { Columns2, TriangleAlert, History, Minus, Settings, Square, X } from 'lucide-react'
 import { hint } from '../app/shortcuts'
+import { CHROME_ICON_SIZE } from '../ui/icons'
 import { TabStrip } from './TabStrip'
 import type { HotkeyRegistration, TabId, TabState } from '../../shared/types'
 import './TitleBar.css'
@@ -60,7 +61,7 @@ export function TitleBar({
           title={hint('Два разговора рядом', 'toggleSplit')}
           onClick={onToggleSplit}
         >
-          <Columns2 size={15} aria-hidden="true" />
+          <Columns2 size={CHROME_ICON_SIZE} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -70,7 +71,7 @@ export function TitleBar({
           title={hint('Прошлые разговоры', 'history')}
           onClick={onOpenHistory}
         >
-          <History size={15} aria-hidden="true" />
+          <History size={CHROME_ICON_SIZE} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -80,7 +81,7 @@ export function TitleBar({
           title={hint('Настройки', 'settings')}
           onClick={onOpenSettings}
         >
-          <Settings size={15} aria-hidden="true" />
+          <Settings size={CHROME_ICON_SIZE} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -90,7 +91,7 @@ export function TitleBar({
           title="Свернуть"
           onClick={() => void window.qclod.minimize()}
         >
-          <Minus size={15} aria-hidden="true" />
+          <Minus size={CHROME_ICON_SIZE} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -100,7 +101,7 @@ export function TitleBar({
           title="Развернуть или вернуть размер"
           onClick={() => void window.qclod.toggleMaximize()}
         >
-          <Square size={12} aria-hidden="true" />
+          <Square size={CHROME_ICON_SIZE} absoluteStrokeWidth aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -110,7 +111,7 @@ export function TitleBar({
           title="Закрыть окно"
           onClick={() => void window.qclod.closeWindow()}
         >
-          <X size={16} aria-hidden="true" />
+          <X size={CHROME_ICON_SIZE} aria-hidden="true" />
         </button>
       </div>
     </header>

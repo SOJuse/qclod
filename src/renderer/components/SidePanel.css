@@ -347,15 +347,9 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The icon wears its level's colour itself (LevelIcon); this only seats it by the number. */
 .panel-context-alert {
+  display: inline-flex;
   vertical-align: -2px;
   margin-right: 4px;
-}
-
-[data-level='warn'] > .panel-line .panel-context-alert {
-  color: var(--status-warn);
-}
-
-[data-level='critical'] > .panel-line .panel-context-alert {
-  color: var(--status-critical);
 }

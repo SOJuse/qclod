@@ -1,7 +1,8 @@
 import type { LimitWindow, McpServerInfo, PanelData, SubagentState } from '../../shared/types'
 import { untilReset } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
-import { CircleAlert, PanelRightClose } from 'lucide-react'
+import { PanelRightClose } from 'lucide-react'
+import { LEVEL_LABEL, LevelIcon } from '../ui/icons'
 import { hint } from '../app/shortcuts'
 import { ContextBreakdown } from './ContextBreakdown'
 import { AGENT_STATE_LABEL } from './agentState'
@@ -83,7 +84,12 @@ export function SidePanel({ data, started, agents, onClose }: Props): JSX.Elemen
               {/* Worked out from the record until the tab's agent reports its own. */}
               <span>
                 {contextLevel(data.context.percent) !== 'ok' && (
-                  <CircleAlert className="panel-context-alert" size={13} aria-label="Контекст почти заполнен" />
+                  <span className="panel-context-alert">
+                    <LevelIcon
+                      level={contextLevel(data.context.percent)}
+                      label={LEVEL_LABEL.context[contextLevel(data.context.percent) === 'critical' ? 'critical' : 'warn']}
+                    />
+                  </span>
                 )}
                 {data.context.estimated ? '≈ ' : ''}
                 {data.context.percent}% из {Math.round(data.context.max / 1000)}k

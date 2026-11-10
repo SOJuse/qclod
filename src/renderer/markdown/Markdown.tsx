@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo } from 'react'
+import { Check } from 'lucide-react'
 import type { ResolvedPath } from '../../shared/types'
 import { pathTexts } from '../paths/linkify'
 import { LinkedText } from '../paths/PathLink'
@@ -161,7 +162,7 @@ function renderItem(item: ListItem, index: number): JSX.Element {
     <li key={index} className={item.checked === undefined ? undefined : 'md-task'}>
       {item.checked !== undefined && (
         <span className={`md-check${item.checked ? ' is-done' : ''}`} aria-hidden>
-          {item.checked ? '✓' : ''}
+          {item.checked && <Check size={11} strokeWidth={3} />}
         </span>
       )}
       {item.spans.map(renderSpan)}

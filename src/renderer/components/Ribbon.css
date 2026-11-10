@@ -115,15 +115,25 @@
 }
 
 .row-agent.is-streaming .md > :last-child::after {
-  content: '▍';
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
   margin-left: 2px;
-  opacity: 0.5;
+  vertical-align: text-bottom;
+  background: var(--accent);
   animation: ribbon-caret 1s steps(2) infinite;
 }
 
 @keyframes ribbon-caret {
   50% {
     opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-agent.is-streaming .md > :last-child::after {
+    animation: none;
   }
 }
 

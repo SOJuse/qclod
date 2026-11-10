@@ -100,3 +100,15 @@ test('у body нет user-select и нет лишних user-select: text', () =
   expect(rules.filter((r) => r.selector === 'body' && /user-select/.test(r.body)).map((r) => r.file)).toEqual([])
   expect(rules.filter((r) => /user-select:\s*text/.test(r.body)).map((r) => `${r.file}: ${r.selector}`)).toEqual([])
 })
+
+// Arrows, box drawing and geometric shapes, dingbats, symbols, emoji. Typographic × … — stay allowed.
+const GLYPHS = /[←-⇿─-◿☀-➿⬀-⯿\u{1F300}-\u{1FAFF}]/u
+test('нет Unicode-глифов вместо значков', () => {
+  const found = [...rendererTsxFiles(), ...rendererCssFiles()].flatMap((f) =>
+    readFileSync(f, 'utf8')
+      .split('\n')
+      .map((line, i) => [f, i + 1, line] as const)
+      .filter(([, , line]) => !/^\s*(\/\/|\*|\/\*)/.test(line) && GLYPHS.test(line))
+  )
+  expect(found.map(([f, n, l]) => `${f}:${n}: ${l.trim()}`)).toEqual([])
+})

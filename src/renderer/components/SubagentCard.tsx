@@ -153,6 +153,7 @@ export function SubagentCard({
                   type="button"
                   className="subagent-more"
                   data-testid="subagent-more"
+                  title="Показать более ранние шаги"
                   onClick={() => setShown((n) => n + STEP_PAGE)}
                 >
                   {moreLabel(entries.slice(0, hiddenCount))}

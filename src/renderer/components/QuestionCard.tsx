@@ -73,6 +73,7 @@ export function QuestionCard({ item, onAnswer }: Props): JSX.Element {
                   key={option.label}
                   type="button"
                   data-testid="question-option"
+                  title={option.label}
                   className={chosen ? 'is-chosen' : ''}
                   aria-pressed={chosen}
                   disabled={answered}
@@ -96,6 +97,7 @@ export function QuestionCard({ item, onAnswer }: Props): JSX.Element {
           type="button"
           className="row-question-submit"
           data-testid="question-submit"
+          title="Отправить ответ агенту"
           disabled={!complete}
           onClick={() => send(picked)}
         >

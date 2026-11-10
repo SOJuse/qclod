@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { TriangleAlert } from 'lucide-react'
+import type { SessionSummary } from '../../shared/types'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { compactNow, sendCommand } from '../input/slash'
 import { Ribbon } from './Ribbon'
@@ -8,6 +9,7 @@ import { NowLine } from './NowLine'
 import { TodoStrip } from './TodoStrip'
 import { StatusLine } from './StatusLine'
 import { ContextBanner } from './ContextBanner'
+import { EmptyTab } from './EmptyTab'
 import './ChatPane.css'
 
 interface Props {
@@ -21,6 +23,8 @@ interface Props {
   onFocus: () => void
   onOpenHistory: () => void
   onCycleMode: () => void
+  /** A past conversation picked on the empty tab opens in a tab of its own. */
+  onOpenSession: (fromTabId: string, session: SessionSummary) => void
   /** A warning to show above the input, such as the close-tab guard. */
   notice?: { testId: string; text: string } | null
 }
@@ -41,6 +45,7 @@ export function ChatPane({
   onFocus,
   onOpenHistory,
   onCycleMode,
+  onOpenSession,
   notice
 }: Props): JSX.Element {
   const tabs = useAppStore((s) => s.tabs)
@@ -95,6 +100,11 @@ export function ChatPane({
         items={ribbonByTab[tabId] ?? []}
         cwd={tab?.cwd ?? ''}
         tabId={tabId}
+        whenEmpty={
+          tab ? (
+            <EmptyTab tabId={tabId} cwd={tab.cwd} onOpenSession={(s) => onOpenSession(tabId, s)} />
+          ) : null
+        }
         onAnswerPermission={(requestId, behavior, remember) => {
           void window.qclod.answerPermission(requestId, {
             behavior,

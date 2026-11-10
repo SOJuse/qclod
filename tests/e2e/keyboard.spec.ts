@@ -126,7 +126,7 @@ test('Ctrl+K открывает палитру действий; «настр» 
     const palette = win.locator('[data-testid="action-palette"]')
     await expect(palette).toBeVisible()
     await expect(win.locator('[data-testid="action-query"]')).toBeFocused()
-    await expect(win.locator('[data-testid="action-item"]')).toHaveCount(12)
+    await expect(win.locator('[data-testid="action-item"]')).toHaveCount(16)
 
     // Esc closes it and the cursor goes back to the input.
     await win.keyboard.press('Escape')
@@ -207,6 +207,48 @@ test('копирование, вставка и отмена в поле раб�
     await expect(input).toHaveValue('приветпривет')
     await win.keyboard.press('Control+z')
     await expect(input).not.toHaveValue('приветпривет')
+  } finally {
+    await close(app, profile, folder)
+  }
+})
+
+test('у каждой видимой кнопки есть подсказка, у кнопок с клавишей — с клавишей', async () => {
+  const { app, profile, folder } = await launch({ steps: [] })
+  try {
+    const win = await app.firstWindow()
+    await ready(win)
+    const buttons = await win.locator('button:visible').all()
+    expect(buttons.length).toBeGreaterThan(5)
+    for (const b of buttons) expect((await b.getAttribute('title'))?.trim()).toBeTruthy()
+    expect(await win.locator('[data-testid="tab-new"]').getAttribute('title')).toContain('Ctrl+T')
+    expect(await win.locator('[data-testid="open-settings"]').getAttribute('title')).toContain('Ctrl+,')
+    expect(await win.locator('[data-testid="panel-open"], [data-testid="panel-close"]').first().getAttribute('title')).toContain('Ctrl+\\')
+  } finally {
+    await close(app, profile, folder)
+  }
+})
+
+test('Ctrl+= / Ctrl+- / Ctrl+0 меняют масштаб окна, строки есть в палитре', async () => {
+  const { app, profile, folder } = await launch({ steps: [] })
+  try {
+    const win = await app.firstWindow()
+    await ready(win)
+    const zoom = (): Promise<number> =>
+      app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.getZoomLevel())
+    expect(await zoom()).toBe(0)
+    await win.keyboard.press('Control+=')
+    await expect.poll(zoom).toBe(0.5)
+    await win.keyboard.press('Control+-')
+    await win.keyboard.press('Control+-')
+    await expect.poll(zoom).toBe(-0.5)
+    await win.keyboard.press('Control+0')
+    await expect.poll(zoom).toBe(0)
+
+    await win.keyboard.press('Control+k')
+    await win.locator('[data-testid="action-query"]').fill('круп')
+    await expect(win.locator('[data-testid="action-item"]').first()).toContainText('Крупнее')
+    await win.keyboard.press('Enter')
+    await expect.poll(zoom).toBe(0.5)
   } finally {
     await close(app, profile, folder)
   }

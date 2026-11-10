@@ -1,7 +1,8 @@
 import type { LimitWindow, McpServerInfo, PanelData, SubagentState } from '../../shared/types'
 import { untilReset } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
-import { CircleAlert } from 'lucide-react'
+import { CircleAlert, PanelRightClose } from 'lucide-react'
+import { hint } from '../app/shortcuts'
 import { ContextBreakdown } from './ContextBreakdown'
 import { AGENT_STATE_LABEL } from './agentState'
 import './SidePanel.css'
@@ -70,8 +71,8 @@ export function SidePanel({ data, started, agents, onClose }: Props): JSX.Elemen
     <aside className="panel" data-testid="side-panel">
       <header className="panel-head">
         <span>Сессия</span>
-        <button type="button" data-testid="panel-close" aria-label="Скрыть панель" onClick={onClose}>
-          ›
+        <button type="button" data-testid="panel-close" aria-label="Скрыть панель" title={hint('Скрыть панель', 'togglePanel')} onClick={onClose}>
+          <PanelRightClose size={16} aria-hidden="true" />
         </button>
       </header>
 

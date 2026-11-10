@@ -1,3 +1,5 @@
+import { Columns2, TriangleAlert, History, Minus, Settings, Square, X } from 'lucide-react'
+import { hint } from '../app/shortcuts'
 import { TabStrip } from './TabStrip'
 import type { HotkeyRegistration, TabId, TabState } from '../../shared/types'
 import './TitleBar.css'
@@ -8,7 +10,6 @@ interface Props {
   onActivate: (id: TabId) => void
   onClose: (id: TabId) => void
   onCreate: () => void
-  onConfigure: (id: TabId) => void
   hotkey: HotkeyRegistration | null
   onOpenSettings: () => void
   onOpenHistory: () => void
@@ -22,7 +23,6 @@ export function TitleBar({
   onActivate,
   onClose,
   onCreate,
-  onConfigure,
   hotkey,
   onOpenSettings,
   onOpenHistory,
@@ -38,7 +38,7 @@ export function TitleBar({
         onActivate={onActivate}
         onClose={onClose}
         onCreate={onCreate}
-        onConfigure={onConfigure}
+        onConfigure={onOpenSettings}
       />
       <div className="title-bar-spacer" />
       {hotkey && !hotkey.ok && (
@@ -49,7 +49,7 @@ export function TitleBar({
           title={hotkey.reason}
           onClick={onOpenSettings}
         >
-          ⚠ хоткей занят
+          <TriangleAlert size={12} aria-hidden="true" /> хоткей занят
         </button>
       )}
       <div className="window-controls">
@@ -58,56 +58,60 @@ export function TitleBar({
           className={`window-button${splitOpen ? ' is-on' : ''}`}
           data-testid="toggle-split"
           aria-label="Два разговора рядом"
-          title="Два разговора рядом (Ctrl+Shift+Enter)"
+          title={hint('Два разговора рядом', 'toggleSplit')}
           onClick={onToggleSplit}
         >
-          ⫿
+          <Columns2 size={15} aria-hidden="true" />
         </button>
         <button
           type="button"
           className="window-button"
           data-testid="open-history"
           aria-label="Прошлые разговоры"
-          title="Прошлые разговоры (Ctrl+H)"
+          title={hint('Прошлые разговоры', 'history')}
           onClick={onOpenHistory}
         >
-          ⟲
+          <History size={15} aria-hidden="true" />
         </button>
         <button
           type="button"
           className="window-button"
           data-testid="open-settings"
           aria-label="Настройки"
+          title={hint('Настройки', 'settings')}
           onClick={onOpenSettings}
         >
-          ⚙
+          <Settings size={15} aria-hidden="true" />
         </button>
         <button
           type="button"
           className="window-button"
           data-testid="window-minimize"
           aria-label="Свернуть"
+          title="Свернуть"
           onClick={() => void window.qclod.minimize()}
         >
-          ‒
+          <Minus size={15} aria-hidden="true" />
         </button>
         <button
           type="button"
           className="window-button"
           data-testid="window-maximize"
           aria-label="Развернуть"
+          title="Развернуть или вернуть размер"
           onClick={() => void window.qclod.toggleMaximize()}
         >
-          ▢
+          <Square size={12} aria-hidden="true" />
         </button>
         <button
           type="button"
           className="window-button is-close"
           data-testid="window-close"
           aria-label="Закрыть"
+          title="Закрыть окно"
           onClick={() => void window.qclod.closeWindow()}
         >
-          ×
+          <X size={16} aria-hidden="true" />
         </button>
       </div>
     </header>

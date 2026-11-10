@@ -26,6 +26,7 @@ export function PlanCard({ item, onAnswer }: Props): JSX.Element {
           <button
             type="button"
             data-testid="plan-approve"
+            title="Выполнять этот план"
             onClick={() => onAnswer(item.requestId, true)}
           >
             Выполнять
@@ -33,6 +34,7 @@ export function PlanCard({ item, onAnswer }: Props): JSX.Element {
           <button
             type="button"
             data-testid="plan-reject"
+            title="Не выполнять, обсудить ещё"
             onClick={() => onAnswer(item.requestId, false)}
           >
             Ещё обсудим

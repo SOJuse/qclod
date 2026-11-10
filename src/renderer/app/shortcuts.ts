@@ -16,6 +16,10 @@ export type AppActionId =
   | 'restart'
   | 'compact'
   | 'cycleMode'
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'zoomReset'
+  | 'reload'
 
 export interface AppActionInfo {
   id: AppActionId
@@ -36,7 +40,11 @@ export const APP_ACTIONS: AppActionInfo[] = [
   { id: 'toggleSplit', label: 'Два разговора рядом', keys: 'Ctrl+Shift+Enter' },
   { id: 'restart', label: 'Перезапустить сессию' },
   { id: 'compact', label: 'Сжать контекст' },
-  { id: 'cycleMode', label: 'Сменить режим', keys: 'Shift+Tab' }
+  { id: 'cycleMode', label: 'Сменить режим', keys: 'Shift+Tab' },
+  { id: 'zoomIn', label: 'Крупнее', keys: 'Ctrl+=' },
+  { id: 'zoomOut', label: 'Мельче', keys: 'Ctrl+-' },
+  { id: 'zoomReset', label: 'Обычный масштаб', keys: 'Ctrl+0' },
+  { id: 'reload', label: 'Перезагрузить окно', keys: 'Ctrl+R' }
 ]
 
 /** A button's tooltip: «Новая вкладка (Ctrl+T)». */
@@ -63,6 +71,10 @@ export function resolveAppShortcut(
   if (code === 'Enter' || code === 'NumpadEnter') {
     return ev.shiftKey ? { id: 'toggleSplit' } : null
   }
+  // Zoom: Ctrl+= also arrives as Ctrl+Shift+= (the plus sign), so Shift is allowed here.
+  if (code === 'Equal' || code === 'NumpadAdd') return { id: 'zoomIn' }
+  if (code === 'Minus' || code === 'NumpadSubtract') return { id: 'zoomOut' }
+  if (code === 'Digit0' || code === 'Numpad0') return { id: 'zoomReset' }
   if (ev.shiftKey) return null
 
   if (code === 'Comma') return { id: 'settings' }
@@ -79,6 +91,8 @@ export function resolveAppShortcut(
       return { id: 'actions' }
     case 'h':
       return { id: 'history' }
+    case 'r':
+      return { id: 'reload' }
     default:
       return null
   }

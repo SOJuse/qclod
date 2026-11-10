@@ -128,6 +128,7 @@ export function NowLine({ tabId, status, since, items }: Props): JSX.Element | n
           className={`now-agents${listOpen ? ' is-open' : ''}`}
           data-testid="now-agents"
           aria-expanded={listOpen}
+          title={listOpen ? 'Скрыть список агентов' : 'Показать список агентов'}
           onClick={() => setListOpen((open) => !open)}
         >
           <CategoryIcon category="agent" size={13} />

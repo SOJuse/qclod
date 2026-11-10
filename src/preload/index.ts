@@ -116,6 +116,8 @@ const api = {
   minimize: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowMinimize),
   toggleMaximize: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.windowMaximize),
   closeWindow: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowClose),
+  zoom: (step: 'in' | 'out' | 'reset'): Promise<void> => ipcRenderer.invoke(CHANNELS.windowZoom, step),
+  reloadWindow: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowReload),
 
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke(CHANNELS.openExternal, url),
 

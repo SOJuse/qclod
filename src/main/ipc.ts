@@ -98,4 +98,16 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
   ipcMain.handle(CHANNELS.windowClose, () => {
     getWindow()?.close()
   })
+
+  // The app menu is gone, and with it Electron's zoom and reload keys.
+  ipcMain.handle(CHANNELS.windowZoom, (_e, step: unknown) => {
+    const contents = getWindow()?.webContents
+    if (!contents || (step !== 'in' && step !== 'out' && step !== 'reset')) return
+    const level = step === 'reset' ? 0 : contents.getZoomLevel() + (step === 'in' ? 0.5 : -0.5)
+    contents.setZoomLevel(Math.min(3, Math.max(-3, level)))
+  })
+
+  ipcMain.handle(CHANNELS.windowReload, () => {
+    getWindow()?.webContents.reload()
+  })
 }

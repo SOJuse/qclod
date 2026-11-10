@@ -1,3 +1,4 @@
+import { X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { SessionSummary } from '../../shared/types'
 import './HistoryScreen.css'
@@ -9,7 +10,7 @@ interface Props {
   onClose: () => void
 }
 
-function when(timestamp: number): string {
+export function when(timestamp: number): string {
   const date = new Date(timestamp)
   const today = new Date()
   const sameDay = date.toDateString() === today.toDateString()
@@ -57,9 +58,10 @@ export function HistoryScreen({ cwd, sessions, onOpen, onClose }: Props): JSX.El
             type="button"
             data-testid="history-close"
             aria-label="Закрыть историю"
+            title="Закрыть (Esc)"
             onClick={onClose}
           >
-            ×
+            <X size={16} aria-hidden="true" />
           </button>
         </header>
 

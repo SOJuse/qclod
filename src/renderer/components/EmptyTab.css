@@ -1,0 +1,118 @@
+.empty-tab {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  overflow-y: auto;
+  /* The ribbon under it is empty; the welcome must not eat its clicks for nothing. */
+  pointer-events: none;
+}
+
+.empty-tab-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 100%;
+  max-width: var(--now-list-max-w);
+  pointer-events: auto;
+}
+
+.empty-tab-folder {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--text-lg);
+  overflow-wrap: anywhere;
+}
+
+.empty-tab-folder svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.empty-tab-recent,
+.empty-tab-tips {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.empty-tab-recent {
+  gap: var(--gap-hair);
+}
+
+.empty-tab-session {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.empty-tab-session:hover,
+.empty-tab-session:focus-visible {
+  background: var(--hover-fill);
+}
+
+.empty-tab-session:focus-visible {
+  outline: 1px solid var(--border-accent);
+}
+
+.empty-tab-session svg {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.empty-tab-session-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-tab-session-when {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+.empty-tab-tips {
+  gap: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.empty-tab-tips li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.empty-tab-tips kbd {
+  min-width: 2.2em;
+  padding: var(--gap-hair) var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-hair);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: center;
+}

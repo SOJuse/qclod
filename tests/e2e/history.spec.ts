@@ -239,3 +239,41 @@ test('открытая из истории сессия показывает т�
     rmSync(configDir, { recursive: true, force: true })
   }
 })
+
+test('пустая вкладка показывает папку, прошлые разговоры и подсказки', async () => {
+  const { app, profile } = await launch(HISTORY)
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+
+    const empty = win.locator('[data-testid="empty-tab"]')
+    await expect(empty).toBeVisible()
+    await expect(empty.locator('[data-testid="empty-recent"]')).toHaveCount(2)
+    await expect(empty).toContainText('Починка вставки файлов')
+    await expect(empty.locator('[data-testid="empty-tips"]')).toContainText('Ctrl+K')
+    await expect(empty.locator('[data-testid="empty-tips"]')).toContainText('Shift+Tab')
+
+    await empty.locator('[data-testid="empty-recent"]').first().click()
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText('вставка файлов не работает', {
+      timeout: 15000
+    })
+    // A conversation with something in it has no welcome.
+    await expect(win.locator('[data-testid="empty-tab"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('в папке без разговоров пустая вкладка не рисует пустую строку про них', async () => {
+  const { app, profile } = await launch({ sessions: [] })
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+    await expect(win.locator('[data-testid="empty-tips"]')).toBeVisible()
+    await expect(win.locator('[data-testid="empty-recent"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="empty-recent-list"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})

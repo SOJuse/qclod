@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { RibbonItem as Item } from '../../shared/types'
 import { childrenByParent } from '../chat/children'
 import { oldestPendingPermission } from '../chat/pendingPermission'
@@ -13,6 +14,8 @@ interface Props {
   onAnswerPermission: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
   onAnswerQuestion: (toolUseId: string, answers: Record<string, string>) => void
   onAnswerPlan: (requestId: string, approve: boolean) => void
+  /** Drawn over the ribbon while the conversation has nothing in it. */
+  whenEmpty?: ReactNode
 }
 
 /**
@@ -39,7 +42,8 @@ export function Ribbon({
   tabId,
   onAnswerPermission,
   onAnswerQuestion,
-  onAnswerPlan
+  onAnswerPlan,
+  whenEmpty
 }: Props): JSX.Element {
   const viewport = useRef<HTMLDivElement | null>(null)
   const heights = useRef(new Map<string, number>())
@@ -141,6 +145,7 @@ export function Ribbon({
         ))}
         <div style={{ height: padBottom }} aria-hidden />
       </div>
+      {rows.length === 0 && whenEmpty}
     </div>
   )
 }

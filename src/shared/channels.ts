@@ -49,6 +49,8 @@ export const CHANNELS = Object.freeze({
   windowMinimize: 'window:minimize',
   windowMaximize: 'window:maximize',
   windowClose: 'window:close',
+  windowZoom: 'window:zoom',
+  windowReload: 'window:reload',
   openExternal: 'window:openExternal',
 
   setupCheck: 'setup:check',
@@ -106,6 +108,8 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.windowMinimize,
   CHANNELS.windowMaximize,
   CHANNELS.windowClose,
+  CHANNELS.windowZoom,
+  CHANNELS.windowReload,
   CHANNELS.openExternal,
   CHANNELS.setupCheck,
   CHANNELS.setupInstall,

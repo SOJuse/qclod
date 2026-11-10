@@ -194,17 +194,20 @@
 }
 
 .window-button.is-close:hover {
-  background: #c4312f;
-  color: #fff;
+  background: var(--danger);
+  color: var(--on-accent);
 }
 
 .hotkey-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   align-self: center;
-  margin-right: 8px;
+  margin-right: var(--space-2);
   padding: 3px 9px;
-  border: 1px solid rgba(255, 196, 107, 0.45);
-  border-radius: 99px;
-  background: rgba(255, 196, 107, 0.1);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-pill);
+  background: var(--warn-fill);
   color: var(--warn);
   font: inherit;
   font-size: 11px;
@@ -213,5 +216,5 @@
 }
 
 .hotkey-warning:hover {
-  background: rgba(255, 196, 107, 0.2);
+  background: color-mix(in srgb, var(--warn) 20%, transparent);
 }

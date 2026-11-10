@@ -1,3 +1,5 @@
+import { Plus, X } from 'lucide-react'
+import { hint } from '../app/shortcuts'
 import type { SessionStatus, TabId, TabState } from '../../shared/types'
 
 interface Props {
@@ -59,18 +61,19 @@ export function TabStrip({
             type="button"
             className="tab-close"
             aria-label={`Закрыть ${tab.title}`}
+            title={hint('Закрыть вкладку', 'closeTab')}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation()
               onClose(tab.id)
             }}
           >
-            ×
+            <X size={13} aria-hidden="true" />
           </button>
         </div>
       ))}
-      <button type="button" className="tab-new" data-testid="tab-new" aria-label="Новая вкладка" onClick={onCreate}>
-        +
+      <button type="button" className="tab-new" data-testid="tab-new" aria-label="Новая вкладка" title={hint('Новая вкладка', 'newTab')} onClick={onCreate}>
+        <Plus size={15} aria-hidden="true" />
       </button>
     </div>
   )

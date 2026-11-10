@@ -366,7 +366,7 @@ function Output({ label, text, testId }: { label: string; text: string; testId?:
       <header className="tool-output-head">
         <span>{label}</span>
         {(overflows || whole) && (
-          <button type="button" className="tool-output-more" onClick={() => setWhole((w) => !w)}>
+          <button type="button" className="tool-output-more" title={whole ? 'Свернуть вывод' : 'Показать весь вывод'} onClick={() => setWhole((w) => !w)}>
             {whole ? 'Свернуть' : 'Показать всё'}
           </button>
         )}

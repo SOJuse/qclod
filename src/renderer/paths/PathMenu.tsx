@@ -152,6 +152,7 @@ export function PathMenu({
           tabIndex={i === active ? 0 : -1}
           className={`path-menu-item${i === active ? ' is-active' : ''}`}
           data-testid="path-menu-item"
+          title={item.label}
           onMouseEnter={() => setActive(i)}
           onClick={(e) => {
             e.stopPropagation()

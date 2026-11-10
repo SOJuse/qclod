@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { ArrowUp, Paperclip, Square, X } from 'lucide-react'
 import type {
   Attachment,
   CommandInfo,
@@ -17,6 +18,7 @@ import {
 } from '../input/attachments'
 import { applyMention, findMentionQuery } from '../input/mentions'
 import { InputHistory } from '../input/history'
+import { hint } from '../app/shortcuts'
 import {
   acceptCommand,
   commandItems,
@@ -96,15 +98,15 @@ export function DeadStrip({
       <span>Сессия прервалась</span>
       {canRetry ? (
         <>
-          <button type="button" className="is-primary" data-testid="composer-retry" onClick={onRetry}>
+          <button type="button" className="is-primary" data-testid="composer-retry" title="Повторить последний запрос в этом же разговоре" onClick={onRetry}>
             Повторить
           </button>
-          <button type="button" data-testid="composer-restart" onClick={onRestart}>
+          <button type="button" data-testid="composer-restart" title="Начать новую сессию в этой папке" onClick={onRestart}>
             Начать заново
           </button>
         </>
       ) : (
-        <button type="button" data-testid="composer-restart" onClick={onRestart}>
+        <button type="button" data-testid="composer-restart" title={hint('Запустить сессию заново', 'restart')} onClick={onRestart}>
           Запустить заново
         </button>
       )}
@@ -454,9 +456,10 @@ export function Composer({
                 type="button"
                 data-testid="composer-chip-remove"
                 aria-label={`Убрать ${attachmentLabel(item)}`}
+                title={`Убрать ${attachmentLabel(item)}`}
                 onClick={() => onAttachmentsChange(attachments.filter((_, i) => i !== index))}
               >
-                ×
+                <X size={12} aria-hidden="true" />
               </button>
             </span>
           ))}
@@ -489,9 +492,10 @@ export function Composer({
           className="composer-clip"
           data-testid="composer-clip"
           aria-label="Прикрепить файлы"
+          title="Прикрепить файлы"
           onClick={onPickFiles}
         >
-          📎
+          <Paperclip size={16} aria-hidden="true" />
         </button>
 
         <textarea
@@ -531,10 +535,11 @@ export function Composer({
           className={`composer-send${busy ? ' is-busy' : ''}`}
           data-testid={busy ? 'composer-stop' : 'composer-send'}
           aria-label={busy ? 'Прервать' : 'Отправить'}
+          title={busy ? 'Прервать (Esc)' : 'Отправить (Enter)'}
           disabled={dead}
           onClick={() => (busy ? onInterrupt() : void submit())}
         >
-          {busy ? '■' : '↑'}
+          {busy ? <Square size={12} fill="currentColor" aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
         </button>
       </div>
     </div>

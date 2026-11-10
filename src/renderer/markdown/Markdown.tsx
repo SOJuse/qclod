@@ -225,6 +225,7 @@ function CodeBlock({ language, code }: { language: string; code: string }): JSX.
           type="button"
           className="md-copy"
           data-testid="md-copy"
+          title="Копировать код"
           onClick={() => void navigator.clipboard.writeText(code)}
         >
           копировать

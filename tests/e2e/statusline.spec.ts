@@ -77,14 +77,14 @@ test('80% — индикатор меняет уровень, 92% — плашк
     await expect(win.locator('[data-testid="status-context-alert"]')).toBeVisible()
     await expect(win.locator('[data-testid="context-banner"]')).toHaveCount(0)
     // The panel's bar follows the same thresholds as the status line.
-    await expect(win.locator('[data-testid="panel-context"] .panel-bar')).toHaveAttribute('data-level', 'warn')
+    await expect(win.locator('[data-testid="panel-context"]')).toHaveAttribute('data-level', 'warn')
 
     await send(win, 'второй')
     await expect(meter).toHaveAttribute('data-level', 'critical', { timeout: 15000 })
     const banner = win.locator('[data-testid="context-banner"]')
     await expect(banner).toBeVisible()
     await expect(banner).toContainText('Контекст почти заполнен — 92%')
-    await expect(win.locator('[data-testid="panel-context"] .panel-bar')).toHaveAttribute('data-level', 'critical')
+    await expect(win.locator('[data-testid="panel-context"]')).toHaveAttribute('data-level', 'critical')
 
     await win.locator('[data-testid="context-compact"]').click()
     await expect(win.locator('[data-testid="ribbon-user"]').last()).toContainText('/compact', {

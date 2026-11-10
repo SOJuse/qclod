@@ -65,6 +65,7 @@ export function SetupScreen({ report, onRecheck, onDone }: Props): JSX.Element {
               <button
                 type="button"
                 data-testid="setup-install"
+                title="Установить Claude Code"
                 disabled={installing || report.installMethod === null}
                 onClick={() => void install()}
               >
@@ -98,18 +99,20 @@ export function SetupScreen({ report, onRecheck, onDone }: Props): JSX.Element {
             <button
               type="button"
               data-testid="setup-terminal"
+              title="Открыть терминал, чтобы войти в Claude Code"
               onClick={() => void window.qclod.openTerminal()}
             >
               Открыть терминал
             </button>
           )}
-          <button type="button" data-testid="setup-recheck" onClick={onRecheck}>
+          <button type="button" data-testid="setup-recheck" title="Проверить, что нужное установлено" onClick={onRecheck}>
             Проверить снова
           </button>
           <button
             type="button"
             className="setup-primary"
             data-testid="setup-done"
+            title="Перейти к работе"
             disabled={!report.ready}
             onClick={onDone}
           >

@@ -37,8 +37,19 @@ describe('resolveAppShortcut', () => {
       index: 8
     }))
 
-  test('Ctrl+0 — ничего', () =>
-    expect(resolveAppShortcut(key({ key: '0', code: 'Digit0', ctrlKey: true }))).toBeNull())
+  test('Ctrl+0 — обычный масштаб, не вкладка', () =>
+    expect(resolveAppShortcut(key({ key: '0', code: 'Digit0', ctrlKey: true }))).toEqual({
+      id: 'zoomReset'
+    }))
+
+  test('масштаб и перезагрузка по физической клавише, в том числе с Shift', () => {
+    expect(resolveAppShortcut(key({ key: '=', code: 'Equal', ctrlKey: true }))).toEqual({ id: 'zoomIn' })
+    expect(
+      resolveAppShortcut(key({ key: '+', code: 'Equal', ctrlKey: true, shiftKey: true }))
+    ).toEqual({ id: 'zoomIn' })
+    expect(resolveAppShortcut(key({ key: '-', code: 'Minus', ctrlKey: true }))).toEqual({ id: 'zoomOut' })
+    expect(resolveAppShortcut(key({ key: 'к', code: 'KeyR', ctrlKey: true }))).toEqual({ id: 'reload' })
+  })
 
   test('Ctrl+Tab — следующая, Ctrl+Shift+Tab — предыдущая', () => {
     expect(resolveAppShortcut(key({ key: 'Tab', code: 'Tab', ctrlKey: true }))).toEqual({
@@ -105,6 +116,9 @@ describe('APP_ACTIONS', () => {
       keys: 'Ctrl+W'
     })
     expect(APP_ACTIONS.find((a) => a.id === 'cycleMode')?.keys).toBe('Shift+Tab')
+    for (const id of ['zoomIn', 'zoomOut', 'zoomReset'] as const) {
+      expect(APP_ACTIONS.some((a) => a.id === id)).toBe(true)
+    }
   })
 })
 

@@ -91,6 +91,7 @@ export function SettingsScreen({ settings, version, models, onPatch: save, onClo
               className="settings-close"
               data-testid="close-settings"
               aria-label="Закрыть настройки"
+              title="Закрыть настройки"
               onClick={onClose}
             >
               <X size={16} aria-hidden="true" />
@@ -233,6 +234,7 @@ export function SettingsScreen({ settings, version, models, onPatch: save, onClo
                       type="button"
                       data-testid="permission-rule-delete"
                       aria-label={`Забыть правило для ${rule.toolName}`}
+                      title={`Забыть правило для ${rule.toolName}`}
                       onClick={() => {
                         void window.qclod
                           .deletePermissionRule(rule.id)

@@ -54,6 +54,7 @@ export function TodoStrip({ items, status }: Props): JSX.Element | null {
         className={`todo-strip${open ? ' is-open' : ''}`}
         data-testid="todo-strip"
         aria-expanded={open}
+        title={open ? 'Свернуть задачи' : 'Показать задачи'}
         onClick={() => setOpen((v) => !v)}
       >
         <ListChecks size={14} aria-hidden="true" />

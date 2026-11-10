@@ -1,3 +1,4 @@
+import { PanelRightOpen } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   EnvironmentReport,
@@ -13,15 +14,15 @@ import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { ActionPalette } from '../components/ActionPalette'
 import { compactNow } from '../input/slash'
-import { resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
+import { hint, resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
 import { PANEL_MIN_WIDTH, nextOverride, panelVisible, type PanelOverride } from './panelVisibility'
 import './App.css'
 
 /**
  * The window: tabs across the top, the conversation below.
  *
- * Commands are typed in the composer itself: a slash opens their list right
- * above the input, so there is no palette window here any more.
+ * Owns the shortcuts, the panel, the history and settings screens; each
+ * conversation is a ChatPane.
  */
 export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -214,6 +215,16 @@ export function App(): JSX.Element {
     [setActiveTabId]
   )
 
+  /** A past conversation opens in a new tab through the same resume path a restart uses. */
+  const openSession = useCallback(
+    (fromTabId: string, session: SessionSummary): void => {
+      void window.qclod.openHistory(fromTabId, session.id, session.title).then((tab) => {
+        if (tab) activate(tab.id)
+      })
+    },
+    [activate]
+  )
+
   const newTab = useCallback((): void => {
     void window.qclod.pickFolder().then((cwd) => {
       if (!cwd) return
@@ -300,6 +311,14 @@ export function App(): JSX.Element {
           return
         case 'cycleMode':
           return cycleMode()
+        case 'zoomIn':
+          return void window.qclod.zoom('in')
+        case 'zoomOut':
+          return void window.qclod.zoom('out')
+        case 'zoomReset':
+          return void window.qclod.zoom('reset')
+        case 'reload':
+          return void window.qclod.reloadWindow()
       }
     },
     [activate, newTab, closeActiveTab, openHistory, togglePanel, toggleSplit, restartSession, cycleMode]
@@ -388,7 +407,6 @@ export function App(): JSX.Element {
           void window.qclod.closeTab(id)
         }}
         onCreate={newTab}
-        onConfigure={() => setSettingsOpen(true)}
         hotkey={hotkey}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenHistory={openHistory}
@@ -406,6 +424,7 @@ export function App(): JSX.Element {
             onFocus={() => undefined}
             onCycleMode={cycleMode}
             onOpenHistory={openHistory}
+            onOpenSession={openSession}
             notice={
               closeGuardTab === activeTabId
                 ? { testId: 'close-guard', text: 'Агент работает — Ctrl+W ещё раз закроет вкладку' }
@@ -423,6 +442,7 @@ export function App(): JSX.Element {
               onFocus={() => swapPanes()}
               onCycleMode={cycleMode}
               onOpenHistory={openHistory}
+              onOpenSession={openSession}
             />
           )}
         </div>
@@ -440,9 +460,10 @@ export function App(): JSX.Element {
             className="panel-reopen"
             data-testid="panel-open"
             aria-label="Показать панель"
+            title={hint('Показать панель', 'togglePanel')}
             onClick={togglePanel}
           >
-            ‹
+            <PanelRightOpen size={16} aria-hidden="true" />
           </button>
         )}
       </div>
@@ -456,9 +477,7 @@ export function App(): JSX.Element {
           }}
           onOpen={(session) => {
             setHistoryOpen(false)
-            void window.qclod.openHistory(activeTabId, session.id, session.title).then((tab) => {
-              if (tab) activate(tab.id)
-            })
+            openSession(activeTabId, session)
           }}
         />
       )}

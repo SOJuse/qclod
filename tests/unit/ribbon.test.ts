@@ -99,7 +99,8 @@ describe('RibbonBuilder', () => {
   })
 
   test('вызов инструмента и его результат — один элемент, а не два', () => {
-    const b = new RibbonBuilder()
+    // A frozen clock: the call took no time, so the patch carries no duration.
+    const b = new RibbonBuilder({ now: () => 1 })
     b.apply(assistant([{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'C:/p/auth.ts' } }]))
 
     let tools = only(b.items, 'tool')
@@ -935,5 +936,126 @@ describe('RibbonBuilder: сессия, восстановленная из фа�
     const tool = only(b.items, 'tool')[0]!
     expect(tool.summary).toBe('не закончил')
     expect(changes).toEqual([{ kind: 'update', id: tool.id, patch: { state: 'done', summary: 'не закончил' } }])
+  })
+})
+
+describe('RibbonBuilder: карточка хранит вызов целиком', () => {
+  function call(id: string, name: string, input: Record<string, unknown>): unknown {
+    return assistant([{ type: 'tool_use', id, name, input }])
+  }
+
+  test('карточка хранит вход, выход и время вызова', () => {
+    let clock = 1000
+    const b = new RibbonBuilder({ now: () => clock })
+    b.apply(call('t1', 'Bash', { command: 'ls' }))
+    expect(only(b.items, 'tool')[0]).toMatchObject({ input: { command: 'ls' }, startedAt: 1000 })
+    clock = 2200
+    const changes = b.apply(
+      userMessage([{ type: 'tool_result', tool_use_id: 't1', content: 'a' }], {
+        tool_use_result: { stdout: 'a', stderr: '', interrupted: false }
+      })
+    )
+    expect(only(b.items, 'tool')[0]).toMatchObject({
+      input: { command: 'ls' },
+      output: { stdout: 'a' },
+      durationMs: 1200
+    })
+    // The change on the wire carries them too: the renderer only sees patches.
+    expect(changes[0]).toMatchObject({ kind: 'update', patch: { output: { stdout: 'a' }, durationMs: 1200 } })
+  })
+
+  test('огромный выход режется, originalFile выбрасывается', () => {
+    const b = new RibbonBuilder()
+    b.apply(call('t1', 'Edit', { file_path: 'a.ts', old_string: 'x'.repeat(100_000), new_string: 'y' }))
+    b.apply(
+      userMessage([{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }], {
+        tool_use_result: { filePath: 'a.ts', originalFile: 'z'.repeat(1_000_000), structuredPatch: [] }
+      })
+    )
+    const card = only(b.items, 'tool')[0]!
+    expect(JSON.stringify(card.output)).not.toContain('zzzz')
+    expect(JSON.stringify(card.input).length).toBeLessThan(21_000 + 200)
+  })
+
+  test('результат без структурного выхода: output не появляется, время есть', () => {
+    let clock = 10
+    const b = new RibbonBuilder({ now: () => clock })
+    b.apply(call('t1', 'Read', { file_path: 'a.ts' }))
+    clock = 500
+    b.apply(toolResult('t1', 'текст'))
+    const card = only(b.items, 'tool')[0]!
+    expect(card).not.toHaveProperty('output')
+    expect(card.durationMs).toBe(490)
+  })
+
+  test('ошибка сохраняет вход и время', () => {
+    let clock = 1000
+    const b = new RibbonBuilder({ now: () => clock })
+    b.apply(call('t1', 'Bash', { command: 'false' }))
+    clock = 1700
+    const changes = b.apply(
+      userMessage([{ type: 'tool_result', tool_use_id: 't1', content: 'Exit code 1', is_error: true }], {
+        tool_use_result: { stdout: '', stderr: 'boom', interrupted: false }
+      })
+    )
+    expect(only(b.items, 'toolError')[0]).toMatchObject({
+      input: { command: 'false' },
+      startedAt: 1000,
+      durationMs: 700,
+      output: { stderr: 'boom' },
+      error: 'Exit code 1'
+    })
+    expect(changes[0]).toMatchObject({ kind: 'update', patch: { kind: 'toolError', durationMs: 700 } })
+  })
+
+  test('результат в тот же миллисекунд: длительности нет', () => {
+    const b = new RibbonBuilder({ now: () => 5 })
+    b.apply(call('t1', 'Bash', { command: 'ls' }))
+    b.apply(toolResult('t1', 'a'))
+    expect(only(b.items, 'tool')[0]).not.toHaveProperty('durationMs')
+  })
+
+  test('из JSONL: toolUseResult доезжает до карточки', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qclod-tooloutput-'))
+    try {
+      const sid = '1f0e0d0c-0b0a-4908-8706-050403020101'
+      const line = (extra: Record<string, unknown>, n: number): Record<string, unknown> => ({
+        parentUuid: n === 1 ? null : `00000000-0000-4000-8000-00000000000${n - 1}`,
+        isSidechain: false,
+        uuid: `00000000-0000-4000-8000-00000000000${n}`,
+        sessionId: sid,
+        ...extra
+      })
+      const path = writeTranscript(dir, 'C:\\p', sid, [
+        line({ type: 'user', message: { role: 'user', content: 'запусти' } }, 1),
+        line(
+          {
+            type: 'assistant',
+            message: {
+              id: 'm1',
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'ls' } }]
+            }
+          },
+          2
+        ),
+        line(
+          {
+            type: 'user',
+            message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'a' }] },
+            toolUseResult: { stdout: 'a', stderr: '', interrupted: false }
+          },
+          3
+        )
+      ])
+      const b = new RibbonBuilder()
+      for (const m of await readTranscript(path)) b.apply(m)
+      expect(only(b.items, 'tool')[0]).toMatchObject({
+        input: { command: 'ls' },
+        output: { stdout: 'a', stderr: '', interrupted: false }
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

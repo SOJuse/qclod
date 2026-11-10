@@ -40,6 +40,22 @@ export interface RibbonBase {
 
 export type ToolState = 'running' | 'done'
 
+/**
+ * What a tool card remembers of the call, beyond its one-line summary. All of
+ * it is optional: a snapshot or a stored ribbon from before it existed still
+ * reads. Input and output are bounded copies (shared/clip.ts).
+ */
+export interface ToolCallData {
+  /** The call's input, as the agent sent it. */
+  input?: Record<string, unknown>
+  /** The tool's structured output (the SDK's tool_use_result). */
+  output?: unknown
+  /** When the call was placed, ms since the epoch. */
+  startedAt?: number
+  /** How long it ran, measured from the card to its result. */
+  durationMs?: number
+}
+
 /** A subagent can also fail, be stopped, or be left running when the session ended. */
 export type SubagentState = 'running' | 'done' | 'failed' | 'stopped' | 'unfinished'
 
@@ -61,7 +77,7 @@ export type RibbonItem =
   | (RibbonBase & { kind: 'user'; text: string; attachments: Attachment[] })
   | (RibbonBase & { kind: 'agentText'; text: string; streaming: boolean })
   | (RibbonBase & { kind: 'thinking'; text: string; done: boolean; durationMs: number })
-  | (RibbonBase & {
+  | (RibbonBase & ToolCallData & {
       kind: 'tool'
       toolUseId: string
       name: string
@@ -70,7 +86,7 @@ export type RibbonItem =
       detail: string
       state: ToolState
     })
-  | (RibbonBase & {
+  | (RibbonBase & ToolCallData & {
       kind: 'toolError'
       toolUseId: string
       name: string

@@ -4,9 +4,9 @@ export type FakeStep =
   | { kind: 'text'; text: string }
   | { kind: 'textStream'; pieces: string[]; pauseMs?: number }
   | { kind: 'thinking'; text?: string; ms?: number }
-  | { kind: 'tool'; name: string; input?: object; result?: string }
+  | { kind: 'tool'; name: string; input?: object; result?: string; output?: object; pauseMs?: number }
   | { kind: 'toolRunning'; name: string; input?: object }
-  | { kind: 'toolError'; name: string; input?: object; error: string }
+  | { kind: 'toolError'; name: string; input?: object; error: string; output?: object }
   | { kind: 'askPermission'; name: string; input?: object }
   | { kind: 'askPermissions'; tools: Array<{ name: string; input?: object }> }
   | {

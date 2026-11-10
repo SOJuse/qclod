@@ -14,9 +14,9 @@
  * @typedef {{kind:'text', text:string}} TextStep
  * @typedef {{kind:'textStream', pieces:string[], pauseMs?:number}} TextStreamStep
  * @typedef {{kind:'thinking', text?:string, ms?:number}} ThinkingStep
- * @typedef {{kind:'tool', name:string, input?:object, result?:string}} ToolStep
+ * @typedef {{kind:'tool', name:string, input?:object, result?:string, output?:object, pauseMs?:number}} ToolStep
  * @typedef {{kind:'toolRunning', name:string, input?:object}} ToolRunningStep
- * @typedef {{kind:'toolError', name:string, input?:object, error:string}} ToolErrorStep
+ * @typedef {{kind:'toolError', name:string, input?:object, error:string, output?:object}} ToolErrorStep
  * @typedef {{kind:'askPermission', name:string, input?:object}} AskPermissionStep
  * @typedef {{kind:'askPermissions', tools:Array<{name:string, input?:object}>}} AskPermissionsStep
  * @typedef {{kind:'askQuestion', question?:string, header?:string, options?:string[], questions?:Array<{question:string, header?:string, options:string[], multiSelect?:boolean}>, echoAnswers?:boolean}} AskQuestionStep
@@ -132,7 +132,7 @@ export function createFakeSdk(script = {}) {
     }
   }
 
-  function toolResult(id, content, isError = false) {
+  function toolResult(id, content, isError = false, output = undefined) {
     return {
       type: 'user',
       uuid: randomUUID(),
@@ -142,7 +142,8 @@ export function createFakeSdk(script = {}) {
         content: [
           { type: 'tool_result', tool_use_id: id, content, ...(isError ? { is_error: true } : {}) }
         ]
-      }
+      },
+      ...(output !== undefined ? { tool_use_result: output } : {})
     }
   }
 
@@ -220,7 +221,8 @@ export function createFakeSdk(script = {}) {
           const id = step.id ?? randomUUID()
           yield assistant([{ type: 'tool_use', id, name: step.name, input: step.input ?? {} }])
           state.executedTools.push(step.name)
-          yield toolResult(id, step.result ?? 'ok')
+          if (step.pauseMs) await pause(step.pauseMs)
+          yield toolResult(id, step.result ?? 'ok', false, step.output)
           break
         }
 
@@ -235,17 +237,7 @@ export function createFakeSdk(script = {}) {
         case 'toolError': {
           const id = randomUUID()
           yield assistant([{ type: 'tool_use', id, name: step.name, input: step.input ?? {} }])
-          yield {
-            type: 'user',
-            uuid: randomUUID(),
-            session_id: sessionId,
-            message: {
-              role: 'user',
-              content: [
-                { type: 'tool_result', tool_use_id: id, content: step.error, is_error: true }
-              ]
-            }
-          }
+          yield toolResult(id, step.error, true, step.output)
           break
         }
 

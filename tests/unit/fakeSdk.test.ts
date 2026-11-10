@@ -741,3 +741,62 @@ describe('createFakeSdk: подагент на переднем плане', () 
     expect(output['totalToolUseCount']).toBe(0)
   })
 })
+
+describe('createFakeSdk: структурный выход инструмента', () => {
+  test('шаг tool с output отдаёт tool_use_result', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        {
+          kind: 'tool',
+          name: 'Bash',
+          input: { command: 'ls' },
+          result: 'a',
+          output: { stdout: 'a', stderr: '', interrupted: false }
+        }
+      ]
+    })
+    driver.send({ text: 'go', attachments: [] })
+    const result = (await collect(driver)).find((m) => m['tool_use_result'] !== undefined)!
+    expect(result['tool_use_result']).toEqual({ stdout: 'a', stderr: '', interrupted: false })
+    expect(JSON.stringify(result['message'])).toContain('tool_result')
+  })
+
+  test('шаг toolError с output отдаёт его рядом с ошибкой', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        {
+          kind: 'toolError',
+          name: 'Bash',
+          error: 'Exit code 1',
+          output: { stdout: '', stderr: 'boom', interrupted: false }
+        }
+      ]
+    })
+    driver.send({ text: 'go', attachments: [] })
+    const result = (await collect(driver)).find((m) => m['tool_use_result'] !== undefined)!
+    expect(result['tool_use_result']).toMatchObject({ stderr: 'boom' })
+  })
+
+  test('без output tool_use_result не добавляется', async () => {
+    const driver = createFakeSdk({ steps: [{ kind: 'tool', name: 'Read', result: 'x' }] })
+    driver.send({ text: 'go', attachments: [] })
+    expect((await collect(driver)).some((m) => 'tool_use_result' in m)).toBe(false)
+  })
+
+  test('шаг tool с pauseMs держит паузу до результата', async () => {
+    const driver = createFakeSdk({ steps: [{ kind: 'tool', name: 'Bash', pauseMs: 120 }] })
+    driver.send({ text: 'go', attachments: [] })
+    const stamps: Array<{ kind: string; at: number }> = []
+    for await (const m of driver.messages) {
+      const content = (m['message'] as { content?: Array<{ type: string }> } | undefined)?.content
+      if (Array.isArray(content)) {
+        for (const b of content) {
+          if (b.type === 'tool_use' || b.type === 'tool_result') stamps.push({ kind: b.type, at: Date.now() })
+        }
+      }
+      if (m['type'] === 'result') break
+    }
+    expect(stamps.map((s) => s.kind)).toEqual(['tool_use', 'tool_result'])
+    expect(stamps[1]!.at - stamps[0]!.at).toBeGreaterThanOrEqual(100)
+  })
+})

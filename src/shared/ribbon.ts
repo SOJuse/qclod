@@ -7,6 +7,8 @@ import type {
   TodoItem,
   ToolState
 } from './types'
+import { clipForView } from './clip'
+import { clip, lines } from './format'
 
 /**
  * Turns the SDK's message stream into the ribbon the user reads.
@@ -46,24 +48,9 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-/** 1 строка, 3 строки, 10 строк. */
-function lines(n: number): string {
-  const tens = n % 100
-  const ones = n % 10
-  if (tens >= 11 && tens <= 14) return `${n} строк`
-  if (ones === 1) return `${n} строка`
-  if (ones >= 2 && ones <= 4) return `${n} строки`
-  return `${n} строк`
-}
-
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts.length > 0 ? parts[parts.length - 1]! : path
-}
-
-function clip(text: string, max = 80): string {
-  const line = text.split('\n')[0] ?? ''
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line
 }
 
 /**
@@ -622,6 +609,8 @@ export class RibbonBuilder {
         summary: '',
         detail: '',
         state: 'running' as ToolState,
+        input: clipForView(input) as Record<string, unknown>,
+        startedAt: this.now(),
         ...(parentId ? { parentId } : {})
       })
     ]
@@ -712,6 +701,7 @@ export class RibbonBuilder {
       }
       const name = item.kind === 'tool' ? item.name : ''
       const target = item.kind === 'tool' ? item.target : ''
+      const call = item.kind === 'tool' ? this.callResult(item, result) : {}
       const replacement: RibbonItem = {
         kind: 'toolError',
         id: item.id,
@@ -719,10 +709,13 @@ export class RibbonBuilder {
         name,
         target,
         error: text,
+        ...(item.kind === 'tool' && item.input ? { input: item.input } : {}),
+        ...(item.kind === 'tool' && item.startedAt !== undefined ? { startedAt: item.startedAt } : {}),
+        ...call,
         ...(item.parentId ? { parentId: item.parentId } : {})
       }
       this.list[this.list.indexOf(item)] = replacement
-      return [this.update(item.id, { kind: 'toolError', error: text })]
+      return [this.update(item.id, { kind: 'toolError', error: text, ...call })]
     }
 
     if (item.kind === 'subagent') {
@@ -757,13 +750,33 @@ export class RibbonBuilder {
     }
 
     if (item.kind === 'tool') {
+      const call = this.callResult(item, result)
       item.state = 'done'
       item.summary = toolSummary(item.name, text)
       item.detail = text
-      return [this.update(item.id, { state: 'done', summary: item.summary, detail: text })]
+      Object.assign(item, call)
+      return [this.update(item.id, { state: 'done', summary: item.summary, detail: text, ...call })]
     }
 
     return []
+  }
+
+  /**
+   * What a finished call adds to its card: the tool's structured output, kept
+   * bounded, and how long the call took. An output the tool did not send is
+   * simply absent; so is a duration of nothing (the same millisecond).
+   */
+  private callResult(
+    item: Extract<RibbonItem, { kind: 'tool' }>,
+    result: unknown
+  ): { output?: unknown; durationMs?: number } {
+    const call: { output?: unknown; durationMs?: number } = {}
+    if (result !== undefined && result !== null) call.output = clipForView(result)
+    if (item.startedAt !== undefined) {
+      const measured = this.now() - item.startedAt
+      if (measured > 0) call.durationMs = measured
+    }
+    return call
   }
 
   // ------------------------------------------------------------ task events

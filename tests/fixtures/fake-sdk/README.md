@@ -44,8 +44,8 @@ for await (const message of driver.messages) { /* ... */ }
 |---|---|
 | `text` | текст агента |
 | `thinking` | блок размышлений |
-| `tool` | вызов инструмента и его результат |
-| `toolError` | вызов и результат с `is_error` |
+| `tool` | вызов инструмента и его результат; `output` (объект) уходит как `tool_use_result` рядом с `tool_result` (формы — `sdk-tools.d.ts`); `pauseMs` — пауза между `tool_use` и результатом |
+| `toolError` | вызов и результат с `is_error`; `output` уходит как `tool_use_result` |
 | `askPermission` | спрашивает `canUseTool` с `toolUseID` будущего вызова и `signal`; разрешили — выполняет, отказали — `permission_denied` |
 | `askPermissions` | несколько инструментов одного сообщения: спрашивает о всех сразу, у каждого свой `toolUseID`; разрешённые выполняет одним сообщением ассистента |
 | `askQuestion` | вызов `AskUserQuestion`; `questions: [{question, header?, options, multiSelect?}]` — до четырёх вопросов, а `question`/`options` — сокращение для одного; `echoAnswers: true` — после ответа агент пишет текстом `Получено: …` (в ленте `tool_result` вопроса не виден); затем `canUseTool` с его id; ответ — `updatedInput.answers` в `tool_result`, отказ — `tool_result` с `is_error` |

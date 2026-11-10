@@ -412,8 +412,11 @@ export function App(): JSX.Element {
         <SettingsScreen
           settings={settings}
           version={version}
-          onPatch={(patch) => {
-            void window.qclod.setSettings(patch).then(setSettings)
+          models={(activeTabId ? panelByTab[activeTabId]?.models : undefined) ?? []}
+          onPatch={async (patch) => {
+            const next = await window.qclod.setSettings(patch)
+            setSettings(next)
+            return next
           }}
           onClose={() => setSettingsOpen(false)}
         />

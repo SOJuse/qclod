@@ -1,5 +1,15 @@
-import { useEffect, useState } from 'react'
-import type { AppSettings, HotkeyRegistration } from '../../shared/types'
+import { useEffect, useRef, useState } from 'react'
+import { Check, X } from 'lucide-react'
+import {
+  EFFORT_LEVELS,
+  PERMISSION_MODES,
+  type AppSettings,
+  type EffortLevel,
+  type HotkeyRegistration,
+  type ModelOption,
+  type PermissionMode
+} from '../../shared/types'
+import { EFFORT_LABEL, MODE_LABEL } from '../labels'
 import './SettingsScreen.css'
 
 interface PermissionRuleView {
@@ -11,13 +21,18 @@ interface PermissionRuleView {
 interface Props {
   settings: AppSettings
   version: string
-  onPatch: (patch: Partial<AppSettings>) => void
+  /** Models the active tab's session offers; empty until it has started. */
+  models: ModelOption[]
+  onPatch: (patch: Partial<AppSettings>) => Promise<AppSettings>
   onClose: () => void
 }
 
-export function SettingsScreen({ settings, version, onPatch, onClose }: Props): JSX.Element {
+export function SettingsScreen({ settings, version, models, onPatch: save, onClose }: Props): JSX.Element {
   const [hotkeyStatus, setHotkeyStatus] = useState<HotkeyRegistration | null>(null)
   const [rules, setRules] = useState<PermissionRuleView[]>([])
+  const [saved, setSaved] = useState(false)
+  const savedTimer = useRef<ReturnType<typeof setTimeout>>()
+  const sheet = useRef<HTMLElement>(null)
 
   useEffect(() => {
     void window.qclod.hotkeyStatus().then(setHotkeyStatus)
@@ -27,20 +42,60 @@ export function SettingsScreen({ settings, version, onPatch, onClose }: Props): 
     void window.qclod.permissionRules().then(setRules)
   }, [])
 
+  useEffect(() => {
+    // Focus inside the sheet is what lets Esc reach it.
+    sheet.current?.focus()
+    return () => clearTimeout(savedTimer.current)
+  }, [])
+
+  // The indicator follows the answer, not the click: it shows what the main process kept.
+  const onPatch = (patch: Partial<AppSettings>): void => {
+    void save(patch).then(() => {
+      setSaved(true)
+      clearTimeout(savedTimer.current)
+      savedTimer.current = setTimeout(() => setSaved(false), 2000)
+    })
+  }
+
+  // Blurring first lets a field that is still being edited save before the screen goes.
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key !== 'Escape') return
+    e.stopPropagation()
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    onClose()
+  }
+
+  const model = settings.defaults.model ?? ''
+  const modelKnown = model === '' || models.some((m) => m.value === model)
+
   return (
     <div className="settings-backdrop" data-testid="settings" onMouseDown={onClose}>
-      <section className="settings" onMouseDown={(e) => e.stopPropagation()}>
+      <section
+        className="settings"
+        ref={sheet}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <header className="settings-head">
           <h2>Настройки</h2>
-          <button
-            type="button"
-            className="settings-close"
-            data-testid="close-settings"
-            aria-label="Закрыть настройки"
-            onClick={onClose}
-          >
-            ×
-          </button>
+          <div className="settings-head-end">
+            {saved && (
+              <span className="settings-saved" data-testid="settings-saved" role="status">
+                <Check size={14} aria-hidden="true" />
+                Сохранено
+              </span>
+            )}
+            <button
+              type="button"
+              className="settings-close"
+              data-testid="close-settings"
+              aria-label="Закрыть настройки"
+              onClick={onClose}
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </div>
         </header>
 
         <div className="settings-body">
@@ -81,19 +136,6 @@ export function SettingsScreen({ settings, version, onPatch, onClose }: Props): 
             />
           </Group>
 
-          <Group title="Поведение">
-            <Field label="Размер шрифта терминала">
-              <input
-                type="number"
-                min={9}
-                max={28}
-                data-testid="setting-fontSize"
-                defaultValue={settings.fontSize}
-                onBlur={(e) => onPatch({ fontSize: Number(e.target.value) || settings.fontSize })}
-              />
-            </Field>
-          </Group>
-
           <Group title="Запуск агента">
             <Field label="Путь к исполняемому файлу">
               <input
@@ -104,22 +146,46 @@ export function SettingsScreen({ settings, version, onPatch, onClose }: Props): 
               />
             </Field>
             <Field label="Модель по умолчанию">
-              <input
-                type="text"
+              <select
                 data-testid="setting-defaultModel"
-                placeholder="как у CLI"
-                defaultValue={settings.defaults.model ?? ''}
-                onBlur={(e) => onPatch({ defaults: { model: e.target.value } })}
-              />
+                value={model}
+                onChange={(e) => onPatch({ defaults: { model: e.target.value } })}
+              >
+                <option value="">Как у Claude Code</option>
+                {!modelKnown && <option value={model}>{model}</option>}
+                {models.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.displayName}
+                  </option>
+                ))}
+              </select>
             </Field>
-            <Field label="Режим разрешений по умолчанию">
-              <input
-                type="text"
+            <Field label="Усилие по умолчанию">
+              <select
+                data-testid="setting-defaultEffort"
+                value={settings.defaults.effort ?? ''}
+                onChange={(e) => onPatch({ defaults: { effort: e.target.value as EffortLevel } })}
+              >
+                <option value="">Как у Claude Code</option>
+                {EFFORT_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {EFFORT_LABEL[level]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Режим по умолчанию">
+              <select
                 data-testid="setting-defaultPermissionMode"
-                placeholder="как у CLI"
-                defaultValue={settings.defaults.permissionMode ?? ''}
-                onBlur={(e) => onPatch({ defaults: { permissionMode: e.target.value as AppSettings['defaults']['permissionMode'] } })}
-              />
+                value={settings.defaults.permissionMode ?? 'default'}
+                onChange={(e) => onPatch({ defaults: { permissionMode: e.target.value as PermissionMode } })}
+              >
+                {PERMISSION_MODES.filter((mode) => mode !== 'bypassPermissions').map((mode) => (
+                  <option key={mode} value={mode}>
+                    {MODE_LABEL[mode]}
+                  </option>
+                ))}
+              </select>
             </Field>
             <Field label="Дополнительные флаги">
               <input
@@ -154,7 +220,7 @@ export function SettingsScreen({ settings, version, onPatch, onClose }: Props): 
                           .then(setRules)
                       }}
                     >
-                      ×
+                      <X size={14} aria-hidden="true" />
                     </button>
                   </li>
                 ))}

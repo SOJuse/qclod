@@ -194,7 +194,6 @@ describe('mergeDefaults', () => {
     globalHotkey: 'Ctrl+Alt+Q',
     notificationsEnabled: true,
     soundEnabled: true,
-    fontSize: 14,
     closeToTray: true,
     panelOpen: true,
     defaults: { permissionMode: 'acceptEdits' }
@@ -211,12 +210,18 @@ describe('mergeDefaults', () => {
   })
 
   test('settingsSet с мусором в умолчаниях не портит остальное', () => {
-    const next = mergeDefaults(base, { fontSize: 16, defaults: { effort: 'low', extra: 1 } as never })
-    expect(next.fontSize).toBe(16)
+    const next = mergeDefaults(base, { soundEnabled: false, defaults: { effort: 'low', extra: 1 } as never })
+    expect(next.soundEnabled).toBe(false)
     expect(next.defaults).toEqual({ permissionMode: 'acceptEdits', effort: 'low' })
   })
 
+  test('пустая строка в умолчаниях убирает ключ — «как у Claude Code»', () => {
+    const withModel = mergeDefaults(base, { defaults: { model: 'claude-sonnet-5', effort: 'low' } })
+    const next = mergeDefaults(withModel, { defaults: { model: '', effort: '' as never } })
+    expect(next.defaults).toEqual({ permissionMode: 'acceptEdits' })
+  })
+
   test('патч без defaults оставляет умолчания как были', () => {
-    expect(mergeDefaults(base, { fontSize: 16 }).defaults).toEqual(base.defaults)
+    expect(mergeDefaults(base, { soundEnabled: false }).defaults).toEqual(base.defaults)
   })
 })

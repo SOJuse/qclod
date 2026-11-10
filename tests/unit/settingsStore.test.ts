@@ -36,7 +36,7 @@ describe('settingsStore', () => {
 
   test('сохранение и чтение дают одно и то же', () => {
     const dir = freshDir()
-    const next = { ...DEFAULT_SETTINGS, fontSize: 17, globalHotkey: 'Ctrl+Alt+Q' }
+    const next = { ...DEFAULT_SETTINGS, closeToTray: false, globalHotkey: 'Ctrl+Alt+Q' }
     saveSettings(dir, next)
     expect(loadSettings(dir)).toEqual(next)
     rmSync(dir, { recursive: true, force: true })
@@ -44,10 +44,19 @@ describe('settingsStore', () => {
 
   test('частично записанный файл дополняется значениями по умолчанию', () => {
     const dir = freshDir()
-    writeFileSync(join(dir, SETTINGS_FILE), JSON.stringify({ fontSize: 20 }), 'utf8')
+    writeFileSync(join(dir, SETTINGS_FILE), JSON.stringify({ soundEnabled: false }), 'utf8')
     const loaded = loadSettings(dir)
-    expect(loaded.fontSize).toBe(20)
+    expect(loaded.soundEnabled).toBe(false)
     expect(loaded.globalHotkey).toBe(DEFAULT_SETTINGS.globalHotkey)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('старый settings.json с fontSize читается без ошибок', () => {
+    const dir = freshDir()
+    writeFileSync(join(dir, SETTINGS_FILE), JSON.stringify({ fontSize: 20, closeToTray: false }), 'utf8')
+    const loaded = loadSettings(dir)
+    expect(loaded.closeToTray).toBe(false)
+    expect(DEFAULT_SETTINGS).not.toHaveProperty('fontSize')
     rmSync(dir, { recursive: true, force: true })
   })
 })

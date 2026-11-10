@@ -51,7 +51,6 @@
   --titlebar-height: 38px;
 
   --font-mono: 'Geist Mono', 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
-  --font-size-terminal: 13px;
 
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --dur-fast: 120ms;
@@ -99,6 +98,14 @@
   --rule-category: 2px;
   --gap-hair: 2px;
   --radius-pill: 999px;
+
+  --backdrop: rgba(6, 7, 14, 0.5);
+  --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.55);
+  --hover-fill: rgba(255, 255, 255, 0.07);
+  --accent-fill: rgba(110, 139, 255, 0.16);
+  --accent-fill-strong: rgba(110, 139, 255, 0.3);
+  --warn-fill: rgba(255, 196, 107, 0.08);
+  --warn-border: rgba(255, 196, 107, 0.4);
 }
 
 * {

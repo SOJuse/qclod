@@ -282,7 +282,6 @@ export interface AppSettings {
   globalHotkey: string
   notificationsEnabled: boolean
   soundEnabled: boolean
-  fontSize: number
   closeToTray: boolean
   panelOpen: boolean
   defaults: LaunchOverrides

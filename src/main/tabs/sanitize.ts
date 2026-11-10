@@ -69,11 +69,15 @@ export function sanitizeDefaults(value: unknown): LaunchOverrides {
 /** Settings with a patch applied; the defaults inside the patch are sanitised first. */
 export function mergeDefaults(settings: AppSettings, patch: Partial<AppSettings>): AppSettings {
   const { defaults, ...rest } = patch
-  return {
-    ...settings,
-    ...rest,
-    defaults: { ...settings.defaults, ...(defaults === undefined ? {} : sanitizeDefaults(defaults)) }
+  const merged = { ...settings.defaults, ...(defaults === undefined ? {} : sanitizeDefaults(defaults)) }
+  // An empty string is how the settings screen says "as Claude Code has it":
+  // the key goes away rather than being stored as an empty value.
+  if (isPlainObject(defaults)) {
+    for (const key of ['model', 'effort', 'extraFlags'] as const) {
+      if (defaults[key] === '') delete merged[key]
+    }
   }
+  return { ...settings, ...rest, defaults: merged }
 }
 
 /**

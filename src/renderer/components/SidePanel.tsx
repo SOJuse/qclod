@@ -9,6 +9,7 @@ import {
   type SubagentState
 } from '../../shared/types'
 import { AGENT_STATE_LABEL } from './agentState'
+import { EFFORT_LABEL, MODE_LABEL } from '../labels'
 import './SidePanel.css'
 
 interface Props {
@@ -29,23 +30,6 @@ const MCP_LABEL: Record<McpServerInfo['status'], string> = {
   'needs-auth': 'требует входа',
   pending: 'ждёт',
   disabled: 'выключен'
-}
-
-const EFFORT_LABEL: Record<string, string> = {
-  low: 'низкое — быстро',
-  medium: 'среднее',
-  high: 'высокое',
-  xhigh: 'очень высокое',
-  max: 'максимум — долго'
-}
-
-const MODE_LABEL: Record<string, string> = {
-  default: 'спрашивать',
-  acceptEdits: 'принимать правки',
-  plan: 'план',
-  auto: 'автоматически',
-  dontAsk: 'не спрашивать',
-  bypassPermissions: 'без проверок'
 }
 
 export interface AgentRun {

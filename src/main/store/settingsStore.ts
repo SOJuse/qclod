@@ -10,7 +10,6 @@ export const DEFAULT_SETTINGS: AppSettings = Object.freeze({
   globalHotkey: 'Control+Shift+Space',
   notificationsEnabled: true,
   soundEnabled: true,
-  fontSize: 13,
   closeToTray: true,
   panelOpen: true,
   // A new tab accepts edits without asking: the permission card for every

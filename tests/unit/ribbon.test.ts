@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { RibbonBuilder } from '../../src/shared/ribbon'
+import { RibbonBuilder, parseTaskNotifications } from '../../src/shared/ribbon'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 import type { RibbonItem } from '../../src/shared/types'
 
@@ -608,3 +608,175 @@ describe('RibbonBuilder: подагент по сообщениям фейка',
     expect(card.summary).toBe('не закончил')
   })
 })
+
+const FINISH = { status: 'completed', summary: 'готово', tokens: 900, toolUses: 4, durationMs: 8000 }
+const PROGRESS = [
+  { tokens: 300, toolUses: 1, durationMs: 1000, lastTool: 'Read' },
+  { tokens: 500, toolUses: 2, durationMs: 3000, lastTool: 'Bash' }
+]
+
+function agentStep(extra: Record<string, unknown>): object {
+  return { kind: 'backgroundAgent', name: 'Прогон тестов', ...extra }
+}
+
+/** Plays the steps through the fake and returns everything it said, past the turn's result. */
+async function playedToEnd(steps: object[], stopAt = '</task-notification>'): Promise<unknown[]> {
+  const driver = createFakeSdk({ steps: steps as never })
+  const out: unknown[] = []
+  let resultSeen = false
+  for await (const m of driver.messages) {
+    out.push(m)
+    if ((m as Record<string, unknown>)['type'] === 'result') resultSeen = true
+    if (resultSeen && JSON.stringify(m).includes(stopAt)) break
+  }
+  return out
+}
+
+function feed(b: RibbonBuilder, messages: unknown[]): void {
+  for (const m of messages) b.apply(m)
+}
+
+const bubbles = (b: RibbonBuilder): string[] => only(b.items, 'user').map((u) => u.text)
+
+const isNoticeMessage = (m: unknown): boolean => {
+  const r = m as Record<string, unknown>
+  return r['type'] === 'user' && typeof r['origin'] === 'object'
+}
+
+describe('RibbonBuilder: события задач подагента', () => {
+  test('task_progress обновляет токены, число инструментов и последний инструмент', async () => {
+    const b = new RibbonBuilder()
+    feed(b, await playedToEnd([agentStep({ progress: PROGRESS, finish: null })], '"total_tokens":500'))
+    const card = only(b.items, 'subagent')[0]!
+    expect(card.state).toBe('running')
+    expect(card.tokens).toBe(500)
+    expect(card.toolCalls).toBe(2)
+    expect(card.lastTool).toBe('Bash')
+    expect(card.taskId).toEqual(expect.stringMatching(/^a[0-9a-f]{16}$/))
+  })
+
+  test('task_notification закрывает карточку с итогом', async () => {
+    const b = new RibbonBuilder()
+    feed(b, await playedToEnd([agentStep({ progress: PROGRESS, finish: FINISH })]))
+    const card = only(b.items, 'subagent')[0]!
+    expect(card.state).toBe('done')
+    expect(card.summary).toBe('готово')
+    expect(card.tokens).toBe(900)
+    expect(card.toolCalls).toBe(4)
+    expect(card.lastTool).toBeUndefined()
+  })
+
+  test('уведомление failed и stopped дают свои статусы', async () => {
+    for (const [status, state] of [
+      ['failed', 'failed'],
+      ['stopped', 'stopped']
+    ] as const) {
+      const b = new RibbonBuilder()
+      feed(b, await playedToEnd([agentStep({ finish: { ...FINISH, status } })]))
+      expect(only(b.items, 'subagent')[0]!.state).toBe(state)
+    }
+  })
+
+  test('уведомление пользователем не показывается', async () => {
+    const b = new RibbonBuilder()
+    feed(b, await playedToEnd([agentStep({ finish: FINISH })]))
+    expect(only(b.items, 'subagent')).toHaveLength(1)
+    for (const text of bubbles(b)) {
+      expect(text).not.toContain('task-notification')
+      expect(text).not.toContain('Прогон тестов')
+    }
+  })
+
+  test('уведомление только сообщением пользователя тоже закрывает карточку', async () => {
+    const b = new RibbonBuilder()
+    const all = await playedToEnd([agentStep({ finish: { ...FINISH, tokens: 93175 } })])
+    feed(b, all.filter((m) => (m as Record<string, unknown>)['subtype'] !== 'task_notification'))
+    const card = only(b.items, 'subagent')[0]!
+    expect(card.state).toBe('done')
+    expect(card.tokens).toBe(93175)
+    expect(bubbles(b)).toEqual([])
+  })
+
+  test('result посреди работы фонового агента не закрывает его', async () => {
+    const b = new RibbonBuilder()
+    feed(b, await played([agentStep({ finish: null })]))
+    b.apply({ type: 'result', subtype: 'success' })
+    expect(only(b.items, 'subagent')[0]!.state).toBe('running')
+  })
+
+  test('background_tasks_changed без агента в списке не меняет состояние', async () => {
+    const b = new RibbonBuilder()
+    feed(b, await played([agentStep({ finish: null })]))
+    const before = JSON.stringify(b.items)
+    expect(b.apply({ type: 'system', subtype: 'background_tasks_changed', tasks: [] })).toEqual([])
+    expect(JSON.stringify(b.items)).toBe(before)
+  })
+
+  test('task_updated закрывает карточку, но не воскрешает закрытую', async () => {
+    const b = new RibbonBuilder()
+    feed(b, await played([agentStep({ finish: null })]))
+    const card = only(b.items, 'subagent')[0]!
+    const update = (patch: Record<string, unknown>): unknown =>
+      b.apply({ type: 'system', subtype: 'task_updated', task_id: card.taskId, patch })
+    update({ status: 'running' })
+    expect(card.state).toBe('running')
+    update({ status: 'failed', error: 'упал' })
+    expect(card.state).toBe('failed')
+    expect(card.summary).toBe('упал')
+    update({ status: 'completed' })
+    expect(card.state).toBe('failed')
+  })
+
+  test('событие задачи без карточки игнорируется', () => {
+    const b = new RibbonBuilder()
+    expect(
+      b.apply({ type: 'system', subtype: 'task_started', task_id: 'bash1', tool_use_id: 'x', task_type: 'local_bash' })
+    ).toEqual([])
+    expect(b.apply({ type: 'system', subtype: 'task_progress', task_id: 'bash1', usage: {} })).toEqual([])
+    expect(b.items).toEqual([])
+  })
+
+  test('parseTaskNotifications читает блок внутри system-reminder', () => {
+    const text =
+      '<system-reminder><task-notification>\n<task-id>a1</task-id>\n<tool-use-id>tu1</tool-use-id>\n' +
+      '<status>failed</status>\n<summary>упал</summary>\n' +
+      '<usage><subagent_tokens>10</subagent_tokens><tool_uses>2</tool_uses><duration_ms>30</duration_ms></usage>\n' +
+      '</task-notification></system-reminder>\n<task-notification><status>completed</status></task-notification>'
+    expect(parseTaskNotifications(text)).toEqual([
+      {
+        taskId: 'a1',
+        toolUseId: 'tu1',
+        status: 'failed',
+        summary: 'упал',
+        usage: { tokens: 10, toolCalls: 2, durationMs: 30 }
+      }
+    ])
+  })
+
+  test('повторное уведомление того же агента перезаписывает статус', async () => {
+    const b = new RibbonBuilder()
+    const all = await playedToEnd([agentStep({ finish: FINISH })])
+    feed(b, all)
+    const note = all.find(isNoticeMessage) as { message: { content: string } }
+    b.apply({
+      type: 'user',
+      origin: { kind: 'task-notification' },
+      message: { role: 'user', content: note.message.content.replace('completed', 'failed') }
+    })
+    expect(only(b.items, 'subagent')[0]!.state).toBe('failed')
+  })
+
+  test('уведомление в system-reminder закрывает карточку, а текст человека остаётся', async () => {
+    const b = new RibbonBuilder()
+    const all = await playedToEnd([agentStep({ finish: FINISH })])
+    const note = all.find(isNoticeMessage) as { message: { content: string } }
+    // everything but the notice, so the card is still running
+    feed(b, all.filter((m) => (m as Record<string, unknown>)['subtype'] !== 'task_notification' && !isNoticeMessage(m)))
+    const card = only(b.items, 'subagent')[0]!
+    expect(card.state).toBe('running')
+    b.apply(userMessage(`посмотри ещё\n<system-reminder>${note.message.content}</system-reminder>`))
+    expect(card.state).toBe('done')
+    expect(bubbles(b)).toEqual(['посмотри ещё'])
+  })
+})
+

@@ -776,3 +776,30 @@ describe('AgentSession: id запросов', () => {
     await session.dispose()
   })
 })
+
+describe('AgentSession: фоновый подагент переживает ход', () => {
+  test('ход кончается idle, а фоновый подагент в ленте всё ещё работает, пока не придёт уведомление', async () => {
+    const { session } = makeSession({
+      steps: [
+        {
+          kind: 'backgroundAgent',
+          name: 'Прогон тестов',
+          pauseMs: 150,
+          finish: { status: 'completed', summary: 'готово', tokens: 900, toolUses: 4, durationMs: 8000 }
+        }
+      ]
+    })
+    const rec = watch(session)
+    await session.start()
+    await settle(session)
+    session.send({ text: 'запусти тесты', attachments: [] })
+
+    const card = (): RibbonItem | undefined => rec.items.find((i) => i.kind === 'subagent')
+    await vi.waitFor(() => expect(card()).toBeDefined(), { timeout: 2000, interval: 5 })
+    await vi.waitFor(() => expect(session.status).toBe('idle'), { timeout: 2000, interval: 5 })
+    expect(card()).toMatchObject({ state: 'running', background: true })
+
+    await vi.waitFor(() => expect(card()).toMatchObject({ state: 'done', tokens: 900 }), { timeout: 2000 })
+  })
+})
+

@@ -147,7 +147,8 @@ const INJECTED_TAGS = [
   'command-args',
   'local-command-stdout',
   'local-command-stderr',
-  'user-prompt-submit-hook'
+  'user-prompt-submit-hook',
+  'task-notification'
 ]
 
 const INJECTED = INJECTED_TAGS.map(
@@ -167,6 +168,57 @@ export function userText(raw: string): string {
   return text.trim()
 }
 
+/** One finished-subagent notice, as the CLI words it for the main agent. */
+export interface TaskNotice {
+  taskId: string
+  toolUseId: string
+  status: 'completed' | 'failed' | 'stopped' | 'killed'
+  summary: string
+  usage?: { tokens: number; toolCalls: number; durationMs: number }
+}
+
+function tagValue(block: string, tag: string): string | undefined {
+  const m = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(block)
+  return m ? m[1]!.trim() : undefined
+}
+
+/** Every <task-notification> block in the text, wherever it sits (a reminder included). */
+export function parseTaskNotifications(text: string): TaskNotice[] {
+  const notices: TaskNotice[] = []
+  for (const match of text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
+    const block = match[1]!
+    const taskId = tagValue(block, 'task-id') ?? ''
+    const toolUseId = tagValue(block, 'tool-use-id') ?? ''
+    if (!taskId && !toolUseId) continue
+    const status = tagValue(block, 'status')
+    const notice: TaskNotice = {
+      taskId,
+      toolUseId,
+      status: status === 'failed' || status === 'stopped' || status === 'killed' ? status : 'completed',
+      summary: tagValue(block, 'summary') ?? ''
+    }
+    const usage = tagValue(block, 'usage')
+    if (usage !== undefined) {
+      notice.usage = {
+        tokens: Number(tagValue(usage, 'subagent_tokens') ?? 0) || 0,
+        toolCalls: Number(tagValue(usage, 'tool_uses') ?? 0) || 0,
+        durationMs: Number(tagValue(usage, 'duration_ms') ?? 0) || 0
+      }
+    }
+    notices.push(notice)
+  }
+  return notices
+}
+
+const NOTICE_STATE: Record<TaskNotice['status'], SubagentState> = {
+  completed: 'done',
+  failed: 'failed',
+  stopped: 'stopped',
+  killed: 'stopped'
+}
+
+type SubagentItem = Extract<RibbonItem, { kind: 'subagent' }>
+
 function imageAttachment(block: Record<string, unknown>): Attachment | null {
   const source = block['source']
   if (!isObject(source) || source['type'] !== 'base64') return null
@@ -180,6 +232,8 @@ function imageAttachment(block: Record<string, unknown>): Attachment | null {
 export class RibbonBuilder {
   private readonly list: RibbonItem[] = []
   private readonly byToolUseId = new Map<string, string>()
+  /** task_id of a subagent's task events -> its card, learnt from task_started. */
+  private readonly byTaskId = new Map<string, string>()
   /** When each subagent card was placed, for timing it ourselves. */
   private readonly startedAt = new Map<string, number>()
   private readonly openBlocks = new Map<number, OpenBlock>()
@@ -298,7 +352,7 @@ export class RibbonBuilder {
       case 'user':
         return this.onUser(message)
       case 'system':
-        return message['subtype'] === 'compact_boundary' ? this.onCompaction(message) : []
+        return this.onSystem(message)
       case 'result':
         return this.closeOpenBlocks()
       case 'permission_denied':
@@ -549,10 +603,25 @@ export class RibbonBuilder {
     if (!isObject(inner)) return []
     const content = inner['content']
 
+    // The news of a finished subagent, however it reaches us, closes its card;
+    // it is never something the person typed.
+    const noticeText =
+      typeof content === 'string'
+        ? content
+        : asArray(content)
+            .filter(isObject)
+            .filter((b) => b['type'] === 'text')
+            .map((b) => str(b['text']))
+            .join('\n')
+    const noticed: RibbonChange[] = []
+    for (const notice of parseTaskNotifications(noticeText)) noticed.push(...this.applyNotice(notice))
+    const origin = message['origin']
+    if (isObject(origin) && origin['kind'] === 'task-notification') return noticed
+
     if (typeof content === 'string') {
-      if (message['isSynthetic'] === true || this.consumeEcho(content)) return []
+      if (message['isSynthetic'] === true || this.consumeEcho(content)) return noticed
       const text = userText(content)
-      return text === '' ? [] : this.appendUser(text)
+      return text === '' ? noticed : [...noticed, ...this.appendUser(text)]
     }
 
     const blocks = asArray(content).filter(isObject)
@@ -565,7 +634,7 @@ export class RibbonBuilder {
       return changes
     }
 
-    if (message['isSynthetic'] === true) return []
+    if (message['isSynthetic'] === true) return noticed
 
     const text = userText(
       blocks
@@ -578,9 +647,9 @@ export class RibbonBuilder {
       .map(imageAttachment)
       .filter((a): a is Attachment => a !== null)
 
-    if (!text && attachments.length === 0) return []
-    if (this.consumeEcho(text)) return []
-    return this.appendUser(text, attachments)
+    if (!text && attachments.length === 0) return noticed
+    if (this.consumeEcho(text)) return noticed
+    return [...noticed, ...this.appendUser(text, attachments)]
   }
 
   private onToolResult(
@@ -656,6 +725,116 @@ export class RibbonBuilder {
     }
 
     return []
+  }
+
+  // ------------------------------------------------------------ task events
+
+  private onSystem(message: Record<string, unknown>): RibbonChange[] {
+    switch (message['subtype']) {
+      case 'compact_boundary':
+        return this.onCompaction(message)
+      case 'task_started':
+        return this.onTaskStarted(message)
+      case 'task_progress':
+        return this.onTaskProgress(message)
+      case 'task_updated':
+        return this.onTaskUpdated(message)
+      case 'task_notification':
+        return this.onTaskNotification(message)
+      // background_tasks_changed is a level signal whose order against the
+      // bookends is not promised; only a notice or task_updated closes a card.
+      default:
+        return []
+    }
+  }
+
+  private subagentFor(toolUseId: string, taskId: string): SubagentItem | undefined {
+    const id = (toolUseId && this.byToolUseId.get(toolUseId)) || (taskId && this.byTaskId.get(taskId))
+    const item = id ? this.find(id) : undefined
+    return item?.kind === 'subagent' ? item : undefined
+  }
+
+  private patchSubagent(item: SubagentItem, patch: Partial<SubagentItem>): RibbonChange[] {
+    Object.assign(item, patch)
+    return [this.update(item.id, patch)]
+  }
+
+  private onTaskStarted(message: Record<string, unknown>): RibbonChange[] {
+    const taskId = str(message['task_id'])
+    const item = this.subagentFor(str(message['tool_use_id']), '')
+    if (!item || !taskId) return []
+    this.byTaskId.set(taskId, item.id)
+    const patch: Partial<SubagentItem> = { taskId }
+    if (typeof message['is_backgrounded'] === 'boolean') patch.background = message['is_backgrounded']
+    return this.patchSubagent(item, patch)
+  }
+
+  private onTaskProgress(message: Record<string, unknown>): RibbonChange[] {
+    const item = this.subagentFor(str(message['tool_use_id']), str(message['task_id']))
+    if (!item || item.state !== 'running') return []
+    const usage = isObject(message['usage']) ? message['usage'] : {}
+    const patch: Partial<SubagentItem> = {
+      tokens: Number(usage['total_tokens'] ?? 0) || 0,
+      toolCalls: Number(usage['tool_uses'] ?? 0) || 0,
+      durationMs: Number(usage['duration_ms'] ?? 0) || 0
+    }
+    const last = str(message['last_tool_name'])
+    if (last) patch.lastTool = last
+    const summary = str(message['summary'])
+    if (summary) patch.summary = clip(summary, 160)
+    return this.patchSubagent(item, patch)
+  }
+
+  private onTaskUpdated(message: Record<string, unknown>): RibbonChange[] {
+    const item = this.subagentFor('', str(message['task_id']))
+    if (!item || item.state !== 'running') return []
+    const patch = isObject(message['patch']) ? message['patch'] : {}
+    const status = patch['status']
+    if (status === 'completed') return this.patchSubagent(item, { state: 'done' })
+    if (status === 'killed') return this.patchSubagent(item, { state: 'stopped' })
+    if (status === 'failed') {
+      const error = str(patch['error'])
+      return this.patchSubagent(item, { state: 'failed', ...(error ? { summary: clip(error, 160) } : {}) })
+    }
+    return []
+  }
+
+  private onTaskNotification(message: Record<string, unknown>): RibbonChange[] {
+    const usage = isObject(message['usage']) ? message['usage'] : undefined
+    return this.applyNotice({
+      taskId: str(message['task_id']),
+      toolUseId: str(message['tool_use_id']),
+      status: message['status'] as TaskNotice['status'],
+      summary: str(message['summary']),
+      ...(usage
+        ? {
+            usage: {
+              tokens: Number(usage['total_tokens'] ?? 0) || 0,
+              toolCalls: Number(usage['tool_uses'] ?? 0) || 0,
+              durationMs: Number(usage['duration_ms'] ?? 0) || 0
+            }
+          }
+        : {})
+    })
+  }
+
+  /** A repeated notice for the same agent overwrites the earlier one. */
+  private applyNotice(notice: TaskNotice): RibbonChange[] {
+    const item = this.subagentFor(notice.toolUseId, notice.taskId)
+    if (!item) return []
+    const patch: Partial<SubagentItem> = {
+      state: NOTICE_STATE[notice.status] ?? 'done',
+      summary: clip(notice.summary, 160),
+      lastTool: undefined,
+      ...(notice.usage
+        ? {
+            tokens: notice.usage.tokens,
+            toolCalls: notice.usage.toolCalls,
+            durationMs: notice.usage.durationMs
+          }
+        : {})
+    }
+    return this.patchSubagent(item, patch)
   }
 
   private onCompaction(message: Record<string, unknown>): RibbonChange[] {

@@ -162,7 +162,6 @@
   white-space: pre-wrap;
   line-height: var(--leading);
   color: var(--text-dim);
-  user-select: text;
 }
 
 /* ------------------------------------------------------------ permissions */
@@ -414,7 +413,6 @@
 
 /* The conversation is text people copy out of; the chrome around it is not. */
 .ribbon {
-  user-select: text;
 }
 
 /* ------------------------------------------------------------- plan mode */

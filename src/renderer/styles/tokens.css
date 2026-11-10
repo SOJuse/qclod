@@ -205,6 +205,13 @@ body {
   font-size: var(--text-md);
   line-height: var(--leading);
   overflow: hidden;
+}
+
+/* Text is selectable everywhere; only the window chrome is not. Tool and subagent
+   heads (they fold on click) say so in their own sheets. */
+.title-bar,
+button,
+[role='tab'] {
   user-select: none;
 }
 

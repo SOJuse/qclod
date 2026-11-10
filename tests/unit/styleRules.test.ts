@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test } from 'vitest'
-import { rendererCssFiles, rendererTsxFiles, stripComments } from './cssTokens'
+import { cssRules, rendererCssFiles, rendererTsxFiles, stripComments } from './cssTokens'
 
 const root = resolve(__dirname, '../..')
 
@@ -72,4 +72,31 @@ test('кольцо фокуса — одно правило в tokens.css, ко�
   // Thin 1px look-alikes and private copies of the ring are what made focus hard to see.
   expect(hits(/outline:\s*1px/g)).toEqual([])
   expect(hits(/box-shadow:\s*var\(--focus-ring\)\s*;/g)).toEqual([])
+})
+
+// Text is selectable everywhere except the window chrome and the heads that a click folds or unfolds.
+// `.diff-no` / `.diff-sign` are gutters of the diff: they stay out of a copied selection.
+const CHROME_SELECTORS = [
+  '.title-bar',
+  'button',
+  "[role='tab']",
+  '.tab',
+  '.tool-head',
+  '.subagent-head',
+  '.thinking-head',
+  '.panel-resizer',
+  '.diff-no',
+  '.diff-sign'
+]
+// A selector belongs to the chrome when it starts with one of these and the name ends there (`.tab` is not `.table`).
+const isChrome = (selector: string) =>
+  CHROME_SELECTORS.some((s) => selector.startsWith(s) && !/^[\w-]/.test(selector.slice(s.length)))
+test('user-select: none только у хрома', () => {
+  const offenders = cssRules().filter((r) => /user-select:\s*none/.test(r.body) && !isChrome(r.selector))
+  expect(offenders.map((r) => `${r.file}: ${r.selector}`)).toEqual([])
+})
+test('у body нет user-select и нет лишних user-select: text', () => {
+  const rules = cssRules()
+  expect(rules.filter((r) => r.selector === 'body' && /user-select/.test(r.body)).map((r) => r.file)).toEqual([])
+  expect(rules.filter((r) => /user-select:\s*text/.test(r.body)).map((r) => `${r.file}: ${r.selector}`)).toEqual([])
 })

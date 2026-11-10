@@ -101,7 +101,6 @@
   color: var(--text);
   font: inherit;
   font-size: var(--text-sm);
-  user-select: text;
 }
 
 /* Every text field here holds a shortcut, a path, flags or a command. */

@@ -131,7 +131,6 @@
   font: inherit;
   line-height: var(--leading);
   padding: 2px 0;
-  user-select: text;
 }
 
 .composer-input::placeholder {

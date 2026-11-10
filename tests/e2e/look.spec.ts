@@ -347,3 +347,29 @@ for (const { name, key, level } of [
     }
   })
 }
+
+// ---------------------------------------------------------------- selection (Task 7)
+
+test('двойной клик выделяет слово в ленте, выводе и панели, но не во вкладке заголовка', async () => {
+  const { app, win } = await launchQclod({ script: { steps: [], turns: [ALL_CATEGORIES] } })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.waitFor({ timeout: 15000 })
+    await input.fill('Почини вход')
+    await input.press('Enter')
+    await expect(win.locator('[data-testid="ribbon-agentText"]').last()).toContainText('Готово', { timeout: 15000 })
+    await expect(win.locator('[data-testid="side-panel"]')).toBeVisible()
+    const selected = async (sel: string): Promise<string> => {
+      await win.evaluate(() => document.getSelection()?.removeAllRanges())
+      await win.locator(sel).first().dblclick()
+      return win.evaluate(() => document.getSelection()?.toString() ?? '')
+    }
+    expect(await selected('[data-testid="ribbon-agentText"] .md-p')).not.toBe('')
+    await win.locator('.tool-card[data-category="command"] [data-testid="tool-head"]').first().click()
+    expect(await selected('[data-testid="tool-stdout"]')).not.toBe('')
+    expect(await selected('[data-testid="panel-context"] .panel-line span')).not.toBe('')
+    expect(await selected('[data-testid="tab"] .tab-title')).toBe('')
+  } finally {
+    await app.close()
+  }
+})

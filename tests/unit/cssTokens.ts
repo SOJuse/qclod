@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 /** Shared helpers for the static style tests: read tokens.css, resolve and measure colours. */
@@ -105,4 +105,40 @@ export function rendererCssFiles(): string[] {
 /** Every renderer component file, as absolute paths. */
 export function rendererTsxFiles(): string[] {
   return walk(RENDERER, '.tsx')
+}
+
+export interface CssRule {
+  file: string
+  selector: string
+  body: string
+}
+
+function parseRules(file: string, css: string, out: CssRule[]): void {
+  let i = 0
+  while (i < css.length) {
+    const open = css.indexOf('{', i)
+    if (open < 0) return
+    let depth = 1
+    let j = open + 1
+    for (; j < css.length && depth > 0; j++) {
+      if (css[j] === '{') depth++
+      else if (css[j] === '}') depth--
+    }
+    const head = css.slice(i, open).trim()
+    const body = css.slice(open + 1, j - 1)
+    if (head.startsWith('@')) {
+      // @media / @supports wrap more rules; @font-face and @keyframes hold declarations or frames, not selectors.
+      if (/^@(media|supports|layer)\b/.test(head)) parseRules(file, body, out)
+    } else {
+      for (const selector of head.split(',')) out.push({ file, selector: selector.trim(), body })
+    }
+    i = j
+  }
+}
+
+/** Every style rule of the renderer stylesheets, tokens.css included; one entry per selector of a comma list, @media unwrapped. */
+export function cssRules(): CssRule[] {
+  const out: CssRule[] = []
+  for (const f of walk(RENDERER, '.css')) parseRules(f, stripComments(readFileSync(f, 'utf8')), out)
+  return out
 }

@@ -100,7 +100,7 @@ export interface QuestionView {
  * into one paragraph.
  */
 export type RibbonItem =
-  | (RibbonBase & { kind: 'user'; text: string; attachments: Attachment[] })
+  | (RibbonBase & { kind: 'user'; text: string; attachments: Attachment[]; remote?: true })
   | (RibbonBase & { kind: 'agentText'; text: string; streaming: boolean })
   | (RibbonBase & { kind: 'thinking'; text: string; done: boolean; durationMs: number })
   | (RibbonBase & ToolCallData & {
@@ -150,13 +150,13 @@ export type RibbonItem =
       requestId: string
       toolName: string
       target: string
-      state: 'pending' | 'allowed' | 'denied'
+      state: 'pending' | 'allowed' | 'denied' | 'elsewhere'
     })
   | (RibbonBase & {
       kind: 'plan'
       requestId: string
       text: string
-      state: 'pending' | 'approved' | 'rejected'
+      state: 'pending' | 'approved' | 'rejected' | 'elsewhere'
     })
   | (RibbonBase & {
       kind: 'question'
@@ -164,6 +164,8 @@ export type RibbonItem =
       questions: QuestionView[]
       /** Question text -> chosen label(s); null while the card is open. */
       answers: Record<string, string> | null
+      /** Answered on another device (Remote Control): closed, with no answers of ours. */
+      elsewhere?: true
     })
   | (RibbonBase & {
       kind: 'compaction'

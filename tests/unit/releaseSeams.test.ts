@@ -15,7 +15,9 @@ describe('проверка релизной сборки на тестовые �
       'QCLOD_PREPARE_FAIL',
       'QCLOD_ALLOW_REAL',
       'QCLOD_FAKE_INSTALL',
+      'QCLOD_FAKE_AUTH',
       '__qclodShellLog',
+      '__qclodLoginOpens',
       '__qclodRealAgentStarts',
       'Тестовая сборка не запускает'
     ]

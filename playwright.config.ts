@@ -11,6 +11,10 @@ process.env['QCLOD_FAKE_SDK'] = resolve(__dirname, 'tests/fixtures/fake-sdk/inde
 process.env['QCLOD_HEADLESS'] = '1'
 process.env['QCLOD_USER_DATA'] = mkdtempSync(join(tmpdir(), 'qclod-e2e-'))
 
+// The real `claude auth status` is never asked in e2e: by default the agent
+// counts as logged in. A spec overrides it per launch through `env`.
+process.env['QCLOD_FAKE_AUTH'] ??= '{"sequence":["in"]}'
+
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 45000,

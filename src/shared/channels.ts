@@ -57,7 +57,7 @@ export const CHANNELS = Object.freeze({
   setupCheck: 'setup:check',
   setupInstall: 'setup:install',
   setupCancel: 'setup:cancel',
-  setupTerminal: 'setup:terminal',
+  setupLogin: 'setup:login',
 
   // main -> renderer (events)
   ribbonChanged: 'ribbon:changed',
@@ -67,7 +67,8 @@ export const CHANNELS = Object.freeze({
   activateTab: 'tabs:activateRequest',
   settingsChanged: 'settings:changed',
   commandsChanged: 'commands:changed',
-  setupOutput: 'setup:output'
+  setupOutput: 'setup:output',
+  setupLoginProgress: 'setup:loginProgress'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -116,7 +117,7 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.setupCheck,
   CHANNELS.setupInstall,
   CHANNELS.setupCancel,
-  CHANNELS.setupTerminal
+  CHANNELS.setupLogin
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
@@ -127,5 +128,6 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.activateTab,
   CHANNELS.settingsChanged,
   CHANNELS.commandsChanged,
-  CHANNELS.setupOutput
+  CHANNELS.setupOutput,
+  CHANNELS.setupLoginProgress
 ])

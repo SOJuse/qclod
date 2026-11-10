@@ -1,15 +1,25 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import { spawn } from 'node:child_process'
 import { checkEnvironment } from './setup/environment'
+import { locateAgent } from './setup/findAgent'
+import { LoginWatch, openLoginWindow, readAuthStatus } from './setup/auth'
 import { detectInstallMethods, installWithFallback, InstallSlot } from './setup/install'
 import { fakeInstaller, type FakeInstallConfig } from './setup/fakeInstall'
 import { CHANNELS } from '../shared/channels'
-import type { AppSettings } from '../shared/types'
+import type { AppSettings, AuthStatus } from '../shared/types'
 
 export interface BaseIpcDeps {
   getWindow: () => BrowserWindow | null
   getSettings: () => AppSettings
   setSettings: (patch: Partial<AppSettings>) => AppSettings
+  /** Called once the login watch sees the agent logged in. */
+  onLoggedIn?: () => void
+}
+
+/** QCLOD_FAKE_AUTH: scripted answers of `claude auth status` (e2e only). */
+interface FakeAuthConfig {
+  sequence: AuthStatus[]
+  pollMs?: number
+  maxMs?: number
 }
 
 /**
@@ -36,9 +46,52 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
   const fakeInstallJson = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_INSTALL'] : undefined
   const fake = fakeInstallJson ? fakeInstaller(JSON.parse(fakeInstallJson) as FakeInstallConfig) : null
 
+  // Test seam: scripted `claude auth status` answers, and no login window.
+  // Every check — the environment's and the login watch's — takes the next
+  // answer from one shared sequence; the last one repeats.
+  const fakeAuthJson = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_AUTH'] : undefined
+  const fakeAuth = fakeAuthJson ? (JSON.parse(fakeAuthJson) as FakeAuthConfig) : null
+  let fakeAuthStep = 0
+  const fakeAuthStatus = async (): Promise<AuthStatus> => {
+    const sequence = fakeAuth?.sequence ?? []
+    return sequence[Math.min(fakeAuthStep++, sequence.length - 1)] ?? 'unknown'
+  }
+
   ipcMain.handle(CHANNELS.setupCheck, () =>
-    checkEnvironment(deps.getSettings().agentPath, fake ? { detect: fake.detect } : {})
+    checkEnvironment(deps.getSettings().agentPath, {
+      ...(fake ? { detect: fake.detect } : {}),
+      ...(fakeAuth ? { authStatus: fakeAuthStatus } : {})
+    })
   )
+
+  /** The agent the login window was opened for; the watch asks about it. */
+  let loginAgent = ''
+  const login = new LoginWatch({
+    check: () => (fakeAuth ? fakeAuthStatus() : readAuthStatus(loginAgent)),
+    onProgress: (progress) => {
+      const win = getWindow()
+      if (win && !win.isDestroyed()) win.webContents.send(CHANNELS.setupLoginProgress, progress)
+      if (progress === 'in') deps.onLoggedIn?.()
+    },
+    ...(fakeAuth?.pollMs !== undefined ? { intervalMs: fakeAuth.pollMs } : {}),
+    ...(fakeAuth?.maxMs !== undefined ? { maxMs: fakeAuth.maxMs } : {})
+  })
+
+  // Logging in is `claude auth login` in a console window of its own; Qclod
+  // watches `claude auth status` and notices success by itself. The command
+  // is ours, never the renderer's. Without an agent nothing opens and the
+  // invoke rejects with the reason.
+  ipcMain.handle(CHANNELS.setupLogin, () => {
+    const agent = locateAgent(deps.getSettings().agentPath, process.env)
+    loginAgent = agent
+    if (fakeAuth) {
+      const g = globalThis as { __qclodLoginOpens?: string[] }
+      ;(g.__qclodLoginOpens ??= []).push(agent)
+    } else {
+      openLoginWindow(agent)
+    }
+    login.start()
+  })
 
   ipcMain.handle(CHANNELS.setupInstall, async () => {
     const win = getWindow()
@@ -60,20 +113,6 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
 
   ipcMain.handle(CHANNELS.setupCancel, () => {
     install.cancel()
-  })
-
-  // Logging in happens in a terminal, so Qclod opens one rather than leaving
-  // the user to find it. The command is ours, never the renderer's.
-  ipcMain.handle(CHANNELS.setupTerminal, () => {
-    const agent = deps.getSettings().agentPath || 'claude'
-    if (process.platform === 'win32') {
-      spawn('cmd.exe', ['/c', 'start', '""', 'cmd.exe', '/k', agent], {
-        detached: true,
-        windowsHide: false
-      }).unref()
-      return
-    }
-    spawn('x-terminal-emulator', ['-e', agent], { detached: true }).unref()
   })
 
   ipcMain.handle(CHANNELS.windowMinimize, () => {

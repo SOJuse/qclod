@@ -100,7 +100,7 @@ export function SetupScreen({ report, onRecheck, onDone }: Props): JSX.Element {
               type="button"
               data-testid="setup-terminal"
               title="Открыть терминал, чтобы войти в Claude Code"
-              onClick={() => void window.qclod.openTerminal()}
+              onClick={() => void window.qclod.login()}
             >
               Открыть терминал
             </button>

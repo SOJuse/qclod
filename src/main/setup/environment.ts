@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import type { EnvironmentReport, ToolReport } from '../../shared/types'
+import type { AuthStatus, EnvironmentReport, ToolReport } from '../../shared/types'
 import { AgentNotFoundError } from '../agent/resolveExecutable'
+import { readAuthStatus } from './auth'
 import { locateAgent } from './findAgent'
 import { detectInstallMethod, type InstallMethod } from './install'
 
@@ -12,6 +13,8 @@ const run = promisify(execFile)
 export interface EnvironmentDeps {
   env?: NodeJS.ProcessEnv
   detect?: () => Promise<InstallMethod | null>
+  /** Asked only when the agent is found, with its resolved path. */
+  authStatus?: (agent: string) => Promise<AuthStatus>
 }
 
 /**
@@ -27,6 +30,7 @@ export async function checkEnvironment(
 ): Promise<EnvironmentReport> {
   const env = deps.env ?? process.env
   const detect = deps.detect ?? detectInstallMethod
+  const authStatus = deps.authStatus ?? readAuthStatus
 
   let path: string
   try {
@@ -42,6 +46,7 @@ export async function checkEnvironment(
     return {
       agent: { found: false, ...(problem ? { problem } : {}) },
       installMethod: await detect(),
+      auth: null,
       ready: false
     }
   }
@@ -57,8 +62,17 @@ export async function checkEnvironment(
     // reported as found rather than hidden.
   }
 
+  // Only a definite "logged out" stops the work: an older CLI without
+  // `auth status`, or one that would not answer, must not lock anyone out.
+  const auth = await authStatus(path)
+
   // Nothing left to install, so nothing is asked of the machine.
-  return { agent: { found: true, path, ...(version ? { version } : {}) }, installMethod: null, ready: true }
+  return {
+    agent: { found: true, path, ...(version ? { version } : {}) },
+    installMethod: null,
+    auth,
+    ready: auth !== 'out'
+  }
 }
 
 /** `2.1.268 (Claude Code)` → `2.1.268`. */

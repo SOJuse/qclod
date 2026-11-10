@@ -37,6 +37,15 @@ describe('ipc channel contract', () => {
     }
   })
 
+  test('вход: invoke setup:login и событие setup:loginProgress; setup:terminal больше нет', () => {
+    expect(CHANNELS.setupLogin).toBe('setup:login')
+    expect(INVOKE_CHANNELS).toContain('setup:login')
+    expect(CHANNELS.setupLoginProgress).toBe('setup:loginProgress')
+    expect(EVENT_CHANNELS).toContain('setup:loginProgress')
+    expect(Object.values(CHANNELS)).not.toContain('setup:terminal')
+    expect(INVOKE_CHANNELS).not.toContain('setup:terminal')
+  })
+
   test('терминальных каналов v1 больше нет', () => {
     // The pty is gone; a channel that outlives its feature is a trap for the
     // next reader.

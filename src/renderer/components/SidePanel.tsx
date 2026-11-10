@@ -1,5 +1,6 @@
 import type { LimitWindow, McpServerInfo, PanelData, SubagentState } from '../../shared/types'
 import { untilReset } from '../../shared/format'
+import { contextLevel } from '../chat/contextLevel'
 import { AGENT_STATE_LABEL } from './agentState'
 import './SidePanel.css'
 
@@ -230,10 +231,10 @@ function Empty({ started, text }: { started: boolean; text?: string }): JSX.Elem
   )
 }
 
+/** The same thresholds as the status line under the input (80% and 90%). */
 function Bar({ percent }: { percent: number }): JSX.Element {
-  const level = percent > 85 ? 'is-high' : percent > 60 ? 'is-mid' : 'is-low'
   return (
-    <div className={`panel-bar ${level}`}>
+    <div className="panel-bar" data-level={contextLevel(percent)}>
       <div style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
     </div>
   )

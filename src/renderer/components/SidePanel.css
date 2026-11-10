@@ -78,7 +78,7 @@
 .panel-bar {
   height: 4px;
   border-radius: 999px;
-  background: var(--border);
+  background: var(--meter-track);
   overflow: hidden;
   margin: 5px 0;
 }
@@ -90,12 +90,12 @@
   transition: width var(--dur) var(--ease);
 }
 
-.panel-bar.is-mid > div {
-  background: var(--warn);
+.panel-bar[data-level='warn'] > div {
+  background: var(--status-warn);
 }
 
-.panel-bar.is-high > div {
-  background: var(--danger);
+.panel-bar[data-level='critical'] > div {
+  background: var(--status-critical);
 }
 
 .panel-breakdown {

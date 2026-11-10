@@ -76,12 +76,15 @@ test('80% — индикатор меняет уровень, 92% — плашк
     await expect(win.locator('[data-testid="status-context"]')).toContainText('82%')
     await expect(win.locator('[data-testid="status-context-alert"]')).toBeVisible()
     await expect(win.locator('[data-testid="context-banner"]')).toHaveCount(0)
+    // The panel's bar follows the same thresholds as the status line.
+    await expect(win.locator('[data-testid="panel-context"] .panel-bar')).toHaveAttribute('data-level', 'warn')
 
     await send(win, 'второй')
     await expect(meter).toHaveAttribute('data-level', 'critical', { timeout: 15000 })
     const banner = win.locator('[data-testid="context-banner"]')
     await expect(banner).toBeVisible()
     await expect(banner).toContainText('Контекст почти заполнен — 92%')
+    await expect(win.locator('[data-testid="panel-context"] .panel-bar')).toHaveAttribute('data-level', 'critical')
 
     await win.locator('[data-testid="context-compact"]').click()
     await expect(win.locator('[data-testid="ribbon-user"]').last()).toContainText('/compact', {
@@ -132,11 +135,34 @@ test('список строки статуса водится с клавиат�
     const mode = win.locator('[data-testid="status-mode"]')
     await expect(mode).toHaveAttribute('data-value', 'default', { timeout: 15000 })
 
+    // A select-only combobox: the list is its popup and the chosen row its active descendant.
+    await expect(mode).toHaveAttribute('role', 'combobox')
+    await expect(mode).toHaveAttribute('aria-expanded', 'false')
+
+    // Esc reaching the window: an open list keeps it, a closed button lets it through.
+    await win.evaluate(() => {
+      const seen: string[] = []
+      ;(window as unknown as { escSeen: string[] }).escSeen = seen
+      window.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') seen.push(ev.defaultPrevented ? 'prevented' : 'free')
+      })
+    })
+    const escSeen = (): Promise<string[]> =>
+      win.evaluate(() => (window as unknown as { escSeen: string[] }).escSeen)
+
     await mode.focus()
     await win.keyboard.press('Enter')
     await expect(win.locator('[data-testid="status-mode-menu"]')).toBeVisible()
+    await expect(mode).toHaveAttribute('aria-expanded', 'true')
+    const active = await mode.getAttribute('aria-activedescendant')
+    expect(active).toBeTruthy()
+    await expect(win.locator(`[id="${active}"]`)).toHaveAttribute('data-id', 'default')
     await win.keyboard.press('Escape')
     await expect(win.locator('[data-testid="status-mode-menu"]')).toHaveCount(0)
+    expect(await escSeen()).toEqual([])
+
+    await win.keyboard.press('Escape')
+    expect(await escSeen()).toEqual(['free'])
 
     // default → acceptEdits → plan, one row down at a time.
     await win.keyboard.press('ArrowUp')
@@ -146,6 +172,32 @@ test('список строки статуса водится с клавиат�
     await win.keyboard.press('Enter')
     await expect(mode).toHaveAttribute('data-value', 'plan', { timeout: 15000 })
     await expect(win.locator('[data-testid="status-mode-menu"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('усилие, которого новая модель не знает, показано как «как у модели», а не кодом', async () => {
+  const { app, profile } = await launch({ steps: [] })
+  try {
+    const win = await app.firstWindow()
+    const effort = win.locator('[data-testid="status-effort"]')
+    await expect(win.locator('[data-testid="status-model"]')).toHaveAttribute('data-value', 'claude-opus-5', {
+      timeout: 15000
+    })
+    await choose(win, 'status-effort', 'xhigh')
+    await expect(effort).toHaveAttribute('data-value', 'xhigh', { timeout: 15000 })
+
+    // Sonnet has no «очень высокое».
+    await choose(win, 'status-model', 'claude-sonnet-5')
+    await expect(win.locator('[data-testid="status-model"]')).toHaveAttribute('data-value', 'claude-sonnet-5')
+    await expect(effort).toHaveText('как у модели')
+    await expect(effort).not.toContainText('xhigh')
+
+    await effort.click()
+    const rows = win.locator('[data-testid="status-effort-option"]')
+    await expect(rows).toHaveCount(3)
+    await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
   } finally {
     await close(app, profile)
   }

@@ -70,7 +70,8 @@
   --status-ok: #0ca30c;
   --status-warn: #fab219;
   --status-critical: #e5484d;
-  --meter-track: #26262d;
+  /* Light enough that the empty part reads as a bar, so 13% is not a lone dot. */
+  --meter-track: #3a3f56;
 
   /* Context breakdown bar (categorical palette, dark steps). */
   --seg-1: #3987e5;
@@ -135,6 +136,9 @@
   /* The status line under the input: its meters and the lists its buttons open. */
   --meter-w: 48px;
   --meter-h: 6px;
+  --meter-primary-w: 88px;
+  --meter-primary-h: 8px;
+  --weight-medium: 500;
   --status-pad: 2px 6px;
   --dropdown-menu-min-w: 220px;
   --dropdown-menu-max-w: 340px;

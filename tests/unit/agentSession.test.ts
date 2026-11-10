@@ -420,9 +420,12 @@ describe('AgentSession: режим без проверок', () => {
 
     await session.start()
     await settle(session)
+    await session.setPermissionMode('acceptEdits')
+    expect(session.panel.permissionMode).toBe('acceptEdits')
     await session.setPermissionMode('bypassPermissions')
 
-    expect(session.panel.permissionMode).not.toBe('bypassPermissions')
+    // Refused means left alone — not reset to «спрашивать».
+    expect(session.panel.permissionMode).toBe('acceptEdits')
   })
 
   test('без обработчика подтверждения режим не включается вовсе', async () => {

@@ -153,11 +153,17 @@ test('«без проверок» требует подтверждения вн
     const mode = win.locator('[data-testid="status-mode"]')
     await expect(mode).toHaveAttribute('data-value', 'default', { timeout: 15000 })
 
+    // Start from a mode other than the default, so «refused» cannot be
+    // mistaken for «reset to default».
+    await chooseMode(win, 'acceptEdits')
+    await expect(mode).toHaveAttribute('data-value', 'acceptEdits', { timeout: 15000 })
+
     await chooseMode(win, 'bypassPermissions')
 
-    // The button shows what the panel data reports, and that is what the
-    // session actually has — which is still «спрашивать».
-    await expect(mode).toHaveAttribute('data-value', 'default', { timeout: 15000 })
+    // The button shows what the session actually has — still «принимать правки».
+    // A beat for the refused request to come back before the check.
+    await win.waitForTimeout(500)
+    await expect(mode).toHaveAttribute('data-value', 'acceptEdits')
   } finally {
     await close(app, profile)
   }

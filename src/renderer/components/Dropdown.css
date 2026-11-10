@@ -1,0 +1,66 @@
+/* A value that opens its list upward (Dropdown.tsx). Quiet until hovered. */
+
+.dropdown {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.dropdown-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--status-pad);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.dropdown-button:hover:not([aria-disabled='true']),
+.dropdown-button.is-open {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.dropdown-button:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: 1px;
+}
+
+.dropdown-button[aria-disabled='true'] {
+  cursor: default;
+  color: var(--text-faint);
+}
+
+.dropdown-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown-button > svg {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.dropdown-button:hover:not([aria-disabled='true']) > svg:first-child,
+.dropdown-button.is-open > svg:first-child {
+  color: var(--accent);
+}
+
+/* The list opens up from the control and is as wide as its rows need. */
+.dropdown .inline-menu {
+  right: auto;
+  min-width: var(--dropdown-menu-min-w);
+  max-width: var(--dropdown-menu-max-w);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dropdown-button {
+    transition: none;
+  }
+}

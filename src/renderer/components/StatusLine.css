@@ -1,6 +1,6 @@
 /*
  * The status line under the input, and the context banner above it.
- * Quiet by default: dim words, thin meters. Past 80% a meter's fill takes the
+ * Context leads; the plan's limits sit one step quieter beside it. Past 80% a meter's fill takes the
  * status colour and gains an alert icon; words and numbers keep text colours.
  */
 
@@ -34,67 +34,13 @@
   gap: var(--space-3);
 }
 
-/* ---------------------------------------------------------------- dropdown */
-
-.dropdown {
-  position: relative;
-  display: inline-flex;
-  min-width: 0;
-}
-
-.dropdown-button {
+/* The limits: one step quieter than the context, behind a hairline. */
+.status-limits {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  padding: var(--status-pad);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  font: inherit;
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-}
-
-.dropdown-button:hover:not(:disabled),
-.dropdown-button.is-open {
-  background: var(--hover-fill);
-  color: var(--text);
-}
-
-.dropdown-button:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}
-
-.dropdown-button:disabled {
-  cursor: default;
-  color: var(--text-faint);
-}
-
-.dropdown-value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.status-icon,
-.dropdown-chevron {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-}
-
-.dropdown-button:hover:not(:disabled) .status-icon,
-.dropdown-button.is-open .status-icon {
-  color: var(--accent);
-}
-
-/* The list opens up from the button and is as wide as its rows need. */
-.dropdown .inline-menu {
-  right: auto;
-  min-width: var(--dropdown-menu-min-w);
-  max-width: var(--dropdown-menu-max-w);
+  gap: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
 }
 
 /* ------------------------------------------------------------------ meters */
@@ -141,6 +87,33 @@
   min-width: 3ch;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* Context is the line's main number: a bigger word, a longer, thicker bar, a firmer figure. */
+.status-meter.is-primary {
+  gap: var(--space-2);
+}
+
+.status-meter.is-primary .status-meter-label {
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+.status-meter.is-primary .status-meter-bar {
+  width: var(--meter-primary-w);
+  height: var(--meter-primary-h);
+}
+
+.status-meter.is-primary .status-meter-value {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+/* Past a threshold a limit's figure reads as firmly as the context's. */
+.status-meter.is-warn .status-meter-value,
+.status-meter.is-critical .status-meter-value {
   color: var(--text);
 }
 
@@ -209,7 +182,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dropdown-button,
   .status-meter-fill {
     transition: none;
   }

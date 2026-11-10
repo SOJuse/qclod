@@ -65,6 +65,14 @@ export function StatusLine({ tabId, data, started, slot }: Props): JSX.Element {
       }))
     : []
 
+  // A level the new model does not offer is not what it runs at: it falls
+  // back to the model's own, and the button says so instead of the old code.
+  const effortTitle = !data.effort
+    ? 'Усилие — как у модели'
+    : (levels as readonly string[]).includes(data.effort)
+      ? `Усилие: ${EFFORT_LABEL[data.effort] ?? data.effort}`
+      : `Усилие — как у модели: «${EFFORT_LABEL[data.effort] ?? data.effort}» у неё нет`
+
   const waitingFor = started ? 'после первого ответа' : 'после запуска'
   const context = data.context
   const contextTitle = context
@@ -80,7 +88,7 @@ export function StatusLine({ tabId, data, started, slot }: Props): JSX.Element {
           testId="status-mode"
           label="Режим разрешений"
           title="Режим разрешений — Shift+Tab по кругу"
-          icon={<ShieldCheck size={13} aria-hidden="true" className="status-icon" />}
+          icon={<ShieldCheck size={13} aria-hidden="true" />}
           value={data.permissionMode}
           options={MODE_OPTIONS}
           onChange={(mode) => void window.qclod.setPermissionMode(tabId, mode as PermissionMode)}
@@ -89,7 +97,7 @@ export function StatusLine({ tabId, data, started, slot }: Props): JSX.Element {
           testId="status-model"
           label="Модель"
           title={chosen ? `Модель: ${chosen.displayName}` : 'Модель'}
-          icon={<Cpu size={13} aria-hidden="true" className="status-icon" />}
+          icon={<Cpu size={13} aria-hidden="true" />}
           value={data.model}
           placeholder={started ? '…' : 'модель'}
           options={modelOptions}
@@ -98,8 +106,8 @@ export function StatusLine({ tabId, data, started, slot }: Props): JSX.Element {
         <Dropdown
           testId="status-effort"
           label="Усилие"
-          title={data.effort ? `Усилие: ${EFFORT_LABEL[data.effort] ?? data.effort}` : 'Усилие — как у модели'}
-          icon={<Gauge size={13} aria-hidden="true" className="status-icon" />}
+          title={effortTitle}
+          icon={<Gauge size={13} aria-hidden="true" />}
           value={data.effort}
           placeholder={started ? 'как у модели' : 'усилие'}
           options={effortOptions}
@@ -111,13 +119,17 @@ export function StatusLine({ tabId, data, started, slot }: Props): JSX.Element {
         <Meter
           testId="status-context"
           label="контекст"
+          primary
           percent={context ? context.percent : null}
           approximate={context?.estimated === true}
           title={contextTitle}
         />
-        <LimitMeter testId="status-limit-5h" label="5 ч" name="Лимит на 5 часов" window={data.limits.fiveHour} waitingFor={waitingFor} />
-        <LimitMeter testId="status-limit-7d" label="нед" name="Лимит на неделю" window={data.limits.sevenDay} waitingFor={waitingFor} />
-        {slot}
+        {/* The plan's limits are secondary: smaller, set apart by a hairline. */}
+        <span className="status-limits">
+          <LimitMeter testId="status-limit-5h" label="5 ч" name="Лимит на 5 часов" window={data.limits.fiveHour} waitingFor={waitingFor} />
+          <LimitMeter testId="status-limit-7d" label="нед" name="Лимит на неделю" window={data.limits.sevenDay} waitingFor={waitingFor} />
+          {slot}
+        </span>
       </div>
     </div>
   )
@@ -153,18 +165,26 @@ function Meter({
   label,
   percent,
   approximate = false,
+  primary = false,
   title
 }: {
   testId: string
   label: string
   percent: number | null
   approximate?: boolean
+  /** The context meter: larger than the limits, the line's main number. */
+  primary?: boolean
   title: string
 }): JSX.Element {
-  const level = percent === null ? 'ok' : contextLevel(percent)
+  // The level follows the whole percent shown, so «90%» is always critical.
   const shown = percent === null ? null : Math.round(percent)
+  const level = shown === null ? 'ok' : contextLevel(shown)
   return (
-    <span className={`status-meter is-${level}`} data-testid={testId} title={title}>
+    <span
+      className={`status-meter is-${level}${primary ? ' is-primary' : ''}`}
+      data-testid={testId}
+      title={title}
+    >
       <span className="status-meter-label">{label}</span>
       <span
         className="status-meter-bar"

@@ -9,7 +9,9 @@ test.each([
   [100, 'critical']
 ])('%i%% → %s', (p, l) => expect(contextLevel(p)).toBe(l))
 
-test('дробный процент на пороге уже меняет уровень', () => {
-  expect(contextLevel(79.9)).toBe('ok')
-  expect(contextLevel(89.5)).toBe('warn')
+test('уровень считается от показанного (округлённого) процента: «90%» — всегда критично', () => {
+  expect(contextLevel(79.4)).toBe('ok')
+  expect(contextLevel(79.5)).toBe('warn')
+  expect(contextLevel(89.4)).toBe('warn')
+  expect(contextLevel(89.5)).toBe('critical')
 })

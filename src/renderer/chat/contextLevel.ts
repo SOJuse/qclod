@@ -8,8 +8,13 @@ export type ContextLevel = 'ok' | 'warn' | 'critical'
 export const WARN_PERCENT = 80
 export const CRITICAL_PERCENT = 90
 
+/**
+ * Judged on the whole percent a person sees, so «90%» on screen is always
+ * critical and «80%» always a warning — never one level below what it says.
+ */
 export function contextLevel(percent: number): ContextLevel {
-  if (percent >= CRITICAL_PERCENT) return 'critical'
-  if (percent >= WARN_PERCENT) return 'warn'
+  const shown = Math.round(percent)
+  if (shown >= CRITICAL_PERCENT) return 'critical'
+  if (shown >= WARN_PERCENT) return 'warn'
   return 'ok'
 }

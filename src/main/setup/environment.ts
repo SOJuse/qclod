@@ -1,22 +1,17 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { findAgent } from './findAgent'
+import type { EnvironmentReport, ToolReport } from '../../shared/types'
+import { AgentNotFoundError } from '../agent/resolveExecutable'
+import { locateAgent } from './findAgent'
 import { detectInstallMethod, type InstallMethod } from './install'
+
+export type { EnvironmentReport, ToolReport }
 
 const run = promisify(execFile)
 
-export interface ToolReport {
-  found: boolean
-  version?: string
-  path?: string
-}
-
-export interface EnvironmentReport {
-  agent: ToolReport
-  /** How this machine can install it, if it has to. */
-  installMethod: InstallMethod | null
-  /** True when Qclod has an agent to drive. */
-  ready: boolean
+export interface EnvironmentDeps {
+  env?: NodeJS.ProcessEnv
+  detect?: () => Promise<InstallMethod | null>
 }
 
 /**
@@ -26,10 +21,29 @@ export interface EnvironmentReport {
  * on this list: the Windows package needs none, so demanding it would be
  * asking someone to install a toolchain they will never use.
  */
-export async function checkEnvironment(agentPath: string): Promise<EnvironmentReport> {
-  const path = findAgent(agentPath, process.env)
-  if (!path) {
-    return { agent: { found: false }, installMethod: await detectInstallMethod(), ready: false }
+export async function checkEnvironment(
+  agentPath: string,
+  deps: EnvironmentDeps = {}
+): Promise<EnvironmentReport> {
+  const env = deps.env ?? process.env
+  const detect = deps.detect ?? detectInstallMethod
+
+  let path: string
+  try {
+    path = locateAgent(agentPath, env)
+  } catch (err) {
+    // On a clean machine "claude not found" is expected and the install step
+    // speaks for it; only a wrapper that cannot be used, or a path the person
+    // typed that leads nowhere, is worth saying out loud.
+    const configured = agentPath.trim()
+    const named = configured !== '' && configured !== 'claude'
+    const problem =
+      err instanceof AgentNotFoundError && (err.shim || named) ? err.message : undefined
+    return {
+      agent: { found: false, ...(problem ? { problem } : {}) },
+      installMethod: await detect(),
+      ready: false
+    }
   }
 
   let version: string | undefined

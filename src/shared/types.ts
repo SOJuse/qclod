@@ -347,6 +347,8 @@ export interface ToolReport {
   found: boolean
   version?: string
   path?: string
+  /** Why the agent was not found, when there is something specific to say. */
+  problem?: string
 }
 
 /** What the machine has, for the setup screen. */

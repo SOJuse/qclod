@@ -23,8 +23,7 @@ import { parseExtraFlags } from './launchFlags'
 import { composeText } from './userMessage'
 import { PanelCollector, readProjectSettings } from './panelData'
 import { displayTarget } from './permissionStore'
-import { AgentNotFoundError } from './resolveExecutable'
-import { findAgent } from '../setup/findAgent'
+import { locateAgent } from '../setup/findAgent'
 
 export interface AgentSessionOptions {
   tabId: TabId
@@ -379,10 +378,8 @@ export class AgentSession {
         ((p: string) => {
           // PATH is captured when a process starts, so an agent installed
           // while Qclod was open is invisible to it; findAgent also looks
-          // where the installers put it.
-          const found = findAgent(p, process.env)
-          if (!found) throw new AgentNotFoundError(p)
-          return found
+          // where the installers put it. A miss keeps its own reason.
+          return locateAgent(p, process.env)
         })
       executablePath = resolve(this.options.agentPath)
     } catch (err) {

@@ -435,11 +435,23 @@ test('A в первые 400 мс после появления карточки 
   })
   try {
     const win = await app.firstWindow()
-    const card = win.locator('[data-testid="permission-card"]')
-    await expect(card).toBeFocused({ timeout: 15000 })
 
-    // A keystroke that was already on its way when the card appeared.
-    await win.keyboard.press('KeyA')
+    // A keystroke that was already on its way when the card appeared. Sent from
+    // the page in the very turn the focus is seen, so a slow machine cannot
+    // let the 400 ms pass between the two.
+    await win.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const tick = (): void => {
+            const c = document.querySelector('[data-testid="permission-card"]')
+            if (c && document.activeElement === c) {
+              c.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyA', key: 'a', bubbles: true, cancelable: true }))
+              resolve()
+            } else requestAnimationFrame(tick)
+          }
+          tick()
+        })
+    )
     await expect(win.locator('[data-testid="permission-allow"]')).toBeVisible()
     await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(0)
 

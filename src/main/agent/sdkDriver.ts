@@ -13,8 +13,16 @@ import type {
   TaskOutput,
   UserInput
 } from '../../shared/types'
-import type { AgentDriver, ContextUsage, DriverOptions } from './driver'
+import { availabilityFrom, safeRemoteUrl, type RemoteAvailability } from '../../shared/remote'
+import type { AgentDriver, ContextUsage, DriverOptions, RemoteLink } from './driver'
 import { toPermissionContext } from './permissionContext'
+
+type RemoteCapable = {
+  enableRemoteControl?: (enabled: boolean, name?: string) => Promise<unknown>
+}
+
+/** How long to wait for the CLI's initialize answer before assuming nothing. */
+const REMOTE_INIT_TIMEOUT_MS = 5000
 
 type UsageWindow = NonNullable<SDKControlGetUsageResponse['rate_limits']>['five_hour']
 
@@ -120,6 +128,9 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
       }
     }
   })
+
+  // enableRemoteControl is in sdk.mjs but not in sdk.d.ts, so it is looked for.
+  const remote = session as unknown as RemoteCapable
 
   function push(message: Record<string, unknown>): void {
     inbox.push(message)
@@ -245,6 +256,43 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
 
     async stopTask(taskId: string): Promise<void> {
       await session.stopTask(taskId)
+    },
+
+    async remoteAvailability(): Promise<RemoteAvailability> {
+      const hasMethod = typeof remote.enableRemoteControl === 'function'
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let init: unknown
+      try {
+        init = await Promise.race([
+          session.initializationResult(),
+          new Promise<undefined>((resolve) => {
+            timer = setTimeout(() => resolve(undefined), REMOTE_INIT_TIMEOUT_MS)
+          })
+        ])
+      } catch {
+        init = undefined
+      } finally {
+        clearTimeout(timer)
+      }
+      return availabilityFrom(hasMethod, init)
+    },
+
+    async setRemoteControl(enabled: boolean, name?: string): Promise<RemoteLink | null> {
+      const enable = remote.enableRemoteControl
+      if (!enabled) {
+        if (typeof enable !== 'function') return null
+        await enable.call(session, false, name)
+        return null
+      }
+      if (typeof enable !== 'function') throw new Error('enableRemoteControl отсутствует')
+      const answer = (await enable.call(session, true, name)) as
+        | { session_url?: unknown; connect_url?: unknown }
+        | null
+        | undefined
+      const sessionUrl = safeRemoteUrl(answer?.session_url)
+      if (!sessionUrl) throw new Error('CLI не вернул ссылку на сессию')
+      const connectUrl = safeRemoteUrl(answer?.connect_url)
+      return { sessionUrl, ...(connectUrl ? { connectUrl } : {}) }
     },
 
     async dispose(): Promise<void> {

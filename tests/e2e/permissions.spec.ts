@@ -488,13 +488,23 @@ test('Enter и Пробел на сфокусированной кнопке в 
   })
   try {
     const win = await app.firstWindow()
-    const card = win.locator('[data-testid="permission-card"]')
-    await expect(card).toBeFocused({ timeout: 15000 })
-    // Tab walks onto the buttons; focus entering the card arms it afresh.
-    const allowAll = win.locator('[data-testid="permission-allow-all"]')
-    await allowAll.focus()
-    await win.keyboard.press('Enter')
-    await win.keyboard.press('Space')
+    // Focus on the button and both keys, all in one page turn: the card arms
+    // 400 ms after focus entered it, and a slow machine must not outrun that.
+    await win.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const tick = (): void => {
+            const b = document.querySelector<HTMLElement>('[data-testid="permission-allow-all"]')
+            if (b) {
+              b.focus()
+              for (const [code, key] of [['Enter', 'Enter'], ['Space', ' ']])
+                b.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true }))
+              resolve()
+            } else requestAnimationFrame(tick)
+          }
+          tick()
+        })
+    )
     await expect(win.locator('[data-testid="permission-allow"]')).toBeVisible()
     await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(0)
 

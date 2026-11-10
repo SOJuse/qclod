@@ -10,7 +10,6 @@
   border-left: var(--rule-category) solid var(--cat);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
-  font-family: var(--font-ui);
   font-size: var(--text-md);
   color: var(--text);
 }

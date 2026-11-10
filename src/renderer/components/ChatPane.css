@@ -56,7 +56,6 @@
   border: 1px solid var(--warn-border);
   border-radius: var(--radius-sm);
   background: var(--warn-fill);
-  font-family: var(--font-ui);
   font-size: var(--text-sm);
   color: var(--text);
 }

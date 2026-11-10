@@ -15,7 +15,6 @@
 
 .inline-menu-title {
   padding: var(--space-1) var(--space-2) var(--space-1);
-  font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--text-faint);
 }
@@ -76,7 +75,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-ui);
   color: var(--text-dim);
 }
 

@@ -74,3 +74,18 @@ test('шкала шрифта — ровно шесть ступеней', () =>
     '--text-lg': '14px', '--text-xl': '16px', '--text-2xl': '20px'
   })
 })
+
+test('шрифты закреплены точными версиями и лежат в пакетах', () => {
+  expect(pkg.dependencies['@fontsource-variable/inter']).toBe('5.3.0')
+  expect(pkg.dependencies['@fontsource-variable/geist-mono']).toBe('5.3.0')
+  expect(css).not.toMatch(/@font-face/) // шрифты приходят из пакетов
+  expect(t.get('--font-ui')).toMatch(/^'Inter Variable'/)
+  expect(t.get('--font-mono')).toMatch(/^'Geist Mono Variable'/)
+})
+
+test('интерфейс по умолчанию — Inter, ступень md, межстрочный интерфейса', () => {
+  const body = /\nbody\s*\{([^}]*)\}/.exec(css)?.[1] ?? ''
+  expect(body).toMatch(/font-family:\s*var\(--font-ui\)/)
+  expect(body).toMatch(/font-size:\s*var\(--text-md\)/)
+  expect(body).toMatch(/line-height:\s*var\(--leading\)/)
+})

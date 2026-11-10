@@ -105,6 +105,11 @@
   user-select: text;
 }
 
+/* Every text field here holds a shortcut, a path, flags or a command. */
+.settings-field input[type='text'] {
+  font-family: var(--font-mono);
+}
+
 .settings-field select {
   cursor: pointer;
 }

@@ -20,7 +20,6 @@
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
   font: inherit;
-  font-family: var(--font-ui);
   font-size: var(--text-md);
   color: var(--text-dim);
   text-align: left;

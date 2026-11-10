@@ -38,6 +38,7 @@
 .history-cwd {
   display: block;
   margin-top: 3px;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-faint);
   overflow: hidden;

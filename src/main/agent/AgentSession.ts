@@ -467,7 +467,7 @@ export class AgentSession {
    */
   async interrupt(): Promise<void> {
     if (!this.driver) return
-        this.cancelWaits()
+    this.cancelWaits()
     await this.driver.interrupt().catch(() => undefined)
     this.setStatus('idle')
   }
@@ -607,7 +607,7 @@ export class AgentSession {
     this.disposed = true
     this.stopMcpPolling()
     // A question nobody can answer any more must not hold the agent open.
-        this.cancelWaits()
+    this.cancelWaits()
 
     const driver = this.driver
     this.driver = null
@@ -887,7 +887,7 @@ export class AgentSession {
     this.driver = null
     // The process may still be alive; and cards nobody can answer any more
     // must not stay live (a click could save a rule from a dead session).
-        this.cancelWaits()
+    this.cancelWaits()
     if (dead) void dead.dispose().catch(() => undefined)
     this.failure = text
     this.emit(this.builder.closeOpen())

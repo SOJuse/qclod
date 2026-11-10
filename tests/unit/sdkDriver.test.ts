@@ -273,3 +273,50 @@ describe('toPermissionContext', () => {
     expect(toPermissionContext(undefined)).toEqual({})
   })
 })
+
+describe('sdkDriver: вложения', () => {
+  const FILE = 'C:\Мои проекты\файл 1.ts'
+  const MENTION = `@"${FILE}"`
+
+  async function firstMessage(query: { prompt: unknown }): Promise<{
+    message: { content: Array<Record<string, unknown>> }
+  }> {
+    const gen = query.prompt as AsyncGenerator<never, void>
+    const first = await gen.next()
+    return first.value as never
+  }
+
+  test('файл упоминается в тексте ровно один раз', async () => {
+    const query = mockQuery()
+    const driver = await createSdkDriver(allowAll())
+
+    // The text arrives composed, as AgentSession.send composes it.
+    driver.send({
+      text: `посмотри\n${MENTION}`,
+      attachments: [{ kind: 'file', path: FILE }]
+    })
+
+    const { message } = await firstMessage(query)
+    const text = message.content[0]!['text'] as string
+    expect(text.split(MENTION)).toHaveLength(2)
+    expect(text).toBe(`посмотри\n${MENTION}`)
+    await driver.dispose()
+  })
+
+  test('картинка по-прежнему уходит блоком image', async () => {
+    const query = mockQuery()
+    const driver = await createSdkDriver(allowAll())
+
+    driver.send({
+      text: 'что на картинке',
+      attachments: [{ kind: 'image', mediaType: 'image/png', dataBase64: 'AAAA' }]
+    })
+
+    const { message } = await firstMessage(query)
+    expect(message.content).toEqual([
+      { type: 'text', text: 'что на картинке' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
+    ])
+    await driver.dispose()
+  })
+})

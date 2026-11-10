@@ -15,11 +15,6 @@ import type {
 import type { AgentDriver, ContextUsage, DriverOptions } from './driver'
 import { toPermissionContext } from './permissionContext'
 
-/** `@путь` with quotes when it contains spaces — the convention the probe confirmed. */
-function mention(path: string): string {
-  return /\s/.test(path) ? `@"${path}"` : `@${path}`
-}
-
 type UsageWindow = NonNullable<SDKControlGetUsageResponse['rate_limits']>['five_hour']
 
 /**
@@ -36,20 +31,19 @@ function toLimitWindow(window: UsageWindow): LimitWindow | null {
 /**
  * One message, in the shape the SDK's streaming input expects.
  *
+ * `input.text` goes as it is: the `@`-mentions of attached files are already in
+ * it, put there once by `composeText` in `AgentSession.send`. Only images are
+ * taken from the attachments here.
+ *
  * Images go as real content blocks rather than as a path on disk: the SDK
  * accepts them directly, and v1's write-to-temp-file-then-@-mention dance was
  * both slower and one more thing to clean up (spec 6.3).
  */
 function toSdkMessage(input: UserInput): Record<string, unknown> {
-  const files = input.attachments.filter((a) => a.kind === 'file')
   const images = input.attachments.filter((a) => a.kind === 'image')
 
-  const text = [input.text, ...files.map((f) => mention(f.kind === 'file' ? f.path : ''))]
-    .filter((part) => part.trim() !== '')
-    .join('\n')
-
   const content: Array<Record<string, unknown>> = []
-  if (text) content.push({ type: 'text', text })
+  if (input.text.trim() !== '') content.push({ type: 'text', text: input.text })
   for (const image of images) {
     if (image.kind !== 'image') continue
     content.push({

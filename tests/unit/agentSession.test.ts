@@ -1359,3 +1359,26 @@ describe('AgentSession: живой статус MCP', () => {
     await session.dispose()
   })
 })
+
+describe('AgentSession: повторная отправка с вложением', () => {
+  test('сообщение, посланное до init, уходит снова с упоминанием ровно один раз', async () => {
+    const first = makeSession({ steps: [], nextTurn: [] })
+    await first.session.start()
+    first.session.send({
+      text: 'посмотри',
+      attachments: [{ kind: 'file', path: 'C:/Мои проекты/файл 1.ts' }]
+    })
+
+    const pending = first.session.sentBeforeInit
+    expect(pending).toHaveLength(1)
+
+    const second = makeSession({ steps: [], nextTurn: [] })
+    await second.session.start()
+    second.session.resend(pending[0]!)
+
+    const mention = '@"C:/Мои проекты/файл 1.ts"'
+    expect(second.driver.sent).toHaveLength(1)
+    expect(second.driver.sent[0]!.text).toBe(`посмотри\n${mention}`)
+    expect(second.driver.sent[0]!.text.split(mention)).toHaveLength(2)
+  })
+})

@@ -619,6 +619,21 @@ describe('createFakeSdk: контекст и лимиты по запросу', 
     expect((await driver.getContextUsage()).totalTokens).toBe(184000)
   })
 
+  test('строки разбивки контекста сходятся с процентом: занятое = totalTokens, всё вместе = maxTokens', async () => {
+    for (const [percent, used] of [[13, 26000], [21, 42000], [92, 184000], [99, 198000]] as const) {
+      const usage = await createFakeSdk({ steps: [], contextPercent: percent }).getContextUsage()
+      const sum = (kind: string): number =>
+        usage.categories.filter((c: { kind: string }) => c.kind === kind).reduce((a: number, c: { tokens: number }) => a + c.tokens, 0)
+      expect(usage.totalTokens).toBe(used)
+      expect(sum('used')).toBe(used)
+      expect(sum('used') + sum('buffer') + sum('free')).toBe(usage.maxTokens)
+      expect(usage.categories.every((c: { tokens: number }) => c.tokens >= 0)).toBe(true)
+    }
+    // At 21% the rows are the ones the panel tests and the shots were made with.
+    const base = await createFakeSdk({ steps: [] }).getContextUsage()
+    expect(base.categories.map((c: { tokens: number }) => c.tokens)).toEqual([30000, 12000, 9000, 149000, 700])
+  })
+
   test('planLimits по умолчанию — те же окна, что в rate_limit_event', async () => {
     const driver = createFakeSdk({ steps: [{ kind: 'text', text: 'ок' }] })
     const event = (await collect(driver)).find((m) => m['type'] === 'rate_limit_event') as {

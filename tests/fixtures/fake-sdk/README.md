@@ -138,3 +138,6 @@ for await (const message of driver.messages) { /* ... */ }
 `getContextUsage()` отдаёт строки разбивки: `messages` и `system_prompt`
 (`used`), `Autocompact buffer` (`buffer`), `Free space` (`free`) и
 `MCP tools (deferred)` (`deferred`, панель его не рисует).
+Строки следуют за процентом: `used` вместе равны `totalTokens` (делятся
+30:12, как при 21 %), резерв — 9 000, пока есть место, `free` — остаток до
+`maxTokens`. Легенда на снимке с 13 % сходится с числом в полосе.

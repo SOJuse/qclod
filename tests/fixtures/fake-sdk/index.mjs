@@ -1044,16 +1044,23 @@ export function createFakeSdk(script = {}) {
     },
     async getContextUsage() {
       await pause(script.contextUsageDelayMs)
+      // The rows follow the percent, so the legend agrees with the bar's
+      // number: used is split 30:12 as at the default 21% (42 000), the
+      // reserve keeps its 9 000 while there is room, and free is the rest.
+      const max = 200000
+      const used = Math.round((contextPercentNow() / 100) * max)
+      const messages = Math.round((used * 30) / 42)
+      const buffer = Math.min(9000, max - used)
       return {
         model: state.model,
-        totalTokens: Math.round((contextPercentNow() / 100) * 200000),
-        maxTokens: 200000,
+        totalTokens: used,
+        maxTokens: max,
         percentage: contextPercentNow(),
         categories: [
-          { name: 'messages', tokens: 30000, kind: 'used' },
-          { name: 'system_prompt', tokens: 12000, kind: 'used' },
-          { name: 'Autocompact buffer', tokens: 9000, kind: 'buffer' },
-          { name: 'Free space', tokens: 149000, kind: 'free' },
+          { name: 'messages', tokens: messages, kind: 'used' },
+          { name: 'system_prompt', tokens: used - messages, kind: 'used' },
+          { name: 'Autocompact buffer', tokens: buffer, kind: 'buffer' },
+          { name: 'Free space', tokens: max - used - buffer, kind: 'free' },
           { name: 'MCP tools (deferred)', tokens: 700, kind: 'deferred' }
         ]
       }

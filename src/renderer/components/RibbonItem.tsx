@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Brain, Image as ImageIcon } from 'lucide-react'
 import { seconds } from '../../shared/format'
 import type { Attachment, RibbonItem as Item } from '../../shared/types'
@@ -72,16 +72,41 @@ function UserImage({ image, tabId }: { image: ImageAttachment; tabId: string }):
       </span>
     )
   }
+  return <OpenableImage path={path} tabId={tabId} size={size} picture={picture} />
+}
+
+/** A thumbnail whose copy is opened on click; a copy cleaned up since says so. */
+function OpenableImage({
+  path,
+  tabId,
+  size,
+  picture
+}: {
+  path: string
+  tabId: string
+  size: string
+  picture: JSX.Element
+}): JSX.Element {
+  const [gone, setGone] = useState(false)
   return (
-    <button
-      type="button"
-      className="row-user-image is-openable"
-      data-testid="row-user-image"
-      title={`Открыть снимок${size}`}
-      onClick={() => void window.qclod.openPath(tabId, path)}
-    >
-      {picture}
-    </button>
+    <span className="row-user-image-wrap">
+      <button
+        type="button"
+        className="row-user-image is-openable"
+        data-testid="row-user-image"
+        title={`Открыть снимок${size}`}
+        onClick={() =>
+          void window.qclod.openPath(tabId, path).then((result) => setGone(result === null))
+        }
+      >
+        {picture}
+      </button>
+      {gone && (
+        <span className="row-user-image-gone" data-testid="row-user-image-gone" role="status">
+          Файл уже удалён
+        </span>
+      )}
+    </span>
   )
 }
 

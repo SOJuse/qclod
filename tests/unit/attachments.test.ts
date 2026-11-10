@@ -6,6 +6,7 @@ import {
   isPreparing,
   materialize,
   prepareAttachment,
+  queuedSendStep,
   type PendingAttachment
 } from '../../src/renderer/input/attachments'
 
@@ -132,7 +133,6 @@ describe('attachmentsFromDrop', () => {
 describe('вставленная картинка до отправки', () => {
   const prepared = {
     mediaType: 'image/jpeg',
-    dataBase64: 'AAAA',
     thumbnail: 'data:image/png;base64,AA',
     path: 'C:/ud/pastes/paste-1-abcdef01.jpg',
     width: 2000,
@@ -147,7 +147,7 @@ describe('вставленная картинка до отправки', () => 
       { kind: 'file', path: 'C:/p/a.ts' }
     ]
     expect(materialize(pending)).toEqual([
-      { kind: 'image', ...prepared },
+      { kind: 'image', ...prepared, dataBase64: '' },
       { kind: 'file', path: 'C:/p/a.ts' }
     ])
     expect(pending.map(isPreparing)).toEqual([false, false, true, false])
@@ -169,5 +169,37 @@ describe('вставленная картинка до отправки', () => 
     })
     expect(out).toEqual({ error: 'Не получилось прочитать картинку' })
     expect(asked).toBe(false)
+  })
+})
+
+describe('отправка, отложенная до готовности снимка', () => {
+  const ready = {
+    kind: 'image' as const,
+    mediaType: 'image/png',
+    prepared: { mediaType: 'image/png', thumbnail: 'data:image/png;base64,AA', path: 'C:/p.png', width: 1, height: 1 }
+  }
+  const waiting = { kind: 'image' as const, mediaType: 'image/png' }
+  const failed = { kind: 'image' as const, mediaType: 'image/png', error: 'Не похоже на картинку' }
+
+  test('ничего не отложено — ничего не делать', () => {
+    expect(queuedSendStep(false, [waiting])).toBe('none')
+  })
+
+  test('снимок ещё готовится — ждать; готов — отправить', () => {
+    expect(queuedSendStep(true, [ready, waiting])).toBe('wait')
+    expect(queuedSendStep(true, [ready, { kind: 'file', path: 'C:/a.ts' }])).toBe('send')
+  })
+
+  test('снимок не удался — отложенная отправка отменяется, а не уходит без него', () => {
+    expect(queuedSendStep(true, [ready, failed])).toBe('cancel')
+  })
+
+  test('снимок убрали крестиком, пока ждали, — отправка отменяется', () => {
+    expect(queuedSendStep(true, [])).toBe('cancel')
+    expect(queuedSendStep(true, [{ kind: 'file', path: 'C:/a.ts' }])).toBe('cancel')
+  })
+
+  test('у GIF без размеров плашка — просто «Снимок»', () => {
+    expect(attachmentLabel({ ...ready, prepared: { ...ready.prepared, width: 0, height: 0 } })).toBe('Снимок')
   })
 })

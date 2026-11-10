@@ -81,6 +81,11 @@
   to { opacity: 1; }
 }
 
+.composer-chip.is-image > svg {
+  margin-left: var(--space-1);
+  flex-shrink: 0;
+}
+
 .composer-chip.is-error {
   padding-left: var(--space-2);
   border-color: var(--danger-border);

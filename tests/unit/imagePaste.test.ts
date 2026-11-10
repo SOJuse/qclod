@@ -6,6 +6,7 @@ import {
   readdirSync,
   rmSync,
   writeFileSync,
+  realpathSync,
   utimesSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -13,6 +14,7 @@ import { basename, join } from 'node:path'
 import {
   cleanupPasteDir,
   isInsidePasteDir,
+  pasteRealPath,
   PASTE_DIR_NAME,
   saveImageBuffer
 } from '@main/files/imagePaste'
@@ -128,5 +130,21 @@ describe('isInsidePasteDir', () => {
     expect(isInsidePasteDir(userData, basename(saved))).toBe(false)
     // Windows paths are case-insensitive: the same file in other case is still ours.
     expect(isInsidePasteDir(userData, saved.toUpperCase().replace(/\.PNG$/, '.png'))).toBe(true)
+  })
+})
+
+describe('GIF, WebP и настоящий путь', () => {
+  test('GIF и WebP сохраняются со своим расширением и считаются своими', () => {
+    for (const ext of ['gif', 'webp'] as const) {
+      const path = saveImageBuffer(userData, Buffer.from([1]), ext) as string
+      expect(path.endsWith(`.${ext}`)).toBe(true)
+      expect(isInsidePasteDir(userData, path)).toBe(true)
+    }
+  })
+
+  test('pasteRealPath отдаёт путь, каким он лежит на диске, а чужой — null', () => {
+    const saved = saveImageBuffer(userData, Buffer.from([1])) as string
+    expect(pasteRealPath(userData, saved.toUpperCase().replace(/\.PNG$/, '.png'))).toBe(realpathSync.native(saved))
+    expect(pasteRealPath(userData, join(userData, 'нет.png'))).toBeNull()
   })
 })

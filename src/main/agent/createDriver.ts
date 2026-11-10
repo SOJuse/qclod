@@ -1,6 +1,27 @@
 import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
 import { toPermissionContext } from './permissionContext'
 
+/** What a test build says instead of starting the real agent. */
+export const REAL_AGENT_REFUSED =
+  'Тестовая сборка не запускает настоящий Claude Code: задайте QCLOD_FAKE_SDK ' +
+  '(путь к tests/fixtures/fake-sdk/index.mjs) или QCLOD_ALLOW_REAL=1, если настоящий агент нужен намеренно.'
+
+/**
+ * Which agent a build may start. A release build always starts the real one
+ * (it has no seams). A test build starts the fixture when QCLOD_FAKE_SDK
+ * names it, and otherwise refuses, unless QCLOD_ALLOW_REAL=1 says the real
+ * agent is wanted on purpose: a check script that forgot the variable must
+ * not spend the owner's subscription or act on the repository.
+ */
+export function driverChoice(
+  seams: boolean,
+  env: Record<string, string | undefined>
+): 'fake' | 'real' | 'refuse' {
+  if (!seams) return 'real'
+  if (env['QCLOD_FAKE_SDK']) return 'fake'
+  return env['QCLOD_ALLOW_REAL'] === '1' ? 'real' : 'refuse'
+}
+
 /**
  * Picks the session implementation.
  *
@@ -11,9 +32,16 @@ import { toPermissionContext } from './permissionContext'
  * (buildFlags.d.ts), so a user cannot land in it by accident.
  */
 export function createDriverFactory(): DriverFactory {
+  const choice = driverChoice(__QCLOD_TEST_SEAMS__, process.env)
   const fakePath = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_SDK'] : undefined
 
-  if (fakePath) {
+  if (__QCLOD_TEST_SEAMS__ && choice === 'refuse') {
+    return async (): Promise<AgentDriver> => {
+      throw new Error(REAL_AGENT_REFUSED)
+    }
+  }
+
+  if (choice === 'fake' && fakePath) {
     return async (options: DriverOptions): Promise<AgentDriver> => {
       const { pathToFileURL } = await import('node:url')
       const module = (await import(pathToFileURL(fakePath).href)) as {
@@ -41,6 +69,11 @@ export function createDriverFactory(): DriverFactory {
   }
 
   return async (options: DriverOptions): Promise<AgentDriver> => {
+    // e2e checks that a refused test build never got here.
+    if (__QCLOD_TEST_SEAMS__) {
+      const g = globalThis as { __qclodRealAgentStarts?: number }
+      g.__qclodRealAgentStarts = (g.__qclodRealAgentStarts ?? 0) + 1
+    }
     const { createSdkDriver } = await import('./sdkDriver')
     return createSdkDriver(options)
   }

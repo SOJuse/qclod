@@ -13,7 +13,7 @@ import type {
 import { buildFileIndex } from './files/fileIndex'
 import type { PathResolver } from './files/pathResolver'
 import { openInEditor, openPath, revealPath } from './files/fileActions'
-import { isInsidePasteDir } from './files/imagePaste'
+import { pasteMediaType, pasteRealPath } from './files/imagePaste'
 import { prepareImage } from './files/prepareImage'
 import type { TabController } from './tabs/TabController'
 import { EMPTY_PANEL } from './agent/panelData'
@@ -53,9 +53,10 @@ const MAX_RAW_LENGTH = 1024
 const MAX_PASTE_BASE64 = 80_000_000
 
 /**
- * A restored draft's image carries only the path of its pasted copy; the bytes
- * are read here, from a path sanitizeInput has already checked is ours. One
- * that cannot be read is dropped rather than sent empty.
+ * A pasted image reaches main as the path of its copy, not its bytes: the
+ * bytes are read here, from a path sanitizeInput has already checked is ours,
+ * with the type its extension means. One that cannot be read is dropped
+ * rather than sent empty.
  */
 function withPastedBytes(input: UserInput): UserInput {
   const attachments: UserInput['attachments'] = []
@@ -67,7 +68,7 @@ function withPastedBytes(input: UserInput): UserInput {
     if (!a.path) continue
     try {
       const dataBase64 = readFileSync(a.path).toString('base64')
-      const mediaType = a.path.toLowerCase().endsWith('.jpg') ? 'image/jpeg' : 'image/png'
+      const mediaType = pasteMediaType(a.path)
       if (dataBase64 !== '') attachments.push({ ...a, mediaType, dataBase64 })
     } catch {
       /* cleaned up meanwhile */
@@ -275,31 +276,40 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
 
   // Open and show also take one of the app's own pasted images (a thumbnail
   // in the chat): never found in any tab's text, but written by main itself.
-  // Only a file directly in userData/pastes under our own name passes (C10).
-  const mayShow = (id: unknown, absPath: unknown): absPath is string =>
-    mayAct(id, absPath) ||
-    (isString(id) &&
-      isString(absPath) &&
-      controller.list().some((t) => t.id === id) &&
-      isInsidePasteDir(deps.userData, absPath))
+  // Only a file directly in userData/pastes under our own name passes (C10),
+  // and what is acted on is its path on disk, not the text the window sent.
+  const showable = (id: unknown, absPath: unknown): string | null => {
+    if (mayAct(id, absPath)) return absPath
+    if (!isString(id) || !isString(absPath) || !controller.list().some((t) => t.id === id)) return null
+    return pasteRealPath(deps.userData, absPath)
+  }
 
   ipcMain.handle(CHANNELS.filesOpen, async (_e, id: unknown, absPath: unknown) => {
-    if (!mayShow(id, absPath)) return null
-    return openPath(absPath)
+    const target = showable(id, absPath)
+    if (target === null) return null
+    return openPath(target)
   })
 
   ipcMain.handle(CHANNELS.filesReveal, (_e, id: unknown, absPath: unknown) => {
-    if (!mayShow(id, absPath)) return
-    revealPath(absPath)
+    const target = showable(id, absPath)
+    if (target === null) return
+    revealPath(target)
   })
 
   // A pasted image, bounded to what the API takes, with a thumbnail and a copy
   // in userData/pastes.
-  ipcMain.handle(CHANNELS.filesPrepareImage, (_e, dataBase64: unknown, mediaType: unknown) => {
+  ipcMain.handle(CHANNELS.filesPrepareImage, async (_e, dataBase64: unknown, mediaType: unknown) => {
     if (!isString(dataBase64) || !isString(mediaType) || dataBase64 === '') {
       return { error: 'Не похоже на картинку' }
     }
     if (dataBase64.length > MAX_PASTE_BASE64) return { error: 'Картинка слишком большая' }
+    // e2e slows or fails the preparation to reach what waits on it. A release
+    // build has no such branch (buildFlags.d.ts).
+    if (__QCLOD_TEST_SEAMS__) {
+      const delay = Number(process.env['QCLOD_PREPARE_DELAY_MS'] ?? 0)
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay))
+      if (process.env['QCLOD_PREPARE_FAIL']) return { error: 'Не похоже на картинку' }
+    }
     try {
       return prepareImage(deps.userData, dataBase64, mediaType)
     } catch {

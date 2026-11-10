@@ -183,9 +183,49 @@ describe('agent:send и files:prepareImage', () => {
   test('prepareImage: не строка и не картинка — понятная ошибка, а не исключение', async () => {
     expect(await call(CHANNELS.filesPrepareImage, 42, 'image/png')).toEqual({ error: 'Не похоже на картинку' })
     expect(await call(CHANNELS.filesPrepareImage, '', 'image/png')).toEqual({ error: 'Не похоже на картинку' })
-    // The electron mock has no nativeImage: a failure inside is answered, not thrown.
-    expect(await call(CHANNELS.filesPrepareImage, 'AAAA', 'image/png')).toEqual({
+    expect(await call(CHANNELS.filesPrepareImage, 'AAAA', 'image/png')).toEqual({ error: 'Не похоже на картинку' })
+    // A PNG reaches nativeImage, which the electron mock lacks: a failure
+    // inside is answered, not thrown.
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]).toString('base64')
+    expect(await call(CHANNELS.filesPrepareImage, png, 'image/png')).toEqual({
       error: 'Не получилось прочитать картинку'
     })
+  })
+})
+
+describe('pastes: настоящий путь и типы', () => {
+  test('files:open открывает настоящий путь копии, а не написанный окном', async () => {
+    const pasted = saveImageBuffer(USER_DATA, Buffer.from([1])) as string
+    const shouted = pasted.toUpperCase().replace(/\.PNG$/, '.png')
+    expect(await call(CHANNELS.filesOpen, 't1', shouted)).toBe('opened')
+    expect(g.__qclodShellLog).toEqual([{ action: 'open', path: realpathSync.native(pasted) }])
+  })
+
+  test('восстановленная WebP уходит с типом image/webp', async () => {
+    const sent: Array<{ attachments: unknown[] }> = []
+    handlers.clear()
+    registerAgentIpc({
+      getWindow: () => null,
+      controller: { list: () => [{ id: 't1', cwd: CWD }] },
+      manager: { get: () => ({ send: (input: { attachments: unknown[] }) => sent.push(input) }) },
+      broker: {},
+      rememberDefault: () => undefined,
+      resolver: new PathResolver(),
+      getEditorCommand: () => '',
+      userData: USER_DATA
+    } as unknown as AgentIpcDeps)
+    const webp = saveImageBuffer(USER_DATA, Buffer.from([1, 2, 3]), 'webp') as string
+    const gif = saveImageBuffer(USER_DATA, Buffer.from([1, 2, 3]), 'gif') as string
+    await call(CHANNELS.agentSend, 't1', {
+      text: '',
+      attachments: [
+        { kind: 'image', mediaType: 'image/png', dataBase64: '', path: webp },
+        { kind: 'image', mediaType: 'image/png', dataBase64: '', path: gif }
+      ]
+    })
+    expect(sent[0]!.attachments).toEqual([
+      { kind: 'image', mediaType: 'image/webp', dataBase64: 'AQID', path: webp },
+      { kind: 'image', mediaType: 'image/gif', dataBase64: 'AQID', path: gif }
+    ])
   })
 })

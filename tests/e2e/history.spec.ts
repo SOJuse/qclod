@@ -290,9 +290,11 @@ test('с поддельным SDK или без него пустая вклад
   try {
     const win = await app.firstWindow()
     await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
-    await expect(win.locator('[data-testid="empty-recent"]')).toHaveCount(2)
-    await expect(win.locator('[data-testid="empty-tab"]')).not.toContainText('Почему падает вставка')
-    await expect(win.locator('[data-testid="empty-tab"]')).not.toContainText('найди, где падает вставка')
+    // Without the fixture a test build refuses to start the real agent at all,
+    // so the tab says that instead of showing the empty tab.
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText('QCLOD_FAKE_SDK', { timeout: 15000 })
+    await expect(win.locator('body')).not.toContainText('Почему падает вставка')
+    await expect(win.locator('body')).not.toContainText('найди, где падает вставка')
   } finally {
     await close(app, profile)
     rmSync(configDir, { recursive: true, force: true })

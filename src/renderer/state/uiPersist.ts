@@ -46,17 +46,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** A prepared image as it is kept: everything but the bytes. */
+/** A prepared image as it is kept: what main answered, without the pasted File. */
 function restorable(prepared: NonNullable<PendingImage['prepared']>): PendingImage {
-  return {
-    kind: 'image',
-    mediaType: prepared.mediaType,
-    prepared: { ...prepared, dataBase64: '' }
-  }
+  const { mediaType, thumbnail, path, width, height } = prepared
+  return { kind: 'image', mediaType, prepared: { mediaType, thumbnail, path, width, height } }
 }
 
+/** A side in pixels; 0 is a GIF or WebP whose size was never read. */
 function isSide(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
 }
 
 function restoredImage(item: Record<string, unknown>): PendingImage | null {
@@ -64,9 +62,10 @@ function restoredImage(item: Record<string, unknown>): PendingImage | null {
   if (!isRecord(p)) return null
   const { mediaType, path, thumbnail, width, height } = p
   if (typeof mediaType !== 'string' || typeof path !== 'string' || path === '') return null
-  if (typeof thumbnail !== 'string' || !thumbnail.startsWith('data:image/')) return null
+  // No thumbnail at all, or an inline picture; never something to fetch.
+  if (typeof thumbnail !== 'string' || (thumbnail !== '' && !thumbnail.startsWith('data:image/'))) return null
   if (!isSide(width) || !isSide(height)) return null
-  return restorable({ mediaType, path, thumbnail, width, height, dataBase64: '' })
+  return restorable({ mediaType, path, thumbnail, width, height })
 }
 
 export function loadUi(storage: Pick<Storage, 'getItem'> | null): PersistedUi {

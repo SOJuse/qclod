@@ -36,13 +36,17 @@ export type Attachment =
     }
   | { kind: 'file'; path: string }
 
-/** A pasted image after main has read, bounded and saved it. */
+/**
+ * A pasted image after main has read, bounded and saved it. The bytes stay in
+ * main: `path` stands for them and they are read from it when the message goes.
+ */
 export interface PreparedImage {
   mediaType: string
-  dataBase64: string
+  /** A small `data:image/…` picture; empty when there is none (a large GIF or WebP). */
   thumbnail: string
   /** In userData/pastes. */
   path: string
+  /** 0 when unknown (GIF and WebP go as they are, unread). */
   width: number
   height: number
 }

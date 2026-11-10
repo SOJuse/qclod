@@ -80,8 +80,10 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
-  // Old screenshots go before new ones are added.
+  // Old screenshots go before new ones are added, and again every hour: the
+  // app may stay open in the tray for weeks.
   cleanupPasteDir(userData)
+  setInterval(() => cleanupPasteDir(userData), 60 * 60 * 1000).unref()
 
   const outbox = new RendererOutbox((channel, payload) => {
     const win = mainWindow

@@ -110,8 +110,8 @@ export async function prepareAttachment(
 
 /**
  * What goes to main. An image goes as main prepared it; one with an error, or
- * still being prepared, does not go at all. A restored image has no bytes in
- * the window: its path stands for them and main reads the file.
+ * still being prepared, does not go at all. The window never holds an image's
+ * bytes: the path of its copy stands for them and main reads the file.
  */
 export function materialize(pending: PendingAttachment[]): Attachment[] {
   const out: Attachment[] = []
@@ -125,7 +125,7 @@ export function materialize(pending: PendingAttachment[]): Attachment[] {
     out.push({
       kind: 'image',
       mediaType: prepared.mediaType,
-      dataBase64: prepared.dataBase64,
+      dataBase64: '',
       path: prepared.path,
       thumbnail: prepared.thumbnail,
       width: prepared.width,
@@ -133,6 +133,23 @@ export function materialize(pending: PendingAttachment[]): Attachment[] {
     })
   }
   return out
+}
+
+/**
+ * What a send that waited for an image does once something changes: keep
+ * waiting while an image is being prepared; send when every image is ready;
+ * otherwise cancel — an image failed (the message must not quietly go
+ * without it), or the image it waited for was taken away.
+ */
+export function queuedSendStep(
+  queued: boolean,
+  attachments: PendingAttachment[]
+): 'none' | 'wait' | 'send' | 'cancel' {
+  if (!queued) return 'none'
+  if (attachments.some(isPreparing)) return 'wait'
+  const images = attachments.filter((a): a is PendingImage => a.kind === 'image')
+  if (images.length === 0 || images.some((a) => a.error !== undefined)) return 'cancel'
+  return 'send'
 }
 
 function readAsBase64(file: File): Promise<string> {
@@ -150,7 +167,8 @@ function readAsBase64(file: File): Promise<string> {
 /** What the chip in the composer says. */
 export function attachmentLabel(item: PendingAttachment): string {
   if (item.kind === 'image') {
-    if (item.prepared) return `Снимок ${item.prepared.width}×${item.prepared.height}`
+    const p = item.prepared
+    if (p) return p.width > 0 && p.height > 0 ? `Снимок ${p.width}×${p.height}` : 'Снимок'
     return item.error ?? 'Готовлю снимок…'
   }
   return item.path.split(/[\\/]/).pop() ?? item.path

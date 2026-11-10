@@ -132,3 +132,98 @@ test('черновик со снимком переживает перезагр
     await close(app, profile)
   }
 })
+
+/** Same as launch, with main's image preparation slowed or failed (e2e seams). */
+async function launchWith(
+  script: unknown,
+  env: Record<string, string>
+): Promise<{ app: ElectronApplication; profile: string; win: Page }> {
+  const profile = mkdtempSync(join(tmpdir(), 'qclod-input-'))
+  const app = await electron.launch({
+    args: ['.'],
+    env: {
+      ...process.env,
+      QCLOD_USER_DATA: profile,
+      QCLOD_FAKE_SDK_SCRIPT: JSON.stringify(script),
+      QCLOD_FAKE_SHELL: '1',
+      ...env
+    } as Record<string, string>
+  })
+  const win = await app.firstWindow()
+  await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+  return { app, profile, win }
+}
+
+test('крестик, пока снимок готовится и отправка ждёт, отменяет её: набранное потом не уходит', async () => {
+  const { app, profile, win } = await launchWith(
+    { steps: [], nextTurn: [{ kind: 'reportInput' }] },
+    { QCLOD_PREPARE_DELAY_MS: '1500' }
+  )
+  try {
+    await copyScreenshot(app, 64, 48)
+    await paste(win)
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.press('Enter')
+    await win.locator('[data-testid="composer-chip-remove"]').click()
+    await expect(win.locator('[data-testid="composer-chip"]')).toHaveCount(0)
+    await input.type('п')
+    await win.waitForTimeout(2500)
+    await expect(input).toHaveValue('п')
+    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('снимок не удался, пока отправка ждала: текст и плашка с ошибкой остаются, второй Enter шлёт без него', async () => {
+  const { app, profile, win } = await launchWith(
+    { steps: [], nextTurn: [{ kind: 'reportInput' }] },
+    { QCLOD_PREPARE_DELAY_MS: '800', QCLOD_PREPARE_FAIL: '1' }
+  )
+  try {
+    await copyScreenshot(app, 64, 48)
+    await paste(win)
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.fill('посмотри')
+    await input.press('Enter')
+    const chip = win.locator('[data-testid="composer-chip"]')
+    await expect(chip).toHaveClass(/is-error/, { timeout: 10000 })
+    await win.waitForTimeout(500)
+    await expect(input).toHaveValue('посмотри')
+    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
+
+    await input.press('Enter')
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText('картинок: 0', { timeout: 15000 })
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('клик по миниатюре удалённой копии говорит «Файл уже удалён»', async () => {
+  const { app, profile, win } = await launch({ steps: [], nextTurn: [{ kind: 'reportInput' }] })
+  try {
+    await copyScreenshot(app, 64, 48)
+    await paste(win)
+    await expect(win.locator('[data-testid="composer-chip-thumb"]')).toBeVisible({ timeout: 10000 })
+    await win.locator('[data-testid="composer-input"]').press('Enter')
+    const thumb = win.locator('[data-testid="row-user-image"]')
+    await expect(thumb).toBeVisible({ timeout: 15000 })
+
+    rmSync(join(profile, 'pastes'), { recursive: true, force: true })
+    await thumb.click()
+    await expect(win.locator('[data-testid="row-user-image-gone"]')).toHaveText('Файл уже удалён')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('тестовая сборка без QCLOD_FAKE_SDK не запускает настоящего агента и объясняет почему', async () => {
+  const { app, profile, win } = await launchWith({ steps: [] }, { QCLOD_FAKE_SDK: '' })
+  try {
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText('QCLOD_FAKE_SDK', { timeout: 15000 })
+    // No agent process was ever made: main says so itself.
+    expect(await app.evaluate(() => (globalThis as { __qclodRealAgentStarts?: number }).__qclodRealAgentStarts ?? 0)).toBe(0)
+  } finally {
+    await close(app, profile)
+  }
+})

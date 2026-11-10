@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, ImageOff, Paperclip, Square, X } from 'lucide-react'
+import { ArrowUp, Image as ImageIcon, ImageOff, Paperclip, Square, X } from 'lucide-react'
 import type {
   Attachment,
   CommandInfo,
@@ -16,6 +16,7 @@ import {
   isPreparing,
   materialize,
   prepareAttachment,
+  queuedSendStep,
   type PendingAttachment,
   type PendingImage
 } from '../input/attachments'
@@ -283,9 +284,11 @@ export function Composer({
 
   /** Enter pressed while an image was still being prepared: send once it is. */
   const [sendWhenReady, setSendWhenReady] = useState(false)
-  const preparing = attachments.some(isPreparing)
 
   const submit = useCallback(async (): Promise<void> => {
+    // Every way out of here leaves no send waiting, unless it is the one
+    // below that decides to wait.
+    setSendWhenReady(false)
     // A bare «/model» is ours: it opens the list again rather than going to
     // the session, where it would do nothing.
     const local = bareLocalStep(draft)
@@ -305,7 +308,6 @@ export function Composer({
       setSendWhenReady(true)
       return
     }
-    setSendWhenReady(false)
     const ready = materialize(attachments)
     // Nothing left to send: only a failed image, which stays to be seen.
     if (!text && ready.length === 0) return
@@ -315,9 +317,13 @@ export function Composer({
     onSubmit(text, ready)
   }, [draft, attachments, history, onDraftChange, onAttachmentsChange, onSubmit])
 
+  // A failed image cancels the waiting send and leaves the text and its error
+  // chip in place: only another Enter sends without the image.
+  const queued = queuedSendStep(sendWhenReady, attachments)
   useEffect(() => {
-    if (sendWhenReady && !preparing) void submit()
-  }, [sendWhenReady, preparing, submit])
+    if (queued === 'send') void submit()
+    else if (queued === 'cancel') setSendWhenReady(false)
+  }, [queued, submit])
 
   // A different tab's field does not inherit a send that was waiting here.
   useEffect(() => setSendWhenReady(false), [tabId])
@@ -493,7 +499,9 @@ export function Composer({
               data-testid="composer-chip"
               title={attachmentLabel(item)}
             >
-              {item.kind === 'image' && item.prepared ? (
+              {item.kind === 'image' && item.prepared && !item.prepared.thumbnail ? (
+                <ImageIcon size={14} aria-hidden="true" />
+              ) : item.kind === 'image' && item.prepared ? (
                 <img
                   className="composer-chip-thumb"
                   data-testid="composer-chip-thumb"
@@ -512,7 +520,12 @@ export function Composer({
                 data-testid="composer-chip-remove"
                 aria-label={item.kind === 'image' ? 'Убрать снимок' : `Убрать ${attachmentLabel(item)}`}
                 title={item.kind === 'image' ? 'Убрать снимок' : `Убрать ${attachmentLabel(item)}`}
-                onClick={() => onAttachmentsChange(attachments.filter((_, i) => i !== index))}
+                onClick={() => {
+                  // Taking something away changes the message: a send that
+                  // was waiting does not go on its own.
+                  setSendWhenReady(false)
+                  onAttachmentsChange(attachments.filter((_, i) => i !== index))
+                }}
               >
                 <X size={12} aria-hidden="true" />
               </button>

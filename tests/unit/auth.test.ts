@@ -5,9 +5,11 @@ import {
   LOGIN_WATCH_MAX_MS,
   LoginWatch,
   loginCommandLine,
+  openLoginWindow,
   parseAuthStatus,
   readAuthStatus,
-  type ExecLike
+  type ExecLike,
+  type SpawnLike
 } from '@main/setup/auth'
 import type { AuthStatus, LoginProgress } from '@shared/types'
 
@@ -31,6 +33,62 @@ describe('loginCommandLine', () => {
   })
   test('старый cli.js запускается через node', () => {
     expect(loginCommandLine('C:\\npm\\cli.js')).toBe('node C:\\npm\\cli.js auth login')
+  })
+})
+
+describe('openLoginWindow', () => {
+  function fakeSpawn() {
+    const listeners: Record<string, (e: Error) => void> = {}
+    const child = {
+      on: vi.fn((event: string, fn: (e: Error) => void) => {
+        listeners[event] = fn
+        return child
+      }),
+      unref: vi.fn()
+    }
+    const spawnFn = vi.fn<SpawnLike>(() => child)
+    return { spawnFn, child, listeners }
+  }
+
+  // The user's path never reaches the outer cmd: it only runs `start` with a
+  // fixed line. The inner cmd expands the variable once and parses it once.
+  const ARGS = ['/d', '/v:off', '/c', 'start', '""', 'cmd.exe', '/d', '/v:off', '/s', '/k', '^"%QCLOD_LOGIN_LINE^%^"']
+
+  test.each([
+    [
+      'C:\\Users\\Иван Иванов\\.local\\bin\\claude.exe',
+      '"C:\\Users\\Иван Иванов\\.local\\bin\\claude.exe" auth login'
+    ],
+    ['C:\\Users\\A&B\\.local\\bin\\claude.exe', '"C:\\Users\\A&B\\.local\\bin\\claude.exe" auth login'],
+    ['C:\\Users\\100%x\\.local\\bin\\claude.exe', '"C:\\Users\\100"^%"x\\.local\\bin\\claude.exe" auth login'],
+    [
+      'C:\\Users\\A&B\\AppData\\Roaming\\npm\\node_modules\\claude-code\\cli.js',
+      'node "C:\\Users\\A&B\\AppData\\Roaming\\npm\\node_modules\\claude-code\\cli.js" auth login'
+    ]
+  ])('%s → окно cmd с одной строкой входа', (agent, line) => {
+    const { spawnFn, child } = fakeSpawn()
+    openLoginWindow(agent, spawnFn)
+    expect(spawnFn).toHaveBeenCalledTimes(1)
+    const [file, args, opts] = spawnFn.mock.calls[0]
+    expect(file).toBe('cmd.exe')
+    expect(args).toEqual(ARGS)
+    expect(Object.keys(opts).sort()).toEqual(['detached', 'env', 'windowsHide', 'windowsVerbatimArguments'])
+    expect(opts.detached).toBe(true)
+    expect(opts.windowsHide).toBe(false)
+    expect(opts.windowsVerbatimArguments).toBe(true)
+    expect(opts.env?.['QCLOD_LOGIN_LINE']).toBe(line)
+    expect(opts.env?.['PATH'] ?? opts.env?.['Path']).toBe(process.env['PATH'] ?? process.env['Path'])
+    expect(child.unref).toHaveBeenCalledTimes(1)
+  })
+
+  test('ошибка запуска — тихая строка в консоли, не исключение', () => {
+    const { spawnFn, listeners } = fakeSpawn()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    openLoginWindow('C:\\a\\claude.exe', spawnFn)
+    expect(listeners['error']).toBeTypeOf('function')
+    listeners['error'](new Error('spawn cmd.exe ENOENT'))
+    expect(warn).toHaveBeenCalledWith('[login]', 'spawn cmd.exe ENOENT')
+    warn.mockRestore()
   })
 })
 

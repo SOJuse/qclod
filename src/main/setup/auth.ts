@@ -76,18 +76,47 @@ export function loginCommandLine(agent: string): string {
   return `${program} auth login`
 }
 
-/**
- * Opens a console window running `claude auth login`. The inner `cmd /k`
- * sees more than two quotes and strips only the first and last, so a path
- * with a space arrives whole. The window stays open after the login (`/k`),
- * so the person sees the CLI's answer.
- */
-export function openLoginWindow(agent: string): void {
-  spawn('cmd.exe', ['/d', '/s', '/c', `"start "" cmd.exe /k "${loginCommandLine(agent)}""`], {
-    detached: true,
-    windowsHide: false,
+export type SpawnLike = (
+  file: string,
+  args: string[],
+  opts: {
+    detached: true
+    windowsHide: false
     windowsVerbatimArguments: true
-  }).unref()
+    env: NodeJS.ProcessEnv
+  }
+) => { on(event: 'error', fn: (e: Error) => void): unknown; unref(): void }
+
+/** The environment variable that carries the login line to the inner cmd. */
+const LOGIN_LINE_VAR = 'QCLOD_LOGIN_LINE'
+
+/**
+ * Opens a console window running `claude auth login`; it stays open after
+ * the login (`/k`), so the person sees the CLI's answer.
+ *
+ * A new console needs `start`: a detached child of Node gets no console at
+ * all. So there are two cmd.exe, but only the inner one ever parses the
+ * path. The outer one runs a fixed line; the login line travels in an
+ * environment variable. `^"` and `^%` keep the outer cmd from opening quotes
+ * or expanding the variable, so `start` hands the inner cmd
+ * `/s /k "%QCLOD_LOGIN_LINE%"`. The inner cmd strips that one pair of quotes,
+ * expands the variable once and parses the line once, exactly as quoteArg
+ * built it for a single cmd level: quotes around the path keep `&` and `^`
+ * literal, and `"^%"` keeps a `%` from starting a variable.
+ */
+export function openLoginWindow(agent: string, spawnFn: SpawnLike = spawn): void {
+  const child = spawnFn(
+    'cmd.exe',
+    ['/d', '/v:off', '/c', 'start', '""', 'cmd.exe', '/d', '/v:off', '/s', '/k', `^"%${LOGIN_LINE_VAR}^%^"`],
+    {
+      detached: true,
+      windowsHide: false,
+      windowsVerbatimArguments: true,
+      env: { ...process.env, [LOGIN_LINE_VAR]: loginCommandLine(agent) }
+    }
+  )
+  child.on('error', (e) => console.warn('[login]', e.message))
+  child.unref()
 }
 
 export interface LoginWatchDeps {

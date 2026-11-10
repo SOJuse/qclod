@@ -10,6 +10,24 @@ import { join } from 'node:path'
  */
 const SETTLE = { kind: 'thinking', text: 'думаю', ms: 1300 }
 
+/**
+ * How long a scripted question waits before it arrives. The tests that must be
+ * somewhere else (another pane, an open sheet) before it comes have a few
+ * hundred ms of clicking to do; on a loaded machine that must stay far below
+ * this.
+ */
+const ASK_AFTER_MS = 6000
+
+/** Past every effect and timer the page queued in the frame that just rendered. */
+async function afterEffects(win: Page): Promise<void> {
+  await win.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))
+      )
+  )
+}
+
 async function launch(
   script: { steps: unknown[] } & Record<string, unknown>,
   settle = true
@@ -369,7 +387,7 @@ test('запрос в соседней панели не уводит фокус
         steps: [{ kind: 'text', text: 'первый чат' }],
         // The question arrives a few seconds after the message is sent.
         nextTurn: [
-          { kind: 'tool', name: 'Read', input: { file_path: 'a.ts' }, result: 'x', pauseMs: 2500 },
+          { kind: 'tool', name: 'Read', input: { file_path: 'a.ts' }, result: 'x', pauseMs: ASK_AFTER_MS },
           { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }
         ]
       })
@@ -391,9 +409,11 @@ test('запрос в соседней панели не уводит фокус
     await win.keyboard.type('сделай')
     await win.keyboard.press('Enter')
     await left.locator('[data-testid="composer-input"]').click()
+    await expect(left).toHaveClass(/is-focused/)
 
     await expect(right.locator('[data-testid="permission-card"]')).toBeVisible({ timeout: 15000 })
 
+    await afterEffects(win)
     // Focus stayed, so what is typed now lands in the pane being written in.
     await expect(left.locator('[data-testid="composer-input"]')).toBeFocused()
     await win.keyboard.type('левый черновик')
@@ -479,7 +499,7 @@ test('открытые настройки не теряют фокус, когд
   const { app, profile } = await launch({
     steps: [{ kind: 'text', text: 'готов' }],
     nextTurn: [
-      { kind: 'tool', name: 'Read', input: { file_path: 'a.ts' }, result: 'x', pauseMs: 2500 },
+      { kind: 'tool', name: 'Read', input: { file_path: 'a.ts' }, result: 'x', pauseMs: ASK_AFTER_MS },
       { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }
     ]
   })
@@ -494,7 +514,7 @@ test('открытые настройки не теряют фокус, когд
     await expect(settings).toBeVisible()
 
     await expect(win.locator('[data-testid="permission-card"]')).toBeVisible({ timeout: 15000 })
-    await win.waitForTimeout(600)
+    await afterEffects(win)
     // Focus is still inside the sheet, and the keys act on the sheet.
     expect(await win.evaluate(() => !!document.activeElement?.closest('[data-testid="settings"]'))).toBe(true)
     await win.keyboard.press('Escape')

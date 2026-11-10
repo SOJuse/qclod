@@ -143,6 +143,8 @@ export class AgentSession {
   /** Messages given to the driver before system/init; see `sentBeforeInit`. */
   private unintroduced: UserInput[] = []
   private disposed = false
+  /** Whether a driver was ever made; see `launched`. */
+  private launchedAgent = false
   /** Questions the agent asked through canUseTool, waiting on the user. */
   private readonly pendingQuestions = new Map<
     string,
@@ -156,6 +158,13 @@ export class AgentSession {
    * shows «ждёт» while any is, so answering one of two keeps it waiting.
    */
   private waits = 0
+  /**
+   * Whether a turn is under way: from a message given to the agent until its
+   * result, «Стоп» or a failure. A question can be open outside one — a
+   * background subagent asking after the result — and answering it must
+   * leave the tab idle, not working on a turn that is not there.
+   */
+  private turnRunning = false
   private mcpTimer: ReturnType<typeof setTimeout> | null = null
   /** Repeats asked since the servers were last all settled. */
   private mcpPolls = 0
@@ -182,6 +191,15 @@ export class AgentSession {
 
   get items(): RibbonItem[] {
     return this.builder.items
+  }
+
+  /**
+   * Whether a driver was ever created, even if it has failed since. A start
+   * that failed before that — no executable, an SDK that would not load —
+   * never got as far as the conversation, and so says nothing about it.
+   */
+  get launched(): boolean {
+    return this.launchedAgent
   }
 
   get todo(): TodoItem[] {
@@ -384,6 +402,7 @@ export class AgentSession {
       return
     }
     this.driver = driver
+    this.launchedAgent = true
 
     this.pump = this.readMessages(this.driver)
     this.setStatus('idle')
@@ -475,6 +494,7 @@ export class AgentSession {
   private deliver(sent: UserInput): void {
     if (!this.driver) return
     if (this.session === null) this.unintroduced.push(sent)
+    this.turnRunning = true
     this.setStatus('busy')
     this.driver.send(sent)
   }
@@ -489,6 +509,11 @@ export class AgentSession {
     if (!this.driver) return
     this.cancelWaits()
     await this.driver.interrupt().catch(() => undefined)
+    this.turnRunning = false
+    // A question asked while the interrupt was on its way belongs to the
+    // turn being stopped and is refused with it; left open, it would hold a
+    // count of one behind an idle tab.
+    this.cancelWaits()
     this.setStatus('idle')
   }
 
@@ -527,7 +552,9 @@ export class AgentSession {
   private leaveWait(): void {
     if (this.waits === 0) return
     this.waits -= 1
-    if (this.waits === 0 && this.state === 'waiting') this.setStatus('busy')
+    if (this.waits === 0 && this.state === 'waiting') {
+      this.setStatus(this.turnRunning ? 'busy' : 'idle')
+    }
   }
 
   async setPermissionMode(mode: string): Promise<void> {
@@ -625,6 +652,7 @@ export class AgentSession {
 
   async dispose(): Promise<void> {
     this.disposed = true
+    this.turnRunning = false
     this.stopMcpPolling()
     // A question nobody can answer any more must not hold the agent open.
     this.cancelWaits()
@@ -702,6 +730,7 @@ export class AgentSession {
         } else if (m['subtype'] === 'plugin_install') this.background(this.refreshMcp())
         break
       case 'result':
+        this.turnRunning = false
         this.setStatus('idle')
         this.background(this.refreshContext())
         break
@@ -902,6 +931,10 @@ export class AgentSession {
    * agent that no longer exists.
    */
   private fail(err: unknown): void {
+    // A closed session has nothing left to fail; a late callback of its
+    // would write into a ribbon its successor carries on.
+    if (this.disposed) return
+    this.turnRunning = false
     const text = err instanceof Error ? err.message : String(err)
     const dead = this.driver
     this.driver = null
@@ -922,7 +955,8 @@ export class AgentSession {
 
   /** Every patch comes from the collector, so its revision is the collector's. */
   private emitPanel(patch: Partial<PanelData>): void {
-    if (Object.keys(patch).length === 0) return
+    // The tab's panel belongs to whichever session replaced this one.
+    if (this.disposed || Object.keys(patch).length === 0) return
     const rev = this.collector.rev
     for (const listener of this.panelListeners) listener(patch, rev)
   }

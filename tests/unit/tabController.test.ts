@@ -8,7 +8,7 @@ import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
 import type { AgentDriver } from '../../src/main/agent/driver'
 import { TABS_FILE } from '../../src/main/store/tabsStore'
 import { EMPTY_PANEL } from '../../src/main/agent/panelData'
-import type { PanelEvent, RibbonEvent, TabState } from '../../src/shared/types'
+import type { PanelEvent, RibbonEvent, StatusEvent, TabState } from '../../src/shared/types'
 import { readTranscript } from '../../src/main/agent/transcript'
 import { resumedSession, writeTranscript } from '../fixtures/transcript.mjs'
 import { useAppStore } from '../../src/renderer/state/useAppStore'
@@ -103,6 +103,11 @@ function makeController(
     onPanel?: (event: PanelEvent) => void
     /** Sees each ribbon event as it leaves, before anything mutates it. */
     onRibbon?: (event: RibbonEvent) => void
+    onStatus?: (event: StatusEvent) => void
+    /** The configured agent cannot be found at all. */
+    agentMissing?: boolean
+    /** Every driver, fresh or resumed, dies before init with this message. */
+    everyStreamFails?: string
   } = {}
 ): Harness {
   const changed: TabState[][] = []
@@ -119,11 +124,15 @@ function makeController(
 
   const manager = new AgentSessionManager({
     getAgentPath: () => 'claude',
-    resolveAgent: () => 'C:/bin/claude.exe',
+    resolveAgent: () => {
+      if (options.agentMissing) throw new Error('Агент не найден: claude')
+      return 'C:/bin/claude.exe'
+    },
     askPermission: async () => ({ behavior: 'deny' as const }),
     ...(options.confirmBypass ? { confirmBypass: options.confirmBypass } : {}),
     createDriver: (driverOptions) => {
       resumedWith.push(driverOptions.resume)
+      if (options.everyStreamFails) return deadResumeFor(options.everyStreamFails, 0)
       if (options.resumeFailsSync && driverOptions.resume) {
         throw new Error(`Сессия ${driverOptions.resume} не открывается`)
       }
@@ -175,7 +184,7 @@ function makeController(
       options.onRibbon?.(event)
     },
     onPanel: options.onPanel ?? (() => undefined),
-    onStatus: () => undefined,
+    onStatus: options.onStatus ?? (() => undefined),
     onCommands: () => undefined
   })
 
@@ -319,8 +328,10 @@ describe('TabController', () => {
     expect(resumedWith).toContain('вчерашняя-сессия')
   })
 
-  test('сессию возобновить не удалось синхронно — чистая вкладка и строка в ленте', async () => {
-    const { controller, speak } = makeController({ resumeFailsSync: true })
+  test('драйвер не создался при resume — это не мёртвая переписка: ошибка видна, id цел', async () => {
+    // createDriver only loads the SDK; it never sees the conversation, so a
+    // throw there says nothing about whether the conversation still opens.
+    const { controller, manager, created } = makeController({ resumeFailsSync: true })
     writeStoredTabs([
       { id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая-сессия' }
     ])
@@ -328,18 +339,40 @@ describe('TabController', () => {
     await controller.restore()
     await controller.whenSettled()
 
-    const tab = controller.list()[0]!
-    expect(tab.status).not.toBe('error')
-
-    // The dead session's own error stays in the history the new one carries
-    // on from; the last word is what happened to the conversation.
+    expect(controller.list()[0]!.status).toBe('error')
     const notices = controller.itemsOf('a').filter((i) => i.kind === 'notice')
-    expect((notices.at(-1) as { text: string }).text).toContain('Прошлую переписку открыть не удалось')
     expect((notices.at(-1) as { text: string }).text).toContain('не открывается')
+    expect((notices.at(-1) as { text: string }).text).not.toContain('Прошлую переписку')
+    expect(created).toHaveLength(0)
+    expect(manager.get('a')).toBeDefined()
+    expect(storedTabs()[0]!['lastSessionId']).toBe('пропавшая-сессия')
+  })
 
-    // And the tab is usable: a fresh session came up in place of the old one.
-    await speak('a')
-    expect(controller.sessionIdOf('a')).toBeTruthy()
+  test('агент не найден при resume — id переписки остаётся на диске', async () => {
+    const { controller, created } = makeController({ agentMissing: true })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
+
+    await controller.restore()
+    await controller.whenSettled()
+
+    expect(controller.list()[0]!.status).toBe('error')
+    expect(created).toHaveLength(0)
+    expect(controller.list()[0]!.lastSessionId).toBe('живая')
+    expect(storedTabs()[0]!['lastSessionId']).toBe('живая')
+  })
+
+  test('сбой до init и у новой сессии (не вошли в аккаунт) — id переписки остаётся на диске', async () => {
+    const { controller, dead } = makeController({ everyStreamFails: 'Not logged in' })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
+
+    await controller.restore()
+    await vi.waitFor(() => expect(dead.length).toBe(2))
+    await vi.waitFor(() => expect(controller.list()[0]!.status).toBe('error'))
+    await controller.whenSettled()
+
+    // The replacement never introduced itself, so nothing proves the
+    // conversation is gone: it is tried again next time.
+    expect(storedTabs()[0]!['lastSessionId']).toBe('живая')
   })
 
   test('сессию возобновить не удалось на лету — чистая вкладка и строка в ленте', async () => {
@@ -493,8 +526,8 @@ describe('TabController: мёртвая сессия при resume (B4)', () => 
     expect(manager.get('a')).not.toBe(dead)
   })
 
-  test('мёртвый id стирается из tabs.json сразу, а не после первого ответа', async () => {
-    const { controller } = makeController({ resumeFailsAfterMs: 50 })
+  test('мёртвый id сменяется на диске только тогда, когда новая сессия представилась', async () => {
+    const { controller, speak } = makeController({ resumeFailsAfterMs: 50 })
     writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
 
     await controller.restore()
@@ -504,9 +537,15 @@ describe('TabController: мёртвая сессия при resume (B4)', () => 
     await vi.waitFor(() =>
       expect(lastNotice(controller, 'a')).toContain('Прошлую переписку открыть не удалось')
     )
-    // The fresh session has said nothing yet, so it has no id of its own.
+    await controller.whenSettled()
+    // The fresh session has said nothing yet: until it does, nothing proves
+    // the old conversation is the one at fault, so it is not erased.
     expect(controller.sessionIdOf('a')).toBeNull()
-    expect(storedTabs()[0]!['lastSessionId']).toBeUndefined()
+    expect(storedTabs()[0]!['lastSessionId']).toBe('пропавшая')
+
+    await speak('a')
+    expect(controller.sessionIdOf('a')).toBeTruthy()
+    expect(storedTabs()[0]!['lastSessionId']).toBe(controller.sessionIdOf('a'))
   })
 
   test('resume, который падает только на первом сообщении, тоже заменяется', async () => {
@@ -1086,5 +1125,124 @@ describe('TabController: ревизия ленты', () => {
     expect(ids.slice(0, beforeIds.length)).toEqual(beforeIds)
     expect(ids.length).toBeGreaterThan(beforeIds.length)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+})
+
+describe('TabController: замена сессии без гонок', () => {
+  const history = [
+    { type: 'user', message: { role: 'user', content: 'старый вопрос' } },
+    { type: 'assistant', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'старый ответ' }] } }
+  ]
+
+  /**
+   * Runs `during` while the manager is closing the tab's old session — after
+   * it is gone from the manager, before its dispose is over.
+   */
+  function whileClosing(harness: Harness, tabId: string, during: () => void): void {
+    const close = harness.manager.close.bind(harness.manager)
+    let done = false
+    vi.spyOn(harness.manager, 'close').mockImplementation(async (id) => {
+      const closing = close(id)
+      if (id === tabId && !done) {
+        done = true
+        during()
+      }
+      await closing
+    })
+  }
+
+  test('вкладка закрыта, пока закрывалась мёртвая сессия — новая не поднимается и ничего не шлёт', async () => {
+    const harness = makeController({ resumeFailsOnSend: true })
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    whileClosing(harness, 'a', () => void harness.controller.close('a'))
+
+    harness.manager.get('a')!.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(harness.controller.list().map((t) => t.id)).toEqual(['b']))
+    await harness.controller.whenSettled()
+
+    expect(harness.manager.get('a')).toBeUndefined()
+    // Nothing was built for the closed tab, so nothing was resent either.
+    expect(harness.created.filter((c) => c.driver.sent.length > 0)).toEqual([])
+    expect(harness.manager.list().map(([id]) => id)).not.toContain('a')
+  })
+
+  test('вкладка закрыта во время restart — новая сессия не поднимается', async () => {
+    const harness = makeController()
+    const a = harness.controller.create(projectA)
+    harness.controller.create(projectB)
+    await harness.speak(a.id)
+    whileClosing(harness, a.id, () => void harness.controller.close(a.id))
+
+    await harness.controller.restart(a.id)
+    await harness.controller.whenSettled()
+
+    expect(harness.manager.get(a.id)).toBeUndefined()
+    expect(harness.controller.ribbonOf(a.id)).toEqual({ rev: 0, items: [], todo: null })
+  })
+
+  test('снимок ленты во время restart не пустой', async () => {
+    const harness = makeController({ historyMessages: history })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'вчера' }])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    const before = harness.controller.ribbonOf('a')
+    expect(before.items.length).toBeGreaterThan(0)
+
+    let during: ReturnType<TabController['ribbonOf']> | null = null
+    whileClosing(harness, 'a', () => (during = structuredClone(harness.controller.ribbonOf('a'))))
+    await harness.controller.restart('a')
+
+    expect(during!.items).toEqual(before.items)
+  })
+
+  test('снимок ленты во время замены мёртвой сессии не пустой', async () => {
+    const harness = makeController({ resumeFailsOnSend: true, historyMessages: history })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+
+    let during: ReturnType<TabController['ribbonOf']> | null = null
+    whileClosing(harness, 'a', () => (during = structuredClone(harness.controller.ribbonOf('a'))))
+    harness.manager.get('a')!.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(during).not.toBeNull())
+    await harness.controller.whenSettled()
+
+    const texts = during!.items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text)
+    expect(texts).toEqual(['старый вопрос', 'привет'])
+  })
+
+  test('поздние события прежней сессии после restart не трогают статус и панель вкладки', async () => {
+    const statuses: StatusEvent[] = []
+    const panels: PanelEvent[] = []
+    const harness = makeController({
+      onStatus: (e) => statuses.push(e),
+      onPanel: (e) => panels.push(e)
+    })
+    const tab = harness.controller.create(projectA)
+    await harness.controller.whenSettled()
+    const old = harness.manager.get(tab.id)!
+
+    await harness.controller.restart(tab.id)
+    await harness.controller.whenSettled()
+    const fresh = harness.manager.get(tab.id)!
+    expect(fresh).not.toBe(old)
+    const statusesBefore = statuses.length
+    const panelsBefore = panels.length
+    const panelBefore = harness.controller.panelOf(tab.id)
+
+    // A result the old one still delivers, a late failure, a late patch.
+    old.handle({ type: 'result', subtype: 'success', is_error: false, result: '' })
+    ;(old as unknown as { fail: (err: unknown) => void }).fail(new Error('поздно'))
+    await old.setPermissionMode('plan')
+
+    expect(statuses.slice(statusesBefore)).toEqual([])
+    expect(panels.slice(panelsBefore)).toEqual([])
+    expect(harness.controller.list()[0]!.status).toBe(fresh.status)
+    expect(harness.controller.panelOf(tab.id)).toEqual(panelBefore)
   })
 })

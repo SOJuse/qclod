@@ -241,14 +241,21 @@ export class TabController {
     // ribbon here would leave the window holding items main no longer has,
     // and new ones under the same ids.
     const seed = this.deps.manager.get(id)?.successorSeed()
+    // In place before the old session goes: while it closes the tab has no
+    // session, and a snapshot taken then must not come back empty.
+    if (seed) this.previews.set(id, seed)
+    else this.previews.delete(id)
     await this.deps.manager.close(id)
+    // Closed while the old session was closing: nothing to restart.
+    if (!this.tabs.includes(tab)) {
+      this.previews.delete(id)
+      return
+    }
     // Forgotten on disk now, not when the new session first answers: a
     // launch in between would pick the old conversation back up.
     delete tab.lastSessionId
     this.persist()
     this.emit()
-    if (seed) this.previews.set(id, seed)
-    else this.previews.delete(id)
     await this.ensureSession(id)
   }
 
@@ -361,7 +368,10 @@ export class TabController {
   private async resume(id: TabId, session: AgentSession, resumeId: string): Promise<void> {
     await session.start(resumeId)
     if (session.status === 'error') {
-      await this.recoverFromDeadSession(id, session)
+      // A start that never made a driver — no executable, an SDK that would
+      // not load — never reached the conversation: the error stays on screen
+      // and the conversation stays remembered.
+      if (session.launched) await this.recoverFromDeadSession(id, session)
       return
     }
 
@@ -384,29 +394,39 @@ export class TabController {
    * The stored conversation would not open: give the tab a clean session.
    * The history stays on screen — the new session continues the dead one's
    * ribbon — but the panel starts over: it describes the new session.
+   *
+   * The stored id is not erased here. It is replaced once the new session
+   * introduces itself (`rememberSession`), and not before: an agent that
+   * dies before init for reasons of its own — not logged in, a crash at
+   * start — kills the clean session the same way, and then nothing shows
+   * the conversation was at fault. Retrying a truly dead id on the next
+   * launch costs one more notice; erasing a live one costs the conversation.
    */
   private async recoverFromDeadSession(id: TabId, dead: AgentSession): Promise<void> {
     if (this.deps.manager.get(id) !== dead) return
     const reason = dead.error ?? 'неизвестная причина'
     const tab = this.tabs.find((t) => t.id === id)
-    if (tab) {
-      // Off the disk at once, or a launch before the new session's first
-      // answer retries the dead id.
-      delete tab.lastSessionId
-      this.persist()
-      this.emit()
-    }
+    if (!tab) return
 
     // Launched as the tab would be, minus «без проверок»: the clean session
     // is a new one, and that mode is never inherited (spec 5.4).
-    const launch = tab ? this.launchOptions(tab) : this.deps.getDefaults()
+    const launch = this.launchOptions(tab)
     if (launch.permissionMode === 'bypassPermissions') delete launch.permissionMode
     // What the user said to the dead session never reached an agent; it is
     // on screen already and goes to the new one as it was sent.
     const unsent = dead.sentBeforeInit
     const seed = dead.successorSeed()
+    // Shown while the dead session closes, so a snapshot then is not empty.
+    this.previews.set(id, seed)
     await this.deps.manager.close(id)
-    const fresh = this.deps.manager.create(id, tab?.cwd ?? this.deps.defaultCwd, launch, seed)
+    // Closed while the dead session was closing: no agent for a tab that
+    // is gone, and nothing resent to it.
+    if (!this.tabs.includes(tab)) {
+      this.previews.delete(id)
+      return
+    }
+    const fresh = this.deps.manager.create(id, tab.cwd, launch, seed)
+    this.previews.delete(id)
     this.adopt(id, fresh)
     this.emitRibbon(id, fresh.notice(`Прошлую переписку открыть не удалось: ${reason}`))
     await fresh.start()
@@ -435,14 +455,22 @@ export class TabController {
   }
 
   private wire(id: TabId, session: AgentSession): void {
+    // A session that has been replaced — restart, recovery — may still have
+    // callbacks on their way; the tab's status, panel and stored id are its
+    // successor's now. Ribbon changes still go out: the ribbon is shared.
+    const current = (): boolean => this.deps.manager.get(id) === session
     session.onChange((changes) => this.emitRibbon(id, changes))
     session.onPanel((patch, rev) => {
+      if (!current()) return
       this.deps.onPanel({ tabId: id, patch, rev })
       if (patch.limits) this.sharePlanLimits(patch.limits)
     })
     session.onCommands((commands) => this.deps.onCommands({ tabId: id, commands }))
-    session.onSession(() => this.rememberSession(id, session))
+    session.onSession(() => {
+      if (current()) this.rememberSession(id, session)
+    })
     session.onStatus((status) => {
+      if (!current()) return
       const patch: Partial<TabState> = { status }
       if (session.error !== undefined) patch.error = session.error
       if (status === 'waiting' || status === 'idle') {

@@ -1416,3 +1416,103 @@ describe('AgentSession: повторная отправка с вложение�
     expect(second.driver.sent[0]!.text.split(mention)).toHaveLength(2)
   })
 })
+
+describe('AgentSession: ожидание вне хода', () => {
+  /** A session whose canUseTool is called by hand, and whose gate answers when told. */
+  function gated(): {
+    session: AgentSession
+    driver: ReturnType<typeof createFakeSdk>
+    ask: (toolUseId: string) => Promise<{ behavior: string }>
+    answer: () => void
+  } {
+    let canUseTool!: DriverOptions['canUseTool']
+    let allow: (() => void) | null = null
+    const driver = createFakeSdk({ steps: [], nextTurn: [] })
+    const session = new AgentSession({
+      tabId: 't1',
+      cwd: 'C:/проект',
+      overrides: {},
+      agentPath: 'claude',
+      resolveAgent: () => 'C:/bin/claude.exe',
+      askPermission: (_request, signal) =>
+        new Promise((resolve) => {
+          allow = () => resolve({ behavior: 'allow' })
+          signal.addEventListener('abort', () => resolve({ behavior: 'deny' }), { once: true })
+        }),
+      createDriver: (options) => {
+        canUseTool = options.canUseTool
+        return driver as unknown as AgentDriver
+      }
+    })
+    return {
+      session,
+      driver,
+      ask: (toolUseId) =>
+        canUseTool('Bash', { command: 'ls' }, { toolUseId, signal: new AbortController().signal }),
+      answer: () => allow?.()
+    }
+  }
+
+  test('вопрос, открытый в простое, после ответа возвращает вкладку в простой', async () => {
+    const { session, ask, answer } = gated()
+    await session.start()
+    expect(session.status).toBe('idle')
+
+    // A background subagent asking after the turn's result: no turn runs.
+    const asked = ask('после-хода')
+    await vi.waitFor(() => expect(session.status).toBe('waiting'))
+    answer()
+    await asked
+
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('вопрос, пришедший во время «Стоп», отклоняется и не держит вкладку в ожидании', async () => {
+    const { session, driver, ask, answer } = gated()
+    await session.start()
+    session.send({ text: 'делай', attachments: [] })
+
+    let interrupted!: () => void
+    const original = driver.interrupt.bind(driver)
+    driver.interrupt = async () => {
+      await original()
+      await new Promise<void>((resolve) => (interrupted = resolve))
+    }
+    const stopping = session.interrupt()
+    await vi.waitFor(() => expect(interrupted).toBeDefined())
+    const asked = ask('во-время-стопа')
+    await vi.waitFor(() => expect(session.status).toBe('waiting'))
+    interrupted()
+    await stopping
+
+    expect(session.status).toBe('idle')
+    // Refused with the turn it belonged to, not left open behind an idle tab.
+    await expect(asked).resolves.toMatchObject({ behavior: 'deny' })
+    // And the count is clean: the next question still ends in idle.
+    const next = ask('следующий')
+    await vi.waitFor(() => expect(session.status).toBe('waiting'))
+    answer()
+    await next
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+})
+
+describe('AgentSession: после dispose молчит', () => {
+  test('поздний сбой и поздняя правка панели закрытой сессии никуда не уходят', async () => {
+    const { session } = makeSession({ steps: [], nextTurn: [] })
+    await session.start()
+    await session.dispose()
+    const rec = watch(session)
+
+    // What a late callback of the closed session would do.
+    ;(session as unknown as { fail: (err: unknown) => void }).fail(new Error('поздно'))
+    await session.setPermissionMode('plan')
+
+    expect(rec.statuses).toEqual([])
+    expect(rec.changes).toEqual([])
+    expect(rec.panels).toEqual([])
+    expect(session.status).toBe('stopped')
+  })
+})

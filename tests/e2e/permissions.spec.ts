@@ -132,6 +132,44 @@ test('вопрос агента показывает варианты и отв�
   }
 })
 
+test('вопрос из двух частей: выбрал оба варианта — агент получил оба', async () => {
+  const { app, profile } = await launch({
+    steps: [
+      {
+        kind: 'askQuestion',
+        questions: [
+          { question: 'Где?', options: ['Слева', 'Справа'] },
+          { question: 'Цвет?', options: ['Синий', 'Красный'] }
+        ],
+        echoAnswers: true
+      }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    const card = win.locator('[data-testid="question-card"]')
+    await expect(card).toBeVisible({ timeout: 15000 })
+
+    const submit = card.locator('[data-testid="question-submit"]')
+    await expect(submit).toBeDisabled()
+    await card.locator('[data-testid="question-option"]', { hasText: 'Справа' }).click()
+    // One question still open: the card does not answer by itself.
+    await expect(submit).toBeDisabled()
+    await card.locator('[data-testid="question-option"]', { hasText: 'Красный' }).click()
+    await expect(submit).toBeEnabled()
+    await submit.click()
+
+    await expect(card.locator('.is-chosen')).toHaveCount(2)
+    const ribbon = win.locator('[data-testid="ribbon"]')
+    // What the agent itself received, not the card's own text.
+    await expect(ribbon).toContainText('Получено: "Где?"="Справа", "Цвет?"="Красный"', {
+      timeout: 15000
+    })
+  } finally {
+    await close(app, profile)
+  }
+})
+
 test('пока ждём ответа, вкладка в состоянии waiting', async () => {
   const { app, profile } = await launch({
     steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]

@@ -9,7 +9,17 @@ export type FakeStep =
   | { kind: 'toolError'; name: string; input?: object; error: string }
   | { kind: 'askPermission'; name: string; input?: object }
   | { kind: 'askPermissions'; tools: Array<{ name: string; input?: object }> }
-  | { kind: 'askQuestion'; question: string; header?: string; options: string[] }
+  | {
+      kind: 'askQuestion'
+      /** Shorthand for a single question. */
+      question?: string
+      header?: string
+      options?: string[]
+      /** After the answer, say what the agent received as a text message. */
+      echoAnswers?: boolean
+      /** The full form: up to four questions. */
+      questions?: Array<{ question: string; header?: string; options: string[]; multiSelect?: boolean }>
+    }
   | { kind: 'todo'; items: Array<{ content: string; status: string }> }
   | {
       kind: 'subagent'

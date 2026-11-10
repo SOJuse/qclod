@@ -3,6 +3,7 @@ import {
   sanitizeAnswer,
   sanitizeInput,
   sanitizeOverrides,
+  sanitizeQuestionAnswers,
   sanitizeTabPatch
 } from '@main/tabs/sanitize'
 
@@ -145,5 +146,24 @@ describe('sanitizeOverrides: усилие', () => {
     expect(sanitizeOverrides({ effort: 'ultra' })).toEqual({})
     expect(sanitizeOverrides({ effort: 3 })).toEqual({})
     expect(sanitizeOverrides({ model: 'opus', effort: 'HIGH' })).toEqual({ model: 'opus' })
+  })
+})
+
+describe('sanitizeQuestionAnswers', () => {
+  test('ответы на вопрос — только строки, не больше четырёх', () => {
+    expect(sanitizeQuestionAnswers({ A: '1', B: 'x, y' })).toEqual({ A: '1', B: 'x, y' })
+    // Not an object at all.
+    expect(sanitizeQuestionAnswers('Справа')).toEqual({})
+    expect(sanitizeQuestionAnswers(['A'])).toEqual({})
+    expect(sanitizeQuestionAnswers(null)).toEqual({})
+    // Values that are not strings are dropped.
+    expect(sanitizeQuestionAnswers({ A: '1', B: 2, C: { x: 1 } })).toEqual({ A: '1' })
+    // AskUserQuestion asks at most four questions.
+    const many = { a: '1', b: '2', c: '3', d: '4', e: '5' }
+    expect(Object.keys(sanitizeQuestionAnswers(many))).toEqual(['a', 'b', 'c', 'd'])
+    // An answer is a choice, not a document.
+    expect(sanitizeQuestionAnswers({ A: 'я'.repeat(2001), B: 'я'.repeat(2000) })).toEqual({
+      B: 'я'.repeat(2000)
+    })
   })
 })

@@ -1,4 +1,12 @@
-import type { Attachment, RibbonChange, RibbonItem, SubagentState, TodoItem, ToolState } from './types'
+import type {
+  Attachment,
+  QuestionView,
+  RibbonChange,
+  RibbonItem,
+  SubagentState,
+  TodoItem,
+  ToolState
+} from './types'
 
 /**
  * Turns the SDK's message stream into the ribbon the user reads.
@@ -313,13 +321,13 @@ export class RibbonBuilder {
   }
 
   /** Records the user's answer to a question card. */
-  answerQuestion(toolUseId: string, answer: string): RibbonChange[] {
+  answerQuestion(toolUseId: string, answers: Record<string, string>): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)
     if (!item || item.kind !== 'question') return []
     // Kept on the item itself: a snapshot (reload, split pane, a session
     // taking this ribbon over) is built from the items, not from the events.
-    item.answer = answer
-    return [this.update(item.id, { answer })]
+    item.answers = answers
+    return [this.update(item.id, { answers })]
   }
 
   /**
@@ -552,12 +560,19 @@ export class RibbonBuilder {
     }
 
     if (name === 'AskUserQuestion') {
-      const first = asArray(input['questions']).find(isObject)
-      const options = first
-        ? asArray(first['options'])
-            .map((option) => (isObject(option) ? str(option['label']) : str(option)))
-            .filter(Boolean)
-        : []
+      const questions: QuestionView[] = asArray(input['questions'])
+        .filter(isObject)
+        .map((q) => ({
+          question: str(q['question']),
+          header: str(q['header']),
+          multiSelect: q['multiSelect'] === true,
+          options: asArray(q['options'])
+            .map((option) => ({
+              label: isObject(option) ? str(option['label']) : str(option),
+              description: isObject(option) ? str(option['description']) : ''
+            }))
+            .filter((option) => option.label !== '')
+        }))
       const id = this.nextId()
       this.byToolUseId.set(toolUseId, id)
       return [
@@ -565,9 +580,8 @@ export class RibbonBuilder {
           kind: 'question',
           id,
           toolUseId,
-          question: first ? str(first['question']) : '',
-          options,
-          answer: null,
+          questions,
+          answers: null,
           ...(parentId ? { parentId } : {})
         })
       ]

@@ -12,7 +12,7 @@ interface Props {
   children: Item[]
   onMeasure: (id: string, height: number) => void
   onAnswerPermission: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
-  onAnswerQuestion: (toolUseId: string, choice: string) => void
+  onAnswerQuestion: (toolUseId: string, answers: Record<string, string>) => void
   onAnswerPlan: (requestId: string, approve: boolean) => void
 }
 

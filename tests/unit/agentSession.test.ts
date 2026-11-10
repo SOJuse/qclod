@@ -614,7 +614,7 @@ describe('AgentSession: после падения агента', () => {
     expect(session.status).toBe('error')
 
     const card = rec.items.find((i) => i.kind === 'question') as { toolUseId: string }
-    session.answerQuestion(card.toolUseId, 'Справа')
+    session.answerQuestion(card.toolUseId, { 'Какой?': 'Справа' })
     await tick()
 
     // No live question to answer in place, and no driver to take a message.
@@ -774,6 +774,57 @@ describe('AgentSession: init не заканчивает ход', () => {
 })
 
 describe('AgentSession: id запросов', () => {
+  test('ответы на все вопросы уходят в updatedInput.answers', async () => {
+    const { session, driver } = makeSession({
+      steps: [
+        {
+          kind: 'askQuestion',
+          questions: [
+            { question: 'A', options: ['1', 'x'] },
+            { question: 'B', options: ['2', 'y'], multiSelect: true }
+          ]
+        },
+        { kind: 'text', text: 'принял' }
+      ]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    const card = rec.items.find((i) => i.kind === 'question') as { toolUseId: string }
+    session.answerQuestion(card.toolUseId, { A: '1', B: '2' })
+
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('принял'), { timeout: 2000 })
+    await settle(session)
+    expect(driver.questionAnswers).toEqual([{ A: '1', B: '2' }])
+    expect(driver.sent).toEqual([])
+  })
+
+  test('после стопа ответы на несколько вопросов уходят одним сообщением по строке на вопрос', async () => {
+    const { session, driver } = makeSession({
+      steps: [
+        {
+          kind: 'askQuestion',
+          questions: [
+            { question: 'Где?', options: ['Слева', 'Справа'] },
+            { question: 'Цвет?', options: ['Синий', 'Красный'] }
+          ]
+        }
+      ],
+      nextTurn: [{ kind: 'text', text: 'ок' }]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    await session.interrupt()
+    const card = rec.items.find((i) => i.kind === 'question') as { toolUseId: string }
+    session.answerQuestion(card.toolUseId, { 'Где?': 'Справа', 'Цвет?': 'Красный' })
+
+    expect(driver.sent.at(-1)?.text).toBe('«Где?» — Справа\n«Цвет?» — Красный')
+    await session.dispose()
+  })
+
   test('вопрос агента — одна карточка, и ответ на неё отпускает агента', async () => {
     const { session, driver } = makeSession({
       steps: [
@@ -788,7 +839,7 @@ describe('AgentSession: id запросов', () => {
 
     const cards = rec.items.filter((i) => i.kind === 'question')
     expect(cards).toHaveLength(1)
-    session.answerQuestion((cards[0] as { toolUseId: string }).toolUseId, 'Справа')
+    session.answerQuestion((cards[0] as { toolUseId: string }).toolUseId, { 'Какой?': 'Справа' })
 
     await vi.waitFor(() => expect(texts(rec.items)).toContain('понял'), { timeout: 2000 })
     await settle(session)
@@ -796,7 +847,7 @@ describe('AgentSession: id запросов', () => {
     expect(rec.items.filter((i) => i.kind === 'question')).toHaveLength(1)
     // The card shows the choice (the builder reports it as a patch).
     expect(rec.changes).toContainEqual(
-      expect.objectContaining({ kind: 'update', patch: { answer: 'Справа' } })
+      expect.objectContaining({ kind: 'update', patch: { answers: { 'Какой?': 'Справа' } } })
     )
     expect(session.status).toBe('idle')
     expect(driver.questionAnswers).toEqual([{ 'Какой?': 'Справа' }])
@@ -1011,7 +1062,7 @@ describe('AgentSession: стоп во время вопроса', () => {
     expect(session.status).toBe('idle')
 
     const card = rec.items.find((i) => i.kind === 'question') as { toolUseId: string }
-    session.answerQuestion(card.toolUseId, 'Справа')
+    session.answerQuestion(card.toolUseId, { 'Какой?': 'Справа' })
 
     expect(driver.sent.at(-1)?.text).toBe('Справа')
     await vi.waitFor(
@@ -1583,7 +1634,7 @@ describe('AgentSession: «Стоп» не трогает следующий хо
     // The Stop was for the turn before: this turn and its question stay.
     expect(session.status).toBe('waiting')
     const card = rec.items.find((i) => i.kind === 'question') as { toolUseId: string }
-    session.answerQuestion(card.toolUseId, 'Справа')
+    session.answerQuestion(card.toolUseId, { 'Куда?': 'Справа' })
 
     await vi.waitFor(() => expect(texts(rec.items)).toContain('понял'), { timeout: 2000 })
     await settle(session)

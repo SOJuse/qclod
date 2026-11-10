@@ -100,15 +100,6 @@ export function seedFromTranscript(messages: unknown[]): SessionSeed {
   return { builder, collector }
 }
 
-/** The text of an AskUserQuestion's first question — the key its answer goes under. */
-function firstQuestion(input: Record<string, unknown>): string {
-  const questions = input['questions']
-  const first: unknown = Array.isArray(questions) ? questions[0] : undefined
-  if (typeof first !== 'object' || first === null) return ''
-  const text = (first as Record<string, unknown>)['question']
-  return typeof text === 'string' ? text : ''
-}
-
 type ChangeListener = (changes: RibbonChange[]) => void
 type PanelListener = (patch: Partial<PanelData>, rev: number) => void
 type StatusListener = (status: SessionStatus) => void
@@ -265,29 +256,35 @@ export class AgentSession {
   }
 
   /**
-   * The user picked an option on a question card.
+   * The user answered every question on a question card.
    *
    * A question the agent is still waiting on is answered in place: the SDK
-   * takes the answer as `updatedInput.answers` (question text -> choice;
+   * takes the answers as `updatedInput.answers` (question text -> choice;
    * AskUserQuestionInput in sdk-tools.d.ts), and the agent carries on with
    * the same turn. Only when nothing is waiting — a card from history, a
-   * question left over after «Стоп» — does the choice go as a message, which
-   * is what the user would have typed anyway. A stopped question is dropped
+   * question left over after «Стоп» — do the answers go as a message — one line
+   * `«Question» — answer` per question, just the answer for a single question —
+   * which is what the user would have typed anyway. A stopped question is dropped
    * from `pendingQuestions` the moment it is stopped, so its card lands here.
    */
-  answerQuestion(toolUseId: string, choice: string): void {
-    this.emit(this.builder.answerQuestion(toolUseId, choice))
+  answerQuestion(toolUseId: string, answers: Record<string, string>): void {
+    this.emit(this.builder.answerQuestion(toolUseId, answers))
 
     const waiting = this.pendingQuestions.get(toolUseId)
     if (!waiting) {
-      this.send({ text: choice, attachments: [] })
+      const entries = Object.entries(answers)
+      const text =
+        entries.length === 1
+          ? entries[0]![1]
+          : entries.map(([question, answer]) => `«${question}» — ${answer}`).join('\n')
+      this.send({ text, attachments: [] })
       return
     }
     this.pendingQuestions.delete(toolUseId)
     this.leaveWait()
     waiting.resolve({
       behavior: 'allow',
-      updatedInput: { ...waiting.input, answers: { [firstQuestion(waiting.input)]: choice } }
+      updatedInput: { ...waiting.input, answers }
     })
   }
 

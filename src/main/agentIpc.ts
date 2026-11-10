@@ -15,6 +15,7 @@ import type { AgentSessionManager } from './agent/AgentSessionManager'
 import type { PermissionBroker } from './agent/permissions'
 import {
   sanitizeAnswer,
+  sanitizeQuestionAnswers,
   sanitizeInput,
   sanitizeOverrides,
   sanitizeTabPatch
@@ -149,9 +150,12 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     broker.answer(requestId, sanitizeAnswer(answer))
   })
 
-  ipcMain.handle(CHANNELS.questionAnswer, (_e, id: unknown, toolUseId: unknown, choice: unknown) => {
-    if (!isString(id) || !isString(toolUseId) || !isString(choice)) return
-    manager.get(id)?.answerQuestion(toolUseId, choice)
+  ipcMain.handle(CHANNELS.questionAnswer, (_e, id: unknown, toolUseId: unknown, answers: unknown) => {
+    if (!isString(id) || !isString(toolUseId)) return
+    const clean = sanitizeQuestionAnswers(answers)
+    // Nothing usable is no answer: the card stays open rather than sending an empty one.
+    if (Object.keys(clean).length === 0) return
+    manager.get(id)?.answerQuestion(toolUseId, clean)
   })
 
   ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, approve: unknown) => {

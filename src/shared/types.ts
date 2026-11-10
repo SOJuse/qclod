@@ -49,6 +49,14 @@ export type SubagentState = 'running' | 'done' | 'failed' | 'stopped' | 'unfinis
  * folds a tool call and its result into one item, and a stream of text deltas
  * into one paragraph.
  */
+/** One question of an AskUserQuestion card. */
+export interface QuestionView {
+  question: string
+  header: string
+  options: Array<{ label: string; description: string }>
+  multiSelect: boolean
+}
+
 export type RibbonItem =
   | (RibbonBase & { kind: 'user'; text: string; attachments: Attachment[] })
   | (RibbonBase & { kind: 'agentText'; text: string; streaming: boolean })
@@ -105,9 +113,9 @@ export type RibbonItem =
   | (RibbonBase & {
       kind: 'question'
       toolUseId: string
-      question: string
-      options: string[]
-      answer: string | null
+      questions: QuestionView[]
+      /** Question text -> chosen label(s); null while the card is open. */
+      answers: Record<string, string> | null
     })
   | (RibbonBase & {
       kind: 'compaction'

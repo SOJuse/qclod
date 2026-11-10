@@ -19,7 +19,7 @@
  * @typedef {{kind:'toolError', name:string, input?:object, error:string}} ToolErrorStep
  * @typedef {{kind:'askPermission', name:string, input?:object}} AskPermissionStep
  * @typedef {{kind:'askPermissions', tools:Array<{name:string, input?:object}>}} AskPermissionsStep
- * @typedef {{kind:'askQuestion', question:string, header?:string, options:string[]}} AskQuestionStep
+ * @typedef {{kind:'askQuestion', question?:string, header?:string, options?:string[], questions?:Array<{question:string, header?:string, options:string[], multiSelect?:boolean}>, echoAnswers?:boolean}} AskQuestionStep
  * @typedef {{kind:'todo', items:Array<{content:string,status:string}>}} TodoStep
  * @typedef {{kind:'subagent', name:string, agentType?:string, stats?:{totalTokens?:number, totalDurationMs?:number, totalToolUseCount?:number}, steps:Array<object>}} SubagentStep
  * @typedef {{kind:'backgroundAgent', name:string, agentType?:string, agentId?:string, pauseMs?:number,
@@ -303,14 +303,18 @@ export function createFakeSdk(script = {}) {
           const id = randomUUID()
           // Real AskUserQuestionInput shape, from the SDK's own sdk-tools.d.ts:
           // questions[].options are objects with a label, not bare strings.
+          // `questions` is the full form; `question`/`options` stay as the
+          // shorthand for a single question.
+          const asked = step.questions ?? [
+            { question: step.question, header: step.header, options: step.options }
+          ]
           const input = {
-            questions: [
-              {
-                question: step.question,
-                header: step.header ?? 'Вопрос',
-                options: step.options.map((label) => ({ label, description: '' }))
-              }
-            ]
+            questions: asked.map((q) => ({
+              question: q.question,
+              header: q.header ?? 'Вопрос',
+              options: q.options.map((label) => ({ label, description: '' })),
+              multiSelect: q.multiSelect === true
+            }))
           }
           yield assistant([{ type: 'tool_use', id, name: 'AskUserQuestion', input }])
           const answer = await ask('AskUserQuestion', input, id)
@@ -323,6 +327,9 @@ export function createFakeSdk(script = {}) {
               .map(([question, choice]) => `"${question}"="${choice}"`)
               .join(', ')
             yield toolResult(id, `Ответы пользователя: ${said}`)
+            // The tool result is not drawn in the ribbon; this makes what the
+            // agent received visible to an end-to-end test.
+            if (step.echoAnswers) yield* play([{ kind: 'text', text: `Получено: ${said}` }])
           } else {
             yield toolResult(id, answer.message ?? 'отклонено', true)
           }

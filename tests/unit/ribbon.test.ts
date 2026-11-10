@@ -274,9 +274,52 @@ describe('RibbonBuilder', () => {
     const questions = only(b.items, 'question')
     expect(questions).toHaveLength(1)
     expect(questions[0]!.toolUseId).toBe('q1')
-    expect(questions[0]!.question).toBe('Какой вариант панели?')
-    expect(questions[0]!.options).toEqual(['Справа', 'Снизу'])
-    expect(questions[0]!.answer).toBeNull()
+    expect(questions[0]!.questions).toEqual([
+      {
+        question: 'Какой вариант панели?',
+        header: 'Панель',
+        multiSelect: false,
+        options: [
+          { label: 'Справа', description: 'как в приложении' },
+          { label: 'Снизу', description: 'как в терминале' }
+        ]
+      }
+    ])
+    expect(questions[0]!.answers).toBeNull()
+  })
+
+  test('AskUserQuestion с тремя вопросами — одна карточка со всеми тремя', () => {
+    const b = new RibbonBuilder()
+    const ask = (question: string, multiSelect?: boolean): object => ({
+      question,
+      header: 'Н',
+      ...(multiSelect ? { multiSelect } : {}),
+      options: [
+        { label: 'А', description: 'первый' },
+        { label: 'Б', description: 'второй' }
+      ]
+    })
+    b.apply(
+      assistant([
+        {
+          type: 'tool_use',
+          id: 'q3',
+          name: 'AskUserQuestion',
+          input: { questions: [ask('Один?'), ask('Два?', true), ask('Три?')] }
+        }
+      ])
+    )
+
+    const cards = only(b.items, 'question')
+    expect(cards).toHaveLength(1)
+    expect(cards[0]!.questions).toHaveLength(3)
+    expect(cards[0]!.questions.map((q) => q.multiSelect)).toEqual([false, true, false])
+    for (const q of cards[0]!.questions) {
+      expect(q.options).toEqual([
+        { label: 'А', description: 'первый' },
+        { label: 'Б', description: 'второй' }
+      ])
+    }
   })
 
   test('ответ на вопрос остаётся в самих элементах, а не только в событии', () => {
@@ -292,11 +335,13 @@ describe('RibbonBuilder', () => {
       ])
     )
 
-    const changes = b.answerQuestion('q1', 'Справа')
+    const changes = b.answerQuestion('q1', { 'Где?': 'Справа' })
 
-    expect(changes).toEqual([{ kind: 'update', id: only(b.items, 'question')[0]!.id, patch: { answer: 'Справа' } }])
+    expect(changes).toEqual([
+      { kind: 'update', id: only(b.items, 'question')[0]!.id, patch: { answers: { 'Где?': 'Справа' } } }
+    ])
     // A snapshot is built from the items: a reload must not see the card open again.
-    expect(only(b.items, 'question')[0]!.answer).toBe('Справа')
+    expect(b.items.find((i) => i.kind === 'question')).toMatchObject({ answers: { 'Где?': 'Справа' } })
   })
 
   test('compact_boundary даёт элемент compaction с числом освобождённых токенов', () => {

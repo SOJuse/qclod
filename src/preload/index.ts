@@ -73,8 +73,8 @@ const api = {
   answerPlan: (id: TabId, requestId: string, approve: boolean): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.planAnswer, id, requestId, approve),
 
-  answerQuestion: (id: TabId, toolUseId: string, choice: string): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.questionAnswer, id, toolUseId, choice),
+  answerQuestion: (id: TabId, toolUseId: string, answers: Record<string, string>): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.questionAnswer, id, toolUseId, answers),
 
   listHistory: (tabId: TabId): Promise<SessionSummary[]> =>
     ipcRenderer.invoke(CHANNELS.historyList, tabId),

@@ -70,8 +70,8 @@ export function ChatPane({
             ...(remember ? { remember: true } : {})
           })
         }}
-        onAnswerQuestion={(toolUseId, choice) =>
-          void window.qclod.answerQuestion(tabId, toolUseId, choice)
+        onAnswerQuestion={(toolUseId, answers) =>
+          void window.qclod.answerQuestion(tabId, toolUseId, answers)
         }
         onAnswerPlan={(requestId, approve) =>
           void window.qclod.answerPlan(tabId, requestId, approve)

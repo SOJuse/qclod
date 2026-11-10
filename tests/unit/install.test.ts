@@ -183,3 +183,43 @@ describe('InstallSlot', () => {
     expect(slot.busy).toBe(false)
   })
 })
+
+describe('runInstaller: аргументы и вывод', () => {
+  function runLines(script: string, args: string[]): Promise<string[]> {
+    const dir = mkdtempSync(join(tmpdir(), 'qclod-args-'))
+    const file = join(dir, 'echo.js')
+    writeFileSync(file, script)
+    return new Promise((resolve) => {
+      const lines: string[] = []
+      runInstaller('node', [file, ...args], (l) => lines.push(l), () => resolve(lines))
+    })
+  }
+
+  test('аргументы с пробелом, &, ^, %, кавычкой и хвостовым обратным слэшем доходят как есть', async () => {
+    const args = [
+      'a b',
+      'a&b',
+      'a^b',
+      '100%',
+      '%PATH%',
+      'x%PATH%y z',
+      'say "hi"',
+      'C:\\my dir\\',
+      'sss',
+      'a|b<c>d(e)'
+    ]
+    const lines = await runLines('console.log("ARGS" + JSON.stringify(process.argv.slice(2)))', args)
+    const got = lines.find((l) => l.startsWith('ARGS'))
+    expect(JSON.parse(got!.slice(4))).toEqual(args)
+  })
+
+  test('кадры-крутилки winget (в том числе обратный слэш) не попадают в вывод', async () => {
+    const lines = await runLines(
+      'console.log("-"); console.log("\\\\"); console.log("|"); console.log("/"); console.log("█▒▒ 10%"); console.log("настоящая строка")',
+      []
+    )
+    expect(lines).toContain('настоящая строка')
+    expect(lines).toContain('█▒▒ 10%')
+    for (const frame of ['-', '\\', '|', '/']) expect(lines).not.toContain(frame)
+  })
+})

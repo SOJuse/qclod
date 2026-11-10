@@ -92,8 +92,19 @@ export function installAgent(
   return runInstaller(plan.command, plan.args, onOutput, onDone)
 }
 
-function quoteArg(arg: string): string {
-  return /[s"&|<>^()]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg
+/**
+ * One argument for a cmd.exe command line. Quoted when it holds anything cmd
+ * treats specially; `%` is expanded by cmd even inside quotes, so it is
+ * closed out of the quotes and caret-escaped. Trailing backslashes are doubled
+ * so they cannot swallow the closing quote.
+ */
+export function quoteArg(arg: string): string {
+  if (!/[\s"&|<>^()%!]/.test(arg)) return arg
+  const body = arg
+    .replace(/(\\+)$/, '$1$1')
+    .replace(/"/g, '""')
+    .replace(/%/g, '"^%"')
+  return `"${body}"`
 }
 
 /**
@@ -103,10 +114,11 @@ function quoteArg(arg: string): string {
 function killTree(child: ChildProcess): void {
   if (process.platform === 'win32' && child.pid !== undefined) {
     try {
-      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }).on(
-        'error',
-        () => child.kill()
-      )
+      const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+      killer.on('error', () => child.kill())
+      killer.on('exit', (code) => {
+        if (code !== 0) child.kill()
+      })
       return
     } catch {
       /* fall through to a plain kill */
@@ -151,7 +163,7 @@ export function runInstaller(
     // bury the few lines that mean something.
     for (const line of chunk.toString('utf8').split(/\r?\n|\r/)) {
       const text = line.trim()
-      if (text !== '' && !/^[\s▒█▓░■\-\|/]+$/.test(text)) onOutput(text)
+      if (text !== '' && !/^[\s▒█▓░■\-\\|/]+$/.test(text)) onOutput(text)
     }
   }
 

@@ -616,7 +616,7 @@ export class TabController {
     session.onRemote((info) => {
       if (current()) this.patch(id, { remote: info })
     })
-    session.onCommands((commands) =>this.deps.onCommands({ tabId: id, commands }))
+    session.onCommands((commands) => this.deps.onCommands({ tabId: id, commands }))
     session.onSession(() => {
       if (current()) this.rememberSession(id, session)
     })

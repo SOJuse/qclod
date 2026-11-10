@@ -204,7 +204,7 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     await session.setRemote(enabled, title)
   })
 
-  ipcMain.handle(CHANNELS.agentCommands,async (_e, id: unknown) => {
+  ipcMain.handle(CHANNELS.agentCommands, async (_e, id: unknown) => {
     if (!isString(id)) return []
     return (await manager.get(id)?.commands()) ?? []
   })

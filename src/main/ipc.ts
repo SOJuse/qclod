@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { checkEnvironment } from './setup/environment'
-import { detectInstallMethod, installAgent, InstallSlot } from './setup/install'
+import { detectInstallMethods, installWithFallback, InstallSlot } from './setup/install'
+import { fakeInstaller, type FakeInstallConfig } from './setup/fakeInstall'
 import { CHANNELS } from '../shared/channels'
 import type { AppSettings } from '../shared/types'
 
@@ -31,7 +32,13 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
 
   // ---------------------------------------------------------------- setup
 
-  ipcMain.handle(CHANNELS.setupCheck, () => checkEnvironment(deps.getSettings().agentPath))
+  // Test seam: a scripted installer that spawns nothing (see fakeInstall.ts).
+  const fakeInstallJson = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_INSTALL'] : undefined
+  const fake = fakeInstallJson ? fakeInstaller(JSON.parse(fakeInstallJson) as FakeInstallConfig) : null
+
+  ipcMain.handle(CHANNELS.setupCheck, () =>
+    checkEnvironment(deps.getSettings().agentPath, fake ? { detect: fake.detect } : {})
+  )
 
   ipcMain.handle(CHANNELS.setupInstall, async () => {
     const win = getWindow()
@@ -41,13 +48,8 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
 
     const running = install.start(async (done) => {
       // Inside begin, so two quick clicks cannot both get past the detection.
-      const method = await detectInstallMethod()
-      if (!method) {
-        say('Не нашёл, чем установить: нужен либо winget (есть в Windows 10 и 11), либо Node.js.')
-        done(false)
-        return { cancel: () => undefined }
-      }
-      return installAgent(method, say, done)
+      const methods = await (fake ? fake.detectMethods() : detectInstallMethods())
+      return installWithFallback(methods, say, done, fake?.start)
     })
     if (!running) {
       say('Установка уже идёт.')

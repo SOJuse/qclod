@@ -45,10 +45,16 @@ async function canRun(command: string): Promise<boolean> {
  * developer setup — which is the whole point: someone handed this app should
  * be able to run it and work, not go shopping for prerequisites first.
  */
+export async function detectInstallMethods(): Promise<InstallMethod[]> {
+  const methods: InstallMethod[] = []
+  if (process.platform === 'win32' && (await canRun('winget'))) methods.push('winget')
+  if (await canRun('npm')) methods.push('npm')
+  return methods
+}
+
+/** The best way to install, or null; what the environment report shows. */
 export async function detectInstallMethod(): Promise<InstallMethod | null> {
-  if (process.platform === 'win32' && (await canRun('winget'))) return 'winget'
-  if (await canRun('npm')) return 'npm'
-  return null
+  return (await detectInstallMethods())[0] ?? null
 }
 
 function commandFor(method: InstallMethod): { command: string; args: string[]; label: string } {
@@ -90,6 +96,44 @@ export function installAgent(
   const plan = commandFor(method)
   onOutput(plan.label)
   return runInstaller(plan.command, plan.args, onOutput, onDone)
+}
+
+/**
+ * Tries each method in turn: the next one only when the previous failed and
+ * nobody cancelled. `onDone` fires once, with the last method's result.
+ */
+export function installWithFallback(
+  methods: InstallMethod[],
+  onOutput: (line: string) => void,
+  onDone: (ok: boolean) => void,
+  start: typeof installAgent = installAgent
+): InstallHandle {
+  if (methods.length === 0) {
+    onOutput('Нечем установить: нет ни winget, ни Node.js.')
+    onDone(false)
+    return { cancel: () => undefined }
+  }
+  let cancelled = false
+  let current: InstallHandle | null = null
+  const attempt = (index: number): void => {
+    const method = methods[index]
+    current = start(method, onOutput, (ok) => {
+      const next = methods[index + 1]
+      if (ok || cancelled || next === undefined) {
+        onDone(ok)
+        return
+      }
+      onOutput(`${method} не справился — пробую через ${next}.`)
+      attempt(index + 1)
+    })
+  }
+  attempt(0)
+  return {
+    cancel: () => {
+      cancelled = true
+      current?.cancel()
+    }
+  }
 }
 
 /**

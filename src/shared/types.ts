@@ -140,6 +140,11 @@ export interface ContextInfo {
 
 export interface CostInfo {
   session: number
+  /**
+   * The conversation was resumed: the CLI counts from when this process
+   * opened it, not from the conversation's first message.
+   */
+  sinceOpen?: boolean
 }
 
 /** One subscription window, as `rate_limit_event` reports it (probe note 2). */
@@ -190,6 +195,8 @@ export interface LaunchOverrides {
   model?: string
   permissionMode?: PermissionMode
   extraFlags?: string
+  /** Kept in Qclod's tabs.json; applied per session, never to the user's settings. */
+  effort?: EffortLevel
 }
 
 export interface PersistedTab {

@@ -1,10 +1,15 @@
-import type { query as queryFn } from '@anthropic-ai/claude-agent-sdk'
+import type {
+  query as queryFn,
+  SDKControlGetUsageResponse
+} from '@anthropic-ai/claude-agent-sdk'
 import { importEsm } from '../esm'
 import type {
   CommandInfo,
   EffortLevel,
   McpServerInfo,
+  LimitWindow,
   ModelOption,
+  PanelData,
   UserInput
 } from '../../shared/types'
 import type { AgentDriver, ContextUsage, DriverOptions } from './driver'
@@ -13,6 +18,19 @@ import { toPermissionContext } from './permissionContext'
 /** `@путь` with quotes when it contains spaces — the convention the probe confirmed. */
 function mention(path: string): string {
   return /\s/.test(path) ? `@"${path}"` : `@${path}`
+}
+
+type UsageWindow = NonNullable<SDKControlGetUsageResponse['rate_limits']>['five_hour']
+
+/**
+ * One window of the usage call, in the units `rate_limit_event` uses: there it
+ * is 0–1 and unix seconds, here 0–100 and an ISO timestamp.
+ */
+function toLimitWindow(window: UsageWindow): LimitWindow | null {
+  if (!window || window.utilization === null || window.resets_at === null) return null
+  const resetsAt = Date.parse(window.resets_at)
+  if (Number.isNaN(resetsAt)) return null
+  return { utilization: window.utilization / 100, resetsAt: Math.floor(resetsAt / 1000) }
 }
 
 /**
@@ -154,6 +172,7 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
         totalTokens: usage.totalTokens,
         maxTokens: usage.maxTokens,
         percentage: usage.percentage,
+        ...(typeof usage.model === 'string' ? { model: usage.model } : {}),
         categories: usage.categories.map((c) => ({ name: c.name, tokens: c.tokens, kind: c.kind }))
       }
     },
@@ -179,6 +198,29 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
       // FILE is deliberately not used: the user's settings are never modified
       // (constraint 5).
       await session.applyFlagSettings({ effortLevel: level })
+    },
+
+    async planLimits(): Promise<PanelData['limits'] | null> {
+      // Experimental in the SDK (sdk.d.ts) and absent from older builds, so it
+      // is looked for rather than assumed. A CLI that cannot answer leaves the
+      // limits to rate_limit_event, without a word in the ribbon.
+      try {
+        if (typeof session.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET !== 'function') {
+          return null
+        }
+        // skipBehaviors: only the plan's windows are wanted, not a scan of
+        // every local transcript.
+        const usage = await session.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
+          skipBehaviors: true
+        })
+        if (usage.rate_limits_available === false || !usage.rate_limits) return null
+        return {
+          fiveHour: toLimitWindow(usage.rate_limits.five_hour),
+          sevenDay: toLimitWindow(usage.rate_limits.seven_day)
+        }
+      } catch {
+        return null
+      }
     },
 
     async dispose(): Promise<void> {

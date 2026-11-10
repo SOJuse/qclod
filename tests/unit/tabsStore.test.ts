@@ -129,3 +129,19 @@ describe('tabsStore: идентификатор последней сессии'
     }
   })
 })
+
+describe('tabsStore: усилие', () => {
+  test('усилие вкладки сохраняется в tabs.json и читается, чужие значения — нет', () => {
+    const dir = freshDir()
+    saveTabs(dir, [tab({ overrides: { model: 'opus', effort: 'high' } })])
+    expect(loadTabs(dir)[0]!.overrides).toEqual({ model: 'opus', effort: 'high' })
+
+    writeFileSync(
+      join(dir, TABS_FILE),
+      JSON.stringify([{ id: 't1', cwd: tmpdir(), title: 'x', overrides: { effort: 'ultra' } }]),
+      'utf8'
+    )
+    expect(loadTabs(dir)[0]!.overrides).toEqual({})
+    rmSync(dir, { recursive: true, force: true })
+  })
+})

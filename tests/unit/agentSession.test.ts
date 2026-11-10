@@ -803,3 +803,112 @@ describe('AgentSession: фоновый подагент переживает х�
   })
 })
 
+
+describe('AgentSession: панель полна до первого сообщения', () => {
+  test('до первого сообщения панель знает контекст, модель, модели и лимиты', async () => {
+    // steps: [] — the fake is silent until something is sent, like CLI
+    // 2.1.317: no init, no rate_limit_event, no result.
+    const { session, driver } = makeSession({ steps: [] })
+
+    await session.start()
+
+    await vi.waitFor(() => {
+      expect(session.panel.context?.percent).toBe(21)
+      expect(session.panel.model).toBe('claude-opus-5')
+      expect(session.panel.models).toHaveLength(2)
+      expect(session.panel.limits.fiveHour?.utilization).toBe(0.13)
+      expect(session.panel.limits.sevenDay?.utilization).toBe(0.38)
+    })
+    expect(driver.sent).toEqual([])
+    await session.dispose()
+  })
+
+  test('сохранённое усилие вкладки применяется при старте и видно в панели', async () => {
+    const { session, driver } = makeSession({ steps: [] }, { overrides: { effort: 'high' } })
+
+    await session.start()
+
+    await vi.waitFor(() => expect(driver.effort).toBe('high'))
+    expect(session.panel.effort).toBe('high')
+    await session.dispose()
+  })
+
+  test('без сохранённого усилия процессу ничего не навязывается', async () => {
+    const { session, driver } = makeSession({ steps: [] })
+
+    await session.start()
+    await vi.waitFor(() => expect(session.panel.context).not.toBeNull())
+
+    expect(driver.effort).toBeNull()
+    expect(session.panel.effort).toBeNull()
+    await session.dispose()
+  })
+
+  test('после resume стоимость помечена «с момента открытия»', async () => {
+    const { session } = makeSession({ steps: [] })
+
+    await session.start('old-id')
+    session.send({ text: 'продолжим', attachments: [] })
+    await vi.waitFor(() => expect(session.panel.cost).not.toBeNull())
+
+    expect(session.panel.cost).toEqual({ session: 0.0421, sinceOpen: true })
+    await session.dispose()
+  })
+
+  test('новая сессия считает стоимость за всю сессию', async () => {
+    const { session } = makeSession({ steps: [] })
+
+    await session.start()
+    session.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(session.panel.cost).not.toBeNull())
+
+    expect(session.panel.cost).toEqual({ session: 0.0421 })
+    await session.dispose()
+  })
+
+  test('модель из истории видна, пока процесс не назвал свою', async () => {
+    const { session } = makeSession({ steps: [], contextUsageDelayMs: 300 })
+
+    await session.start('old-id')
+    session.replay([
+      {
+        type: 'assistant',
+        message: {
+          id: 'm1',
+          role: 'assistant',
+          model: 'claude-sonnet-5',
+          content: [{ type: 'text', text: 'было' }]
+        }
+      }
+    ])
+    expect(session.panel.model).toBe('claude-sonnet-5')
+
+    // The process is the truth once it speaks.
+    await vi.waitFor(() => expect(session.panel.model).toBe('claude-opus-5'))
+    await session.dispose()
+  })
+
+  test('падающий запрос лимитов не роняет старт и не оставляет пустую панель', async () => {
+    const { session, driver } = makeSession({ steps: [] })
+    driver.planLimits = () => {
+      throw new Error('нет такого метода')
+    }
+    const failures: unknown[] = []
+    const onRejection = (reason: unknown): void => {
+      failures.push(reason)
+    }
+    process.on('unhandledRejection', onRejection)
+    try {
+      await session.start()
+      await vi.waitFor(() => expect(session.panel.context?.percent).toBe(21))
+      await new Promise(setImmediate)
+
+      expect(session.status).toBe('idle')
+      expect(session.panel.limits).toEqual({ fiveHour: null, sevenDay: null })
+      expect(failures).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onRejection)
+      await session.dispose()
+    }
+  })
+})

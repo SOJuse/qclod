@@ -1,5 +1,7 @@
 import {
+  EFFORT_LEVELS,
   PERMISSION_MODES,
+  type EffortLevel,
   type LaunchOverrides,
   type PermissionAnswer,
   type PermissionMode,
@@ -8,7 +10,7 @@ import {
 } from '../../shared/types'
 
 const MAX_TITLE = 200
-const OVERRIDE_KEYS = ['model', 'permissionMode', 'extraFlags'] as const
+const OVERRIDE_KEYS = ['model', 'permissionMode', 'extraFlags', 'effort'] as const
 
 function isString(value: unknown): value is string {
   return typeof value === 'string'
@@ -37,6 +39,13 @@ export function sanitizeOverrides(value: unknown): LaunchOverrides {
       // gate off: that one mode is reached only through the confirmation.
       if (candidate === 'bypassPermissions') continue
       out.permissionMode = candidate as PermissionMode
+      continue
+    }
+    // So is effort: it goes straight to the SDK at the next start.
+    if (key === 'effort') {
+      if ((EFFORT_LEVELS as readonly string[]).includes(candidate)) {
+        out.effort = candidate as EffortLevel
+      }
       continue
     }
     out[key] = candidate

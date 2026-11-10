@@ -101,7 +101,12 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   ipcMain.handle(CHANNELS.agentEffort, async (_e, id: unknown, level: unknown) => {
     if (!isString(id) || !isString(level)) return
     if (!(EFFORT_LEVELS as readonly string[]).includes(level)) return
-    await manager.get(id)?.setEffort(level as EffortLevel)
+    const session = manager.get(id)
+    if (!session) return
+    await session.setEffort(level as EffortLevel)
+    // Kept in Qclod's own tabs.json, so a reopened tab starts at the same
+    // level — the user's settings files are never touched.
+    controller.rememberOverride(id, { effort: level as EffortLevel })
   })
 
   ipcMain.handle(CHANNELS.agentCommands, async (_e, id: unknown) => {

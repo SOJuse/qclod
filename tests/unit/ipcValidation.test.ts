@@ -136,3 +136,14 @@ describe('agentIpc: проверка полезной нагрузки', () => {
     expect(sanitizeInput({ attachments: 'не массив' })).toEqual({ text: '', attachments: [] })
   })
 })
+
+describe('sanitizeOverrides: усилие', () => {
+  test('sanitizeOverrides пропускает только известные уровни усилия', () => {
+    for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      expect(sanitizeOverrides({ effort: level })).toEqual({ effort: level })
+    }
+    expect(sanitizeOverrides({ effort: 'ultra' })).toEqual({})
+    expect(sanitizeOverrides({ effort: 3 })).toEqual({})
+    expect(sanitizeOverrides({ model: 'opus', effort: 'HIGH' })).toEqual({ model: 'opus' })
+  })
+})

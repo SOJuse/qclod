@@ -38,6 +38,8 @@ export class PanelCollector {
   private panel: PanelData = { ...EMPTY_PANEL, limits: { fiveHour: null, sevenDay: null } }
   /** True once the user has chosen a mode; init must not then overrule them. */
   private modeIsOurs = false
+  /** A resumed conversation: the CLI's cost total starts when it was opened. */
+  private resumed = false
 
   get data(): PanelData {
     return this.panel
@@ -69,6 +71,8 @@ export class PanelCollector {
   /** Context is not in the turn's result (probe note 4); it is asked for. */
   setContext(usage: ContextUsage): Partial<PanelData> {
     return this.patch({
+      // The CLI names its model here before it ever sends init.
+      ...(typeof usage.model === 'string' && usage.model !== '' ? { model: usage.model } : {}),
       context: {
         used: usage.totalTokens,
         max: usage.maxTokens,
@@ -87,6 +91,25 @@ export class PanelCollector {
 
   setModel(model: string): Partial<PanelData> {
     return this.patch({ model })
+  }
+
+  /**
+   * The model the conversation was last answered by, read from its history.
+   * A stand-in until the process says which model it is on — never over it.
+   */
+  seedModel(model: string): Partial<PanelData> {
+    if (this.panel.model !== null) return {}
+    return this.patch({ model })
+  }
+
+  /** The plan's windows, asked for at start; rate_limit_event updates them after. */
+  setLimits(limits: PanelData['limits']): Partial<PanelData> {
+    return this.patch({ limits: { fiveHour: limits.fiveHour, sevenDay: limits.sevenDay } })
+  }
+
+  /** From here on the reported cost covers only what this process spent. */
+  markResumed(): void {
+    this.resumed = true
   }
 
   /** Session-scoped, like the permission mode: ours to remember and show. */
@@ -142,7 +165,7 @@ export class PanelCollector {
     // $0.0000 reads as a broken counter.
     if (typeof cost !== 'number' || cost <= 0) return null
     // The SDK reports the session total, not a per-turn delta.
-    return this.patch({ cost: { session: cost } })
+    return this.patch({ cost: this.resumed ? { session: cost, sinceOpen: true } : { session: cost } })
   }
 
   private patch(patch: Partial<PanelData>): Partial<PanelData> {

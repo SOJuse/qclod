@@ -11,9 +11,12 @@ import { toPermissionContext } from '../../src/main/agent/permissionContext'
  */
 const sdk = vi.hoisted(() => {
   const calls: Array<{ prompt: unknown; options: Record<string, unknown> }> = []
+  /** Methods the next query() object carries besides the basics. */
+  const extra: Record<string, unknown> = {}
   function fakeQuery(args: { prompt: unknown; options: Record<string, unknown> }): unknown {
     calls.push(args)
     return {
+      ...extra,
       close: () => undefined,
       interrupt: async () => undefined,
       return: async () => ({ done: true, value: undefined }),
@@ -22,7 +25,7 @@ const sdk = vi.hoisted(() => {
       }
     }
   }
-  return { calls, fakeQuery }
+  return { calls, extra, fakeQuery }
 })
 
 vi.mock('../../src/main/esm', () => ({
@@ -39,12 +42,14 @@ type SdkCanUseTool = (
  * Forgets earlier `query()` calls and gives access to the next one: what
  * sdkDriver passed as `prompt` and `options`.
  */
-function mockQuery(): {
+function mockQuery(methods: Record<string, unknown> = {}): {
   readonly prompt: unknown
   readonly options: Record<string, unknown>
   readonly canUseTool: SdkCanUseTool
 } {
   sdk.calls.length = 0
+  for (const key of Object.keys(sdk.extra)) delete sdk.extra[key]
+  Object.assign(sdk.extra, methods)
   const last = (): { prompt: unknown; options: Record<string, unknown> } => {
     const call = sdk.calls.at(-1)
     if (!call) throw new Error('query() was not called')
@@ -122,6 +127,122 @@ describe('sdkDriver: canUseTool', () => {
     behavior = 'deny'
     await expect(query.canUseTool('Bash', { command: 'ls' }, context)).resolves.toMatchObject({
       behavior: 'deny'
+    })
+    await driver.dispose()
+  })
+})
+
+const USAGE = 'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET'
+
+function usageAnswer(patch: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    session: {
+      total_cost_usd: 0,
+      total_api_duration_ms: 0,
+      total_duration_ms: 0,
+      total_lines_added: 0,
+      total_lines_removed: 0,
+      model_usage: {}
+    },
+    subscription_type: 'max',
+    rate_limits_available: true,
+    rate_limits: {
+      five_hour: { utilization: 13, resets_at: '2026-11-10T15:00:00.000Z' },
+      seven_day: { utilization: 38, resets_at: '2026-11-14T00:00:00.000Z' }
+    },
+    behaviors: null,
+    ...patch
+  }
+}
+
+function allowAll(): DriverOptions {
+  return driverOptions(async () => ({ behavior: 'allow' }))
+}
+
+describe('sdkDriver: лимиты подписки до первого сообщения', () => {
+  test('лимиты подписки спрашиваются с skipBehaviors и переводятся в 0..1 и unix-секунды', async () => {
+    const usage = vi.fn(async (_opts: unknown) => usageAnswer())
+    mockQuery({ [USAGE]: usage })
+    const driver = await createSdkDriver(allowAll())
+
+    await expect(driver.planLimits()).resolves.toEqual({
+      fiveHour: { utilization: 0.13, resetsAt: 1794322800 },
+      sevenDay: { utilization: 0.38, resetsAt: 1794614400 }
+    })
+    expect(usage).toHaveBeenCalledWith({ skipBehaviors: true })
+    await driver.dispose()
+  })
+
+  test('нет метода usage — null, без исключения', async () => {
+    mockQuery()
+    const driver = await createSdkDriver(allowAll())
+    await expect(driver.planLimits()).resolves.toBeNull()
+    await driver.dispose()
+  })
+
+  test('rate_limits_available false — null', async () => {
+    mockQuery({
+      [USAGE]: async () => usageAnswer({ rate_limits_available: false, rate_limits: null })
+    })
+    const driver = await createSdkDriver(allowAll())
+    await expect(driver.planLimits()).resolves.toBeNull()
+    await driver.dispose()
+  })
+
+  test('rate_limits null при доступных лимитах — тоже null', async () => {
+    mockQuery({ [USAGE]: async () => usageAnswer({ rate_limits: null }) })
+    const driver = await createSdkDriver(allowAll())
+    await expect(driver.planLimits()).resolves.toBeNull()
+    await driver.dispose()
+  })
+
+  test('окно без процента или без времени сброса — пустое, второе остаётся', async () => {
+    mockQuery({
+      [USAGE]: async () =>
+        usageAnswer({
+          rate_limits: {
+            five_hour: { utilization: null, resets_at: '2026-11-10T15:00:00.000Z' },
+            seven_day: { utilization: 38, resets_at: '2026-11-14T00:00:00.000Z' }
+          }
+        })
+    })
+    const driver = await createSdkDriver(allowAll())
+    await expect(driver.planLimits()).resolves.toEqual({
+      fiveHour: null,
+      sevenDay: { utilization: 0.38, resetsAt: 1794614400 }
+    })
+    await driver.dispose()
+  })
+
+  test('исключение из usage — null, наружу не летит', async () => {
+    mockQuery({
+      [USAGE]: () => {
+        throw new Error('not supported by this CLI')
+      }
+    })
+    const driver = await createSdkDriver(allowAll())
+    await expect(driver.planLimits()).resolves.toBeNull()
+    await driver.dispose()
+  })
+})
+
+describe('sdkDriver: контекст', () => {
+  test('getContextUsage пробрасывает модель', async () => {
+    mockQuery({
+      getContextUsage: async () => ({
+        categories: [{ name: 'Messages', tokens: 10, color: 'x', kind: 'used' }],
+        totalTokens: 10,
+        maxTokens: 200000,
+        rawMaxTokens: 200000,
+        percentage: 0,
+        gridRows: [],
+        model: 'claude-opus-5'
+      })
+    })
+    const driver = await createSdkDriver(allowAll())
+    await expect(driver.getContextUsage()).resolves.toMatchObject({
+      model: 'claude-opus-5',
+      totalTokens: 10
     })
     await driver.dispose()
   })

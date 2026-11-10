@@ -175,3 +175,30 @@ test('свои хуки папки показаны отдельной стро�
     rmSync(project, { recursive: true, force: true })
   }
 })
+
+test('пока модель неизвестна, выбор показывает «…», потом настоящую', async () => {
+  // steps: [] — silent until the first message, like the real CLI. The model
+  // is known only once getContextUsage answers, and that answer is delayed.
+  const { app, profile } = await launch({ steps: [], contextUsageDelayMs: 1500 })
+  try {
+    const win = await app.firstWindow()
+    // Until the list of models arrives the row is a plain «…» line, not a
+    // select; the list comes long before the delayed context answer.
+    const picker = win.locator('[data-testid="side-panel"] select[data-testid="panel-model"]')
+    await expect(picker).toBeVisible({ timeout: 15000 })
+
+    // The list of models is there; which one is on is not yet.
+    await expect(picker).toHaveValue('')
+    await expect(picker.locator('option:checked')).toHaveText('…')
+
+    await expect(picker).toHaveValue('claude-opus-5', { timeout: 15000 })
+    await expect(picker.locator('option:checked')).toHaveText('Opus 5')
+
+    // Nothing was sent to get there.
+    await expect(win.locator('[data-testid="side-panel"] [data-testid="panel-limits"]')).toContainText(
+      '13%'
+    )
+  } finally {
+    await close(app, profile)
+  }
+})

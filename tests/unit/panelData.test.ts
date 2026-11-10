@@ -224,3 +224,68 @@ describe('PanelCollector: нулевой расход', () => {
     expect(collector.data.cost?.session).toBeCloseTo(0.004)
   })
 })
+
+describe('PanelCollector: до первого сообщения', () => {
+  test('seedModel не перезаписывает модель от процесса', () => {
+    const fromInit = new PanelCollector()
+    fromInit.apply(init({ model: 'claude-opus-5' }))
+    expect(fromInit.seedModel('claude-sonnet-5')).toEqual({})
+    expect(fromInit.data.model).toBe('claude-opus-5')
+
+    const fromContext = new PanelCollector()
+    fromContext.setContext({
+      model: 'claude-opus-5',
+      totalTokens: 1,
+      maxTokens: 2,
+      percentage: 50,
+      categories: []
+    })
+    fromContext.seedModel('claude-sonnet-5')
+    expect(fromContext.data.model).toBe('claude-opus-5')
+
+    // Nothing from the process yet: the history's model stands in…
+    const early = new PanelCollector()
+    expect(early.seedModel('claude-sonnet-5')).toEqual({ model: 'claude-sonnet-5' })
+    // …until the process names its own.
+    early.apply(init({ model: 'claude-opus-5' }))
+    expect(early.data.model).toBe('claude-opus-5')
+  })
+
+  test('контекст приносит модель, если она в ответе есть', () => {
+    const collector = new PanelCollector()
+    const usage = { totalTokens: 1, maxTokens: 2, percentage: 50, categories: [] }
+
+    expect(collector.setContext(usage)).not.toHaveProperty('model')
+    expect(collector.data.model).toBeNull()
+
+    expect(collector.setContext({ ...usage, model: 'claude-opus-5' })).toMatchObject({
+      model: 'claude-opus-5'
+    })
+    expect(collector.data.model).toBe('claude-opus-5')
+  })
+
+  test('setLimits ставит оба окна, rate_limit_event потом их обновляет', () => {
+    const collector = new PanelCollector()
+    const limits = {
+      fiveHour: { utilization: 0.1, resetsAt: 1794083400 },
+      sevenDay: { utilization: 0.2, resetsAt: 1794481200 }
+    }
+    expect(collector.setLimits(limits)).toEqual({ limits })
+    expect(collector.data.limits).toEqual(limits)
+
+    collector.apply(rateLimit(0.5, 0.6))
+    expect(collector.data.limits.fiveHour?.utilization).toBe(0.5)
+    expect(collector.data.limits.sevenDay?.utilization).toBe(0.6)
+  })
+
+  test('после markResumed расход помечен «с момента открытия»', () => {
+    const fresh = new PanelCollector()
+    fresh.apply({ type: 'result', subtype: 'success', total_cost_usd: 0.25 })
+    expect(fresh.data.cost).toEqual({ session: 0.25 })
+
+    const resumed = new PanelCollector()
+    resumed.markResumed()
+    resumed.apply({ type: 'result', subtype: 'success', total_cost_usd: 0.25 })
+    expect(resumed.data.cost).toEqual({ session: 0.25, sinceOpen: true })
+  })
+})

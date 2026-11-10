@@ -3,6 +3,7 @@ import type {
   EffortLevel,
   McpServerInfo,
   ModelOption,
+  PanelData,
   PermissionAnswer,
   UserInput
 } from '../../shared/types'
@@ -30,6 +31,12 @@ export interface AgentDriver {
   setModel(model: string): Promise<void>
   /** Session-scoped: never written to the user's settings files. */
   setEffort(level: EffortLevel): Promise<void>
+  /**
+   * The plan's rate-limit windows, asked for rather than waited for: the CLI
+   * sends no `rate_limit_event` until it is given something to answer. Null
+   * when the plan has none or this CLI cannot say.
+   */
+  planLimits(): Promise<PanelData['limits'] | null>
   dispose(): Promise<void>
 }
 
@@ -37,6 +44,8 @@ export interface ContextUsage {
   totalTokens: number
   maxTokens: number
   percentage: number
+  /** The model the session is on — the CLI knows it before init is sent. */
+  model?: string
   categories: Array<{ name: string; tokens: number; kind?: string }>
 }
 

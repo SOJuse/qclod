@@ -58,6 +58,25 @@ function explain(message: string): string {
   return message
 }
 
+/**
+ * The model that last answered in a conversation's history. `<synthetic>` is
+ * what the CLI writes on messages it made up itself (an API error, say) — not
+ * a model anyone could be on.
+ */
+function lastAssistantModel(messages: unknown[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (typeof m !== 'object' || m === null) continue
+    const record = m as Record<string, unknown>
+    if (record['type'] !== 'assistant') continue
+    const inner = record['message']
+    if (typeof inner !== 'object' || inner === null) continue
+    const model = (inner as Record<string, unknown>)['model']
+    if (typeof model === 'string' && model !== '' && model !== '<synthetic>') return model
+  }
+  return null
+}
+
 /** The text of an AskUserQuestion's first question — the key its answer goes under. */
 function firstQuestion(input: Record<string, unknown>): string {
   const questions = input['questions']
@@ -170,7 +189,9 @@ export class AgentSession {
    * Rebuilds the ribbon from a past conversation's messages.
    *
    * Replay must never be mistaken for live traffic: it adds items and touches
-   * nothing else — no status change, no panel update, no cost counted twice.
+   * nothing else — no status change, no cost counted twice. The one panel
+   * line it may fill is the model, and only until the process names its own:
+   * a resumed CLI says nothing until it is written to.
    * What the old process left running is closed as unfinished at the end:
    * that process is gone and will never report back.
    */
@@ -180,6 +201,8 @@ export class AgentSession {
     changes.push(...this.builder.finishReplay())
     const todo = this.builder.todo
     if (todo) this.todoItems = todo
+    const model = lastAssistantModel(messages)
+    if (model) this.emitPanel(this.collector.seedModel(model))
     return changes
   }
 
@@ -252,6 +275,9 @@ export class AgentSession {
     if (this.driver || this.disposed) return
     this.setStatus('starting')
     this.failure = undefined
+    // A resumed CLI reports what it has spent since it opened the
+    // conversation, not since the conversation began.
+    if (resumeId) this.collector.markResumed()
 
     // A tab could carry bypassPermissions in its stored overrides, from a
     // settings default or an older tabs.json. Starting in it unasked would
@@ -333,10 +359,34 @@ export class AgentSession {
     // arrives only once the CLI has been given something to answer, so a tab
     // that has not been written in yet used to show «появится после первого
     // ответа» in every row — including a second tab, which looked broken.
-    // These three are control requests: they answer straight away.
-    void this.refreshContext()
-    void this.refreshMcp()
-    void this.refreshModels()
+    // These are control requests: they answer straight away. Context also
+    // names the model; the plan's limits come from the usage call, since no
+    // rate_limit_event arrives before the first message either. None of them
+    // may become an unhandled rejection, even one thrown synchronously.
+    void this.applyStoredEffort().catch(() => undefined)
+    void this.refreshContext().catch(() => undefined)
+    void this.refreshModels().catch(() => undefined)
+    void this.refreshMcp().catch(() => undefined)
+    void this.refreshLimits().catch(() => undefined)
+  }
+
+  /** The level this tab was left at, from tabs.json — the session's, not the user's settings. */
+  private async applyStoredEffort(): Promise<void> {
+    const effort = this.options.overrides.effort
+    const driver = this.driver
+    if (!effort || !driver) return
+    this.emitPanel(this.collector.setEffort(effort))
+    await driver.setEffort(effort)
+  }
+
+  /** The plan's windows before the first message; rate_limit_event takes over after. */
+  private async refreshLimits(): Promise<void> {
+    const driver = this.driver
+    if (!driver) return
+    const limits = await driver.planLimits()
+    if (limits && (limits.fiveHour || limits.sevenDay)) {
+      this.emitPanel(this.collector.setLimits(limits))
+    }
   }
 
   send(input: UserInput): void {

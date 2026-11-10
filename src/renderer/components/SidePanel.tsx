@@ -143,7 +143,8 @@ export function SidePanel({
       <Section title="Расход">
         {data.cost ? (
           <div className="panel-line" data-testid="panel-cost">
-            <span>за сессию</span>
+            {/* A resumed conversation is counted by the CLI from when it was opened. */}
+            <span>{data.cost.sinceOpen ? 'с момента открытия' : 'за сессию'}</span>
             <span>{money(data.cost.session)}</span>
           </div>
         ) : (
@@ -170,6 +171,13 @@ export function SidePanel({
             value={data.model ?? ''}
             onChange={(e) => onSetModel(e.target.value)}
           >
+            {/* Without it the browser shows the first model as chosen while the
+                session may be on another one. */}
+            {data.model === null && (
+              <option value="" disabled>
+                …
+              </option>
+            )}
             {data.model && !data.models.some((m) => m.value === data.model) && (
               <option value={data.model}>{data.model}</option>
             )}
@@ -182,6 +190,11 @@ export function SidePanel({
         ) : data.model ? (
           <div className="panel-line" data-testid="panel-model">
             <span>{data.model}</span>
+          </div>
+        ) : started ? (
+          // Asked for at start; the answer is a moment away, not a turn away.
+          <div className="panel-line" data-testid="panel-model">
+            <span>…</span>
           </div>
         ) : (
           <Empty started={started} />

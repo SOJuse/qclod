@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 type Handler = (e: unknown, ...args: unknown[]) => unknown
 const handlers = vi.hoisted(() => new Map<string, Handler>())
@@ -16,22 +19,27 @@ import { CHANNELS } from '@shared/channels'
 type Log = Array<{ action: string; path: string; line?: number }>
 const g = globalThis as { __qclodShellLog?: Log }
 
-const A = 'C:\\proj\\src\\a.ts'
+const CWD = realpathSync.native(mkdtempSync(join(tmpdir(), 'qclod-ipc-')))
+mkdirSync(join(CWD, 'src'))
+const A = join(CWD, 'src', 'a.ts')
+writeFileSync(A, '')
 let editorCommand = ''
 
 function setup(): void {
   handlers.clear()
-  const stat = vi.fn(async (p: string) => {
-    if (p === A) return { isDirectory: () => false }
-    throw new Error('ENOENT')
-  })
   registerAgentIpc({
     getWindow: () => null,
-    controller: { list: () => [{ id: 't1', cwd: 'C:\\proj' }] },
+    controller: {
+      list: () => [
+        { id: 't1', cwd: CWD },
+        { id: 't2', cwd: CWD }
+      ],
+      close: async () => undefined
+    },
     manager: {},
-    broker: {},
+    broker: { cancelTab: () => undefined },
     rememberDefault: () => undefined,
-    resolver: new PathResolver({ stat }),
+    resolver: new PathResolver(),
     getEditorCommand: () => editorCommand
   } as unknown as AgentIpcDeps)
 }
@@ -66,7 +74,7 @@ describe('files:* каналы', () => {
     expect(await call(CHANNELS.filesOpen, 't1', 'C:\\Windows\\notepad.exe')).toBeNull()
     await call(CHANNELS.filesReveal, 't1', A)
     editorCommand = 'code -g {path}:{line}'
-    await call(CHANNELS.filesOpenInEditor, 't1', A, 3)
+    expect(await call(CHANNELS.filesOpenInEditor, 't1', A, 3)).toBeNull()
     expect(g.__qclodShellLog).toEqual([])
   })
 
@@ -86,9 +94,29 @@ describe('files:* каналы', () => {
     ])
   })
 
-  test('известный путь, но чужая вкладка — ничего', async () => {
+  test('негодный шаблон редактора возвращает объяснение', async () => {
+    await call(CHANNELS.filesResolve, 't1', ['src/a.ts'])
+    editorCommand = 'ed "{path}'
+    expect(await call(CHANNELS.filesOpenInEditor, 't1', A)).toMatch(/кавычк/)
+    expect(g.__qclodShellLog).toEqual([])
+  })
+
+  test('путь, найденный во вкладке t1, нельзя открыть из t2', async () => {
+    await call(CHANNELS.filesResolve, 't1', ['src/a.ts'])
+    expect(await call(CHANNELS.filesOpen, 't2', A)).toBeNull()
+    await call(CHANNELS.filesReveal, 't2', A)
+    expect(g.__qclodShellLog).toEqual([])
+  })
+
+  test('известный путь, но несуществующая вкладка — ничего', async () => {
     await call(CHANNELS.filesResolve, 't1', ['src/a.ts'])
     expect(await call(CHANNELS.filesOpen, 'чужая', A)).toBeNull()
     expect(g.__qclodShellLog).toEqual([])
+  })
+
+  test('после закрытия вкладки её пути больше не действуют', async () => {
+    await call(CHANNELS.filesResolve, 't1', ['src/a.ts'])
+    await call(CHANNELS.tabsClose, 't1')
+    expect(await call(CHANNELS.filesOpen, 't1', A)).toBeNull()
   })
 })

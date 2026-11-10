@@ -95,15 +95,17 @@ export function installAgent(
 /**
  * One argument for a cmd.exe command line. Quoted when it holds anything cmd
  * treats specially; `%` is expanded by cmd even inside quotes, so it is
- * closed out of the quotes and caret-escaped. Trailing backslashes are doubled
- * so they cannot swallow the closing quote.
+ * closed out of the quotes and caret-escaped. Backslashes right before any
+ * quote this adds — the closing one, a doubled `"`, the pair around a `%` —
+ * are doubled, or the program would read `\"` as a literal quote
+ * (`C:\%PATH%` would arrive as `C:"%PATH%`).
  */
 export function quoteArg(arg: string): string {
   if (!/[\s"&|<>^()%!]/.test(arg)) return arg
   const body = arg
     .replace(/(\\+)$/, '$1$1')
-    .replace(/"/g, '""')
-    .replace(/%/g, '"^%"')
+    .replace(/(\\*)"/g, '$1$1""')
+    .replace(/(\\*)%/g, '$1$1"^%"')
   return `"${body}"`
 }
 

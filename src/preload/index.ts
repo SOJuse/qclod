@@ -94,7 +94,13 @@ const api = {
     ipcRenderer.invoke(CHANNELS.filesOpen, tabId, absPath),
   revealPath: (tabId: TabId, absPath: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.filesReveal, tabId, absPath),
-  openInEditor: (tabId: TabId, absPath: string, line?: number, column?: number): Promise<void> =>
+  /** null when the editor started; otherwise a message to show (the template needs fixing). */
+  openInEditor: (
+    tabId: TabId,
+    absPath: string,
+    line?: number,
+    column?: number
+  ): Promise<string | null> =>
     ipcRenderer.invoke(CHANNELS.filesOpenInEditor, tabId, absPath, line, column),
 
   // File.path was removed in Electron 32; webUtils is the supported way to

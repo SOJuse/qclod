@@ -69,6 +69,7 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   ipcMain.handle(CHANNELS.tabsClose, async (_e, id: unknown) => {
     if (!isString(id)) return
     broker.cancelTab(id)
+    deps.resolver.forget(id)
     await controller.close(id)
   })
 
@@ -224,20 +225,20 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     const valid = raws.map((r) => isString(r) && r !== '' && r.length <= MAX_RAW_LENGTH)
     const answers = await deps.resolver.resolve(
       tab.cwd,
-      raws.filter((_r, i) => valid[i]) as string[]
+      raws.filter((_r, i) => valid[i]) as string[],
+      id
     )
     let next = 0
     return valid.map((ok) => (ok ? (answers[next++] ?? null) : null))
   })
 
-  // An action takes only a path main itself found on disk: the renderer
-  // cannot name an arbitrary file and have it opened. Anything else is
-  // silently nothing.
+  // An action takes only a path main found on disk for this same tab in the
+  // last half hour (PathResolver.knows). Anything else is silently nothing.
   const mayAct = (id: unknown, absPath: unknown): absPath is string =>
     isString(id) &&
     isString(absPath) &&
     controller.list().some((t) => t.id === id) &&
-    deps.resolver.knows(absPath)
+    deps.resolver.knows(absPath, id)
 
   ipcMain.handle(CHANNELS.filesOpen, async (_e, id: unknown, absPath: unknown) => {
     if (!mayAct(id, absPath)) return null
@@ -252,15 +253,16 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   ipcMain.handle(
     CHANNELS.filesOpenInEditor,
     (_e, id: unknown, absPath: unknown, line: unknown, column: unknown) => {
-      if (!mayAct(id, absPath)) return
+      if (!mayAct(id, absPath)) return null
       const template = deps.getEditorCommand()
-      if (template.trim() === '') return
+      if (template.trim() === '') return null
       const target: { path: string; line?: number; column?: number } = { path: absPath }
       const l = lineNumber(line)
       const c = lineNumber(column)
       if (l !== undefined) target.line = l
       if (l !== undefined && c !== undefined) target.column = c
-      openInEditor(template, target)
+      // A message for the user when the template cannot run this path safely.
+      return openInEditor(template, target)
     }
   )
 

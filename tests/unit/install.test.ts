@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InstallSlot, runInstaller, type InstallHandle } from '@main/setup/install'
+import { InstallSlot, quoteArg, runInstaller, type InstallHandle } from '@main/setup/install'
 
 function alive(pid: number): boolean {
   try {
@@ -205,6 +205,8 @@ describe('runInstaller: аргументы и вывод', () => {
       'x%PATH%y z',
       'say "hi"',
       'C:\\my dir\\',
+      'C:\\%PATH%\\x y',
+      'a\\"b c',
       'sss',
       'a|b<c>d(e)'
     ]
@@ -221,5 +223,15 @@ describe('runInstaller: аргументы и вывод', () => {
     expect(lines).toContain('настоящая строка')
     expect(lines).toContain('█▒▒ 10%')
     for (const frame of ['-', '\\', '|', '/']) expect(lines).not.toContain(frame)
+  })
+})
+
+describe('quoteArg', () => {
+  test('слеш перед % удваивается, чтобы не стать буквальной кавычкой', () => {
+    expect(quoteArg(String.raw`C:\%P%\x`)).toBe(String.raw`"C:\\"^%"P"^%"\x"`)
+  })
+  test('без особых символов — как есть, хвостовой слеш в кавычках удваивается', () => {
+    expect(quoteArg(String.raw`C:\a\b`)).toBe(String.raw`C:\a\b`)
+    expect(quoteArg('C:\\a b\\')).toBe('"C:\\a b\\\\"')
   })
 })

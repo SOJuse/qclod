@@ -138,8 +138,8 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
         text: '',
         popupOpen: false,
         hasSelection: false,
-        caretAtStart: true,
-        caretAtEnd: true,
+        caretOnFirstLine: true,
+        caretOnLastLine: true,
         pendingPermission: true
       }
     )

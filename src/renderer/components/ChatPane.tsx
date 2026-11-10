@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import type { SessionSummary } from '../../shared/types'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
@@ -66,6 +66,11 @@ export function ChatPane({
   const tab = tabs.find((t) => t.id === tabId)
   const status = tab?.status ?? 'stopped'
   const draft = draftByTab[tabId] ?? ''
+  const items = ribbonByTab[tabId]
+  const sentTexts = useMemo(
+    () => (items ?? []).flatMap((item) => (item.kind === 'user' ? [item.text] : [])),
+    [items]
+  )
 
   // The session's commands are asked for the first time a slash is typed in
   // this tab; after that the main process pushes every change. A session that
@@ -144,6 +149,7 @@ export function ChatPane({
         tabId={tabId}
         status={status}
         draft={draft}
+        sentTexts={sentTexts}
         attachments={attachmentsByTab[tabId] ?? []}
         fileIndex={fileIndexByTab[tabId] ?? []}
         started={status !== 'stopped'}

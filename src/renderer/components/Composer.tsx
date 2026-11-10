@@ -41,6 +41,8 @@ interface Props {
   tabId: string
   status: SessionStatus
   draft: string
+  /** What the person sent in this tab, oldest first: the source of ↑/↓ history. */
+  sentTexts: string[]
   attachments: PendingAttachment[]
   fileIndex: string[]
   /** What the session offers after `/`, as it sent it. */
@@ -138,6 +140,7 @@ export function Composer({
   tabId,
   status,
   draft,
+  sentTexts,
   attachments,
   fileIndex,
   commands,
@@ -180,11 +183,13 @@ export function Composer({
   const history = ((): InputHistory => {
     let existing = histories.current.get(tabId)
     if (!existing) {
-      existing = new InputHistory()
+      existing = new InputHistory(sentTexts)
       histories.current.set(tabId, existing)
     }
     return existing
   })()
+  // The tab's own messages are the source; the list follows them as they come.
+  useEffect(() => history.setEntries(sentTexts), [history, sentTexts])
 
   const available = withLocalCommands(commands)
 
@@ -335,8 +340,8 @@ export function Composer({
       popupOpen,
       hasSelection: el ? el.selectionStart !== el.selectionEnd : false,
       hasAttachments: attachments.length > 0,
-      caretAtStart: el ? el.selectionStart === 0 : true,
-      caretAtEnd: el ? el.selectionEnd === draft.length : true
+      caretOnFirstLine: el ? !draft.slice(0, el.selectionStart).includes('\n') : true,
+      caretOnLastLine: el ? !draft.slice(el.selectionEnd).includes('\n') : true
     }
   }
 
@@ -462,10 +467,12 @@ export function Composer({
 
       case 'historyPrev':
       case 'historyNext': {
-        const line = action === 'historyPrev' ? history.prev() : history.next()
-        if (line === undefined || line === null) return
+        const line = action === 'historyPrev' ? history.prev(draft) : history.next()
+        if (line === undefined) return
         ev.preventDefault()
-        onDraftChange(line)
+        // Going back lands at the start so ↑ goes on through the past; coming
+        // forward lands at the end so ↓ does.
+        replaceDraft(line, action === 'historyPrev' ? 0 : line.length)
         return
       }
     }
@@ -582,6 +589,7 @@ export function Composer({
           }
           value={draft}
           onChange={(ev) => {
+            history.reset()
             onDraftChange(ev.target.value)
             setCaret(ev.target.selectionStart)
           }}

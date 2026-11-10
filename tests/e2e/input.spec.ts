@@ -237,3 +237,57 @@ test('тестовая сборка без QCLOD_FAKE_SDK не запускае�
     await close(app, profile)
   }
 })
+
+test('↑ приносит прошлое сообщение, ↓ возвращает черновик', async () => {
+  const { app, profile, win } = await launch({ steps: [], nextTurn: [] })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    for (const text of ['первое', 'второе']) {
+      await input.fill(text)
+      await input.press('Enter')
+      await expect(input).toHaveValue('')
+    }
+    await input.fill('черновик')
+    await input.press('Home')
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('второе')
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('первое')
+    await input.press('ArrowDown')
+    await input.press('ArrowDown')
+    await expect(input).toHaveValue('черновик')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('история вкладки — из её ленты, у второй вкладки своя', async () => {
+  const other = mkdtempSync(join(tmpdir(), 'qclod-input-other-'))
+  const { app, profile, win } = await launchWith(
+    { steps: [{ kind: 'text', text: 'слушаю' }], nextTurn: [{ kind: 'text', text: 'готово' }] },
+    { QCLOD_PICK_FOLDER: other }
+  )
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    await input.fill('только в первой')
+    await input.press('Enter')
+    await expect(win.locator('[data-testid="ribbon-user"]')).toContainText('только в первой')
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText('готово', { timeout: 15000 })
+
+    await win.locator('[data-testid="tab-new"]').click()
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+    await input.click()
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('')
+
+    await win.locator('[data-testid="tab"]').first().click()
+    await input.click()
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('только в первой')
+  } finally {
+    await close(app, profile)
+    rmSync(other, { recursive: true, force: true })
+  }
+})

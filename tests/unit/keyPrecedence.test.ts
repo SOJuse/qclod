@@ -22,8 +22,8 @@ function ctx(partial: Partial<ComposerContext> = {}): ComposerContext {
     text: '',
     popupOpen: false,
     hasSelection: false,
-    caretAtStart: true,
-    caretAtEnd: true,
+    caretOnFirstLine: true,
+    caretOnLastLine: true,
     ...partial
   }
 }
@@ -58,8 +58,39 @@ describe('resolveComposerKey', () => {
     expect(
       resolveComposerKey(
         key({ key: 'ArrowUp' }),
-        ctx({ text: 'две\nстроки', caretAtStart: false })
+        ctx({ text: 'две\nстроки', caretOnFirstLine: false })
       )
+    ).toBe('caret')
+  })
+
+  test('↑ на первой строке многострочного поля — история', () =>
+    expect(
+      resolveComposerKey(key({ key: 'ArrowUp' }), ctx({ text: 'а\nб', caretOnFirstLine: true }))
+    ).toBe('historyPrev'))
+
+  test('↑ на второй строке — движение каретки', () =>
+    expect(
+      resolveComposerKey(
+        key({ key: 'ArrowUp' }),
+        ctx({ text: 'а\nб', caretOnFirstLine: false, caretOnLastLine: true })
+      )
+    ).toBe('caret'))
+
+  test('↓ на последней строке — история, выше — каретка', () => {
+    expect(
+      resolveComposerKey(key({ key: 'ArrowDown' }), ctx({ text: 'а\nб', caretOnLastLine: true }))
+    ).toBe('historyNext')
+    expect(
+      resolveComposerKey(
+        key({ key: 'ArrowDown' }),
+        ctx({ text: 'а\nб', caretOnFirstLine: true, caretOnLastLine: false })
+      )
+    ).toBe('caret')
+  })
+
+  test('с выделением стрелки двигают каретку, истории нет', () => {
+    expect(
+      resolveComposerKey(key({ key: 'ArrowUp' }), ctx({ text: 'слово', hasSelection: true }))
     ).toBe('caret')
   })
 

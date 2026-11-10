@@ -134,7 +134,13 @@ test('07 список / и второй шаг /model', async () => {
   await input.press('/')
   await expect(win.locator('[data-testid="slash-menu"]')).toBeVisible()
   await shot(win, '07-slash-list')
-  await input.fill('/model ')
+  // Typed and chosen the way a person does; fill() skips the menu altogether.
+  await input.pressSequentially('model')
+  await input.press('Enter')
+  // The second step is the model list; the shot is of it, not of the command list.
+  const items = win.locator('[data-testid="slash-item"]')
+  await expect(items).toHaveCount(2)
+  await expect(items.nth(1)).toContainText('Sonnet 5')
   await shot(win, '07b-slash-model')
   await done(app, profile)
 })

@@ -62,7 +62,7 @@ export function withLocalCommands(commands: CommandInfo[]): CommandInfo[] {
 }
 
 /** Subsequence match: `cmp` finds `compact`. Returns null when it does not fit. */
-function score(text: string, needle: string): number | null {
+export function score(text: string, needle: string): number | null {
   if (needle === '') return 0
   if (text === needle) return 1000
   if (text.startsWith(needle)) return 500 - text.length

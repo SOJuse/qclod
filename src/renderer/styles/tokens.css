@@ -111,6 +111,10 @@
   --accent-fill-strong: rgba(110, 139, 255, 0.3);
   --warn-fill: rgba(255, 196, 107, 0.08);
   --warn-border: rgba(255, 196, 107, 0.4);
+
+  /* The Ctrl+K window of app actions. */
+  --palette-top: 12vh;
+  --palette-width: 520px;
 }
 
 * {

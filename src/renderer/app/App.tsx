@@ -11,6 +11,9 @@ import { SidePanel } from '../components/SidePanel'
 import { HistoryScreen } from '../components/HistoryScreen'
 import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
+import { ActionPalette } from '../components/ActionPalette'
+import { compactNow } from '../input/slash'
+import { LAST_TAB_INDEX, resolveAppShortcut, type AppActionId } from './shortcuts'
 import './App.css'
 
 /**
@@ -28,6 +31,10 @@ export function App(): JSX.Element {
   const [focusToken, setFocusToken] = useState(0)
   const [environment, setEnvironment] = useState<EnvironmentReport | null>(null)
   const [setupDismissed, setSetupDismissed] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  /** Ctrl+W was pressed once on a working tab; a second press within 3 s closes it. */
+  const [closeGuardTab, setCloseGuardTab] = useState<string | null>(null)
+  const closeGuardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const recheck = useCallback((): void => {
     void window.qclod.checkEnvironment().then(setEnvironment)
@@ -154,23 +161,134 @@ export function App(): JSX.Element {
     void window.qclod.listHistory(activeTabId).then(setSessions)
   }, [activeTabId])
 
-  // Ctrl+Backslash folds the panel away, Ctrl+H opens the history.
+  /** Shift+Tab walks the everyday modes; «без проверок» is not on the ring. */
+  const cycleMode = useCallback((): void => {
+    if (!activeTabId) return
+    const ring = ['default', 'acceptEdits', 'plan'] as const
+    const current = useAppStore.getState().panelByTab[activeTabId]?.permissionMode ?? 'default'
+    const at = ring.indexOf(current as (typeof ring)[number])
+    void window.qclod.setPermissionMode(activeTabId, ring[(at + 1) % ring.length]!)
+  }, [activeTabId])
+
+
+
+  const activate = useCallback(
+    (id: string) => {
+      setActiveTabId(id)
+      void window.qclod.activateTab(id)
+    },
+    [setActiveTabId]
+  )
+
+  const newTab = useCallback((): void => {
+    void window.qclod.pickFolder().then((cwd) => {
+      if (!cwd) return
+      void window.qclod.createTab(cwd).then((tab) => {
+        if (tab) activate(tab.id)
+      })
+    })
+  }, [activate])
+
+  const clearCloseGuard = useCallback((): void => {
+    if (closeGuardTimer.current) clearTimeout(closeGuardTimer.current)
+    closeGuardTimer.current = null
+    setCloseGuardTab(null)
+  }, [])
+  useEffect(() => () => {
+    if (closeGuardTimer.current) clearTimeout(closeGuardTimer.current)
+  }, [])
+  // The warning is about one tab; switching away forgets it.
+  useEffect(clearCloseGuard, [activeTabId, clearCloseGuard])
+
+  /** Ctrl+W: a working tab asks for a second press, so a stray key cannot kill a run. */
+  const closeActiveTab = useCallback((): void => {
+    const state = useAppStore.getState()
+    const tab = state.tabs.find((t) => t.id === state.activeTabId)
+    if (!tab) return
+    const working = tab.status === 'busy' || tab.status === 'waiting'
+    if (working && closeGuardTimer.current === null) {
+      setCloseGuardTab(tab.id)
+      closeGuardTimer.current = setTimeout(clearCloseGuard, 3000)
+      return
+    }
+    clearCloseGuard()
+    void window.qclod.closeTab(tab.id)
+  }, [clearCloseGuard])
+
+  const restartSession = useCallback((): void => {
+    const id = useAppStore.getState().activeTabId
+    if (!id) return
+    // The new session's panel replaces the old one's whole.
+    void window.qclod
+      .restartTab(id)
+      .then(() => window.qclod.panel(id))
+      .then((snapshot) => setPanelSnapshot(id, snapshot))
+  }, [setPanelSnapshot])
+
+  /** The one place every shortcut and every Ctrl+K row ends up. */
+  const runAction = useCallback(
+    (id: AppActionId, index?: number): void => {
+      const state = useAppStore.getState()
+      const at = state.tabs.findIndex((t) => t.id === state.activeTabId)
+      const step = (delta: number): void => {
+        if (state.tabs.length < 2 || at < 0) return
+        activate(state.tabs[(at + delta + state.tabs.length) % state.tabs.length]!.id)
+      }
+      switch (id) {
+        case 'newTab':
+          return newTab()
+        case 'closeTab':
+          return closeActiveTab()
+        case 'nextTab':
+          return step(1)
+        case 'prevTab':
+          return step(-1)
+        case 'tabAt': {
+          const target =
+            index === LAST_TAB_INDEX ? state.tabs[state.tabs.length - 1] : state.tabs[index ?? -1]
+          if (target) activate(target.id)
+          return
+        }
+        case 'actions':
+          return setPaletteOpen((open) => !open)
+        case 'settings':
+          return setSettingsOpen(true)
+        case 'history':
+          return openHistory()
+        case 'togglePanel':
+          return togglePanel()
+        case 'toggleSplit':
+          return toggleSplit()
+        case 'restart':
+          return restartSession()
+        case 'compact':
+          if (state.activeTabId) compactNow(state.activeTabId)
+          return
+        case 'cycleMode':
+          return cycleMode()
+      }
+    },
+    [activate, newTab, closeActiveTab, openHistory, togglePanel, toggleSplit, restartSession, cycleMode]
+  )
+
+  // Window-level shortcuts, by physical key. The handler is registered once and
+  // reads the latest runAction through a ref.
+  const runRef = useRef(runAction)
+  runRef.current = runAction
+  const paletteRef = useRef(paletteOpen)
+  paletteRef.current = paletteOpen
   useEffect(() => {
     const onKey = (ev: KeyboardEvent): void => {
-      if (ev.ctrlKey && ev.code === 'Backslash') {
-        ev.preventDefault()
-        togglePanel()
-      } else if (ev.ctrlKey && ev.code === 'KeyH') {
-        ev.preventDefault()
-        openHistory()
-      } else if (ev.ctrlKey && ev.shiftKey && ev.code === 'Enter') {
-        ev.preventDefault()
-        toggleSplit()
-      }
+      const hit = resolveAppShortcut(ev)
+      if (!hit) return
+      // With the palette open only Ctrl+K (to close it) is ours.
+      if (paletteRef.current && hit.id !== 'actions') return
+      ev.preventDefault()
+      runRef.current(hit.id, hit.index)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [togglePanel, openHistory, toggleSplit])
+  }, [])
 
   // The file index backs @-mentions; it is per folder, so it is fetched once
   // per tab rather than on every keystroke.
@@ -214,24 +332,7 @@ export function App(): JSX.Element {
     if (splitTabId) loadRibbon(splitTabId)
   }, [splitTabId, loadRibbon])
 
-  const activate = useCallback(
-    (id: string) => {
-      setActiveTabId(id)
-      void window.qclod.activateTab(id)
-    },
-    [setActiveTabId]
-  )
 
-
-
-  /** Shift+Tab walks the everyday modes; «без проверок» is not on the ring. */
-  const cycleMode = useCallback((): void => {
-    if (!activeTabId) return
-    const ring = ['default', 'acceptEdits', 'plan'] as const
-    const current = useAppStore.getState().panelByTab[activeTabId]?.permissionMode ?? 'default'
-    const at = ring.indexOf(current as (typeof ring)[number])
-    void window.qclod.setPermissionMode(activeTabId, ring[(at + 1) % ring.length]!)
-  }, [activeTabId])
 
 
   if (environment && !environment.ready && !setupDismissed) {
@@ -251,14 +352,7 @@ export function App(): JSX.Element {
         activeTabId={activeTabId}
         onActivate={activate}
         onClose={(id) => void window.qclod.closeTab(id)}
-        onCreate={() => {
-          void window.qclod.pickFolder().then((cwd) => {
-            if (!cwd) return
-            void window.qclod.createTab(cwd).then((tab) => {
-              if (tab) activate(tab.id)
-            })
-          })
-        }}
+        onCreate={newTab}
         onConfigure={() => setSettingsOpen(true)}
         hotkey={hotkey}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -277,6 +371,11 @@ export function App(): JSX.Element {
             onFocus={() => undefined}
             onCycleMode={cycleMode}
             onOpenHistory={openHistory}
+            notice={
+              closeGuardTab === activeTabId
+                ? { testId: 'close-guard', text: 'Агент работает — Ctrl+W ещё раз закроет вкладку' }
+                : null
+            }
           />
           {splitTabId && (
             <ChatPane
@@ -334,6 +433,19 @@ export function App(): JSX.Element {
             void window.qclod.openHistory(activeTabId, session.id, session.title).then((tab) => {
               if (tab) activate(tab.id)
             })
+          }}
+        />
+      )}
+      {paletteOpen && (
+        <ActionPalette
+          onRun={(id) => {
+            setPaletteOpen(false)
+            setFocusToken((n) => n + 1)
+            runAction(id)
+          }}
+          onClose={() => {
+            setPaletteOpen(false)
+            setFocusToken((n) => n + 1)
           }}
         />
       )}

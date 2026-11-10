@@ -1,0 +1,85 @@
+import { physicalKey } from '../input/physicalKey'
+import type { KeyLike } from '../input/keyPrecedence'
+
+/** Everything the window can do from the keyboard or from the Ctrl+K list. */
+export type AppActionId =
+  | 'newTab'
+  | 'closeTab'
+  | 'nextTab'
+  | 'prevTab'
+  | 'tabAt'
+  | 'actions'
+  | 'settings'
+  | 'history'
+  | 'togglePanel'
+  | 'toggleSplit'
+  | 'restart'
+  | 'compact'
+  | 'cycleMode'
+
+export interface AppActionInfo {
+  id: AppActionId
+  label: string
+  keys?: string
+}
+
+/** The Ctrl+K list, in the order it is shown. `tabAt` has no row: it is Ctrl+1…9. */
+export const APP_ACTIONS: AppActionInfo[] = [
+  { id: 'newTab', label: 'Новая вкладка', keys: 'Ctrl+T' },
+  { id: 'closeTab', label: 'Закрыть вкладку', keys: 'Ctrl+W' },
+  { id: 'nextTab', label: 'Следующая вкладка', keys: 'Ctrl+Tab' },
+  { id: 'prevTab', label: 'Предыдущая вкладка', keys: 'Ctrl+Shift+Tab' },
+  { id: 'actions', label: 'Палитра действий', keys: 'Ctrl+K' },
+  { id: 'settings', label: 'Настройки', keys: 'Ctrl+,' },
+  { id: 'history', label: 'Прошлые разговоры', keys: 'Ctrl+H' },
+  { id: 'togglePanel', label: 'Показать или скрыть панель', keys: 'Ctrl+\\' },
+  { id: 'toggleSplit', label: 'Два разговора рядом', keys: 'Ctrl+Shift+Enter' },
+  { id: 'restart', label: 'Перезапустить сессию' },
+  { id: 'compact', label: 'Сжать контекст' },
+  { id: 'cycleMode', label: 'Сменить режим', keys: 'Shift+Tab' }
+]
+
+/** A button's tooltip: «Новая вкладка (Ctrl+T)». */
+export function hint(label: string, id?: AppActionId): string {
+  const keys = id ? APP_ACTIONS.find((a) => a.id === id)?.keys : undefined
+  return keys ? `${label} (${keys})` : label
+}
+
+/** Ctrl+9 is the last tab, as in a browser: the runner reads index 8 that way. */
+export const LAST_TAB_INDEX = 8
+
+/**
+ * The window-level shortcut for a key press, by the PHYSICAL key so the Russian
+ * layout works. Shift+Tab alone is the composer's (it cycles the mode there).
+ */
+export function resolveAppShortcut(
+  ev: KeyLike
+): { id: AppActionId; index?: number } | null {
+  if (ev.isComposing || ev.keyCode === 229) return null
+  if (!ev.ctrlKey || ev.altKey || ev.metaKey) return null
+
+  const code = ev.code ?? ''
+  if (code === 'Tab') return { id: ev.shiftKey ? 'prevTab' : 'nextTab' }
+  if (code === 'Enter' || code === 'NumpadEnter') {
+    return ev.shiftKey ? { id: 'toggleSplit' } : null
+  }
+  if (ev.shiftKey) return null
+
+  if (code === 'Comma') return { id: 'settings' }
+  if (code === 'Backslash') return { id: 'togglePanel' }
+
+  const k = physicalKey(ev)
+  if (/^[1-9]$/.test(k)) return { id: 'tabAt', index: Number(k) - 1 }
+  switch (k) {
+    case 't':
+      return { id: 'newTab' }
+    case 'w':
+      return { id: 'closeTab' }
+    case 'k':
+      return { id: 'actions' }
+    case 'h':
+      return { id: 'history' }
+    default:
+      return null
+  }
+}

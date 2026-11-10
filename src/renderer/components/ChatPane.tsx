@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { TriangleAlert } from 'lucide-react'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { sendCommand } from '../input/slash'
 import { Ribbon } from './Ribbon'
@@ -17,6 +18,8 @@ interface Props {
   onFocus: () => void
   onOpenHistory: () => void
   onCycleMode: () => void
+  /** A warning to show above the input, such as the close-tab guard. */
+  notice?: { testId: string; text: string } | null
 }
 
 /**
@@ -34,7 +37,8 @@ export function ChatPane({
   showTitle,
   onFocus,
   onOpenHistory,
-  onCycleMode
+  onCycleMode,
+  notice
 }: Props): JSX.Element {
   const tabs = useAppStore((s) => s.tabs)
   const ribbonByTab = useAppStore((s) => s.ribbonByTab)
@@ -102,6 +106,13 @@ export function ChatPane({
       />
 
       <Working status={status} since={busySinceByTab[tabId]} items={ribbonByTab[tabId] ?? []} />
+
+      {notice && (
+        <div className="close-guard" data-testid={notice.testId} role="status">
+          <TriangleAlert size={14} aria-hidden="true" />
+          {notice.text}
+        </div>
+      )}
 
       <Composer
         tabId={tabId}

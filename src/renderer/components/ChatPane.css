@@ -43,3 +43,25 @@
   min-height: 0;
   display: flex;
 }
+
+/* A one-line warning above the input, same width as the input. */
+.close-guard {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: min(920px, calc(100% - 40px));
+  margin: 0 auto var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-sm);
+  background: var(--warn-fill);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+.close-guard svg {
+  flex: 0 0 auto;
+  color: var(--warn);
+}

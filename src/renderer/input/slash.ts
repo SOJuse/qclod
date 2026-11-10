@@ -33,6 +33,8 @@ export type SlashOutcome =
   | { kind: 'send'; text: string }
   /** Put this text in the field and wait — for an argument, or for more typing. */
   | { kind: 'fill'; text: string }
+  /** Switch Remote Control for this tab (/remote-control, /rc). */
+  | { kind: 'remote' }
   /** Open the history screen (/resume). */
   | { kind: 'history' }
   /** Show the second list (/model, /effort), with this text in the field. */
@@ -44,6 +46,7 @@ export type SlashOutcome =
  */
 export function acceptCommand(command: CommandInfo): SlashOutcome {
   if (command.unavailableReason) return { kind: 'none' }
+  if (command.name === 'remote-control' || command.name === 'rc') return { kind: 'remote' }
   if (isLocalCommand(command.name)) {
     if (command.name === 'resume') return { kind: 'history' }
     const kind = command.name === 'model' ? 'model' : 'effort'
@@ -140,6 +143,14 @@ export function bareLocalStep(text: string): { kind: 'model' | 'effort' } | null
   if (trimmed === '/model') return { kind: 'model' }
   if (trimmed === '/effort') return { kind: 'effort' }
   return null
+}
+
+/**
+ * `/remote-control` or `/rc` as the draft, with or without an argument. The
+ * switch is one per tab, so a name typed after it is not used.
+ */
+export function bareRemoteToggle(text: string): boolean {
+  return /^\/(?:remote-control|rc)(?:\s|$)/.test(text.trim())
 }
 
 /** Sends a slash command to the session, as typed. */

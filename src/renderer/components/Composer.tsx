@@ -66,6 +66,8 @@ interface Props {
   onSendCommand: (text: string) => void
   onCommandUsed: (name: string) => void
   onOpenHistory: () => void
+  /** Switch Remote Control for this tab (/remote-control, /rc). */
+  onToggleRemote?: () => void
   onSetModel: (model: string) => void
   onSetEffort: (level: EffortLevel) => void
   onCycleMode: () => void
@@ -158,6 +160,7 @@ export function Composer({
   onSendCommand,
   onCommandUsed,
   onOpenHistory,
+  onToggleRemote,
   onSetModel,
   onSetEffort,
   onCycleMode,
@@ -368,6 +371,10 @@ export function Composer({
         return
       case 'fill':
         replaceDraft(outcome.text)
+        return
+      case 'remote':
+        replaceDraft('')
+        onToggleRemote?.()
         return
       case 'history':
         replaceDraft('')

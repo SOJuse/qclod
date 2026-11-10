@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   filterCommands,
   isLocalCommand,
+  markRemote,
   markUnavailable,
   withLocalCommands
 } from '../../src/shared/commandFilter'
@@ -70,19 +71,23 @@ describe('filterCommands', () => {
 })
 
 describe('markUnavailable', () => {
-  test('недоступная команда помечена и не выбирается', () => {
-    // Remote Control needs the terminal Qclod no longer runs (spec 6.7).
-    const marked = markUnavailable([...ALL, cmd('remote-control')])
-    const rc = marked.find((c) => c.name === 'remote-control')
-
-    expect(rc?.unavailableReason).toBeTruthy()
-    expect(rc?.unavailableReason).toContain('Qclod')
-    expect(marked.find((c) => c.name === 'compact')?.unavailableReason).toBeUndefined()
+  test('remote-control больше не помечен недоступным', () => {
+    expect(markUnavailable([cmd('remote-control'), cmd('rc')]).every((c) => !c.unavailableReason)).toBe(true)
   })
+})
 
-  test('псевдонимы той же команды тоже помечаются', () => {
-    const marked = markUnavailable([cmd('rc'), cmd('remote-control')])
-    expect(marked.every((c) => c.unavailableReason)).toBe(true)
+describe('Remote Control в списке', () => {
+  test('remote-control есть в списке, даже если сессия его не прислала', () => {
+    expect(withLocalCommands([]).find((c) => c.name === 'remote-control')).toMatchObject({ aliases: ['rc'] })
+  })
+  test('markRemote ставит причину блокировки', () => {
+    expect(
+      markRemote(withLocalCommands([]), 'нет подписки').find((c) => c.name === 'remote-control')?.unavailableReason
+    ).toBe('нет подписки')
+  })
+  test('markRemote без блокировки ничего не трогает', () => {
+    const list = withLocalCommands([])
+    expect(markRemote(list, null)).toEqual(list)
   })
 })
 
@@ -111,7 +116,7 @@ describe('withLocalCommands', () => {
     )
   })
 
-  test('присланную сессией команду не дублирует, а недоступную помечает', () => {
+  test('присланную сессией команду не дублирует, а описание берёт своё', () => {
     const result = withLocalCommands([
       cmd('model', { description: 'Set the model', argumentHint: '<model>' }),
       cmd('remote-control')
@@ -120,6 +125,6 @@ describe('withLocalCommands', () => {
     // The session's own hint stays; the description is ours.
     expect(result.find((c) => c.name === 'model')?.argumentHint).toBe('<model>')
     expect(result.find((c) => c.name === 'model')?.description).not.toBe('Set the model')
-    expect(result.find((c) => c.name === 'remote-control')?.unavailableReason).toBeTruthy()
+    expect(result.find((c) => c.name === 'remote-control')?.unavailableReason).toBeUndefined()
   })
 })

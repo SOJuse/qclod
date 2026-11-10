@@ -88,6 +88,8 @@ export function createFakeSdk(script = {}) {
 
   /** Sends waiting to be played as their own turn. */
   const inbox = []
+  /** How many sent messages have been answered; the next one plays `turns[answered]`. */
+  let answered = 0
   let wake = null
   let closed = false
 
@@ -653,7 +655,9 @@ export function createFakeSdk(script = {}) {
         parent_tool_use_id: null,
         message: { role: 'user', content: input.text }
       }
-      yield* play(script.nextTurn ?? [])
+      const turn = script.turns?.[answered] ?? script.nextTurn ?? []
+      answered += 1
+      yield* play(turn)
       yield* finishTurn()
       yield* drainAfterTurn()
     }

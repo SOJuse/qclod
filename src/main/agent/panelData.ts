@@ -7,7 +7,8 @@ import type {
   PanelData,
   PanelSnapshot,
   PermissionMode,
-  ProjectSettingsInfo
+  ProjectSettingsInfo,
+  QueuedMessage
 } from '../../shared/types'
 import type { ContextUsage } from './driver'
 
@@ -50,7 +51,8 @@ export const EMPTY_PANEL: PanelData = {
   effort: null,
   permissionMode: 'default',
   mcp: [],
-  projectSettings: null
+  projectSettings: null,
+  queue: []
 }
 
 let lastPanelRev = 0
@@ -214,6 +216,11 @@ export class PanelCollector {
 
   setProjectSettings(info: ProjectSettingsInfo | null): Partial<PanelData> {
     return this.patch({ projectSettings: info })
+  }
+
+  /** What waits to be sent: the session owns the messages, the panel shows them. */
+  setQueue(queue: QueuedMessage[]): Partial<PanelData> {
+    return this.patch({ queue })
   }
 
   private onInit(m: Record<string, unknown>): Partial<PanelData> {

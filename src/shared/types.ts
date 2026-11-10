@@ -257,6 +257,16 @@ export interface PanelData {
   permissionMode: PermissionMode
   mcp: McpServerInfo[]
   projectSettings: ProjectSettingsInfo | null
+  /** Messages sent while the agent was working, waiting for it to be free. */
+  queue: QueuedMessage[]
+}
+
+/** A message waiting its turn: what the strip above the input field shows of it. */
+export interface QueuedMessage {
+  id: string
+  text: string
+  /** How many files and pictures go with it. */
+  attachments: number
 }
 
 // ------------------------------------------------------------------ the rest

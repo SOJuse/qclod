@@ -148,6 +148,33 @@ describe('createFakeSdk', () => {
 })
 
 describe('createFakeSdk: следующий ход', () => {
+  test('turns: i-е сообщение играет turns[i], дальше — nextTurn', async () => {
+    const driver = createFakeSdk({
+      steps: [],
+      turns: [[{ kind: 'text', text: 'ответ один' }], [{ kind: 'text', text: 'ответ два' }]],
+      nextTurn: [{ kind: 'text', text: 'ответ потом' }]
+    })
+
+    const said: string[] = []
+    let results = 0
+    const reader = (async () => {
+      for await (const m of driver.messages) {
+        if (m['type'] === 'assistant') {
+          const content = (m['message'] as { content: Array<{ type: string; text?: string }> }).content
+          for (const block of content) if (block.type === 'text' && block.text) said.push(block.text)
+        }
+        if (m['type'] === 'result' && ++results === 3) break
+      }
+    })()
+
+    driver.send({ text: 'раз', attachments: [] })
+    driver.send({ text: 'два', attachments: [] })
+    driver.send({ text: 'три', attachments: [] })
+    await reader
+
+    expect(said).toEqual(['ответ один', 'ответ два', 'ответ потом'])
+  })
+
   test('send проигрывает nextTurn и эхо сообщения пользователя', async () => {
     const driver = createFakeSdk({
       steps: [{ kind: 'text', text: 'первый ход' }],

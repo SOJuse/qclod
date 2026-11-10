@@ -22,6 +22,7 @@ export const CHANNELS = Object.freeze({
 
   agentSend: 'agent:send',
   agentInterrupt: 'agent:interrupt',
+  agentQueueCancel: 'agent:queueCancel',
   agentPermissionMode: 'agent:permissionMode',
   agentModel: 'agent:model',
   agentEffort: 'agent:effort',
@@ -86,6 +87,7 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.tabsRetry,
   CHANNELS.agentSend,
   CHANNELS.agentInterrupt,
+  CHANNELS.agentQueueCancel,
   CHANNELS.agentPermissionMode,
   CHANNELS.agentModel,
   CHANNELS.agentEffort,

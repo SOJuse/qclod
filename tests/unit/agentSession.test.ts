@@ -1740,3 +1740,153 @@ describe('AgentSession: после dispose молчит', () => {
     expect(session.status).toBe('stopped')
   })
 })
+
+describe('AgentSession: очередь сообщений', () => {
+  /** A first turn long enough to type a second message into. */
+  const slowTurn: NonNullable<NonNullable<FakeScript>['nextTurn']> = [
+    { kind: 'textStream', pieces: ['один ', 'два ', 'три ', 'четыре ', 'пять'], pauseMs: 50 }
+  ]
+
+  function lastQueue(rec: Recorder): PanelData['queue'] | undefined {
+    return rec.panels.filter((p) => p.queue !== undefined).at(-1)?.queue
+  }
+
+  test('сообщение во время хода ждёт в очереди и уходит после result', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      turns: [slowTurn, [{ kind: 'text', text: 'второй ответ' }]]
+    })
+    const rec = watch(session)
+    await session.start()
+
+    session.send({ text: 'раз', attachments: [] })
+    session.send({ text: 'два', attachments: [] })
+
+    // Not sent, not in the ribbon — only on the strip above the input.
+    expect(driver.sent).toHaveLength(1)
+    expect(rec.items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text)).toEqual(['раз'])
+    expect(lastQueue(rec)).toEqual([{ id: expect.any(String), text: 'два', attachments: 0 }])
+    expect(session.panel.queue).toHaveLength(1)
+
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('второй ответ'), { timeout: 3000 })
+    expect(driver.sent[1]!.text).toBe('два')
+    expect(rec.items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text)).toEqual([
+      'раз',
+      'два'
+    ])
+    expect(session.panel.queue).toEqual([])
+    await settle(session)
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('отменённое из очереди не уходит', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+
+    session.send({ text: 'раз', attachments: [] })
+    session.send({ text: 'два', attachments: [] })
+    const queued = session.panel.queue[0]!
+
+    expect(session.cancelQueued('нет-такого')).toBe(false)
+    expect(session.cancelQueued(queued.id)).toBe(true)
+    expect(lastQueue(rec)).toEqual([])
+
+    await settle(session)
+    await tick()
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('Стоп возвращает очередь и очищает её', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    await session.start()
+
+    session.send({ text: 'раз', attachments: [] })
+    session.send({ text: 'два', attachments: [] })
+
+    expect(await session.interrupt()).toEqual([{ text: 'два', attachments: [] }])
+    expect(session.panel.queue).toEqual([])
+    await settle(session)
+    await new Promise((r) => setTimeout(r, 300))
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
+    await session.dispose()
+  })
+
+  test('сообщение, отправленное пока Стоп в пути, уходит сразу и не возвращается', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    session.send({ text: 'два', attachments: [] })
+
+    let interrupted!: () => void
+    driver.interrupt = () => new Promise<void>((resolve) => (interrupted = resolve))
+    const stopping = session.interrupt()
+    await vi.waitFor(() => expect(interrupted).toBeDefined())
+
+    // The queue was taken the moment Stop was pressed; this one goes now.
+    session.send({ text: 'три', attachments: [] })
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'три'])
+    expect(session.panel.queue).toEqual([])
+
+    interrupted()
+    expect(await stopping).toEqual([{ text: 'два', attachments: [] }])
+    await session.dispose()
+  })
+
+  test('ответ на вопрос карточкой во время хода тоже встаёт в очередь', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+    // A card from history: nothing waits on it, so its answer goes as a message.
+    session.handle({
+      type: 'assistant',
+      message: {
+        id: 'old',
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'q-old', name: 'AskUserQuestion', input: { questions: [{ question: 'Куда?', options: [] }] } }]
+      }
+    })
+    session.send({ text: 'раз', attachments: [] })
+    session.answerQuestion('q-old', { 'Куда?': 'Справа' })
+
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
+    expect(lastQueue(rec)?.map((q) => q.text)).toEqual(['Справа'])
+    await vi.waitFor(() => expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'Справа']), { timeout: 3000 })
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('упавшая сессия очередь держит и не шлёт', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      turns: [[...slowTurn, { kind: 'crash', message: 'агент умер' }]]
+    })
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    session.send({ text: 'два', attachments: [] })
+
+    await vi.waitFor(() => expect(session.status).toBe('error'), { timeout: 3000 })
+    await tick()
+    expect(session.panel.queue).toHaveLength(1)
+    expect(driver.sent).toHaveLength(1)
+    expect(session.takeQueue()).toEqual([{ text: 'два', attachments: [] }])
+    expect(session.panel.queue).toEqual([])
+  })
+
+  test('requeue в свободную сессию отправляет первое, остальное ждёт', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    await session.start()
+    session.requeue([
+      { text: 'раз', attachments: [] },
+      { text: 'два', attachments: [] }
+    ])
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
+    expect(session.panel.queue.map((q) => q.text)).toEqual(['два'])
+    await vi.waitFor(() => expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два']), { timeout: 3000 })
+    await settle(session)
+    await session.dispose()
+  })
+})

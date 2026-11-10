@@ -1488,3 +1488,78 @@ describe('TabController: подмена сессии, «Повторить» и 
     expect(b!.overrides).toMatchObject({ model: 'claude-opus-5', effort: 'low' })
   })
 })
+
+describe('TabController: очередь переходит к новой сессии', () => {
+  const sentTexts = (driver: { sent: Array<{ text: string }> }): string[] => driver.sent.map((s) => s.text)
+  const bubbles = (controller: TabController, id: string): string[] =>
+    controller
+      .itemsOf(id)
+      .filter((i) => i.kind === 'user')
+      .map((i) => (i as { text: string }).text)
+
+  test('перезапуск после падения отправляет очередь новой сессии', async () => {
+    const harness = makeController({
+      script: { steps: [], nextTurn: [{ kind: 'textStream', pieces: ['а', 'б', 'в', 'г'], pauseMs: 50 }] }
+    })
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    const id = harness.controller.list()[0]!.id
+    const old = harness.manager.get(id)!
+
+    old.send({ text: 'раз', attachments: [] })
+    old.send({ text: 'два', attachments: [] })
+    // The agent dies mid-answer, with «два» still waiting.
+    ;(old as unknown as { fail: (e: unknown) => void }).fail(new Error('агент умер'))
+    expect(old.status).toBe('error')
+    expect(old.panel.queue).toHaveLength(1)
+    expect(sentTexts(harness.created[0]!.driver)).toEqual(['раз'])
+
+    await harness.controller.restart(id)
+    const fresh = harness.created.at(-1)!
+    expect(fresh).not.toBe(harness.created[0])
+    await vi.waitFor(() => expect(sentTexts(fresh.driver)).toEqual(['два']))
+    expect(bubbles(harness.controller, id)).toEqual(['раз', 'два'])
+    expect(harness.manager.get(id)!.panel.queue).toEqual([])
+    await harness.controller.whenSettled()
+  })
+
+  test('«Повторить» после «не вошёл» отправляет и неотправленное, и очередь', async () => {
+    const options = { notLoggedInOnSend: true }
+    const harness = makeController(options)
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+
+    const dead = harness.manager.get('a')!
+    dead.send({ text: 'привет', attachments: [] })
+    dead.send({ text: 'и ещё', attachments: [] })
+    await vi.waitFor(() => expect(harness.controller.list()[0]!.canRetry).toBe(true))
+    await harness.controller.whenSettled()
+    // The dead session holds the queue and sends nothing from it.
+    expect(dead.panel.queue.map((q) => q.text)).toEqual(['и ещё'])
+    expect(harness.dead[0]!.sent).toHaveLength(1)
+
+    options.notLoggedInOnSend = false
+    await harness.controller.retry('a')
+    const fresh = harness.created.at(-1)!
+    await vi.waitFor(() => expect(sentTexts(fresh.driver)).toEqual(['привет', 'и ещё']))
+    await harness.controller.whenSettled()
+    expect(bubbles(harness.controller, 'a')).toEqual(['привет', 'и ещё'])
+  })
+
+  test('восстановление мёртвой переписки переносит очередь', async () => {
+    const harness = makeController({ resumeFailsOnSend: true })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+
+    const dead = harness.manager.get('a')!
+    dead.send({ text: 'привет', attachments: [] })
+    dead.send({ text: 'и ещё', attachments: [] })
+    await vi.waitFor(() => expect(harness.created).toHaveLength(1))
+    const fresh = harness.created[0]!
+    await vi.waitFor(() => expect(sentTexts(fresh.driver)).toEqual(['привет', 'и ещё']))
+    await harness.controller.whenSettled()
+    expect(bubbles(harness.controller, 'a')).toEqual(['привет', 'и ещё'])
+  })
+})

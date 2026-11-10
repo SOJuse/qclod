@@ -76,6 +76,8 @@ export interface FakePlanLimits {
 export interface FakeScript {
   steps?: FakeStep[]
   nextTurn?: FakeStep[]
+  /** The i-th message sent (0-based) plays `turns[i]`; past the list, `nextTurn`. */
+  turns?: FakeStep[][]
   sessionId?: string
   costUsd?: number
   contextPercent?: number

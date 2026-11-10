@@ -3,8 +3,10 @@ import {
   attachmentLabel,
   attachmentsFromClipboard,
   attachmentsFromDrop,
+  draftWithReturned,
   isPreparing,
   materialize,
+  pendingFromSent,
   prepareAttachment,
   queuedSendStep,
   type PendingAttachment
@@ -201,5 +203,45 @@ describe('отправка, отложенная до готовности сн�
 
   test('у GIF без размеров плашка — просто «Снимок»', () => {
     expect(attachmentLabel({ ...ready, prepared: { ...ready.prepared, width: 0, height: 0 } })).toBe('Снимок')
+  })
+})
+
+describe('очередь возвращается в поле', () => {
+  test('файл — путём, картинка — подготовленной копией и байтами', async () => {
+    expect(pendingFromSent({ kind: 'file', path: 'C:/p/a.ts' })).toEqual({ kind: 'file', path: 'C:/p/a.ts' })
+
+    const back = pendingFromSent({
+      kind: 'image',
+      mediaType: 'image/png',
+      dataBase64: Buffer.from([1, 2, 3]).toString('base64'),
+      path: 'C:/u/pastes/1.png',
+      thumbnail: 'data:image/png;base64,AA',
+      width: 64,
+      height: 48
+    })
+    expect(back).toMatchObject({
+      kind: 'image',
+      mediaType: 'image/png',
+      prepared: { mediaType: 'image/png', path: 'C:/u/pastes/1.png', thumbnail: 'data:image/png;base64,AA', width: 64, height: 48 }
+    })
+    const bytes = (back as { file: File }).file
+    expect(bytes.type).toBe('image/png')
+    expect([...new Uint8Array(await bytes.arrayBuffer())]).toEqual([1, 2, 3])
+    // Ready to go again, not «Готовлю снимок…».
+    expect(isPreparing(back)).toBe(false)
+  })
+
+  test('картинка без копии и без байтов — плашка с ошибкой', () => {
+    expect(pendingFromSent({ kind: 'image', mediaType: 'image/png', dataBase64: '' })).toEqual({
+      kind: 'image',
+      mediaType: 'image/png',
+      error: 'Не получилось прочитать картинку'
+    })
+  })
+
+  test('тексты очереди — перед набранным, через пустую строку', () => {
+    expect(draftWithReturned(['два', 'три'], 'уже набрано')).toBe('два\n\nтри\n\nуже набрано')
+    expect(draftWithReturned(['два'], '')).toBe('два')
+    expect(draftWithReturned([], 'как было')).toBe('как было')
   })
 })

@@ -33,6 +33,10 @@ for await (const message of driver.messages) { /* ... */ }
 `init` и `rate_limit_event` приходят один раз за сессию; каждый ход
 заканчивается `result/success`.
 
+Чтобы ходы отвечали по-разному, есть `turns: FakeStep[][]`: i-е отправленное
+сообщение (с нуля, ход из `steps` не считается) играет `turns[i]`; когда
+список кончился — `nextTurn`.
+
 Модель, контекст и лимиты до первого сообщения можно узнать только
 запросом: `getContextUsage()` (с полем `model`; `contextUsageDelayMs`
 задерживает ответ) и `planLimits()` (окна из `script.planLimits`, `null` —

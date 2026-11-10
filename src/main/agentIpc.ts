@@ -136,9 +136,16 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     session.send(withPastedBytes(sanitizeInput(input, deps.userData)))
   })
 
-  ipcMain.handle(CHANNELS.agentInterrupt, async (_e, id: unknown) => {
-    if (!isString(id)) return
-    await manager.get(id)?.interrupt()
+  // «Стоп» hands back what was waiting to be sent; the window puts it back
+  // in the input field.
+  ipcMain.handle(CHANNELS.agentInterrupt, async (_e, id: unknown): Promise<UserInput[]> => {
+    if (!isString(id)) return []
+    return (await manager.get(id)?.interrupt()) ?? []
+  })
+
+  ipcMain.handle(CHANNELS.agentQueueCancel, (_e, id: unknown, queuedId: unknown): boolean => {
+    if (!isString(id) || !isString(queuedId)) return false
+    return manager.get(id)?.cancelQueued(queuedId) ?? false
   })
 
   // The mode decides whether the agent asks at all, so an unknown string must

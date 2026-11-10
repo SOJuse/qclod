@@ -39,3 +39,12 @@ describe('format', () => {
     expect(clip('abcdef', 4)).toBe('abc…')
   })
 })
+
+describe('format: границы округления', () => {
+  test('999 999 переходит в M, а не в «1000k»', () => {
+    expect(compactNumber(999_999)).toBe('1M')
+  })
+  test('1048575 байт переходят в МБ, а не в «1024 КБ»', () => {
+    expect(bytes(1048575)).toBe('1,0 МБ')
+  })
+})

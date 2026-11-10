@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { RibbonBuilder, parseTaskNotifications } from '../../src/shared/ribbon'
+import { VIEW_CLIP } from '../../src/shared/clip'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 import { readTranscript } from '../../src/main/agent/transcript'
 import { resumedSession, writeTranscript } from '../fixtures/transcript.mjs'
@@ -1057,5 +1058,68 @@ describe('RibbonBuilder: карточка хранит вызов целиком
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('RibbonBuilder: границы того, что хранит карточка', () => {
+  const call = (id: string, name: string, input: Record<string, unknown>): unknown =>
+    assistant([{ type: 'tool_use', id, name, input }])
+
+  test('мегабайт текста результата режется в detail и в патче', () => {
+    const b = new RibbonBuilder()
+    b.apply(call('t1', 'Bash', { command: 'big' }))
+    const changes = b.apply(toolResult('t1', 'x'.repeat(1_000_000)))
+    expect(only(b.items, 'tool')[0]!.detail.length).toBeLessThan(VIEW_CLIP + 60)
+    expect(JSON.stringify(changes).length).toBeLessThan(VIEW_CLIP + 1000)
+  })
+
+  test('мегабайт текста ошибки режется', () => {
+    const b = new RibbonBuilder()
+    b.apply(call('t1', 'Bash', { command: 'big' }))
+    const changes = b.apply(toolResult('t1', 'e'.repeat(1_000_000), true))
+    expect(only(b.items, 'toolError')[0]!.error.length).toBeLessThan(VIEW_CLIP + 60)
+    expect(JSON.stringify(changes).length).toBeLessThan(VIEW_CLIP + 1000)
+  })
+
+  test('счёт большого файла посчитан до обрезки', () => {
+    const b = new RibbonBuilder()
+    b.apply(call('t1', 'Write', { file_path: 'big.ts' }))
+    const content = Array.from({ length: 20_000 }, (_, i) => `строка ${i}`).join('\n')
+    b.apply(
+      userMessage([{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }], {
+        tool_use_result: { type: 'create', filePath: 'big.ts', content, structuredPatch: [] }
+      })
+    )
+    const output = only(b.items, 'tool')[0]!.output as Record<string, unknown>
+    expect(String(output['content']).length).toBeLessThan(VIEW_CLIP + 60)
+    expect(output['_counts']).toMatchObject({ size: content.length, totalLines: 20_000 })
+  })
+
+  test('счёт большого диффа посчитан до обрезки', () => {
+    const b = new RibbonBuilder()
+    b.apply(call('t1', 'Edit', { file_path: 'a.ts' }))
+    const lines = Array.from({ length: 3000 }, (_, i) => (i % 3 === 0 ? `-${'o'.repeat(100)}` : `+${'n'.repeat(100)}`))
+    b.apply(
+      userMessage([{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }], {
+        tool_use_result: { filePath: 'a.ts', structuredPatch: [{ oldStart: 1, newStart: 1, lines }] }
+      })
+    )
+    const output = only(b.items, 'tool')[0]!.output as Record<string, unknown>
+    expect(output['_counts']).toEqual({ added: 2000, removed: 1000 })
+  })
+
+  test('при воспроизведении истории времени нет, вживую — есть', () => {
+    let clock = 100
+    const b = new RibbonBuilder({ now: () => clock, replay: true })
+    b.apply(call('t1', 'Bash', { command: 'ls' }))
+    clock = 900
+    b.apply(toolResult('t1', 'a'))
+    expect(only(b.items, 'tool')[0]).not.toHaveProperty('startedAt')
+    expect(only(b.items, 'tool')[0]).not.toHaveProperty('durationMs')
+    b.finishReplay()
+    b.apply(call('t2', 'Bash', { command: 'ls' }))
+    clock = 1500
+    b.apply(toolResult('t2', 'a'))
+    expect(only(b.items, 'tool')[1]).toMatchObject({ startedAt: 900, durationMs: 600 })
   })
 })

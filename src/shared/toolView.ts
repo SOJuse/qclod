@@ -108,6 +108,22 @@ function resultText(item: ToolCardItem): string {
   return item.kind === 'tool' ? item.detail : item.error
 }
 
+/**
+ * Counts the ribbon took before it clipped the output (see clipOutput in
+ * ribbon.ts); what is left in the output may be only the start of the file.
+ */
+function countsOf(output: unknown): Partial<Record<'added' | 'removed' | 'size' | 'totalLines', number>> {
+  const counts = isObject(output) ? output['_counts'] : undefined
+  if (!isObject(counts)) return {}
+  const pick = (key: string): number | undefined => num(counts[key])
+  const found: Partial<Record<'added' | 'removed' | 'size' | 'totalLines', number>> = {}
+  for (const key of ['added', 'removed', 'size', 'totalLines'] as const) {
+    const value = pick(key)
+    if (value !== undefined) found[key] = value
+  }
+  return found
+}
+
 function countChanges(hunks: DiffHunk[]): { added: number; removed: number } {
   let added = 0
   let removed = 0
@@ -161,19 +177,23 @@ function commandView(input: Obj, output: unknown, fallback: string, failed: bool
 function editView(input: Obj, output: unknown): ToolView {
   const hunks = patchOf(output) ?? [wholeEdit(str(input['old_string']), str(input['new_string']))]
   const path = (isObject(output) ? str(output['filePath']) : '') || str(input['file_path'])
-  return { type: 'edit', path, hunks, ...countChanges(hunks) }
+  const counts = countsOf(output)
+  const own = countChanges(hunks)
+  return { type: 'edit', path, hunks, added: counts.added ?? own.added, removed: counts.removed ?? own.removed }
 }
 
 function writeView(input: Obj, output: unknown): ToolView {
   const out = isObject(output) ? output : null
   const content = (out ? str(out['content']) : '') || str(input['content'])
   const all = splitLines(content)
+  const counts = countsOf(output)
+  const totalLines = counts.totalLines ?? all.length
   const created = out?.['type'] === 'create'
   let hunks = patchOf(output)
   let { added, removed } = hunks ? countChanges(hunks) : { added: 0, removed: 0 }
   if (created) {
     // A new file has no patch to count: everything in it is added.
-    added = all.length
+    added = totalLines
     removed = 0
   } else if (!hunks) {
     hunks = [{ oldStart: 1, newStart: 1, lines: all.map((l) => `+${l}`) }]
@@ -183,12 +203,12 @@ function writeView(input: Obj, output: unknown): ToolView {
     type: 'write',
     path: (out ? str(out['filePath']) : '') || str(input['file_path']),
     created,
-    size: content.length,
+    size: counts.size ?? content.length,
     head: all.slice(0, PREVIEW_LINES),
-    totalLines: all.length,
+    totalLines,
     hunks: hunks ?? [],
-    added,
-    removed
+    added: counts.added ?? added,
+    removed: counts.removed ?? removed
   }
 }
 
@@ -281,9 +301,13 @@ export function toolView(item: ToolCardItem): ToolView {
     case 'Bash':
       if (isObject(output)) return commandView(input, output, resultText(item), failed)
       break
+    // A failed edit has no output: showing the input as a diff would show a
+    // change that never happened.
     case 'Edit':
+      if (failed && !isObject(output)) break
       return editView(input, output)
     case 'Write':
+      if (failed && !isObject(output)) break
       return writeView(input, output)
     case 'Read':
       if (isObject(output)) return readView(input, output)

@@ -92,7 +92,7 @@ export interface SessionSeed {
  * is closed as unfinished: that process is gone and will never report back.
  */
 export function seedFromTranscript(messages: unknown[]): SessionSeed {
-  const builder = new RibbonBuilder()
+  const builder = new RibbonBuilder({ replay: true })
   for (const message of messages) builder.apply(message)
   builder.finishReplay()
   const collector = new PanelCollector()

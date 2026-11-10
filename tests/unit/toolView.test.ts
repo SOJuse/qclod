@@ -225,3 +225,36 @@ describe('toolView', () => {
     expect(toolOutcome(edge, toolView(edge))).toBe('готово · 0,1 с')
   })
 })
+
+describe('toolView: усечённые данные и ошибки', () => {
+  test('счёт нового файла берётся из скаляров, а не из обрезанного текста', () => {
+    const item = tool('Write', { file_path: 'big.ts' }, {
+      type: 'create',
+      filePath: 'big.ts',
+      content: 'x\ny',
+      structuredPatch: [],
+      _counts: { size: 100_000, totalLines: 5000, added: 5000, removed: 0 }
+    })
+    expect(toolView(item)).toMatchObject({ type: 'write', size: 100_000, totalLines: 5000, added: 5000 })
+    expect(toolOutcome(item, toolView(item))).toBe('новый · 5000 строк')
+  })
+
+  test('счёт правки берётся из скаляров', () => {
+    const item = tool('Edit', { file_path: 'a.ts' }, {
+      filePath: 'a.ts',
+      structuredPatch: [{ oldStart: 1, newStart: 1, lines: ['+a'] }],
+      _counts: { added: 900, removed: 700 }
+    })
+    expect(toolOutcome(item, toolView(item))).toBe('+900 −700')
+  })
+
+  test('неудавшаяся правка без output не выглядит применённой', () => {
+    const item = failed('Edit', { file_path: 'a.ts', old_string: 'x', new_string: 'y' }, 'String not found')
+    expect(toolView(item)).toEqual({ type: 'generic', text: 'String not found' })
+  })
+
+  test('неудавшаяся запись без output — текст ошибки', () => {
+    const item = failed('Write', { file_path: 'a.ts', content: 'z' }, 'denied')
+    expect(toolView(item)).toEqual({ type: 'generic', text: 'denied' })
+  })
+})

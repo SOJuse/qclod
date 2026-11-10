@@ -27,6 +27,12 @@ import { clip, lines } from './format'
 
 interface Clock {
   now?: () => number
+  /**
+   * The messages come from a stored conversation: the clock now says nothing
+   * about when a call was made, so cards get no start time or duration until
+   * finishReplay().
+   */
+  replay?: boolean
 }
 
 /** A content block currently being streamed, keyed by its index in the message. */
@@ -87,6 +93,38 @@ function resultText(content: unknown): string {
     .map((block) => (isObject(block) ? str(block['text']) : ''))
     .filter(Boolean)
     .join('\n')
+}
+
+/**
+ * The tool's structured output, bounded — with the counts the card prints
+ * taken first. A created file of 100 KB or a patch of thousands of lines
+ * would otherwise be counted from what is left after clipping.
+ */
+function clipOutput(result: unknown): unknown {
+  const clipped = clipForView(result)
+  if (!isObject(result) || Array.isArray(result) || !isObject(clipped)) return clipped
+
+  const counts: Record<string, number> = {}
+  if (Array.isArray(result['structuredPatch'])) {
+    let added = 0
+    let removed = 0
+    for (const hunk of result['structuredPatch']) {
+      if (!isObject(hunk)) continue
+      for (const line of asArray(hunk['lines'])) {
+        if (typeof line !== 'string') continue
+        if (line.startsWith('+')) added++
+        else if (line.startsWith('-')) removed++
+      }
+    }
+    counts['added'] = added
+    counts['removed'] = removed
+  }
+  if (typeof result['content'] === 'string') {
+    counts['size'] = result['content'].length
+    counts['totalLines'] = result['content'] === '' ? 0 : result['content'].split('\n').length
+  }
+  if (Object.keys(counts).length > 0) clipped['_counts'] = counts
+  return clipped
 }
 
 /**
@@ -242,9 +280,11 @@ export class RibbonBuilder {
   private readonly pendingEchoes: string[] = []
   private seq = 0
   private readonly now: () => number
+  private replaying: boolean
 
   constructor(options: Clock = {}) {
     this.now = options.now ?? (() => Date.now())
+    this.replaying = options.replay === true
   }
 
   get items(): RibbonItem[] {
@@ -347,6 +387,7 @@ export class RibbonBuilder {
    * closeOpen() settles a session that ended: «не закончил».
    */
   finishReplay(): RibbonChange[] {
+    this.replaying = false
     return this.closeOpen()
   }
 
@@ -610,7 +651,7 @@ export class RibbonBuilder {
         detail: '',
         state: 'running' as ToolState,
         input: clipForView(input) as Record<string, unknown>,
-        startedAt: this.now(),
+        ...(this.replaying ? {} : { startedAt: this.now() }),
         ...(parentId ? { parentId } : {})
       })
     ]
@@ -689,7 +730,9 @@ export class RibbonBuilder {
     const item = this.find(itemId)
     if (!item) return []
 
-    const text = resultText(block['content'])
+    // The text is kept for the card whole-ish: a megabyte of stdout is not.
+    const whole = resultText(block['content'])
+    const text = clipForView(whole) as string
 
     if (block['is_error'] === true) {
       // A failed subagent stays a subagent: it still has a place in the
@@ -752,7 +795,7 @@ export class RibbonBuilder {
     if (item.kind === 'tool') {
       const call = this.callResult(item, result)
       item.state = 'done'
-      item.summary = toolSummary(item.name, text)
+      item.summary = toolSummary(item.name, whole)
       item.detail = text
       Object.assign(item, call)
       return [this.update(item.id, { state: 'done', summary: item.summary, detail: text, ...call })]
@@ -771,7 +814,7 @@ export class RibbonBuilder {
     result: unknown
   ): { output?: unknown; durationMs?: number } {
     const call: { output?: unknown; durationMs?: number } = {}
-    if (result !== undefined && result !== null) call.output = clipForView(result)
+    if (result !== undefined && result !== null) call.output = clipOutput(result)
     if (item.startedAt !== undefined) {
       const measured = this.now() - item.startedAt
       if (measured > 0) call.durationMs = measured

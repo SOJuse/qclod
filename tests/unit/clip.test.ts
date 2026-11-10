@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { VIEW_CLIP, clipForView } from '../../src/shared/clip'
+import { VIEW_CLIP, VIEW_TOTAL, clipForView } from '../../src/shared/clip'
 
 describe('clipForView', () => {
   test('мегабайт stdout режется до VIEW_CLIP с пометкой', () => {
@@ -49,5 +49,19 @@ describe('clipForView', () => {
     const value = { originalFile: 'x', list: [1, 2] }
     clipForView(value)
     expect(value).toEqual({ originalFile: 'x', list: [1, 2] })
+  })
+})
+
+describe('clipForView: общий бюджет', () => {
+  test('большой structuredPatch не разрастается: сумма ограничена', () => {
+    const hunk = { oldStart: 1, newStart: 1, lines: Array.from({ length: 500 }, () => `+${'x'.repeat(1000)}`) }
+    const out = clipForView({ structuredPatch: Array.from({ length: 500 }, () => hunk) })
+    expect(JSON.stringify(out).length).toBeLessThan(VIEW_TOTAL + 100_000)
+    expect(JSON.stringify(out)).toContain('обрезано')
+  })
+
+  test('пустые элементы тоже стоят бюджета', () => {
+    const out = clipForView({ a: Array.from({ length: 500 }, () => Array.from({ length: 500 }, () => '')) })
+    expect(JSON.stringify(out).length).toBeLessThan(VIEW_TOTAL + 100_000)
   })
 })

@@ -36,14 +36,15 @@ export function compactNumber(n: number): string {
     return `${text.replace(/,0$/, '')}${suffix}`
   }
   if (n < 1000) return String(n)
-  if (n < 1_000_000) return short(n / 1000, 'k')
+  // 999 999 rounds to 1000k: it is already a million.
+  if (Math.round(n / 1000) < 1000) return short(n / 1000, 'k')
   return short(n / 1_000_000, 'M')
 }
 
 /** «300 Б», «12 КБ», «1,4 МБ». */
 export function bytes(n: number): string {
   if (n < 1024) return `${Math.round(n)} Б`
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} КБ`
+  if (Math.round(n / 1024) < 1024) return `${Math.round(n / 1024)} КБ`
   return `${decimal(n / (1024 * 1024))} МБ`
 }
 

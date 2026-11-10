@@ -173,6 +173,14 @@ describe('sanitizeQuestionAnswers', () => {
       B: 'я'.repeat(2000)
     })
   })
+
+  test('не больше 64 ответов, и вопрос не длиннее 2000 знаков', () => {
+    const lots = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`q${i}`, 'да']))
+    expect(Object.keys(sanitizeQuestionAnswers(lots))).toHaveLength(64)
+    expect(sanitizeQuestionAnswers({ ['в'.repeat(2001)]: 'да', ['в'.repeat(2000)]: 'нет' })).toEqual({
+      ['в'.repeat(2000)]: 'нет'
+    })
+  })
 })
 
 describe('sanitizeDefaults', () => {

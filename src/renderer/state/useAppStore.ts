@@ -23,6 +23,14 @@ const PER_TAB_KEYS = [
   'fileIndexByTab'
 ] as const
 
+function closedAfter(state: AppState, tabs: TabState[]): ReadonlySet<TabId> {
+  const open = new Set(tabs.map((t) => t.id))
+  const closed = new Set(state.closedTabs)
+  for (const t of state.tabs) if (!open.has(t.id)) closed.add(t.id)
+  for (const id of open) closed.delete(id)
+  return closed
+}
+
 function forgetClosed(state: AppState, tabs: TabState[]): Partial<AppState> {
   const open = new Set(tabs.map((t) => t.id))
   const closed = state.tabs.filter((t) => !open.has(t.id)).map((t) => t.id)
@@ -52,6 +60,8 @@ interface AppState {
   /** The conversation shown beside the active one, when the view is split. */
   splitTabId: TabId | null
   tabs: TabState[]
+  /** Ids of tabs that were closed: late events and answers for them are dropped. */
+  closedTabs: ReadonlySet<TabId>
   ribbonByTab: Record<TabId, RibbonItem[]>
   /** The newest ribbon revision applied per tab — anything not newer is already in. */
   ribbonRevByTab: Record<TabId, number>
@@ -129,6 +139,7 @@ export const useAppStore = create<AppState>((set) => ({
   activeTabId: '',
   splitTabId: null,
   tabs: [],
+  closedTabs: new Set(),
   ribbonByTab: {},
   ribbonRevByTab: {},
   todoByTab: {},
@@ -151,6 +162,7 @@ export const useAppStore = create<AppState>((set) => ({
       // A closed tab's data goes with it. Only tabs this store has seen in
       // `tabs` are forgotten: a new tab's ribbon events can precede the list.
       ...forgetClosed(state, tabs),
+      closedTabs: closedAfter(state, tabs),
       busySinceByTab: tabs.reduce<Record<TabId, number>>((acc, tab) => {
         const working = tab.status === 'busy' || tab.status === 'waiting'
         const previous = state.tabs.find((t) => t.id === tab.id)
@@ -171,7 +183,7 @@ export const useAppStore = create<AppState>((set) => ({
   // arrive later with a revision no newer than it, and are dropped.
   setRibbon: (id, snapshot) =>
     set((state) => {
-      if (snapshot.rev < (state.ribbonRevByTab[id] ?? -1)) return state
+      if (state.closedTabs.has(id) || snapshot.rev < (state.ribbonRevByTab[id] ?? -1)) return state
       return {
         ribbonByTab: { ...state.ribbonByTab, [id]: snapshot.items },
         ribbonRevByTab: { ...state.ribbonRevByTab, [id]: snapshot.rev },
@@ -181,7 +193,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   applyRibbon: (id, changes, rev) =>
     set((state) => {
-      if (rev <= (state.ribbonRevByTab[id] ?? -1)) return state
+      if (state.closedTabs.has(id) || rev <= (state.ribbonRevByTab[id] ?? -1)) return state
       const { items, todo } = reduceRibbon(state.ribbonByTab[id] ?? [], changes)
       return {
         ribbonByTab: { ...state.ribbonByTab, [id]: items },
@@ -191,7 +203,7 @@ export const useAppStore = create<AppState>((set) => ({
     }),
 
   applyPanel: (id, patch, rev) =>
-    set((state) => ({
+    set((state) => state.closedTabs.has(id) ? state : ({
       panelByTab: {
         ...state.panelByTab,
         [id]: { ...(state.panelByTab[id] ?? EMPTY_PANEL), ...patch }
@@ -207,19 +219,19 @@ export const useAppStore = create<AppState>((set) => ({
   // same race the ribbon had on tab switches.
   setPanelSnapshot: (id, snapshot) =>
     set((state) => {
-      if (snapshot.rev < (state.panelRevByTab[id] ?? -1)) return state
+      if (state.closedTabs.has(id) || snapshot.rev < (state.panelRevByTab[id] ?? -1)) return state
       return {
         panelByTab: { ...state.panelByTab, [id]: snapshot.data },
         panelRevByTab: { ...state.panelRevByTab, [id]: snapshot.rev }
       }
     }),
 
-  setDraft: (id, text) => set((state) => ({ draftByTab: { ...state.draftByTab, [id]: text } })),
+  setDraft: (id, text) => set((state) => (state.closedTabs.has(id) ? state : { draftByTab: { ...state.draftByTab, [id]: text } })),
 
   setAttachments: (id, items) =>
-    set((state) => ({ attachmentsByTab: { ...state.attachmentsByTab, [id]: items } })),
+    set((state) => (state.closedTabs.has(id) ? state : { attachmentsByTab: { ...state.attachmentsByTab, [id]: items } })),
 
   setFileIndex: (id, paths) =>
-    set((state) => ({ fileIndexByTab: { ...state.fileIndexByTab, [id]: paths } }))
+    set((state) => (state.closedTabs.has(id) ? state : { fileIndexByTab: { ...state.fileIndexByTab, [id]: paths } }))
 
 }))

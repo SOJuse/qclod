@@ -196,4 +196,20 @@ describe('useAppStore: закрытые вкладки', () => {
     expect(useAppStore.getState().ribbonByTab['C']).toBeDefined()
     expect(keysOf('C')).toHaveLength(8)
   })
+
+  test('запоздавшие записи для только что закрытой вкладки ничего не оставляют', () => {
+    const store = useAppStore.getState()
+    store.setTabs([tab('A'), tab('B')])
+    store.setTabs([tab('A')])
+
+    store.applyRibbon('B', [{ kind: 'append', item: { kind: 'notice', id: 'r1', text: 't', tone: 'info' } }], 1)
+    store.setRibbon('B', { rev: 2, items: [], todo: [{ content: 'x', status: 'pending' }] })
+    store.applyPanel('B', { model: 'm' }, 3)
+    store.setPanelSnapshot('B', { rev: 4, data: EMPTY_PANEL })
+    store.setDraft('B', 'x')
+    store.setAttachments('B', [])
+    store.setFileIndex('B', ['a'])
+
+    expect(keysOf('B')).toEqual([])
+  })
 })

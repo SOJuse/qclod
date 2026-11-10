@@ -71,7 +71,6 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
-  backdrop-filter: blur(var(--menu-blur));
   box-shadow: var(--shadow-menu);
 }
 

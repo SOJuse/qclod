@@ -1,19 +1,19 @@
-import { BrowserWindow, shell, type WebContents } from 'electron'
+import { BrowserWindow, shell, type BrowserWindowConstructorOptions, type WebContents } from 'electron'
 import { join } from 'node:path'
+import { WINDOW_BG } from '../shared/theme'
 import { isSafeExternalUrl, makeNavigationGuard } from './security'
 
 export const RENDERER_ENTRY = join(__dirname, '../renderer/index.html')
 
-export function createMainWindow(): BrowserWindow {
-  const win = new BrowserWindow({
+export function mainWindowOptions(): BrowserWindowConstructorOptions {
+  return {
     width: 1180,
     height: 760,
     minWidth: 800,
     minHeight: 600,
     show: false,
     frame: false,
-    backgroundColor: '#00000000',
-    backgroundMaterial: 'acrylic',
+    backgroundColor: WINDOW_BG,
     title: 'Qclod',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -21,7 +21,11 @@ export function createMainWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true
     }
-  })
+  }
+}
+
+export function createMainWindow(): BrowserWindow {
+  const win = new BrowserWindow(mainWindowOptions())
 
   // Navigation hardening is registered app-wide via `web-contents-created`,
   // so every webContents gets it, not just this window.

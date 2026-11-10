@@ -208,7 +208,7 @@ body,
 }
 
 body {
-  background: transparent;
+  background: var(--bg);
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 13px;

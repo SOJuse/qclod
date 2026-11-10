@@ -11,7 +11,6 @@
   border-radius: var(--radius);
   background: var(--surface-raised);
   box-shadow: var(--glow-accent), var(--shadow-menu);
-  backdrop-filter: blur(var(--menu-blur));
 }
 
 .inline-menu-title {

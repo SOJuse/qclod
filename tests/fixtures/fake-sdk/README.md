@@ -113,8 +113,8 @@ for await (const message of driver.messages) { /* ... */ }
 `{type:'system', subtype:'worker_shutting_down', reason:'remote_control_disabled'}`.
 Ход с телефона — `user`-сообщение той же формы, что эхо, шаги
 (`steps ?? nextTurn`) и `result`; в `sent` он не попадает. Формы взяты из
-таблицы «Сверка с SDK и CLI» в
-`.superpowers/sdd/2026-11-10-qclod-v3-stage5-remote/sdk-reconciliation.md`.
+раздела «Сверка с SDK и CLI» плана
+`docs/superpowers/plans/2026-11-10-qclod-v3-stage5-remote.md`.
 
 ## Транскрипты на диске: `../transcript.mjs`
 

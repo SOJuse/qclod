@@ -168,13 +168,9 @@ export function createFakeSdk(script = {}) {
    * interrupted. An aborted question stops holding the turn open and counts
    * as a refusal — nothing runs on an answer nobody is waiting for.
    */
-  async function ask(name, input, toolUseID, abortAfterMs) {
+  async function ask(name, input, toolUseID) {
     const controller = new AbortController()
     openAsks.add(controller)
-    // A question answered on the phone: the CLI cancels it, the SDK aborts
-    // this signal, and a late answer from Qclod is of no interest.
-    const timer =
-      abortAfterMs === undefined ? null : setTimeout(() => controller.abort(), abortAfterMs)
     const aborted = new Promise((resolve) => {
       controller.signal.addEventListener(
         'abort',
@@ -188,7 +184,6 @@ export function createFakeSdk(script = {}) {
         aborted
       ])
     } finally {
-      if (timer) clearTimeout(timer)
       openAsks.delete(controller)
     }
   }
@@ -345,7 +340,14 @@ export function createFakeSdk(script = {}) {
           const id = randomUUID()
           const input = step.input ?? {}
           state.permissionRequests.push({ name: step.name, input })
-          await ask(step.name, input, id, step.afterMs ?? 50)
+          // Whatever Qclod answers is ignored: the phone answered. Wait for
+          // the abort of this very signal, then follow the decision.
+          const controller = new AbortController()
+          openAsks.add(controller)
+          canUseTool(step.name, input, { toolUseID: id, signal: controller.signal }).catch(() => undefined)
+          await pause(step.afterMs ?? 50)
+          controller.abort()
+          openAsks.delete(controller)
           if (step.decision === 'allow') {
             yield* play([{ kind: 'tool', id, name: step.name, input, result: 'ok' }])
           } else {

@@ -1069,6 +1069,21 @@ describe('createFakeSdk: Remote Control', () => {
     expect(d.executedTools).toContain('Bash')
   })
 
+  test('remoteAnswer: ответ Qclod до afterMs игнорируется, сигнал всё равно абортится', async () => {
+    const seen: AbortSignal[] = []
+    const d = createFakeSdk({
+      steps: [{ kind: 'remoteAnswer', name: 'Bash', decision: 'allow' }],
+      canUseTool: async (_n, _i, o) => {
+        seen.push(o.signal)
+        return { behavior: 'deny' }
+      }
+    })
+    const got = await collect(d)
+    expect(seen[0]!.aborted).toBe(true)
+    expect(d.executedTools).toContain('Bash')
+    expect(kinds(got)).not.toContain('permission_denied')
+  })
+
   test('remoteAnswer deny: permission_denied, инструмент не выполняется', async () => {
     const d = createFakeSdk({
       steps: [{ kind: 'remoteAnswer', name: 'Bash', decision: 'deny' }],

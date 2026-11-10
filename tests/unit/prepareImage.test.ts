@@ -235,8 +235,20 @@ describe('prepareImage: слишком большие до декодирова�
     decode.mockRestore()
   })
 
+  test('PNG или JPEG больше 100 мегапикселей не декодируется, даже если каждая сторона в пределе', async () => {
+    const electron = await import('electron')
+    const decode = vi.spyOn(electron.nativeImage, 'createFromBuffer')
+    for (const head of [pngHead(16_384, 16_384), pngHead(12_000, 9_000), jpegHead(10_001, 10_000)]) {
+      expect(prepareImage(userData, head.toString('base64'), 'image/png')).toEqual({
+        error: 'Картинка слишком большая'
+      })
+    }
+    expect(decode).not.toHaveBeenCalled()
+    decode.mockRestore()
+  })
+
   test('PNG в пределах по заголовку идёт дальше как обычно', () => {
-    const head = pngHead(16_384, 16_384)
+    const head = pngHead(16_384, 6_000)
     // The fake decoder reads the size from the text after the head.
     const data = Buffer.concat([head, Buffer.from(' 800x600 ', 'latin1')]).toString('base64')
     expect(ok(prepareImage(userData, data, 'image/png'))).toMatchObject({ width: 800, height: 600 })

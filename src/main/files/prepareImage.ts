@@ -8,6 +8,8 @@ export const MAX_IMAGE_SIDE = 2000
 export const MAX_IMAGE_BYTES = 3_750_000
 /** A picture bigger than this by either side is not decoded at all: its pixels alone run to gigabytes. */
 export const MAX_SOURCE_SIDE = 16_384
+/** Nor one this big by area: 16384 × 16384 within the side limit is still a gigabyte of pixels. */
+export const MAX_SOURCE_PIXELS = 100_000_000
 /** Nor is a paste this heavy. */
 export const MAX_SOURCE_BYTES = 50 * 1024 * 1024
 /** The chip and the bubble show the picture this big by its longer side. */
@@ -113,7 +115,11 @@ export function prepareImage(
   if (!type) return { error: 'Не похоже на картинку' }
   if (source.length > MAX_SOURCE_BYTES) return { error: 'Картинка слишком большая' }
   const declared = headerSize(source, type)
-  if (declared && Math.max(declared.width, declared.height) > MAX_SOURCE_SIDE) {
+  if (
+    declared &&
+    (Math.max(declared.width, declared.height) > MAX_SOURCE_SIDE ||
+      declared.width * declared.height > MAX_SOURCE_PIXELS)
+  ) {
     return { error: 'Картинка слишком большая' }
   }
 

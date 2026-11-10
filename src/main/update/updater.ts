@@ -99,7 +99,13 @@ export class UpdateFlow {
 export function createUpdateSource(isPackaged: boolean): UpdateSource | null {
   const fakeSpec = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_UPDATE'] : undefined
   if (__QCLOD_TEST_SEAMS__ && fakeSpec !== undefined) {
-    const spec = JSON.parse(fakeSpec) as { version?: string; error?: string }
+    let spec: { version?: string; error?: string }
+    try {
+      spec = JSON.parse(fakeSpec) as { version?: string; error?: string }
+    } catch (err) {
+      console.warn('[update] QCLOD_FAKE_UPDATE is not valid JSON, updates are off:', messageOf(err))
+      return null
+    }
     const downloaded: Array<(version: string) => void> = []
     const errored: Array<(err: Error) => void> = []
     const counter = globalThis as { __qclodUpdateRestarts?: number }
@@ -123,6 +129,12 @@ export function createUpdateSource(isPackaged: boolean): UpdateSource | null {
     }
   }
 
+  // The portable Qclod.exe does not update itself: the updater would install
+  // the NSIS copy on quit, next to the portable one. electron-builder's
+  // portable launcher sets this variable.
+  if (process.env['PORTABLE_EXECUTABLE_DIR']) return null
+  // A test build, packaged or not, never asks GitHub: no test touches the network.
+  if (__QCLOD_TEST_SEAMS__) return null
   if (!isPackaged) return null
 
   // Loaded only here: a run from the source tree never touches it.

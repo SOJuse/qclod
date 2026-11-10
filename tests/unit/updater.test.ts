@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   UpdateFlow,
+  createUpdateSource,
   UPDATE_FIRST_CHECK_MS,
   UPDATE_RECHECK_MS,
   type UpdateSource
@@ -177,5 +178,48 @@ describe('restartWarning', () => {
   test('агент работает или ждёт ответа — предупреждение', () => {
     expect(restartWarning(['idle', 'busy'])).toBe(text)
     expect(restartWarning(['waiting'])).toBe(text)
+  })
+})
+
+describe('createUpdateSource', () => {
+  const saved = { ...process.env }
+  afterEach(() => {
+    for (const key of ['QCLOD_FAKE_UPDATE', 'PORTABLE_EXECUTABLE_DIR']) {
+      if (saved[key] === undefined) delete process.env[key]
+      else process.env[key] = saved[key]
+    }
+    vi.restoreAllMocks()
+  })
+
+  test('сборка с лазейками без QCLOD_FAKE_UPDATE не берёт настоящий источник, даже упакованная', () => {
+    delete process.env['QCLOD_FAKE_UPDATE']
+    expect(createUpdateSource(true)).toBeNull()
+    expect(createUpdateSource(false)).toBeNull()
+  })
+
+  test('портативная сборка не обновляется сама', () => {
+    delete process.env['QCLOD_FAKE_UPDATE']
+    process.env['PORTABLE_EXECUTABLE_DIR'] = 'C:\\Portable'
+    expect(createUpdateSource(true)).toBeNull()
+  })
+
+  test('битый QCLOD_FAKE_UPDATE — предупреждение в консоли и null, а не исключение', () => {
+    process.env['QCLOD_FAKE_UPDATE'] = '{version:'
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    expect(createUpdateSource(true)).toBeNull()
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0]!.join(' ')).toContain('QCLOD_FAKE_UPDATE')
+  })
+
+  test('фейк: первая проверка сразу, версия скачивается, перезапуск только считается', async () => {
+    process.env['QCLOD_FAKE_UPDATE'] = '{"version":"9.9.9"}'
+    const source = createUpdateSource(false)!
+    expect(source.firstCheckMs).toBe(0)
+    const versions: string[] = []
+    source.onDownloaded((v) => versions.push(v))
+    await source.checkForUpdates()
+    expect(versions).toEqual(['9.9.9'])
+    source.quitAndInstall(true, true)
+    expect((globalThis as { __qclodUpdateRestarts?: number }).__qclodUpdateRestarts).toBe(1)
   })
 })

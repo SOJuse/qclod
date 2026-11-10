@@ -397,11 +397,11 @@ export class AgentSession {
     // names the model; the plan's limits come from the usage call, since no
     // rate_limit_event arrives before the first message either. None of them
     // may become an unhandled rejection, even one thrown synchronously.
-    void this.applyStoredEffort().catch(() => undefined)
-    void this.refreshContext().catch(() => undefined)
-    void this.refreshModels().catch(() => undefined)
-    void this.refreshMcp().catch(() => undefined)
-    void this.refreshLimits().catch(() => undefined)
+    this.background(this.applyStoredEffort())
+    this.background(this.refreshContext())
+    this.background(this.refreshModels())
+    this.background(this.refreshMcp())
+    this.background(this.refreshLimits())
   }
 
   /** The level this tab was left at, from tabs.json — the session's, not the user's settings. */
@@ -409,8 +409,28 @@ export class AgentSession {
     const effort = this.options.overrides.effort
     const driver = this.driver
     if (!effort || !driver) return
+    try {
+      await driver.setEffort(effort)
+    } catch {
+      // The panel keeps showing what the process is really at.
+      this.emit(
+        this.builder.notice(
+          `Усилие «${effort}» не применено — процесс отказался его принять.`,
+          'info'
+        )
+      )
+      return
+    }
     this.emitPanel(this.collector.setEffort(effort))
-    await driver.setEffort(effort)
+  }
+
+  /**
+   * A refresh nobody awaits. The work is an async call, so even a driver that
+   * throws synchronously ends as a rejection — which, unhandled, is a process
+   * warning at best. The panel simply stays as it was.
+   */
+  private background(work: Promise<unknown>): void {
+    work.catch(() => undefined)
   }
 
   /** The plan's windows before the first message; rate_limit_event takes over after. */
@@ -584,7 +604,7 @@ export class AgentSession {
     this.mcpPolls += 1
     this.mcpTimer = setTimeout(() => {
       this.mcpTimer = null
-      void this.refreshMcp().catch(() => undefined)
+      this.background(this.refreshMcp())
     }, this.options.mcpPollMs ?? MCP_POLL_MS)
   }
 
@@ -678,12 +698,12 @@ export class AgentSession {
         else if (m['subtype'] === 'commands_changed') {
           this.onCommandsChanged(m)
           // A plugin's commands come with its servers.
-          void this.refreshMcp().catch(() => undefined)
-        } else if (m['subtype'] === 'plugin_install') void this.refreshMcp().catch(() => undefined)
+          this.background(this.refreshMcp())
+        } else if (m['subtype'] === 'plugin_install') this.background(this.refreshMcp())
         break
       case 'result':
         this.setStatus('idle')
-        void this.refreshContext()
+        this.background(this.refreshContext())
         break
       default:
         break
@@ -708,9 +728,9 @@ export class AgentSession {
     // idle while the agent was still working, and only from the second message
     // on did anything ever look alive. Only `result` ends a turn.
     if (this.state !== 'busy' && this.state !== 'waiting') this.setStatus('idle')
-    void this.refreshModels()
+    this.background(this.refreshModels())
     // init's servers are as they were at start; the live state is asked for.
-    void this.refreshMcp().catch(() => undefined)
+    this.background(this.refreshMcp())
   }
 
   private onCommandsChanged(m: Record<string, unknown>): void {

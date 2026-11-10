@@ -1173,6 +1173,40 @@ describe('AgentSession: панель полна до первого сообще
     await session.dispose()
   })
 
+  test('отказ драйвера применить сохранённое усилие не попадает в панель и виден заметкой', async () => {
+    const { session, driver } = makeSession({ steps: [] }, { overrides: { effort: 'high' } })
+    const rec = watch(session)
+    ;(driver as unknown as { setEffort: () => Promise<void> }).setEffort = () =>
+      Promise.reject(new Error('refused'))
+
+    await session.start()
+
+    await vi.waitFor(() =>
+      expect(rec.items.some((i) => JSON.stringify(i).includes('high'))).toBe(true)
+    )
+    expect(session.panel.effort).toBeNull()
+    await session.dispose()
+  })
+
+  test('драйвер без supportedModels/mcpServerStatus не роняет процесс', async () => {
+    const { session, driver } = makeSession({})
+    delete (driver as Partial<typeof driver>).supportedModels
+    delete (driver as Partial<typeof driver>).mcpServerStatus
+    const seen: unknown[] = []
+    const h = (e: unknown): number => seen.push(e)
+    process.on('unhandledRejection', h)
+
+    await session.start()
+    // init arrives only after a message; its refreshModels is the unwrapped call.
+    session.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(session.panel.cost).not.toBeNull())
+    await new Promise((r) => setTimeout(r, 20))
+    process.off('unhandledRejection', h)
+
+    expect(seen).toEqual([])
+    await session.dispose()
+  })
+
   test('без сохранённого усилия процессу ничего не навязывается', async () => {
     const { session, driver } = makeSession({ steps: [] })
 

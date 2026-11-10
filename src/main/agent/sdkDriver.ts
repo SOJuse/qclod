@@ -8,6 +8,7 @@ import type {
   UserInput
 } from '../../shared/types'
 import type { AgentDriver, ContextUsage, DriverOptions } from './driver'
+import { toPermissionContext } from './permissionContext'
 
 /** `@путь` with quotes when it contains spaces — the convention the probe confirmed. */
 function mention(path: string): string {
@@ -97,13 +98,11 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
       // recorded in spec §5 with its consequence.
       settingSources: ['user', 'project', 'local'],
       canUseTool: async (toolName, input, opts) => {
-        const answer = await options.canUseTool(toolName, input as Record<string, unknown>, {
-          ...(opts && typeof opts === 'object' && 'toolUseId' in opts
-            ? { toolUseId: String((opts as { toolUseId?: unknown }).toolUseId ?? '') }
-            : {})
-        })
+        const answer = await options.canUseTool(toolName, input, toPermissionContext(opts))
+        // updatedInput is how an AskUserQuestion answer travels
+        // (AskUserQuestionInput.answers in sdk-tools.d.ts).
         return answer.behavior === 'allow'
-          ? { behavior: 'allow', updatedInput: input }
+          ? { behavior: 'allow', updatedInput: answer.updatedInput ?? input }
           : { behavior: 'deny', message: 'Отклонено в Qclod' }
       }
     }

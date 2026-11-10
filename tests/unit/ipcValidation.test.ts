@@ -102,6 +102,12 @@ describe('agentIpc: проверка полезной нагрузки', () => {
     expect(sanitizeAnswer({ behavior: 'allow', remember: 'да' })).toEqual({ behavior: 'allow' })
   })
 
+  test('окно не может подменить ввод инструмента через updatedInput', () => {
+    expect(
+      sanitizeAnswer({ behavior: 'allow', updatedInput: { command: 'rm -rf /' } })
+    ).toEqual({ behavior: 'allow' })
+  })
+
   test('сообщение пользователя чистится от чужих полей', () => {
     expect(
       sanitizeInput({

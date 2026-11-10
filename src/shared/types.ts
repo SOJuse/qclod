@@ -225,6 +225,13 @@ export interface PermissionRequest {
 export interface PermissionAnswer {
   behavior: 'allow' | 'deny'
   remember?: boolean
+  /**
+   * The tool's input as it should run — how a question's answers reach the
+   * agent. Set only inside the main process: the window's answer never
+   * carries it (sanitizeAnswer drops it), so the window cannot rewrite what a
+   * tool does.
+   */
+  updatedInput?: Record<string, unknown>
 }
 
 export interface AppSettings {

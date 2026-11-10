@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 
 /**
@@ -207,5 +207,148 @@ describe('createFakeSdk: потоковый текст', () => {
     expect((complete['message'] as { content: Array<{ text: string }> }).content[0]!.text).toBe(
       'Привет, мир'
     )
+  })
+})
+
+type Ctx = { toolUseID: string; signal: AbortSignal }
+type Answer = { behavior: 'allow' | 'deny'; message?: string; updatedInput?: Record<string, unknown> }
+
+function toolUses(messages: Array<Record<string, unknown>>): Array<{ id: string; name: string }> {
+  return messages
+    .filter((m) => m['type'] === 'assistant')
+    .flatMap((m) => (m['message'] as { content: Array<Record<string, unknown>> }).content)
+    .filter((b) => b['type'] === 'tool_use')
+    .map((b) => ({ id: String(b['id']), name: String(b['name']) }))
+}
+
+function toolResults(messages: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return messages
+    .filter((m) => m['type'] === 'user' && Array.isArray((m['message'] as { content: unknown }).content))
+    .flatMap((m) => (m['message'] as { content: Array<Record<string, unknown>> }).content)
+    .filter((b) => b['type'] === 'tool_result')
+}
+
+describe('createFakeSdk: id запросов, как у настоящего SDK', () => {
+  test('askPermission передаёт toolUseID будущего tool_use и AbortSignal', async () => {
+    const contexts: Ctx[] = []
+    const driver = createFakeSdk({
+      steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }],
+      canUseTool: async (_name, _input, ctx) => {
+        contexts.push(ctx)
+        return { behavior: 'allow' as const }
+      }
+    })
+    const out = await collect(driver)
+
+    expect(contexts).toHaveLength(1)
+    expect(contexts[0]!.signal).toBeInstanceOf(AbortSignal)
+    expect(typeof contexts[0]!.toolUseID).toBe('string')
+    expect(toolUses(out)).toEqual([{ id: contexts[0]!.toolUseID, name: 'Bash' }])
+    expect(toolResults(out)[0]!['tool_use_id']).toBe(contexts[0]!.toolUseID)
+  })
+
+  test('askQuestion сначала выдаёт tool_use, потом спрашивает canUseTool с его id', async () => {
+    const order: string[] = []
+    const driver = createFakeSdk({
+      steps: [{ kind: 'askQuestion', question: 'Какой?', options: ['Справа', 'Снизу'] }],
+      canUseTool: async (name, _input, ctx) => {
+        order.push(`ask:${name}:${ctx.toolUseID}`)
+        return { behavior: 'allow' as const }
+      }
+    })
+    for await (const m of driver.messages) {
+      for (const use of toolUses([m])) order.push(`tool_use:${use.name}:${use.id}`)
+      if (m['type'] === 'result') break
+    }
+
+    expect(order).toHaveLength(2)
+    const id = order[0]!.split(':')[2]
+    expect(order).toEqual([`tool_use:AskUserQuestion:${id}`, `ask:AskUserQuestion:${id}`])
+  })
+
+  test('ответ на вопрос через updatedInput.answers попадает в tool_result', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'askQuestion', question: 'Какой?', options: ['Справа', 'Снизу'] }],
+      canUseTool: async (_name, input): Promise<Answer> => ({
+        behavior: 'allow',
+        updatedInput: { ...input, answers: { 'Какой?': 'Справа' } }
+      })
+    })
+    const out = await collect(driver)
+
+    const result = toolResults(out)[0]!
+    expect(result['tool_use_id']).toBe(toolUses(out)[0]!.id)
+    expect(result['is_error']).toBeUndefined()
+    expect(String(result['content'])).toContain('Справа')
+    expect(driver.questionAnswers).toEqual([{ 'Какой?': 'Справа' }])
+  })
+
+  test('отказ на вопрос — tool_result с is_error', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'askQuestion', question: 'Какой?', options: ['Справа'] }],
+      canUseTool: async () => ({ behavior: 'deny' as const, message: 'не сейчас' })
+    })
+    const out = await collect(driver)
+
+    const result = toolResults(out)[0]!
+    expect(result['is_error']).toBe(true)
+    expect(String(result['content'])).toContain('не сейчас')
+    expect(driver.questionAnswers).toEqual([])
+  })
+
+  test('askPermissions спрашивает о всех инструментах сразу, у каждого свой id', async () => {
+    const calls: Array<{ name: string; ctx: Ctx; resolve: (a: Answer) => void }> = []
+    const driver = createFakeSdk({
+      steps: [
+        {
+          kind: 'askPermissions',
+          tools: [
+            { name: 'Bash', input: { command: 'npm test' } },
+            { name: 'Edit', input: { file_path: 'a.ts' } }
+          ]
+        }
+      ],
+      canUseTool: (name, _input, ctx) =>
+        new Promise<Answer>((resolve) => calls.push({ name, ctx, resolve }))
+    })
+    const reading = collect(driver)
+
+    // Both questions are open before either is answered.
+    await vi.waitFor(() => expect(calls).toHaveLength(2), { timeout: 2000 })
+    expect(calls.map((c) => c.name)).toEqual(['Bash', 'Edit'])
+    expect(calls[0]!.ctx.toolUseID).not.toBe(calls[1]!.ctx.toolUseID)
+
+    for (const call of calls) call.resolve({ behavior: 'allow' })
+    const out = await reading
+
+    expect(driver.executedTools).toEqual(['Bash', 'Edit'])
+    expect(toolUses(out)).toEqual([
+      { id: calls[0]!.ctx.toolUseID, name: 'Bash' },
+      { id: calls[1]!.ctx.toolUseID, name: 'Edit' }
+    ])
+    // One assistant message carries both calls, as the real one would.
+    const withTools = out.filter((m) => m['type'] === 'assistant' && toolUses([m]).length > 0)
+    expect(withTools).toHaveLength(1)
+  })
+
+  test('interrupt абортит сигнал открытого вопроса', async () => {
+    let signal: AbortSignal | undefined
+    const driver = createFakeSdk({
+      steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }],
+      canUseTool: (_name, _input, ctx) => {
+        signal = ctx.signal
+        return new Promise<Answer>(() => undefined)
+      }
+    })
+    const reading = collect(driver)
+
+    await vi.waitFor(() => expect(signal).toBeDefined(), { timeout: 2000 })
+    expect(signal!.aborted).toBe(false)
+    await driver.interrupt()
+    expect(signal!.aborted).toBe(true)
+
+    // An aborted question no longer holds the turn open, and nothing ran.
+    await reading
+    expect(driver.executedTools).toEqual([])
   })
 })

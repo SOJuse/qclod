@@ -18,6 +18,7 @@
  * @typedef {{kind:'toolRunning', name:string, input?:object}} ToolRunningStep
  * @typedef {{kind:'toolError', name:string, input?:object, error:string}} ToolErrorStep
  * @typedef {{kind:'askPermission', name:string, input?:object}} AskPermissionStep
+ * @typedef {{kind:'askPermissions', tools:Array<{name:string, input?:object}>}} AskPermissionsStep
  * @typedef {{kind:'askQuestion', question:string, header?:string, options:string[]}} AskQuestionStep
  * @typedef {{kind:'todo', items:Array<{content:string,status:string}>}} TodoStep
  * @typedef {{kind:'subagent', name:string, agentType?:string, stats?:object, steps:Array<object>}} SubagentStep
@@ -64,6 +65,7 @@ export function createFakeSdk(script = {}) {
   const state = {
     sent: [],
     permissionRequests: [],
+    questionAnswers: [],
     executedTools: [],
     permissionMode: script.init?.permissionMode ?? 'default',
     model: script.init?.model ?? 'claude-opus-5',
@@ -71,6 +73,59 @@ export function createFakeSdk(script = {}) {
     interrupted: false,
     disposed: false,
     contextPercent: script.contextPercent ?? 21
+  }
+
+  /** Questions put to canUseTool that have not been answered yet. */
+  const openAsks = new Set()
+
+  /**
+   * Asks canUseTool the way the real SDK does: with the id of the tool call
+   * the question is about and a signal that fires when the turn is
+   * interrupted. An aborted question stops holding the turn open and counts
+   * as a refusal — nothing runs on an answer nobody is waiting for.
+   */
+  async function ask(name, input, toolUseID) {
+    const controller = new AbortController()
+    openAsks.add(controller)
+    const aborted = new Promise((resolve) => {
+      controller.signal.addEventListener(
+        'abort',
+        () => resolve({ behavior: 'deny', message: 'прервано' }),
+        { once: true }
+      )
+    })
+    try {
+      return await Promise.race([
+        canUseTool(name, input, { toolUseID, signal: controller.signal }),
+        aborted
+      ])
+    } finally {
+      openAsks.delete(controller)
+    }
+  }
+
+  function toolResult(id, content, isError = false) {
+    return {
+      type: 'user',
+      uuid: randomUUID(),
+      session_id: sessionId,
+      message: {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: id, content, ...(isError ? { is_error: true } : {}) }
+        ]
+      }
+    }
+  }
+
+  function permissionDenied(name, answer) {
+    return {
+      type: 'permission_denied',
+      uuid: randomUUID(),
+      session_id: sessionId,
+      tool_name: name,
+      message: answer.message ?? 'отклонено'
+    }
   }
 
   function assistant(content) {
@@ -133,20 +188,11 @@ export function createFakeSdk(script = {}) {
         }
 
         case 'tool': {
-          const id = randomUUID()
+          // `id` is internal: askPermission passes the id it already asked with.
+          const id = step.id ?? randomUUID()
           yield assistant([{ type: 'tool_use', id, name: step.name, input: step.input ?? {} }])
           state.executedTools.push(step.name)
-          yield {
-            type: 'user',
-            uuid: randomUUID(),
-            session_id: sessionId,
-            message: {
-              role: 'user',
-              content: [
-                { type: 'tool_result', tool_use_id: id, content: step.result ?? 'ok' }
-              ]
-            }
-          }
+          yield toolResult(id, step.result ?? 'ok')
           break
         }
 
@@ -175,44 +221,83 @@ export function createFakeSdk(script = {}) {
           break
         }
 
+        // Asks first and shows the call after, unlike the real CLI (which shows
+        // the call, then asks) — the ribbon's order is not this fixture's to
+        // change yet. The id asked with is the id of the call that follows, so
+        // the two can be matched exactly as in a real session.
         case 'askPermission': {
+          const id = randomUUID()
           const input = step.input ?? {}
           state.permissionRequests.push({ name: step.name, input })
-          const answer = await canUseTool(step.name, input, { sessionId })
+          const answer = await ask(step.name, input, id)
           if (answer.behavior === 'allow') {
-            yield* play([{ kind: 'tool', name: step.name, input, result: 'ok' }])
+            yield* play([{ kind: 'tool', id, name: step.name, input, result: 'ok' }])
           } else {
-            yield {
-              type: 'permission_denied',
-              uuid: randomUUID(),
-              session_id: sessionId,
-              tool_name: step.name,
-              message: answer.message ?? 'отклонено'
-            }
+            yield permissionDenied(step.name, answer)
           }
           break
         }
 
+        // Several tools in one assistant message: the real SDK asks about all
+        // of them at once, each with its own toolUseID, and the answers come
+        // back in whatever order the person gives them.
+        case 'askPermissions': {
+          const calls = (step.tools ?? []).map((tool) => ({
+            id: randomUUID(),
+            name: tool.name,
+            input: tool.input ?? {}
+          }))
+          for (const call of calls) {
+            state.permissionRequests.push({ name: call.name, input: call.input })
+          }
+          const answers = await Promise.all(calls.map((c) => ask(c.name, c.input, c.id)))
+          const allowed = calls.filter((_, i) => answers[i].behavior === 'allow')
+          if (allowed.length > 0) {
+            yield assistant(
+              allowed.map((c) => ({ type: 'tool_use', id: c.id, name: c.name, input: c.input }))
+            )
+            for (const call of allowed) {
+              state.executedTools.push(call.name)
+              yield toolResult(call.id, 'ok')
+            }
+          }
+          for (const [i, call] of calls.entries()) {
+            if (answers[i].behavior !== 'allow') yield permissionDenied(call.name, answers[i])
+          }
+          break
+        }
+
+        // The real order: the call reaches the stream first, then canUseTool is
+        // asked about it with the same id. The answer comes back in
+        // updatedInput.answers (AskUserQuestionInput.answers in sdk-tools.d.ts,
+        // question text -> answer); a refusal is an errored tool_result.
         case 'askQuestion': {
           const id = randomUUID()
-          yield assistant([
-            {
-              type: 'tool_use',
-              id,
-              name: 'AskUserQuestion',
-              // Real AskUserQuestionInput shape, from the SDK's own sdk-tools.d.ts:
-              // questions[].options are objects with a label, not bare strings.
-              input: {
-                questions: [
-                  {
-                    question: step.question,
-                    header: step.header ?? 'Вопрос',
-                    options: step.options.map((label) => ({ label, description: '' }))
-                  }
-                ]
+          // Real AskUserQuestionInput shape, from the SDK's own sdk-tools.d.ts:
+          // questions[].options are objects with a label, not bare strings.
+          const input = {
+            questions: [
+              {
+                question: step.question,
+                header: step.header ?? 'Вопрос',
+                options: step.options.map((label) => ({ label, description: '' }))
               }
-            }
-          ])
+            ]
+          }
+          yield assistant([{ type: 'tool_use', id, name: 'AskUserQuestion', input }])
+          const answer = await ask('AskUserQuestion', input, id)
+          if (answer.behavior === 'allow') {
+            const given = answer.updatedInput?.answers ?? {}
+            state.questionAnswers.push(given)
+            // The wording is the fixture's own; what matters is that the
+            // answers reach the agent through the tool's result.
+            const said = Object.entries(given)
+              .map(([question, choice]) => `"${question}"="${choice}"`)
+              .join(', ')
+            yield toolResult(id, `Ответы пользователя: ${said}`)
+          } else {
+            yield toolResult(id, answer.message ?? 'отклонено', true)
+          }
           break
         }
 
@@ -361,6 +446,7 @@ export function createFakeSdk(script = {}) {
     },
     async interrupt() {
       state.interrupted = true
+      for (const controller of openAsks) controller.abort()
     },
     async setPermissionMode(mode) {
       state.permissionMode = mode
@@ -424,6 +510,9 @@ export function createFakeSdk(script = {}) {
     },
     get executedTools() {
       return state.executedTools
+    },
+    get questionAnswers() {
+      return state.questionAnswers
     },
     get permissionMode() {
       return state.permissionMode

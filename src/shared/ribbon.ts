@@ -251,6 +251,11 @@ export class RibbonBuilder {
     return [this.update(item.id, { state })]
   }
 
+  /** Whether a card for this tool call is already in the ribbon. */
+  hasToolUse(toolUseId: string): boolean {
+    return this.byToolUseId.has(toolUseId)
+  }
+
   /** Records the user's answer to a question card. */
   answerQuestion(toolUseId: string, answer: string): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)

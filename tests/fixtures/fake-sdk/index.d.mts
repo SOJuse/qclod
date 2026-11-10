@@ -8,6 +8,7 @@ export type FakeStep =
   | { kind: 'toolRunning'; name: string; input?: object }
   | { kind: 'toolError'; name: string; input?: object; error: string }
   | { kind: 'askPermission'; name: string; input?: object }
+  | { kind: 'askPermissions'; tools: Array<{ name: string; input?: object }> }
   | { kind: 'askQuestion'; question: string; header?: string; options: string[] }
   | { kind: 'todo'; items: Array<{ content: string; status: string }> }
   | { kind: 'subagent'; name: string; agentType?: string; stats?: object; steps: FakeStep[] }
@@ -17,6 +18,7 @@ export type FakeStep =
 export interface FakePermissionAnswer {
   behavior: 'allow' | 'deny'
   message?: string
+  updatedInput?: Record<string, unknown>
 }
 
 export interface FakeWindow {
@@ -34,7 +36,7 @@ export interface FakeScript {
   canUseTool?: (
     toolName: string,
     input: Record<string, unknown>,
-    options: { sessionId: string }
+    options: { toolUseID: string; signal: AbortSignal }
   ) => Promise<FakePermissionAnswer>
   init?: {
     cwd?: string
@@ -87,6 +89,8 @@ export interface FakeDriver {
   readonly sent: Array<{ text: string; attachments: unknown[] }>
   readonly permissionRequests: Array<{ name: string; input: object }>
   readonly executedTools: string[]
+  /** What each answered AskUserQuestion carried in updatedInput.answers. */
+  readonly questionAnswers: Array<Record<string, string>>
   readonly permissionMode: string
   readonly model: string
   readonly effort: string | null

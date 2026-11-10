@@ -6,6 +6,7 @@ import type {
   PermissionAnswer,
   UserInput
 } from '../../shared/types'
+import type { ToolPermissionContext } from './permissionContext'
 
 /**
  * Everything Qclod needs from an agent session, and nothing more.
@@ -49,11 +50,15 @@ export interface DriverOptions {
   extraArgs?: Record<string, string | null> | undefined
   /** Session id to continue, when the tab is picking a conversation back up. */
   resume?: string | undefined
-  /** Called before a tool runs; the answer decides whether it does. */
+  /**
+   * Called before a tool runs; the answer decides whether it does. The
+   * context carries the tool call's own id, so concurrent questions about
+   * one message's tools never collide.
+   */
   canUseTool: (
     toolName: string,
     input: Record<string, unknown>,
-    options: { toolUseId?: string }
+    context: ToolPermissionContext
   ) => Promise<PermissionAnswer>
 }
 

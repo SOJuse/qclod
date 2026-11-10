@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { RibbonBuilder } from '../../shared/ribbon'
 import type {
   CommandInfo,
@@ -16,6 +17,7 @@ import type {
   UserInput
 } from '../../shared/types'
 import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
+import type { ToolPermissionContext } from './permissionContext'
 import { parseExtraFlags } from './launchFlags'
 import { composeText } from './userMessage'
 import { PanelCollector, readProjectSettings } from './panelData'
@@ -56,6 +58,15 @@ function explain(message: string): string {
   return message
 }
 
+/** The text of an AskUserQuestion's first question — the key its answer goes under. */
+function firstQuestion(input: Record<string, unknown>): string {
+  const questions = input['questions']
+  const first: unknown = Array.isArray(questions) ? questions[0] : undefined
+  if (typeof first !== 'object' || first === null) return ''
+  const text = (first as Record<string, unknown>)['question']
+  return typeof text === 'string' ? text : ''
+}
+
 type ChangeListener = (changes: RibbonChange[]) => void
 type PanelListener = (patch: Partial<PanelData>) => void
 type StatusListener = (status: SessionStatus) => void
@@ -89,7 +100,10 @@ export class AgentSession {
   private readonly idleWaiters: Array<() => void> = []
   private disposed = false
   /** Questions the agent asked through canUseTool, waiting on the user. */
-  private readonly pendingQuestions = new Map<string, (answer: PermissionAnswer) => void>()
+  private readonly pendingQuestions = new Map<
+    string,
+    { input: Record<string, unknown>; resolve: (answer: PermissionAnswer) => void }
+  >()
   private readonly pendingPlans = new Map<string, (answer: PermissionAnswer) => void>()
 
   constructor(options: AgentSessionOptions) {
@@ -169,22 +183,26 @@ export class AgentSession {
   /**
    * The user picked an option on a question card.
    *
-   * The answer goes back as an ordinary message. The SDK's types do not say
-   * how an AskUserQuestion answer travels in a headless session, and inventing
-   * a protocol frame would be guessing; a message is what the user would have
-   * typed anyway, the agent reads it the same way, and nothing depends on a
-   * shape we have not verified.
+   * A question the agent is still waiting on is answered in place: the SDK
+   * takes the answer as `updatedInput.answers` (question text -> choice;
+   * AskUserQuestionInput in sdk-tools.d.ts), and the agent carries on with
+   * the same turn. Only when nothing is waiting — a card from history, a
+   * question left over after «Стоп» — does the choice go as a message, which
+   * is what the user would have typed anyway.
    */
   answerQuestion(toolUseId: string, choice: string): void {
     this.emit(this.builder.answerQuestion(toolUseId, choice))
 
     const waiting = this.pendingQuestions.get(toolUseId)
-    if (waiting) {
-      this.pendingQuestions.delete(toolUseId)
-      waiting({ behavior: 'deny' })
+    if (!waiting) {
+      this.send({ text: choice, attachments: [] })
+      return
     }
-
-    this.send({ text: choice, attachments: [] })
+    this.pendingQuestions.delete(toolUseId)
+    waiting.resolve({
+      behavior: 'allow',
+      updatedInput: { ...waiting.input, answers: { [firstQuestion(waiting.input)]: choice } }
+    })
   }
 
   /**
@@ -397,7 +415,7 @@ export class AgentSession {
   async dispose(): Promise<void> {
     this.disposed = true
     // A question nobody can answer any more must not hold the agent open.
-    for (const [, resolve] of this.pendingQuestions) resolve({ behavior: 'deny' })
+    for (const [, waiting] of this.pendingQuestions) waiting.resolve({ behavior: 'deny' })
     this.pendingQuestions.clear()
     for (const [, resolve] of this.pendingPlans) resolve({ behavior: 'deny' })
     this.pendingPlans.clear()
@@ -511,7 +529,7 @@ export class AgentSession {
   private async onToolPermission(
     toolName: string,
     input: Record<string, unknown>,
-    opts: { toolUseId?: string }
+    opts: ToolPermissionContext
   ): Promise<PermissionAnswer> {
     const ask = this.options.askPermission
 
@@ -525,7 +543,9 @@ export class AgentSession {
     // do, and that is the moment the user decides (spec 6.4).
     if (toolName === 'ExitPlanMode' && this.mode === 'plan') return this.askPlan(input, opts)
 
-    const requestId = opts.toolUseId ?? `${this.options.tabId}:${Date.now()}`
+    // The tool call's own id, so two questions about one message's tools are
+    // two requests. A clock is no id: two asks in one millisecond collided.
+    const requestId = opts.toolUseId ?? randomUUID()
     const target = displayTarget(input)
 
     const previous = this.state
@@ -549,9 +569,9 @@ export class AgentSession {
 
   private askPlan(
     input: Record<string, unknown>,
-    opts: { toolUseId?: string }
+    opts: ToolPermissionContext
   ): Promise<PermissionAnswer> {
-    const requestId = opts.toolUseId ?? `plan-${Date.now()}`
+    const requestId = opts.toolUseId ?? randomUUID()
     const text = typeof input['plan'] === 'string' ? input['plan'] : ''
     this.emit(this.builder.addPlan(requestId, text))
 
@@ -567,17 +587,24 @@ export class AgentSession {
 
   private askQuestion(
     input: Record<string, unknown>,
-    opts: { toolUseId?: string }
+    opts: ToolPermissionContext
   ): Promise<PermissionAnswer> {
-    const toolUseId = opts.toolUseId ?? `q-${Date.now()}`
-    this.emit(this.builder.apply(this.questionMessage(toolUseId, input)))
+    const toolUseId = opts.toolUseId ?? randomUUID()
+    // The CLI puts the call in the stream before it asks, so its card is
+    // usually there already; a second one would be a card nobody can answer.
+    if (!this.builder.hasToolUse(toolUseId)) {
+      this.emit(this.builder.apply(this.questionMessage(toolUseId, input)))
+    }
 
     const previous = this.state
     this.setStatus('waiting')
     return new Promise<PermissionAnswer>((resolve) => {
-      this.pendingQuestions.set(toolUseId, (answer) => {
-        this.setStatus(previous === 'waiting' ? 'busy' : previous)
-        resolve(answer)
+      this.pendingQuestions.set(toolUseId, {
+        input,
+        resolve: (answer) => {
+          this.setStatus(previous === 'waiting' ? 'busy' : previous)
+          resolve(answer)
+        }
       })
     })
   }

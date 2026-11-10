@@ -92,7 +92,8 @@ export function sanitizeInput(value: unknown): UserInput {
 
 /**
  * An answer is allow or deny — anything else is a deny. A malformed payload
- * must never widen a permission.
+ * must never widen a permission, and `updatedInput` never crosses from the
+ * window: it would let the window rewrite the tool call it is approving.
  */
 export function sanitizeAnswer(value: unknown): PermissionAnswer {
   if (typeof value !== 'object' || value === null) return { behavior: 'deny' }

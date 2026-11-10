@@ -3,6 +3,7 @@ import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 import { AgentSession } from '../../src/main/agent/AgentSession'
 import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
 import type { AgentDriver, DriverOptions } from '../../src/main/agent/driver'
+import { toPermissionContext } from '../../src/main/agent/permissionContext'
 import type { PanelData, RibbonChange, RibbonItem, SessionStatus } from '../../src/shared/types'
 
 type FakeScript = Parameters<typeof createFakeSdk>[0]
@@ -33,12 +34,12 @@ function makeSession(
   // The fixture asks about tools through whatever canUseTool it was built with;
   // the session supplies its own only when it starts, so route through a holder.
   const gate = {
-    ask: async (_name: string, _input: Record<string, unknown>) =>
-      ({ behavior: 'allow' }) as { behavior: 'allow' | 'deny' }
+    ask: async (_name: string, _input: Record<string, unknown>, _opts: unknown) =>
+      ({ behavior: 'allow' }) as Awaited<ReturnType<DriverOptions['canUseTool']>>
   }
   const driver = createFakeSdk({
     ...script,
-    canUseTool: (name, input) => gate.ask(name, input)
+    canUseTool: (name, input, opts) => gate.ask(name, input, opts)
   })
   const session = new AgentSession({
     tabId: 't1',
@@ -48,7 +49,9 @@ function makeSession(
     resolveAgent: () => 'C:/bin/claude.exe',
     askPermission: async () => ({ behavior: 'allow' as const }),
     createDriver: (options) => {
-      gate.ask = (name, input) => options.canUseTool(name, input, {})
+      // The fixture's third argument is the SDK's, so it is read the way the
+      // real driver reads it.
+      gate.ask = (name, input, opts) => options.canUseTool(name, input, toPermissionContext(opts))
       return driver as unknown as AgentDriver
     },
     ...overrides
@@ -649,5 +652,127 @@ describe('AgentSession: init не заканчивает ход', () => {
 
     session.handle({ type: 'result', subtype: 'success', total_cost_usd: 0.01 })
     expect(session.status).toBe('idle')
+  })
+})
+
+describe('AgentSession: id запросов', () => {
+  test('вопрос агента — одна карточка, и ответ на неё отпускает агента', async () => {
+    const { session, driver } = makeSession({
+      steps: [
+        { kind: 'askQuestion', question: 'Какой?', options: ['Справа', 'Снизу'] },
+        { kind: 'text', text: 'понял' }
+      ]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+
+    const cards = rec.items.filter((i) => i.kind === 'question')
+    expect(cards).toHaveLength(1)
+    session.answerQuestion((cards[0] as { toolUseId: string }).toolUseId, 'Справа')
+
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('понял'), { timeout: 2000 })
+    await settle(session)
+
+    expect(rec.items.filter((i) => i.kind === 'question')).toHaveLength(1)
+    // The card shows the choice (the builder reports it as a patch).
+    expect(rec.changes).toContainEqual(
+      expect.objectContaining({ kind: 'update', patch: { answer: 'Справа' } })
+    )
+    expect(session.status).toBe('idle')
+    expect(driver.questionAnswers).toEqual([{ 'Какой?': 'Справа' }])
+    // The answer went back through canUseTool, not a second time as a message.
+    expect(driver.sent).toEqual([])
+  })
+
+  test('два разрешения в одном сообщении — два разных requestId, оба отвечаются', async () => {
+    const asked: Array<{ requestId: string; resolve: (a: { behavior: 'allow' }) => void }> = []
+    const { session, driver } = makeSession(
+      {
+        steps: [
+          {
+            kind: 'askPermissions',
+            tools: [
+              { name: 'Bash', input: { command: 'npm test' } },
+              { name: 'Edit', input: { file_path: 'a.ts' } }
+            ]
+          }
+        ]
+      },
+      {
+        askPermission: (request) =>
+          new Promise((resolve) => {
+            session.showPermissionCard(request.requestId, request.toolName, request.target)
+            asked.push({ requestId: request.requestId, resolve })
+          })
+      }
+    )
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(asked).toHaveLength(2), { timeout: 2000 })
+    expect(asked[0]!.requestId).not.toBe(asked[1]!.requestId)
+
+    for (const request of asked) request.resolve({ behavior: 'allow' })
+    await vi.waitFor(() => expect(driver.executedTools).toEqual(['Bash', 'Edit']), {
+      timeout: 2000
+    })
+    await settle(session)
+
+    // Each answer settled its own card.
+    const cards = rec.items.filter((i) => i.kind === 'permission')
+    expect(cards.map((c) => (c as { state: string }).state)).toEqual(['allowed', 'allowed'])
+    // And each request id is the id of the tool call it was about.
+    const tools = rec.items.filter((i) => i.kind === 'tool') as Array<{ toolUseId: string }>
+    expect(asked.map((a) => a.requestId)).toEqual(tools.map((t) => t.toolUseId))
+  })
+
+  test('requestId разрешения — это toolUseID инструмента', async () => {
+    const requestIds: string[] = []
+    const { session } = makeSession(
+      { steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }] },
+      {
+        askPermission: async (request) => {
+          requestIds.push(request.requestId)
+          return { behavior: 'allow' as const }
+        }
+      }
+    )
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+
+    const tool = rec.items.find((i) => i.kind === 'tool') as { toolUseId: string } | undefined
+    expect(tool).toBeDefined()
+    expect(requestIds).toEqual([tool!.toolUseId])
+  })
+
+  test('без toolUseID два одновременных запроса всё равно получают разные id', async () => {
+    const requestIds: string[] = []
+    let canUseTool: DriverOptions['canUseTool'] | undefined
+    const session = new AgentSession({
+      tabId: 't1',
+      cwd: 'C:/проект',
+      overrides: {},
+      agentPath: 'claude',
+      resolveAgent: () => 'C:/bin/claude.exe',
+      askPermission: async (request) => {
+        requestIds.push(request.requestId)
+        return { behavior: 'allow' as const }
+      },
+      createDriver: (options) => {
+        canUseTool = options.canUseTool
+        return createFakeSdk({ steps: [] }) as unknown as AgentDriver
+      }
+    })
+
+    await session.start()
+    await Promise.all([canUseTool!('Bash', {}, {}), canUseTool!('Edit', {}, {})])
+
+    expect(requestIds).toHaveLength(2)
+    expect(requestIds[0]).not.toBe(requestIds[1])
+    await session.dispose()
   })
 })

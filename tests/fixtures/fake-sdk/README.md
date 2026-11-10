@@ -35,8 +35,9 @@ for await (const message of driver.messages) { /* ... */ }
 | `thinking` | блок размышлений |
 | `tool` | вызов инструмента и его результат |
 | `toolError` | вызов и результат с `is_error` |
-| `askPermission` | спрашивает `canUseTool`; разрешили — выполняет, отказали — `permission_denied` |
-| `askQuestion` | вызов `AskUserQuestion` с вариантами |
+| `askPermission` | спрашивает `canUseTool` с `toolUseID` будущего вызова и `signal`; разрешили — выполняет, отказали — `permission_denied` |
+| `askPermissions` | несколько инструментов одного сообщения: спрашивает о всех сразу, у каждого свой `toolUseID`; разрешённые выполняет одним сообщением ассистента |
+| `askQuestion` | вызов `AskUserQuestion` с вариантами, затем `canUseTool` с его id; ответ — `updatedInput.answers` в `tool_result`, отказ — `tool_result` с `is_error` |
 | `todo` | вызов `TodoWrite` со списком задач |
 | `subagent` | вызов `Task`, вложенные шаги помечаются `parent_tool_use_id` |
 | `compact` | `compact_boundary` с токенами до и после |
@@ -45,6 +46,11 @@ for await (const message of driver.messages) { /* ... */ }
 ## Что можно проверить после прогона
 
 `driver.sent`, `driver.permissionRequests`, `driver.executedTools`,
-`driver.permissionMode`, `driver.interrupted`, `driver.disposed` — чтобы
+`driver.questionAnswers` (что пришло в `updatedInput.answers` каждого
+отвеченного вопроса), `driver.permissionMode`, `driver.interrupted`,
+`driver.disposed` — чтобы
 утверждать не только о том, что увидел интерфейс, но и о том, что дошло до
 агента.
+
+`interrupt()` абортит `signal` всех открытых вопросов `canUseTool`; такой
+вопрос считается отказом и больше не держит ход.

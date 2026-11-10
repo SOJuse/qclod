@@ -1,4 +1,5 @@
 import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
+import { toPermissionContext } from './permissionContext'
 
 /**
  * Picks the session implementation.
@@ -24,8 +25,10 @@ export function createDriverFactory(): DriverFactory {
         ...parsed,
         // The fixture must ask the same gate the real session asks, or an e2e
         // run would approve everything by itself and prove nothing.
-        canUseTool: (toolName: string, input: Record<string, unknown>) =>
-          options.canUseTool(toolName, input, {}),
+        // It is also handed what the real SDK hands it — the call's id and
+        // signal — read the same way the real driver reads them.
+        canUseTool: (toolName: string, input: Record<string, unknown>, opts: unknown) =>
+          options.canUseTool(toolName, input, toPermissionContext(opts)),
         init: { cwd: options.cwd, ...(parsed['init'] as object) }
       })
     }

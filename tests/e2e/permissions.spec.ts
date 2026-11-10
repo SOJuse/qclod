@@ -107,9 +107,10 @@ test('вопрос агента показывает варианты и отв�
         kind: 'askQuestion',
         question: 'Какой вариант панели?',
         options: ['Справа', 'Снизу']
-      }
-    ],
-    nextTurn: [{ kind: 'text', text: 'понял, делаю справа' }]
+      },
+      // The answer releases the same turn: no second message is needed.
+      { kind: 'text', text: 'понял, делаю справа' }
+    ]
   })
   try {
     const win = await app.firstWindow()

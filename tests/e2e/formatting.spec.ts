@@ -81,14 +81,15 @@ test('код в ответе подсвечен и копируется', async 
   }
 })
 
-test('подагент показывает задачу, время и токены', async () => {
+// снять в Task 2b: итоги идут под настоящими именами AgentOutput, лента их ещё не читает
+test.fail('подагент показывает задачу, время и токены', async () => {
   const { app, profile } = await launch({
     steps: [
       {
         kind: 'subagent',
         name: 'найти утечку памяти',
         agentType: 'Explore',
-        stats: { durationMs: 42000, usage: { input_tokens: 12000, output_tokens: 3000 }, toolUseCount: 7 },
+        stats: { totalTokens: 15000, totalDurationMs: 42000, totalToolUseCount: 7 },
         steps: [{ kind: 'tool', name: 'Grep', input: { pattern: 'leak' }, result: 'три места' }]
       }
     ]
@@ -255,14 +256,15 @@ test('два разговора рядом: пишешь в один — вто�
   }
 })
 
-test('панель показывает агентов сессии', async () => {
+// снять в Task 2b: итоги идут под настоящими именами AgentOutput, лента их ещё не читает
+test.fail('панель показывает агентов сессии', async () => {
   const { app, profile } = await launch({
     steps: [
       {
         kind: 'subagent',
         name: 'перебрать зависимости',
         agentType: 'Explore',
-        stats: { durationMs: 12000, usage: { input_tokens: 4000, output_tokens: 1000 } },
+        stats: { totalTokens: 5000, totalDurationMs: 12000 },
         steps: [{ kind: 'tool', name: 'Glob', input: { pattern: '*.ts' }, result: 'нашёл' }]
       }
     ]

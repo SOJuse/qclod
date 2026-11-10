@@ -34,6 +34,8 @@ describe('createFakeSdk', () => {
       steps: [],
       init: { model: 'claude-opus-5', mcpServers: [{ name: 'unity', status: 'connected' }] }
     })
+    // Silent until spoken to, as the real CLI is.
+    driver.send({ text: 'привет', attachments: [] })
     const init = (await collect(driver))[0] as Record<string, never>
     expect(init['model']).toBe('claude-opus-5')
     expect(init['mcp_servers']).toEqual([{ name: 'unity', status: 'connected' }])
@@ -177,6 +179,21 @@ describe('createFakeSdk: следующий ход', () => {
   })
 
   test('dispose отпускает поток, ждущий следующего сообщения', async () => {
+    const driver = createFakeSdk({ steps: [{ kind: 'text', text: 'первый ход' }] })
+    const seen: string[] = []
+    const reader = (async () => {
+      for await (const m of driver.messages) seen.push(String(m['type']))
+    })()
+
+    await vi.waitFor(() => expect(seen).toContain('result'), { timeout: 2000 })
+    await driver.dispose()
+    await reader
+
+    expect(seen.at(-1)).toBe('result')
+    expect(driver.disposed).toBe(true)
+  })
+
+  test('dispose отпускает и поток, который ещё ничего не сказал', async () => {
     const driver = createFakeSdk({ steps: [] })
     const seen: string[] = []
     const reader = (async () => {
@@ -186,7 +203,7 @@ describe('createFakeSdk: следующий ход', () => {
     await driver.dispose()
     await reader
 
-    expect(seen.at(-1)).toBe('result')
+    expect(seen).toEqual([])
     expect(driver.disposed).toBe(true)
   })
 })
@@ -350,5 +367,373 @@ describe('createFakeSdk: id запросов, как у настоящего SDK
     // An aborted question no longer holds the turn open, and nothing ran.
     await reading
     expect(driver.executedTools).toEqual([])
+  })
+})
+
+type Message = Record<string, unknown>
+
+/**
+ * Reads the stream in pieces: what arrived within a window, or everything up
+ * to a message that matches. One pending read carries over between calls, so
+ * nothing is lost when a window closes on an empty stream.
+ */
+function streamReader(driver: { messages: AsyncIterable<Message> }) {
+  const it = driver.messages[Symbol.asyncIterator]()
+  let pending: Promise<IteratorResult<Message>> | null = null
+  const out: Message[] = []
+  const next = (): Promise<IteratorResult<Message>> => (pending ??= it.next())
+  return {
+    out,
+    async within(ms: number): Promise<void> {
+      const until = Date.now() + ms
+      for (;;) {
+        const left = until - Date.now()
+        if (left <= 0) return
+        const got = await Promise.race([
+          next(),
+          new Promise<null>((r) => setTimeout(() => r(null), left))
+        ])
+        if (got === null) return
+        pending = null
+        if (got.done) return
+        out.push(got.value)
+      }
+    },
+    async until(match: (m: Message) => boolean): Promise<void> {
+      for (;;) {
+        const got = await next()
+        pending = null
+        if (got.done) throw new Error('поток кончился раньше')
+        out.push(got.value)
+        if (match(got.value)) return
+      }
+    }
+  }
+}
+
+const isResult = (m: Message): boolean => m['type'] === 'result'
+
+describe('createFakeSdk: молчит до первого сообщения, как CLI 2.1.317', () => {
+  test('без steps фейк не выдаёт ничего, пока не пришло сообщение', async () => {
+    const driver = createFakeSdk({})
+    const reader = streamReader(driver)
+
+    await reader.within(100)
+    expect(reader.out).toEqual([])
+
+    driver.send({ text: 'привет', attachments: [] })
+    await reader.until(isResult)
+    expect(kinds(reader.out)).toEqual(['system/init', 'rate_limit_event', 'user', 'result/success'])
+    const echo = reader.out[2]!['message'] as { content: unknown }
+    expect(echo.content).toBe('привет')
+    await driver.dispose()
+  })
+
+  test('result до первого сообщения не приходит никогда', async () => {
+    const driver = createFakeSdk({ steps: [], nextTurn: [{ kind: 'text', text: 'ответ' }] })
+    const reader = streamReader(driver)
+
+    await reader.within(150)
+    expect(reader.out).toHaveLength(0)
+
+    driver.send({ text: 'привет', attachments: [] })
+    await reader.until(isResult)
+    // Exactly one result, and it closes the turn the message opened.
+    expect(reader.out.filter(isResult)).toHaveLength(1)
+    expect(kinds(reader.out)).toEqual([
+      'system/init',
+      'rate_limit_event',
+      'user',
+      'assistant',
+      'result/success'
+    ])
+    await driver.dispose()
+  })
+
+  test('init и лимиты приходят один раз, в начале первого хода', async () => {
+    const driver = createFakeSdk({ steps: [] })
+    const reader = streamReader(driver)
+    driver.send({ text: 'раз', attachments: [] })
+    await reader.until(isResult)
+    driver.send({ text: 'два', attachments: [] })
+    await reader.until(isResult)
+
+    expect(kinds(reader.out)).toEqual([
+      'system/init',
+      'rate_limit_event',
+      'user',
+      'result/success',
+      'user',
+      'result/success'
+    ])
+    await driver.dispose()
+  })
+
+  test('со steps ход играется сразу и начинается с init и лимитов', async () => {
+    const driver = createFakeSdk({ steps: [{ kind: 'text', text: 'привет' }] })
+    expect(kinds(await collect(driver))).toEqual([
+      'system/init',
+      'rate_limit_event',
+      'assistant',
+      'result/success'
+    ])
+  })
+})
+
+describe('createFakeSdk: контекст и лимиты по запросу', () => {
+  test('getContextUsage знает модель', async () => {
+    const driver = createFakeSdk({})
+    expect((await driver.getContextUsage()).model).toBe('claude-opus-5')
+    await driver.setModel('claude-sonnet-5')
+    expect((await driver.getContextUsage()).model).toBe('claude-sonnet-5')
+  })
+
+  test('getContextUsage берёт модель из init сценария', async () => {
+    const driver = createFakeSdk({ init: { model: 'claude-sonnet-5' } })
+    expect((await driver.getContextUsage()).model).toBe('claude-sonnet-5')
+  })
+
+  test('contextUsageDelayMs задерживает ответ', async () => {
+    const driver = createFakeSdk({ contextUsageDelayMs: 120 })
+    const began = Date.now()
+    const usage = await driver.getContextUsage()
+    expect(Date.now() - began).toBeGreaterThanOrEqual(100)
+    expect(usage.percentage).toBe(21)
+  })
+
+  test('planLimits по умолчанию — те же окна, что в rate_limit_event', async () => {
+    const driver = createFakeSdk({ steps: [{ kind: 'text', text: 'ок' }] })
+    const event = (await collect(driver)).find((m) => m['type'] === 'rate_limit_event') as {
+      rate_limit_info: { unifiedWindows: { five_hour: object; seven_day: object } }
+    }
+    const limits = await driver.planLimits()
+    expect(limits).toEqual({
+      fiveHour: event.rate_limit_info.unifiedWindows.five_hour,
+      sevenDay: event.rate_limit_info.unifiedWindows.seven_day
+    })
+    expect(limits!.fiveHour!.utilization).toBe(0.13)
+    expect(limits!.sevenDay!.utilization).toBe(0.38)
+  })
+
+  test('planLimits из сценария, null — это null', async () => {
+    const custom = createFakeSdk({
+      planLimits: { fiveHour: { utilization: 0.5, resetsAt: 1794322800 }, sevenDay: null }
+    })
+    await expect(custom.planLimits()).resolves.toEqual({
+      fiveHour: { utilization: 0.5, resetsAt: 1794322800 },
+      sevenDay: null
+    })
+    await expect(createFakeSdk({ planLimits: null }).planLimits()).resolves.toBeNull()
+  })
+})
+
+function toolResultOf(m: Message): Record<string, unknown> | undefined {
+  const content = (m['message'] as { content: unknown } | undefined)?.content
+  if (m['type'] !== 'user' || !Array.isArray(content)) return undefined
+  return (content as Array<Record<string, unknown>>).find((b) => b['type'] === 'tool_result')
+}
+
+function resultText(block: Record<string, unknown>): string {
+  const content = block['content']
+  if (typeof content === 'string') return content
+  return (content as Array<{ text?: string }>).map((b) => b.text ?? '').join('\n')
+}
+
+describe('createFakeSdk: фоновый подагент', () => {
+  test('backgroundAgent: async_launched, потом task_started, progress и notification', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        {
+          kind: 'backgroundAgent',
+          name: 'Прогон тестов',
+          agentType: 'general-purpose',
+          progress: [{ tokens: 500, toolUses: 2, durationMs: 3000, lastTool: 'Bash' }],
+          finish: { status: 'completed', summary: 'готово', tokens: 900, toolUses: 4, durationMs: 9000 }
+        }
+      ]
+    })
+    const reader = streamReader(driver)
+    await reader.until((m) => m['origin'] !== undefined)
+    const out = reader.out
+
+    // Ruling C2: the turn that launched the agent ends first; the agent's
+    // progress and its notification come after that turn's result.
+    expect(kinds(out)).toEqual([
+      'system/init',
+      'rate_limit_event',
+      'assistant',
+      'user',
+      'system/task_started',
+      'result/success',
+      'system/task_progress',
+      'system/task_notification',
+      'user'
+    ])
+
+    const [call] = toolUses(out)
+    expect(call!.name).toBe('Agent')
+    const callBlock = (out[2]!['message'] as { content: Array<Record<string, unknown>> }).content[0]!
+    expect(callBlock['input']).toEqual({
+      description: 'Прогон тестов',
+      subagent_type: 'general-purpose',
+      run_in_background: true
+    })
+    const id = call!.id
+
+    const launched = out[3]!
+    const result = toolResultOf(launched)!
+    expect(result['tool_use_id']).toBe(id)
+    const launchedOutput = launched['tool_use_result'] as Record<string, unknown>
+    const agentId = String(launchedOutput['agentId'])
+    expect(agentId).toMatch(/^a[0-9a-f]{16}$/)
+    expect(launchedOutput).toEqual(
+      expect.objectContaining({
+        isAsync: true,
+        status: 'async_launched',
+        agentId,
+        description: 'Прогон тестов',
+        outputFile: expect.any(String)
+      })
+    )
+    expect(resultText(result).startsWith('Async agent launched successfully.')).toBe(true)
+    expect(resultText(result)).toContain(`agentId: ${agentId}`)
+
+    expect(out[4]).toEqual(
+      expect.objectContaining({
+        subtype: 'task_started',
+        task_id: agentId,
+        tool_use_id: id,
+        description: 'Прогон тестов',
+        subagent_type: 'general-purpose',
+        task_type: 'local_agent',
+        is_backgrounded: true
+      })
+    )
+    expect(out[6]).toEqual(
+      expect.objectContaining({
+        subtype: 'task_progress',
+        task_id: agentId,
+        tool_use_id: id,
+        usage: { total_tokens: 500, tool_uses: 2, duration_ms: 3000 },
+        last_tool_name: 'Bash'
+      })
+    )
+    expect(out[7]).toEqual(
+      expect.objectContaining({
+        subtype: 'task_notification',
+        task_id: agentId,
+        tool_use_id: id,
+        status: 'completed',
+        summary: 'готово',
+        output_file: launchedOutput['outputFile'],
+        usage: { total_tokens: 900, tool_uses: 4, duration_ms: 9000 }
+      })
+    )
+
+    const notice = out[8]!
+    expect(notice['origin']).toEqual({ kind: 'task-notification' })
+    const text = (notice['message'] as { content: unknown }).content
+    expect(text).toBe(
+      `<task-notification>\n<task-id>${agentId}</task-id>\n<tool-use-id>${id}</tool-use-id>\n` +
+        `<output-file>${String(launchedOutput['outputFile'])}</output-file>\n<status>completed</status>\n` +
+        `<summary>готово</summary>\n<usage><subagent_tokens>900</subagent_tokens><tool_uses>4</tool_uses>` +
+        `<duration_ms>9000</duration_ms></usage>\n</task-notification>`
+    )
+    await driver.dispose()
+  })
+
+  test('backgroundAgent с finish: null не присылает уведомления', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        {
+          kind: 'backgroundAgent',
+          name: 'Долгий обзор',
+          agentId: 'a0123456789abcdef',
+          progress: [{ tokens: 100, toolUses: 1, durationMs: 1000 }],
+          finish: null
+        }
+      ]
+    })
+    const reader = streamReader(driver)
+    await reader.until((m) => m['subtype'] === 'task_progress')
+    await reader.within(150)
+
+    expect(kinds(reader.out)).toEqual([
+      'system/init',
+      'rate_limit_event',
+      'assistant',
+      'user',
+      'system/task_started',
+      'result/success',
+      'system/task_progress'
+    ])
+    expect(reader.out[4]!['task_id']).toBe('a0123456789abcdef')
+    expect(reader.out.some((m) => m['origin'] !== undefined)).toBe(false)
+    await driver.dispose()
+  })
+
+  test('pauseMs разносит события по времени', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        {
+          kind: 'backgroundAgent',
+          name: 'Прогон тестов',
+          pauseMs: 40,
+          finish: { status: 'failed', summary: 'упал', tokens: 10, toolUses: 1, durationMs: 100 }
+        }
+      ]
+    })
+    const reader = streamReader(driver)
+    await reader.until(isResult)
+    const turnEnded = Date.now()
+    await reader.until((m) => m['subtype'] === 'task_notification')
+
+    expect(Date.now() - turnEnded).toBeGreaterThanOrEqual(30)
+    expect(reader.out.at(-1)!['status']).toBe('failed')
+    await driver.dispose()
+  })
+})
+
+describe('createFakeSdk: подагент на переднем плане', () => {
+  test('subagent отдаёт totalTokens/totalDurationMs/totalToolUseCount', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        {
+          kind: 'subagent',
+          name: 'Обзор вставки',
+          agentType: 'Explore',
+          stats: { totalTokens: 18000, totalDurationMs: 42000, totalToolUseCount: 7 },
+          steps: [{ kind: 'text', text: 'смотрю' }]
+        }
+      ]
+    })
+    const out = await collect(driver)
+    const finished = out.find((m) => toolResultOf(m) !== undefined)!
+    const output = finished['tool_use_result'] as Record<string, unknown>
+
+    expect(toolResultOf(finished)!['tool_use_id']).toBe(toolUses(out)[0]!.id)
+    expect(output).toEqual({
+      status: 'completed',
+      agentId: expect.stringMatching(/^a[0-9a-f]{16}$/),
+      totalTokens: 18000,
+      totalDurationMs: 42000,
+      totalToolUseCount: 7,
+      content: [{ type: 'text', text: 'подагент закончил' }]
+    })
+  })
+
+  test('subagent без stats всё равно отдаёт AgentOutput', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'subagent', name: 'Обзор', steps: [] }]
+    })
+    const out = await collect(driver)
+    const output = out.find((m) => toolResultOf(m) !== undefined)!['tool_use_result'] as Record<
+      string,
+      unknown
+    >
+    expect(output['status']).toBe('completed')
+    expect(output['totalTokens']).toBe(0)
+    expect(output['totalDurationMs']).toBe(0)
+    expect(output['totalToolUseCount']).toBe(0)
   })
 })

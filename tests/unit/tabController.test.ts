@@ -34,6 +34,11 @@ interface Harness {
     permissionMode: string | undefined
     driver: ReturnType<typeof createFakeSdk>
   }>
+  /**
+   * Sends one message on a tab and waits for the answer. The CLI says nothing
+   * — not even its session id — until it is spoken to.
+   */
+  speak(id: string): Promise<void>
 }
 
 function makeController(
@@ -89,7 +94,13 @@ function makeController(
     onCommands: () => undefined
   })
 
-  return { controller, changed, ribbon, resumedWith, created }
+  const speak = async (id: string): Promise<void> => {
+    await controller.whenSettled()
+    manager.get(id)!.send({ text: 'привет', attachments: [] })
+    await controller.whenSettled()
+  }
+
+  return { controller, changed, ribbon, resumedWith, created, speak }
 }
 
 function writeStoredTabs(tabs: unknown[]): void {
@@ -139,11 +150,12 @@ describe('TabController', () => {
   })
 
   test('идентификатор последней сессии сохраняется вместе с папкой', async () => {
-    const { controller } = makeController()
+    const { controller, speak } = makeController()
     await controller.restore()
     await controller.whenSettled()
 
     const id = controller.list()[0]!.id
+    await speak(id)
     const sessionId = controller.sessionIdOf(id)
     expect(sessionId).toBeTruthy()
 
@@ -202,7 +214,7 @@ describe('TabController', () => {
   })
 
   test('сессию возобновить не удалось синхронно — чистая вкладка и строка в ленте', async () => {
-    const { controller } = makeController({ resumeFailsSync: true })
+    const { controller, speak } = makeController({ resumeFailsSync: true })
     writeStoredTabs([
       { id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая-сессия' }
     ])
@@ -218,13 +230,14 @@ describe('TabController', () => {
     expect((notices[0] as { text: string }).text).toContain('не открывается')
 
     // And the tab is usable: a fresh session came up in place of the old one.
+    await speak('a')
     expect(controller.sessionIdOf('a')).toBeTruthy()
   })
 
   test('сессию возобновить не удалось на лету — чистая вкладка и строка в ленте', async () => {
     // The shape every real failure takes: the CLI starts, then rejects the
     // transcript. Checking the status right after start() sees «starting».
-    const { controller } = makeController({ resumeFails: true })
+    const { controller, speak } = makeController({ resumeFails: true })
     writeStoredTabs([
       { id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая-сессия' }
     ])
@@ -237,6 +250,7 @@ describe('TabController', () => {
 
     const notices = controller.itemsOf('a').filter((i) => i.kind === 'notice')
     expect((notices[0] as { text: string } | undefined)?.text).toContain('не открывается')
+    await speak('a')
     expect(controller.sessionIdOf('a')).toBeTruthy()
 
     // And the dead id is forgotten, or every later launch retries it.
@@ -282,7 +296,7 @@ describe('TabController', () => {
   })
 
   test('закрытие вкладки не трогает соседнюю', async () => {
-    const { controller } = makeController()
+    const { controller, speak } = makeController()
     await controller.restore()
     const first = controller.list()[0]!.id
     const second = controller.create(projectB).id
@@ -291,6 +305,7 @@ describe('TabController', () => {
     await controller.close(first)
 
     expect(controller.list().map((t) => t.id)).toEqual([second])
+    await speak(second)
     expect(controller.sessionIdOf(second)).toBeTruthy()
   })
 
@@ -314,14 +329,16 @@ describe('TabController', () => {
   })
 
   test('restart поднимает новую сессию вместо прежней', async () => {
-    const { controller } = makeController()
+    const { controller, speak } = makeController()
     await controller.restore()
     await controller.whenSettled()
     const id = controller.list()[0]!.id
+    await speak(id)
     const before = controller.sessionIdOf(id)
+    expect(before).toBeTruthy()
 
     await controller.restart(id)
-    await controller.whenSettled()
+    await speak(id)
 
     expect(controller.sessionIdOf(id)).toBeTruthy()
     expect(controller.sessionIdOf(id)).not.toBe(before)

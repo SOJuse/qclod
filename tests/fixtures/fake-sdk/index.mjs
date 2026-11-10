@@ -21,7 +21,10 @@
  * @typedef {{kind:'askPermissions', tools:Array<{name:string, input?:object}>}} AskPermissionsStep
  * @typedef {{kind:'askQuestion', question:string, header?:string, options:string[]}} AskQuestionStep
  * @typedef {{kind:'todo', items:Array<{content:string,status:string}>}} TodoStep
- * @typedef {{kind:'subagent', name:string, agentType?:string, stats?:object, steps:Array<object>}} SubagentStep
+ * @typedef {{kind:'subagent', name:string, agentType?:string, stats?:{totalTokens?:number, totalDurationMs?:number, totalToolUseCount?:number}, steps:Array<object>}} SubagentStep
+ * @typedef {{kind:'backgroundAgent', name:string, agentType?:string, agentId?:string, pauseMs?:number,
+ *   progress?:Array<{tokens:number, toolUses:number, durationMs:number, lastTool?:string}>,
+ *   finish?:{status:'completed'|'failed'|'stopped', summary:string, tokens:number, toolUses:number, durationMs:number}|null}} BackgroundAgentStep
  * @typedef {{kind:'compact', preTokens:number, postTokens:number, trigger?:'auto'|'manual'}} CompactStep
  * @typedef {{kind:'crash', message:string}} CrashStep
  */
@@ -52,10 +55,35 @@ function rateLimitEvent(sessionId, fiveHour, sevenDay) {
   }
 }
 
+/** A subagent's id as the CLI writes it: `a` and 16 hex digits. */
+function agentHexId() {
+  return `a${randomUUID().replace(/-/g, '').slice(0, 16)}`
+}
+
+function pause(ms) {
+  return ms ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve()
+}
+
 export function createFakeSdk(script = {}) {
   const steps = script.steps ?? []
   const sessionId = script.sessionId ?? randomUUID()
   const canUseTool = script.canUseTool ?? (async () => ({ behavior: 'allow' }))
+
+  // One pair of windows for the whole session, so rate_limit_event and
+  // planLimits() tell the same story.
+  const now = Math.floor(Date.now() / 1000)
+  const windows = {
+    fiveHour: script.rateLimits?.fiveHour ?? { utilization: 0.13, resetsAt: now + 3600 },
+    sevenDay: script.rateLimits?.sevenDay ?? { utilization: 0.38, resetsAt: now + 400000 }
+  }
+
+  /**
+   * What background agents still have to say once the turn that launched
+   * them has ended — their progress and their notification. Ruling C2: the
+   * fake holds it until after that turn's result, so a test can see the turn
+   * end while the agent is still running.
+   */
+  const afterTurn = []
 
   /** Sends waiting to be played as their own turn. */
   const inbox = []
@@ -309,6 +337,7 @@ export function createFakeSdk(script = {}) {
 
         case 'subagent': {
           const id = randomUUID()
+          const agentId = agentHexId()
           yield assistant([
             {
               type: 'tool_use',
@@ -332,9 +361,150 @@ export function createFakeSdk(script = {}) {
               role: 'user',
               content: [{ type: 'tool_result', tool_use_id: id, content: 'подагент закончил' }]
             },
-            // The Task tool's structured output: the run totals a card shows.
-            ...(step.stats ? { tool_use_result: step.stats } : {})
+            // The Agent tool's structured output, AgentOutput in
+            // sdk-tools.d.ts: the run totals a card shows.
+            tool_use_result: {
+              status: 'completed',
+              agentId,
+              totalTokens: step.stats?.totalTokens ?? 0,
+              totalDurationMs: step.stats?.totalDurationMs ?? 0,
+              totalToolUseCount: step.stats?.totalToolUseCount ?? 0,
+              content: [{ type: 'text', text: 'подагент закончил' }]
+            }
           }
+          break
+        }
+
+        // An agent launched with run_in_background: the call returns at once
+        // with async_launched and the task is registered; the rest of its
+        // life — progress, then the notification — comes after the turn that
+        // launched it has ended.
+        case 'backgroundAgent': {
+          const id = randomUUID()
+          const agentId = step.agentId ?? agentHexId()
+          const description = step.name
+          const subagentType = step.agentType ?? 'general-purpose'
+          const outputFile = `C:\\Users\\fake\\AppData\\Local\\Temp\\claude\\tasks\\${agentId}.output`
+          let first = true
+          const between = async () => {
+            if (!first) await pause(step.pauseMs)
+            first = false
+          }
+
+          await between()
+          yield assistant([
+            {
+              type: 'tool_use',
+              id,
+              name: 'Agent',
+              input: {
+                description,
+                ...(step.agentType ? { subagent_type: step.agentType } : {}),
+                run_in_background: true
+              }
+            }
+          ])
+          await between()
+          yield {
+            ...toolResult(id, [
+              {
+                type: 'text',
+                text:
+                  'Async agent launched successfully.\n' +
+                  `agentId: ${agentId} (internal ID - do not mention to user.)\n` +
+                  'The agent is working in the background. ' +
+                  'You will be notified automatically when it completes.'
+              }
+            ]),
+            tool_use_result: {
+              isAsync: true,
+              status: 'async_launched',
+              agentId,
+              description,
+              prompt: description,
+              outputFile,
+              canReadOutputFile: true
+            }
+          }
+          await between()
+          yield {
+            type: 'system',
+            subtype: 'task_started',
+            uuid: randomUUID(),
+            session_id: sessionId,
+            task_id: agentId,
+            tool_use_id: id,
+            description,
+            subagent_type: subagentType,
+            task_type: 'local_agent',
+            is_backgrounded: true,
+            prompt: description
+          }
+
+          afterTurn.push(async function* () {
+            for (const progress of step.progress ?? []) {
+              await between()
+              yield {
+                type: 'system',
+                subtype: 'task_progress',
+                uuid: randomUUID(),
+                session_id: sessionId,
+                task_id: agentId,
+                tool_use_id: id,
+                description,
+                subagent_type: subagentType,
+                usage: {
+                  total_tokens: progress.tokens,
+                  tool_uses: progress.toolUses,
+                  duration_ms: progress.durationMs
+                },
+                ...(progress.lastTool ? { last_tool_name: progress.lastTool } : {})
+              }
+            }
+            const finish = step.finish
+            // finish: null — the agent never ends, and nothing says it did.
+            if (!finish) return
+            await between()
+            yield {
+              type: 'system',
+              subtype: 'task_notification',
+              uuid: randomUUID(),
+              session_id: sessionId,
+              task_id: agentId,
+              tool_use_id: id,
+              status: finish.status,
+              summary: finish.summary,
+              output_file: outputFile,
+              usage: {
+                total_tokens: finish.tokens,
+                tool_uses: finish.toolUses,
+                duration_ms: finish.durationMs
+              }
+            }
+            await between()
+            // The same news as the text the main agent reads next.
+            yield {
+              type: 'user',
+              uuid: randomUUID(),
+              session_id: sessionId,
+              parent_tool_use_id: null,
+              origin: { kind: 'task-notification' },
+              message: {
+                role: 'user',
+                content:
+                  '<task-notification>\n' +
+                  `<task-id>${agentId}</task-id>\n` +
+                  `<tool-use-id>${id}</tool-use-id>\n` +
+                  `<output-file>${outputFile}</output-file>\n` +
+                  `<status>${finish.status}</status>\n` +
+                  `<summary>${finish.summary}</summary>\n` +
+                  `<usage><subagent_tokens>${finish.tokens}</subagent_tokens>` +
+                  `<tool_uses>${finish.toolUses}</tool_uses>` +
+                  `<duration_ms>${finish.durationMs}</duration_ms></usage>\n` +
+                  '</task-notification>'
+              }
+            }
+          })
           break
         }
 
@@ -362,8 +532,15 @@ export function createFakeSdk(script = {}) {
     }
   }
 
-  async function* stream() {
-    const now = Math.floor(Date.now() / 1000)
+  let introduced = false
+
+  /**
+   * What the CLI says at the start of its first turn — and not a moment
+   * before: CLI 2.1.317 is silent until the first message arrives.
+   */
+  function* introduce() {
+    if (introduced) return
+    introduced = true
     yield {
       type: 'system',
       subtype: 'init',
@@ -377,17 +554,32 @@ export function createFakeSdk(script = {}) {
       tools: ['Read', 'Edit', 'Bash'],
       claude_code_version: 'fake'
     }
-    yield rateLimitEvent(
-      sessionId,
-      script.rateLimits?.fiveHour ?? { utilization: 0.13, resetsAt: now + 3600 },
-      script.rateLimits?.sevenDay ?? { utilization: 0.38, resetsAt: now + 400000 }
-    )
+    yield rateLimitEvent(sessionId, windows.fiveHour, windows.sevenDay)
+  }
 
-    yield* play(steps)
-    yield* finishTurn()
+  /** Background agents' late news, in the order they were launched. */
+  async function* drainAfterTurn() {
+    while (afterTurn.length > 0 && !closed) {
+      const tail = afterTurn.shift()
+      for await (const message of tail()) {
+        if (closed) return
+        yield message
+      }
+    }
+  }
 
-    // A real session does not end after its first answer: it waits for the
-    // next message. Without this the app could never be driven past turn one.
+  async function* stream() {
+    // Non-empty steps are a turn sent before the stream opened. An empty
+    // script waits for the first message and says nothing until then.
+    if (steps.length > 0) {
+      yield* introduce()
+      yield* play(steps)
+      yield* finishTurn()
+      yield* drainAfterTurn()
+    }
+
+    // A real session does not end after its answer: it waits for the next
+    // message. Without this the app could never be driven past turn one.
     while (!closed) {
       if (inbox.length === 0) {
         await new Promise((resolve) => {
@@ -398,6 +590,7 @@ export function createFakeSdk(script = {}) {
       const input = inbox.shift()
       if (!input) continue
 
+      yield* introduce()
       // The CLI echoes the message back before answering it.
       yield {
         type: 'user',
@@ -408,6 +601,7 @@ export function createFakeSdk(script = {}) {
       }
       yield* play(script.nextTurn ?? [])
       yield* finishTurn()
+      yield* drainAfterTurn()
     }
   }
 
@@ -481,8 +675,15 @@ export function createFakeSdk(script = {}) {
     async mcpServerStatus() {
       return script.init?.mcpServers ?? []
     },
+    /** What the plan's usage endpoint would say; Task 2e reads it. */
+    async planLimits() {
+      if (script.planLimits !== undefined) return script.planLimits
+      return { fiveHour: { ...windows.fiveHour }, sevenDay: { ...windows.sevenDay } }
+    },
     async getContextUsage() {
+      await pause(script.contextUsageDelayMs)
       return {
+        model: state.model,
         totalTokens: Math.round((state.contextPercent / 100) * 200000),
         maxTokens: 200000,
         percentage: state.contextPercent,

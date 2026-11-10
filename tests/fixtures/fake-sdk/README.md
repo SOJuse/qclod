@@ -24,8 +24,19 @@ const driver = createFakeSdk({
 for await (const message of driver.messages) { /* ... */ }
 ```
 
-Поток всегда начинается с `system/init` и `rate_limit_event` и заканчивается
-`result/success` — ровно как настоящий.
+**Молчит до первого сообщения, как настоящий CLI 2.1.317.** Сценарий без
+`steps` (или с `steps: []`) не выдаёт ничего — ни `system/init`, ни
+`rate_limit_event`, ни `result`, — пока не придёт первый `send()`. На первом
+`send` идут `system/init`, `rate_limit_event`, эхо сообщения, шаги `nextTurn`
+и `result/success`. Сценарий с непустыми `steps` играет их сразу: это ход,
+«уже отправленный» до старта, и `init` с `rate_limit_event` идут в его начале.
+`init` и `rate_limit_event` приходят один раз за сессию; каждый ход
+заканчивается `result/success`.
+
+Модель, контекст и лимиты до первого сообщения можно узнать только
+запросом: `getContextUsage()` (с полем `model`; `contextUsageDelayMs`
+задерживает ответ) и `planLimits()` (окна из `script.planLimits`, `null` —
+`null`; по умолчанию те же, что в `rate_limit_event`: 0.13 и 0.38).
 
 ## Шаги сценария
 
@@ -39,7 +50,8 @@ for await (const message of driver.messages) { /* ... */ }
 | `askPermissions` | несколько инструментов одного сообщения: спрашивает о всех сразу, у каждого свой `toolUseID`; разрешённые выполняет одним сообщением ассистента |
 | `askQuestion` | вызов `AskUserQuestion` с вариантами, затем `canUseTool` с его id; ответ — `updatedInput.answers` в `tool_result`, отказ — `tool_result` с `is_error` |
 | `todo` | вызов `TodoWrite` со списком задач |
-| `subagent` | вызов `Task`, вложенные шаги помечаются `parent_tool_use_id` |
+| `subagent` | вызов `Agent`, вложенные шаги помечаются `parent_tool_use_id`; `tool_use_result` — `AgentOutput` (`status: completed`, `agentId`, `totalTokens`, `totalDurationMs`, `totalToolUseCount`, `content`), итоги — из `stats` под теми же именами |
+| `backgroundAgent` | вызов `Agent` с `run_in_background: true`; `tool_result` «Async agent launched successfully.» с `tool_use_result.status: async_launched`; `system/task_started`. **После `result` этого хода** — по `system/task_progress` на каждый элемент `progress`, затем (если `finish` не `null`) `system/task_notification` и сообщение пользователя с `origin.kind: task-notification` и текстом `<task-notification>…`. `pauseMs` — пауза между событиями; `agentId` по умолчанию — `a` и 16 hex. Порядок «после `result`» — решение C2 (тест видит, что ход кончился, а агент ещё работает); ответного хода главного агента на уведомление фейк не играет |
 | `compact` | `compact_boundary` с токенами до и после |
 | `crash` | бросает ошибку посреди потока |
 
@@ -54,3 +66,21 @@ for await (const message of driver.messages) { /* ... */ }
 
 `interrupt()` абортит `signal` всех открытых вопросов `canUseTool`; такой
 вопрос считается отказом и больше не держит ход.
+
+## Транскрипты на диске: `../transcript.mjs`
+
+Для тестов возобновления сессии из её JSONL-файла.
+
+- `encodeProjectDir(cwd)` — имя папки проекта, как его строит SDK:
+  всё, кроме латинских букв и цифр, заменено на `-`.
+- `writeTranscript(configDir, cwd, sessionId, lines, subagents?)` — пишет
+  `<configDir>/projects/<папка>/<sessionId>.jsonl` и для каждого подагента
+  `<sessionId>/subagents/agent-<agentId>.jsonl` с `.meta.json`; возвращает
+  путь основного файла.
+- `resumedSession(sessionId, cwd)` — готовая сессия в форме сырого JSONL
+  CLI 2.1.268–2.1.317: подагент Explore на переднем плане с итогами, сжатие
+  (`compact_boundary` и сводка), фоновый «Прогон тестов» с уведомлением
+  (`queued_command` и сообщение `task-notification`), упавшая «Сборка»,
+  фоновый «Долгий обзор» без уведомления, ветка «старый вариант», отрезанная
+  перемоткой, и служебные строки (`file-history-snapshot`, `cost-state`,
+  `queue-operation`), которые читатель обязан пропускать.

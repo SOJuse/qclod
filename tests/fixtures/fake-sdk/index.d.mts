@@ -11,9 +11,37 @@ export type FakeStep =
   | { kind: 'askPermissions'; tools: Array<{ name: string; input?: object }> }
   | { kind: 'askQuestion'; question: string; header?: string; options: string[] }
   | { kind: 'todo'; items: Array<{ content: string; status: string }> }
-  | { kind: 'subagent'; name: string; agentType?: string; stats?: object; steps: FakeStep[] }
+  | {
+      kind: 'subagent'
+      name: string
+      agentType?: string
+      /** Run totals under the names AgentOutput uses (sdk-tools.d.ts). */
+      stats?: { totalTokens?: number; totalDurationMs?: number; totalToolUseCount?: number }
+      steps: FakeStep[]
+    }
+  | FakeBackgroundAgentStep
   | { kind: 'compact'; preTokens: number; postTokens: number; trigger?: 'auto' | 'manual' }
   | { kind: 'crash'; message: string }
+
+/** An Agent call with run_in_background; its progress and notification come after the turn. */
+export interface FakeBackgroundAgentStep {
+  kind: 'backgroundAgent'
+  name: string
+  agentType?: string
+  /** `a` and 16 hex digits when not given. */
+  agentId?: string
+  /** Pause between the events this step emits. */
+  pauseMs?: number
+  progress?: Array<{ tokens: number; toolUses: number; durationMs: number; lastTool?: string }>
+  /** null: the agent never finishes, no notification ever comes. */
+  finish?: {
+    status: 'completed' | 'failed' | 'stopped'
+    summary: string
+    tokens: number
+    toolUses: number
+    durationMs: number
+  } | null
+}
 
 export interface FakePermissionAnswer {
   behavior: 'allow' | 'deny'
@@ -26,6 +54,11 @@ export interface FakeWindow {
   resetsAt: number
 }
 
+export interface FakePlanLimits {
+  fiveHour: FakeWindow | null
+  sevenDay: FakeWindow | null
+}
+
 export interface FakeScript {
   steps?: FakeStep[]
   nextTurn?: FakeStep[]
@@ -33,6 +66,10 @@ export interface FakeScript {
   costUsd?: number
   contextPercent?: number
   rateLimits?: { fiveHour?: FakeWindow; sevenDay?: FakeWindow }
+  /** What planLimits() returns; by default the rate_limit_event windows. */
+  planLimits?: FakePlanLimits | null
+  /** Delay before getContextUsage() answers. */
+  contextUsageDelayMs?: number
   canUseTool?: (
     toolName: string,
     input: Record<string, unknown>,
@@ -78,7 +115,9 @@ export interface FakeDriver {
   setModel(model: string): Promise<void>
   setEffort(level: string): Promise<void>
   mcpServerStatus(): Promise<Array<{ name: string; status: string }>>
+  planLimits(): Promise<FakePlanLimits | null>
   getContextUsage(): Promise<{
+    model: string
     totalTokens: number
     maxTokens: number
     percentage: number

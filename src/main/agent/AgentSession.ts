@@ -7,6 +7,7 @@ import type {
   LaunchOverrides,
   McpServerInfo,
   PanelData,
+  PanelSnapshot,
   PermissionAnswer,
   PermissionRequest,
   RibbonChange,
@@ -45,7 +46,14 @@ export interface AgentSessionOptions {
    * `bypassPermissions` outright rather than assuming consent.
    */
   confirmBypass?: () => Promise<boolean>
+  /** How long to wait before asking again about a server still coming up. */
+  mcpPollMs?: number
 }
+
+/** A server still `pending` or `connecting` is asked about again after this long… */
+export const MCP_POLL_MS = 2000
+/** …this many times at most, so one that never comes up is not asked about forever. */
+export const MCP_POLL_MAX = 15
 
 /**
  * Turns what the SDK said into something worth reading. «Claude Code process
@@ -87,7 +95,7 @@ function firstQuestion(input: Record<string, unknown>): string {
 }
 
 type ChangeListener = (changes: RibbonChange[]) => void
-type PanelListener = (patch: Partial<PanelData>) => void
+type PanelListener = (patch: Partial<PanelData>, rev: number) => void
 type StatusListener = (status: SessionStatus) => void
 
 /**
@@ -124,6 +132,9 @@ export class AgentSession {
     { input: Record<string, unknown>; resolve: (answer: PermissionAnswer) => void }
   >()
   private readonly pendingPlans = new Map<string, (answer: PermissionAnswer) => void>()
+  private mcpTimer: ReturnType<typeof setTimeout> | null = null
+  /** Repeats asked since the servers were last all settled. */
+  private mcpPolls = 0
 
   constructor(options: AgentSessionOptions) {
     this.options = options
@@ -413,7 +424,7 @@ export class AgentSession {
       // must still be reported — otherwise it keeps showing the mode the user
       // picked while the session is in another one, and the panel's whole
       // premise is that it shows the truth (spec 6.5).
-      this.emitPanel({ permissionMode: this.collector.data.permissionMode })
+      this.emitPanel(this.collector.currentPermissionMode())
       return
     }
     this.mode = mode
@@ -453,11 +464,41 @@ export class AgentSession {
     if (models.length > 0) this.emitPanel(this.collector.setModels(models))
   }
 
-  /** Live MCP state, asked for only while the panel is open (spec 6.5). */
+  /**
+   * Live MCP state. Asked for at start, right after init, when the commands
+   * or plugins change, and when the panel is opened. init itself only says how
+   * the servers stood when the CLI started — `pending`, mostly — so a server
+   * still coming up is asked about again until it settles: otherwise
+   * «ждёт» stayed on screen until someone happened to reopen the panel.
+   */
   async refreshMcp(): Promise<void> {
-    if (!this.driver) return
-    const mcp = await this.driver.mcpServerStatus().catch((): McpServerInfo[] => [])
-    if (mcp.length > 0) this.emitPanel({ mcp })
+    const driver = this.driver
+    if (!driver) return
+    const mcp = await driver.mcpServerStatus().catch((): McpServerInfo[] => [])
+    if (this.disposed || this.driver !== driver) return
+    if (mcp.length > 0) this.emitPanel(this.collector.setMcp(mcp))
+    this.pollMcpWhileWaiting(mcp)
+  }
+
+  private pollMcpWhileWaiting(mcp: McpServerInfo[]): void {
+    const waiting = mcp.some((s) => s.status === 'pending' || s.status === 'connecting')
+    if (!waiting) {
+      this.mcpPolls = 0
+      this.stopMcpPolling()
+      return
+    }
+    // One repeat in flight at a time; a refresh from elsewhere joins it.
+    if (this.mcpTimer || this.mcpPolls >= MCP_POLL_MAX) return
+    this.mcpPolls += 1
+    this.mcpTimer = setTimeout(() => {
+      this.mcpTimer = null
+      void this.refreshMcp().catch(() => undefined)
+    }, this.options.mcpPollMs ?? MCP_POLL_MS)
+  }
+
+  private stopMcpPolling(): void {
+    if (this.mcpTimer) clearTimeout(this.mcpTimer)
+    this.mcpTimer = null
   }
 
   /** Everything the panel knows about this tab right now. */
@@ -465,8 +506,14 @@ export class AgentSession {
     return this.collector.data
   }
 
+  /** The whole panel with the revision of its last patch — for a window catching up. */
+  panelSnapshot(): PanelSnapshot {
+    return this.collector.snapshot
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true
+    this.stopMcpPolling()
     // A question nobody can answer any more must not hold the agent open.
     for (const [, waiting] of this.pendingQuestions) waiting.resolve({ behavior: 'deny' })
     this.pendingQuestions.clear()
@@ -526,7 +573,11 @@ export class AgentSession {
     switch (m['type']) {
       case 'system':
         if (m['subtype'] === 'init') this.onInit(m)
-        else if (m['subtype'] === 'commands_changed') this.onCommandsChanged(m)
+        else if (m['subtype'] === 'commands_changed') {
+          this.onCommandsChanged(m)
+          // A plugin's commands come with its servers.
+          void this.refreshMcp().catch(() => undefined)
+        } else if (m['subtype'] === 'plugin_install') void this.refreshMcp().catch(() => undefined)
         break
       case 'result':
         this.setStatus('idle')
@@ -554,6 +605,8 @@ export class AgentSession {
     // on did anything ever look alive. Only `result` ends a turn.
     if (this.state !== 'busy' && this.state !== 'waiting') this.setStatus('idle')
     void this.refreshModels()
+    // init's servers are as they were at start; the live state is asked for.
+    void this.refreshMcp().catch(() => undefined)
   }
 
   private onCommandsChanged(m: Record<string, unknown>): void {
@@ -699,9 +752,11 @@ export class AgentSession {
     for (const listener of this.changeListeners) listener(changes)
   }
 
+  /** Every patch comes from the collector, so its revision is the collector's. */
   private emitPanel(patch: Partial<PanelData>): void {
     if (Object.keys(patch).length === 0) return
-    for (const listener of this.panelListeners) listener(patch)
+    const rev = this.collector.rev
+    for (const listener of this.panelListeners) listener(patch, rev)
   }
 
   private setStatus(status: SessionStatus): void {

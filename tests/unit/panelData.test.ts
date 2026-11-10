@@ -289,3 +289,48 @@ describe('PanelCollector: до первого сообщения', () => {
     expect(resumed.data.cost).toEqual({ session: 0.25, sinceOpen: true })
   })
 })
+
+describe('PanelCollector: живой MCP и ревизии', () => {
+  test('init не откатывает живой статус MCP на pending', () => {
+    const collector = new PanelCollector()
+    collector.setMcp([{ name: 'unity', status: 'connected' }])
+
+    const patch = collector.apply(init({ mcp_servers: [{ name: 'unity', status: 'pending' }] }))
+
+    expect(patch).not.toHaveProperty('mcp')
+    expect(collector.data.mcp).toEqual([{ name: 'unity', status: 'connected' }])
+    // The rest of init still lands.
+    expect(collector.data.model).toBe('claude-opus-5')
+  })
+
+  test('до живого ответа init показывает MCP как есть', () => {
+    const collector = new PanelCollector()
+    collector.apply(init({ mcp_servers: [{ name: 'unity', status: 'pending' }] }))
+    expect(collector.data.mcp).toEqual([{ name: 'unity', status: 'pending' }])
+  })
+
+  test('ревизия растёт и у новой сессии продолжается, а не начинается с нуля', () => {
+    const first = new PanelCollector()
+    expect(first.rev).toBe(0)
+    first.setModel('claude-opus-5')
+    const a = first.rev
+    first.setEffort('high')
+    const b = first.rev
+    expect(a).toBeGreaterThan(0)
+    expect(b).toBeGreaterThan(a)
+
+    // A restarted tab gets a new collector; its patches must still outrank
+    // what the window already holds from the old one.
+    const second = new PanelCollector()
+    second.setModel('claude-sonnet-5')
+    expect(second.rev).toBeGreaterThan(b)
+  })
+
+  test('пустой патч ревизию не тратит', () => {
+    const collector = new PanelCollector()
+    collector.setModel('claude-opus-5')
+    const before = collector.rev
+    expect(collector.seedModel('claude-sonnet-5')).toEqual({})
+    expect(collector.rev).toBe(before)
+  })
+})

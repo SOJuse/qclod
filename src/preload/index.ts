@@ -6,8 +6,8 @@ import type {
   CommandInfo,
   HotkeyRegistration,
   LaunchOverrides,
-  PanelData,
   PanelEvent,
+  PanelSnapshot,
   PermissionAnswer,
   PersistedTab,
   RibbonEvent,
@@ -60,7 +60,8 @@ const api = {
   commands: (id: TabId): Promise<CommandInfo[]> => ipcRenderer.invoke(CHANNELS.agentCommands, id),
   /** Everything already in this tab's ribbon — used when a tab is opened. */
   ribbon: (id: TabId): Promise<RibbonItem[]> => ipcRenderer.invoke(CHANNELS.agentRibbon, id),
-  panel: (id: TabId): Promise<PanelData> => ipcRenderer.invoke(CHANNELS.agentPanel, id),
+  /** The tab's whole panel with its revision; live MCP follows as an event. */
+  panel: (id: TabId): Promise<PanelSnapshot> => ipcRenderer.invoke(CHANNELS.agentPanel, id),
 
   answerPermission: (requestId: string, answer: PermissionAnswer): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.permissionAnswer, requestId, answer),

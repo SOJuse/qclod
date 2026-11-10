@@ -3,6 +3,7 @@ import type { PendingAttachment } from '../input/attachments'
 import type {
   AppSettings,
   PanelData,
+  PanelSnapshot,
   RibbonChange,
   RibbonItem,
   TabId,
@@ -31,6 +32,8 @@ interface AppState {
   ribbonByTab: Record<TabId, RibbonItem[]>
   todoByTab: Record<TabId, TodoItem[]>
   panelByTab: Record<TabId, PanelData>
+  /** The newest panel revision applied per tab — a snapshot older than it is stale. */
+  panelRevByTab: Record<TabId, number>
   /** When the current turn started, per tab — epoch ms. */
   busySinceByTab: Record<TabId, number>
   /** Unsent text and files per tab — switching tabs must never lose them. */
@@ -45,7 +48,8 @@ interface AppState {
   setTabs: (tabs: TabState[]) => void
   setRibbon: (id: TabId, items: RibbonItem[]) => void
   applyRibbon: (id: TabId, changes: RibbonChange[]) => void
-  applyPanel: (id: TabId, patch: Partial<PanelData>) => void
+  applyPanel: (id: TabId, patch: Partial<PanelData>, rev: number) => void
+  setPanelSnapshot: (id: TabId, snapshot: PanelSnapshot) => void
   setDraft: (id: TabId, text: string) => void
   setAttachments: (id: TabId, items: PendingAttachment[]) => void
   setFileIndex: (id: TabId, paths: string[]) => void
@@ -92,6 +96,7 @@ export const useAppStore = create<AppState>((set) => ({
   ribbonByTab: {},
   todoByTab: {},
   panelByTab: {},
+  panelRevByTab: {},
   busySinceByTab: {},
   draftByTab: {},
   attachmentsByTab: {},
@@ -132,13 +137,29 @@ export const useAppStore = create<AppState>((set) => ({
       }
     }),
 
-  applyPanel: (id, patch) =>
+  applyPanel: (id, patch, rev) =>
     set((state) => ({
       panelByTab: {
         ...state.panelByTab,
         [id]: { ...(state.panelByTab[id] ?? EMPTY_PANEL), ...patch }
+      },
+      panelRevByTab: {
+        ...state.panelRevByTab,
+        [id]: Math.max(rev, state.panelRevByTab[id] ?? -1)
       }
     })),
+
+  // The snapshot is taken when it is asked for and lands when it returns;
+  // events that arrived in between are newer than it and must survive — the
+  // same race the ribbon had on tab switches.
+  setPanelSnapshot: (id, snapshot) =>
+    set((state) => {
+      if (snapshot.rev < (state.panelRevByTab[id] ?? -1)) return state
+      return {
+        panelByTab: { ...state.panelByTab, [id]: snapshot.data },
+        panelRevByTab: { ...state.panelRevByTab, [id]: snapshot.rev }
+      }
+    }),
 
   setDraft: (id, text) => set((state) => ({ draftByTab: { ...state.draftByTab, [id]: text } })),
 

@@ -291,6 +291,14 @@ export interface RibbonEvent {
 export interface PanelEvent {
   tabId: TabId
   patch: Partial<PanelData>
+  /** Grows with every patch, across sessions; orders events against snapshots. */
+  rev: number
+}
+
+/** A tab's whole panel at revision `rev` — what a window asks for to catch up. */
+export interface PanelSnapshot {
+  rev: number
+  data: PanelData
 }
 
 export interface StatusEvent {

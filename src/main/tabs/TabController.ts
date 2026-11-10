@@ -4,6 +4,7 @@ import type {
   CommandInfo,
   LaunchOverrides,
   PanelEvent,
+  PanelSnapshot,
   RibbonEvent,
   RibbonItem,
   SessionStatus,
@@ -14,6 +15,7 @@ import type {
 } from '../../shared/types'
 import { isDirectory, loadTabs, saveTabs, type LoadedTab } from '../store/tabsStore'
 import type { AgentSession } from '../agent/AgentSession'
+import { EMPTY_PANEL } from '../agent/panelData'
 import type { AgentSessionManager } from '../agent/AgentSessionManager'
 
 export interface TabHistory {
@@ -64,6 +66,14 @@ export class TabController {
 
   itemsOf(id: TabId): RibbonItem[] {
     return this.deps.manager.get(id)?.items ?? []
+  }
+
+  /**
+   * The tab's whole panel, for a window that missed the events — reloaded,
+   * or just opened. A tab with no session yet has nothing to report.
+   */
+  panelOf(id: TabId): PanelSnapshot {
+    return this.deps.manager.get(id)?.panelSnapshot() ?? { rev: 0, data: EMPTY_PANEL }
   }
 
   sessionIdOf(id: TabId): string | null {
@@ -277,7 +287,7 @@ export class TabController {
 
   private wire(id: TabId, session: AgentSession): void {
     session.onChange((changes) => this.deps.onRibbon({ tabId: id, changes }))
-    session.onPanel((patch) => this.deps.onPanel({ tabId: id, patch }))
+    session.onPanel((patch, rev) => this.deps.onPanel({ tabId: id, patch, rev }))
     session.onCommands((commands) => this.deps.onCommands({ tabId: id, commands }))
     session.onSession(() => this.rememberSession(id, session))
     session.onStatus((status) => {

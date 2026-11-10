@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, afterEach } from 'vitest'
+import { describe, expect, test, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +7,8 @@ import { TabController } from '../../src/main/tabs/TabController'
 import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
 import type { AgentDriver } from '../../src/main/agent/driver'
 import { TABS_FILE } from '../../src/main/store/tabsStore'
-import type { RibbonEvent, TabState } from '../../src/shared/types'
+import { EMPTY_PANEL } from '../../src/main/agent/panelData'
+import type { PanelEvent, RibbonEvent, TabState } from '../../src/shared/types'
 
 let store = ''
 let projectA = ''
@@ -50,6 +51,7 @@ function makeController(
     resumeFailsSync?: boolean
     defaults?: { model?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan' }
     historyMessages?: unknown[]
+    onPanel?: (event: PanelEvent) => void
   } = {}
 ): Harness {
   const changed: TabState[][] = []
@@ -95,7 +97,7 @@ function makeController(
     },
     onChanged: (tabs) => changed.push(tabs),
     onRibbon: (event) => ribbon.push(event),
-    onPanel: () => undefined,
+    onPanel: options.onPanel ?? (() => undefined),
     onStatus: () => undefined,
     onCommands: () => undefined
   })
@@ -481,5 +483,40 @@ describe('TabController: режим запуска переживает пере
       require('node:fs').readFileSync(join(store, TABS_FILE), 'utf8')
     ) as Array<{ overrides: Record<string, unknown> }>
     expect(stored[0]!.overrides['permissionMode']).toBe('plan')
+  })
+})
+
+describe('TabController: снимок панели', () => {
+  test('panelOf отдаёт полный снимок панели вкладки', async () => {
+    const { controller } = makeController()
+    const tab = controller.create(projectA)
+    await controller.whenSettled()
+
+    // Nothing has been sent; the panel is filled at start all the same.
+    await vi.waitFor(() => {
+      const snapshot = controller.panelOf(tab.id)
+      expect(snapshot.data.context?.percent).toBe(21)
+      expect(snapshot.data.model).toBe('claude-opus-5')
+      expect(snapshot.data.models).toHaveLength(2)
+      expect(snapshot.rev).toBeGreaterThan(0)
+    })
+  })
+
+  test('вкладка без сессии отдаёт пустую панель с ревизией 0', async () => {
+    const { controller } = makeController()
+    expect(controller.panelOf('нет-такой')).toEqual({ rev: 0, data: EMPTY_PANEL })
+  })
+
+  test('события панели несут ревизию', async () => {
+    const panels: PanelEvent[] = []
+    const { controller } = makeController({ onPanel: (event) => panels.push(event) })
+    const tab = controller.create(projectA)
+    await controller.whenSettled()
+    await vi.waitFor(() => expect(controller.panelOf(tab.id).data.models).toHaveLength(2))
+
+    const mine = panels.filter((e) => e.tabId === tab.id)
+    expect(mine.length).toBeGreaterThan(0)
+    expect(mine.every((e) => typeof e.rev === 'number' && e.rev > 0)).toBe(true)
+    expect(controller.panelOf(tab.id).rev).toBe(mine[mine.length - 1]!.rev)
   })
 })

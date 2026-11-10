@@ -102,6 +102,7 @@ export function App(): JSX.Element {
   const setRibbon = useAppStore((s) => s.setRibbon)
   const applyRibbon = useAppStore((s) => s.applyRibbon)
   const applyPanel = useAppStore((s) => s.applyPanel)
+  const setPanelSnapshot = useAppStore((s) => s.setPanelSnapshot)
   const setFileIndex = useAppStore((s) => s.setFileIndex)
 
   useEffect(() => {
@@ -115,7 +116,7 @@ export function App(): JSX.Element {
       window.qclod.onTabsChanged(setTabs),
       window.qclod.onActivateTab((id) => setActiveTabId(id)),
       window.qclod.onRibbon((event) => applyRibbon(event.tabId, event.changes)),
-      window.qclod.onPanel((event) => applyPanel(event.tabId, event.patch)),
+      window.qclod.onPanel((event) => applyPanel(event.tabId, event.patch, event.rev)),
       // The list is live: a plugin installed mid-session changes it.
       window.qclod.onCommandsChanged((event) => {
         if (event.tabId === useAppStore.getState().activeTabId) setCommands(event.commands)
@@ -126,12 +127,32 @@ export function App(): JSX.Element {
     }
   }, [setSettings, setTabs, setActiveTabId, applyRibbon, applyPanel])
 
+  /**
+   * Asks for a tab's whole panel. Events alone are not enough: a reloaded
+   * window, or one that opened after the session started, has missed the ones
+   * that filled it. The main process also asks for live MCP state, which
+   * follows as an event.
+   */
+  const loadPanel = useCallback(
+    (id: string): void => {
+      void window.qclod.panel(id).then((snapshot) => setPanelSnapshot(id, snapshot))
+    },
+    [setPanelSnapshot]
+  )
+
+  // On mount and on every switch, for both panes.
+  useEffect(() => {
+    if (activeTabId) loadPanel(activeTabId)
+  }, [activeTabId, loadPanel])
+  useEffect(() => {
+    if (splitTabId) loadPanel(splitTabId)
+  }, [splitTabId, loadPanel])
+
   const togglePanel = useCallback((): void => {
     const next = !(useAppStore.getState().settings?.panelOpen ?? true)
     void window.qclod.setSettings({ panelOpen: next }).then(setSettings)
-    // Live MCP state is only worth asking for while someone is looking.
-    if (next && activeTabId) void window.qclod.panel(activeTabId)
-  }, [activeTabId, setSettings])
+    if (next && activeTabId) loadPanel(activeTabId)
+  }, [activeTabId, setSettings, loadPanel])
 
   /** Opens the panel if needed and puts the cursor on the control. */
   const revealPanelControl = useCallback(
@@ -139,6 +160,8 @@ export function App(): JSX.Element {
       if (!useAppStore.getState().settings?.panelOpen) {
         const next = await window.qclod.setSettings({ panelOpen: true })
         setSettings(next)
+        const id = useAppStore.getState().activeTabId
+        if (id) loadPanel(id)
       }
       requestAnimationFrame(() => {
         const control = document.querySelector<HTMLSelectElement>(`[data-testid="${testId}"]`)
@@ -146,7 +169,7 @@ export function App(): JSX.Element {
         control?.scrollIntoView({ block: 'center' })
       })
     },
-    [setSettings]
+    [setSettings, loadPanel]
   )
 
   const openHistory = useCallback((): void => {

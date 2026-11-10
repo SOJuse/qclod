@@ -912,3 +912,108 @@ describe('AgentSession: панель полна до первого сообще
     }
   })
 })
+
+describe('AgentSession: живой статус MCP', () => {
+  const initMessage = (servers: Array<{ name: string; status: string }>): unknown => ({
+    type: 'system',
+    subtype: 'init',
+    session_id: 's-mcp',
+    model: 'claude-opus-5',
+    permissionMode: 'default',
+    mcp_servers: servers
+  })
+
+  test('после init MCP спрашивается заново', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      init: { mcpServers: [{ name: 'unity', status: 'connected' }] }
+    })
+    const status = vi.spyOn(driver, 'mcpServerStatus')
+    await session.start()
+    await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(1))
+
+    // init carries the state from the moment the CLI started: pending.
+    session.handle(initMessage([{ name: 'unity', status: 'pending' }]))
+
+    await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(session.panel.mcp).toEqual([{ name: 'unity', status: 'connected' }]))
+    await session.dispose()
+  })
+
+  test('на commands_changed и plugin_install MCP спрашивается заново', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      init: { mcpServers: [{ name: 'unity', status: 'connected' }] }
+    })
+    const status = vi.spyOn(driver, 'mcpServerStatus')
+    await session.start()
+    await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(1))
+
+    session.handle({ type: 'system', subtype: 'commands_changed', commands: [] })
+    await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2))
+    session.handle({ type: 'system', subtype: 'plugin_install', status: 'completed' })
+    await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(3))
+    await session.dispose()
+  })
+
+  test('сервер в pending опрашивается, пока не подключится', async () => {
+    // Ruling C6: the fake answers the same thing every time, so the sequence
+    // is stubbed here.
+    const { session, driver } = makeSession({ steps: [] }, { mcpPollMs: 10 })
+    const status = vi
+      .fn()
+      .mockResolvedValueOnce([{ name: 'unity', status: 'pending' }])
+      .mockResolvedValue([{ name: 'unity', status: 'connected' }])
+    driver.mcpServerStatus = status
+    const rec = watch(session)
+
+    await session.start()
+
+    await vi.waitFor(() => expect(session.panel.mcp).toEqual([{ name: 'unity', status: 'connected' }]))
+    expect(rec.panels.some((p) => p.mcp?.[0]?.status === 'pending')).toBe(true)
+    const calls = status.mock.calls.length
+    expect(calls).toBe(2)
+    // Connected: nothing more to wait for, so the polling stops.
+    await new Promise((r) => setTimeout(r, 60))
+    expect(status).toHaveBeenCalledTimes(calls)
+    await session.dispose()
+  })
+
+  test('опрос ограничен MCP_POLL_MAX и гасится в dispose', async () => {
+    const { session, driver } = makeSession({ steps: [] }, { mcpPollMs: 2 })
+    const status = vi.fn().mockResolvedValue([{ name: 'unity', status: 'connecting' }])
+    driver.mcpServerStatus = status
+
+    await session.start()
+    // The first ask plus at most MCP_POLL_MAX (15) repeats.
+    await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(16), { timeout: 2000 })
+    await new Promise((r) => setTimeout(r, 40))
+    expect(status).toHaveBeenCalledTimes(16)
+    await session.dispose()
+
+    const { session: second, driver: secondDriver } = makeSession({ steps: [] }, { mcpPollMs: 20 })
+    const secondStatus = vi.fn().mockResolvedValue([{ name: 'unity', status: 'pending' }])
+    secondDriver.mcpServerStatus = secondStatus
+    await second.start()
+    await vi.waitFor(() => expect(secondStatus).toHaveBeenCalledTimes(1))
+    await second.dispose()
+    await new Promise((r) => setTimeout(r, 60))
+    expect(secondStatus).toHaveBeenCalledTimes(1)
+  })
+
+  test('патчи панели несут ревизию, снимок — последнюю', async () => {
+    const { session } = makeSession({ steps: [] })
+    const revs: number[] = []
+    session.onPanel((_patch, rev) => revs.push(rev))
+    await session.start()
+    await vi.waitFor(() => expect(session.panel.context).not.toBeNull())
+    await vi.waitFor(() => expect(session.panel.models).toHaveLength(2))
+
+    expect(revs.length).toBeGreaterThan(1)
+    for (let i = 1; i < revs.length; i++) expect(revs[i]).toBeGreaterThan(revs[i - 1]!)
+    const snapshot = session.panelSnapshot()
+    expect(snapshot.rev).toBe(revs[revs.length - 1])
+    expect(snapshot.data).toEqual(session.panel)
+    await session.dispose()
+  })
+})

@@ -5,6 +5,7 @@ import type {
   McpServerInfo,
   ModelOption,
   PanelData,
+  PanelSnapshot,
   PermissionMode,
   ProjectSettingsInfo
 } from '../../shared/types'
@@ -26,6 +27,19 @@ export const EMPTY_PANEL: PanelData = {
   projectSettings: null
 }
 
+let lastPanelRev = 0
+
+/**
+ * The next panel revision, shared by every collector in the process. A tab's
+ * session is replaced on restart or recovery, and the window still holds the
+ * old one's revisions: a counter starting from zero again would make every
+ * patch of the new session look older than what is already on screen.
+ */
+export function nextPanelRev(): number {
+  lastPanelRev += 1
+  return lastPanelRev
+}
+
 /**
  * Everything the side panel shows, gathered from the message stream.
  *
@@ -40,9 +54,25 @@ export class PanelCollector {
   private modeIsOurs = false
   /** A resumed conversation: the CLI's cost total starts when it was opened. */
   private resumed = false
+  /**
+   * True once mcpServerStatus has answered. init describes the servers as
+   * they were when the CLI started — mostly `pending` — and arrives after the
+   * live answer, so it must not then roll «подключён» back to «ждёт».
+   */
+  private mcpIsLive = false
+  private revision = 0
 
   get data(): PanelData {
     return this.panel
+  }
+
+  /** The revision of the last patch; 0 before there was any. */
+  get rev(): number {
+    return this.revision
+  }
+
+  get snapshot(): PanelSnapshot {
+    return { rev: this.revision, data: this.panel }
   }
 
   apply(message: unknown): Partial<PanelData> | null {
@@ -83,6 +113,20 @@ export class PanelCollector {
           .map((c) => ({ name: c.name, tokens: c.tokens }))
       }
     })
+  }
+
+  /** The live answer; from here on it, not init, is what the panel shows. */
+  setMcp(list: McpServerInfo[]): Partial<PanelData> {
+    this.mcpIsLive = true
+    return this.patch({ mcp: list })
+  }
+
+  /**
+   * The mode as it stands, sent again — after a refused change, so the
+   * panel's select stops showing the mode the user picked but did not get.
+   */
+  currentPermissionMode(): Partial<PanelData> {
+    return this.patch({ permissionMode: this.panel.permissionMode })
   }
 
   setModels(models: ModelOption[]): Partial<PanelData> {
@@ -127,7 +171,7 @@ export class PanelCollector {
     if (!this.modeIsOurs && typeof m['permissionMode'] === 'string') {
       patch.permissionMode = m['permissionMode'] as PermissionMode
     }
-    if (Array.isArray(m['mcp_servers'])) {
+    if (!this.mcpIsLive && Array.isArray(m['mcp_servers'])) {
       patch.mcp = (m['mcp_servers'] as Array<Record<string, unknown>>).map((s) => ({
         name: String(s['name'] ?? ''),
         status: String(s['status'] ?? 'pending') as McpServerInfo['status']
@@ -169,7 +213,9 @@ export class PanelCollector {
   }
 
   private patch(patch: Partial<PanelData>): Partial<PanelData> {
+    if (Object.keys(patch).length === 0) return patch
     this.panel = { ...this.panel, ...patch }
+    this.revision = nextPanelRev()
     return patch
   }
 }

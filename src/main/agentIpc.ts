@@ -1,9 +1,10 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { CHANNELS } from '../shared/channels'
 import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
-import type { EffortLevel, LaunchOverrides, TabId } from '../shared/types'
+import type { EffortLevel, LaunchOverrides, PanelSnapshot, TabId } from '../shared/types'
 import { buildFileIndex } from './files/fileIndex'
 import type { TabController } from './tabs/TabController'
+import { EMPTY_PANEL } from './agent/panelData'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
 import type { PermissionBroker } from './agent/permissions'
 import {
@@ -121,9 +122,13 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     return controller.itemsOf(id)
   })
 
-  ipcMain.handle(CHANNELS.agentPanel, async (_e, id: unknown) => {
-    if (!isString(id)) return
-    await manager.get(id)?.refreshMcp()
+  // What the panel holds right now, answered at once — a reloaded window or
+  // a missed event must not leave the panel empty. Live MCP state is asked
+  // for meanwhile and arrives as an ordinary event.
+  ipcMain.handle(CHANNELS.agentPanel, (_e, id: unknown): PanelSnapshot => {
+    if (!isString(id)) return { rev: 0, data: EMPTY_PANEL }
+    void manager.get(id)?.refreshMcp().catch(() => undefined)
+    return controller.panelOf(id)
   })
 
   ipcMain.handle(CHANNELS.permissionAnswer, (_e, requestId: unknown, answer: unknown) => {

@@ -202,3 +202,31 @@ test('пока модель неизвестна, выбор показывае�
     await close(app, profile)
   }
 })
+
+test('после перезагрузки окна панель снова полная', async () => {
+  // steps: [] — nothing is sent, so nothing after the reload can refill the
+  // panel by events: only the snapshot the window asks for.
+  const { app, profile } = await launch({ steps: [] })
+  try {
+    const win = await app.firstWindow()
+    const panel = win.locator('[data-testid="side-panel"]')
+    await expect(panel.locator('[data-testid="panel-context"]')).toContainText('21%', {
+      timeout: 15000
+    })
+    await expect(panel.locator('[data-testid="panel-model"]')).toHaveValue('claude-opus-5', {
+      timeout: 15000
+    })
+
+    await win.reload()
+
+    const again = win.locator('[data-testid="side-panel"]')
+    await expect(again).toBeVisible({ timeout: 15000 })
+    await expect(again.locator('[data-testid="panel-context"]')).toContainText('21%', {
+      timeout: 15000
+    })
+    await expect(again.locator('[data-testid="panel-model"]')).toHaveValue('claude-opus-5')
+    await expect(again.locator('[data-testid="panel-limits"]')).toContainText('13%')
+  } finally {
+    await close(app, profile)
+  }
+})

@@ -23,7 +23,7 @@
   width: min(600px, 100%);
   padding: var(--space-5);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--surface-raised);
   box-shadow: var(--shadow-modal);
   text-align: left;
@@ -32,8 +32,8 @@
 .setup-title {
   margin: 0 0 var(--space-2);
   font-size: var(--text-xl);
-  font-weight: 600;
-  line-height: 1.3;
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
 }
 
 .setup-lead {
@@ -41,7 +41,7 @@
   max-width: 62ch;
   color: var(--text-dim);
   font-size: var(--text-sm);
-  line-height: 1.55;
+  line-height: var(--leading-prose);
 }
 
 /* ------------------------------------------------------------------ steps */
@@ -75,7 +75,7 @@
   border-radius: var(--radius-pill);
   color: var(--text-faint);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   font-variant-numeric: tabular-nums;
 }
 
@@ -86,21 +86,21 @@
 }
 
 .setup-step[data-state='done'] .setup-marker {
-  border-color: var(--ok);
-  color: var(--ok);
+  border-color: var(--status-ok);
+  color: var(--status-ok);
 }
 
 .setup-step[data-state='blocked'] .setup-marker {
-  border-color: var(--danger-border);
-  background: var(--danger-fill);
-  color: var(--danger);
+  border-color: var(--critical-border);
+  background: var(--critical-fill);
+  color: var(--status-critical);
 }
 
 /* An unanswered login check stops nothing: a caution, not an error. */
 .setup-step[data-testid='setup-step-login'][data-state='blocked'] .setup-marker {
   border-color: var(--warn-border);
   background: var(--warn-fill);
-  color: var(--warn);
+  color: var(--status-warn);
 }
 
 /* The rail runs from the first marker down to the next step. */
@@ -154,7 +154,7 @@
 .setup-step-name {
   margin: 0;
   font-size: var(--text-md);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 .setup-step[data-state='todo'] .setup-step-name {
@@ -172,7 +172,7 @@
   max-width: 62ch;
   color: var(--text-dim);
   font-size: var(--text-sm);
-  line-height: 1.55;
+  line-height: var(--leading-prose);
 }
 
 .setup-step[data-state='todo'] .setup-step-text {
@@ -191,11 +191,11 @@
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
+  background: var(--bg);
   color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  line-height: 1.5;
+  line-height: var(--leading);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -219,8 +219,8 @@
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: var(--button-sm-font-size);
-  line-height: 1.5;
+  font-size: var(--text-sm);
+  line-height: var(--leading);
   white-space: nowrap;
   cursor: pointer;
   transition:
@@ -248,7 +248,7 @@
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 .setup-button.is-primary:hover:not(:disabled) {

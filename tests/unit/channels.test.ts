@@ -22,6 +22,11 @@ describe('ipc channel contract', () => {
     for (const name of INVOKE_CHANNELS) expect(events.has(name)).toBe(false)
   })
 
+  test('«Повторить» вкладки — invoke-канал tabs:retry', () => {
+    expect(CHANNELS.tabsRetry).toBe('tabs:retry')
+    expect(INVOKE_CHANNELS).toContain('tabs:retry')
+  })
+
   test('терминальных каналов v1 больше нет', () => {
     // The pty is gone; a channel that outlives its feature is a trap for the
     // next reader.

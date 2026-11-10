@@ -34,6 +34,12 @@
 
   --radius: 10px;
   --radius-sm: 6px;
+
+  /* A small button inside a line of text: the dead-session strip, a notice. */
+  --button-sm-pad: 4px 11px;
+  --button-sm-radius: 7px;
+  --button-sm-font-size: 12px;
+  --button-sm-gap: 10px;
   --titlebar-height: 38px;
 
   --font-mono: 'Geist Mono', 'Cascadia Mono', 'Consolas', ui-monospace, monospace;

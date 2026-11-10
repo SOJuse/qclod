@@ -383,8 +383,12 @@ export class RibbonBuilder {
   }
 
   /** Something Qclod itself needs to say — a crash, a session that would not resume. */
-  notice(text: string, tone: 'info' | 'error' = 'info'): RibbonChange[] {
-    return [this.append({ kind: 'notice', id: this.nextId(), text, tone })]
+  notice(
+    text: string,
+    tone: 'info' | 'error' = 'info',
+    action?: 'login' | 'retry'
+  ): RibbonChange[] {
+    return [this.append({ kind: 'notice', id: this.nextId(), text, tone, ...(action ? { action } : {}) })]
   }
 
   // ------------------------------------------------------------- the stream

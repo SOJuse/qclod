@@ -361,8 +361,8 @@ describe('TabController', () => {
     expect(storedTabs()[0]!['lastSessionId']).toBe('живая')
   })
 
-  test('сбой до init и у новой сессии (не вошли в аккаунт) — id переписки остаётся на диске', async () => {
-    const { controller, dead } = makeController({ everyStreamFails: 'Not logged in' })
+  test('сбой до init и у новой сессии (агент падает при запуске) — id переписки остаётся на диске', async () => {
+    const { controller, dead } = makeController({ everyStreamFails: 'Агент упал при запуске' })
     writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
 
     await controller.restore()
@@ -971,8 +971,10 @@ describe('TabController: фоновая вкладка видна без зап�
       'что было вчера'
     ])
     expect(items.filter((i) => i.kind === 'agentText')[0]).toMatchObject({ text: 'вчера было это' })
+    // «не открывается» says nothing about the conversation being gone: the
+    // honest line is that the session did not start.
     expect(items.filter((i) => i.kind === 'notice').at(-1)).toMatchObject({
-      text: expect.stringContaining('Прошлую переписку открыть не удалось')
+      text: expect.stringContaining('Сессия не запустилась')
     })
 
     const before = items.map((i) => i.id)
@@ -1244,5 +1246,191 @@ describe('TabController: замена сессии без гонок', () => {
     expect(panels.slice(panelsBefore)).toEqual([])
     expect(harness.controller.list()[0]!.status).toBe(fresh.status)
     expect(harness.controller.panelOf(tab.id)).toEqual(panelBefore)
+  })
+})
+
+describe('TabController: подмена сессии, «Повторить» и честная причина', () => {
+  /**
+   * Holds the manager's close of the tab's session open until the test lets
+   * it go: the old session is already gone from the manager, the new one not
+   * made yet.
+   */
+  function holdClose(harness: Harness, tabId: string): { reached: () => boolean; release: () => void } {
+    const close = harness.manager.close.bind(harness.manager)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    let reached = false
+    vi.spyOn(harness.manager, 'close').mockImplementation(async (id) => {
+      const closing = close(id)
+      if (id === tabId && !reached) {
+        reached = true
+        await gate
+      }
+      await closing
+    })
+    return { reached: () => reached, release }
+  }
+
+  const notices = (controller: TabController, id: string): Array<{ text: string; action?: string }> =>
+    controller.itemsOf(id).filter((i) => i.kind === 'notice') as Array<{ text: string; action?: string }>
+
+  test('activate во время восстановления не открывает мёртвую переписку второй раз', async () => {
+    const harness = makeController({ resumeFailsOnSend: true })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    expect(harness.resumedWith).toEqual(['пропавшая'])
+
+    const hold = holdClose(harness, 'a')
+    const create = vi.spyOn(harness.manager, 'create')
+    harness.manager.get('a')!.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(hold.reached()).toBe(true))
+
+    // The user clicks the tab while the dead session is still closing.
+    await harness.controller.activate('a')
+    hold.release()
+    await harness.controller.whenSettled()
+
+    // One session made, the clean one; the dead id was not opened again.
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(harness.resumedWith).toEqual(['пропавшая', undefined])
+    expect(harness.dead).toHaveLength(1)
+    const fresh = harness.created.at(-1)!
+    expect(fresh.resume).toBeUndefined()
+    // The message the dead session died on went to the clean one, once.
+    expect(fresh.driver.sent).toHaveLength(1)
+    expect(harness.manager.get('a')).toBeDefined()
+    expect(harness.controller.list()[0]!.status).not.toBe('error')
+  })
+
+  test('activate во время restart не возвращает старую переписку', async () => {
+    const harness = makeController()
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'вчера' }])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    expect(harness.resumedWith).toEqual(['вчера'])
+
+    const hold = holdClose(harness, 'a')
+    const create = vi.spyOn(harness.manager, 'create')
+    const restarting = harness.controller.restart('a')
+    await vi.waitFor(() => expect(hold.reached()).toBe(true))
+
+    await harness.controller.activate('a')
+    hold.release()
+    await restarting
+    await harness.controller.whenSettled()
+
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(harness.resumedWith).toEqual(['вчера', undefined])
+    expect(harness.controller.list()[0]!.lastSessionId).toBeUndefined()
+    expect(storedTabs()[0]!['lastSessionId']).toBeUndefined()
+  })
+
+  test('«Повторить» после ненайденного агента открывает ту же переписку', async () => {
+    const options = { agentMissing: true }
+    const harness = makeController(options)
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+
+    const failed = harness.controller.list()[0]!
+    expect(failed.status).toBe('error')
+    expect(failed.canRetry).toBe(true)
+    expect(failed.lastSessionId).toBe('живая')
+
+    // The user installs the agent and asks to try again.
+    options.agentMissing = false
+    await harness.controller.retry('a')
+    await harness.controller.whenSettled()
+
+    expect(harness.created).toHaveLength(1)
+    expect(harness.created[0]!.resume).toBe('живая')
+    const after = harness.controller.list()[0]!
+    expect(after.status).toBe('idle')
+    expect(after.canRetry).toBeFalsy()
+    expect(storedTabs()[0]!['lastSessionId']).toBe('живая')
+  })
+
+  test('guard: вкладке без переписки «Повторить» не предлагается', async () => {
+    const harness = makeController({ agentMissing: true })
+    harness.controller.create(projectA)
+    await harness.controller.whenSettled()
+
+    const tab = harness.controller.list()[0]!
+    expect(tab.status).toBe('error')
+    expect(tab.canRetry).toBeFalsy()
+  })
+
+  test('«Не вошёл в аккаунт» до init: сессия не подменяется, есть «Войти» и «Повторить»', async () => {
+    const harness = makeController({ everyStreamFails: 'Not logged in · Please run /login' })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
+    const create = vi.spyOn(harness.manager, 'create')
+    await harness.controller.restore()
+    await vi.waitFor(() => expect(harness.controller.list()[0]!.status).toBe('error'))
+    await harness.controller.whenSettled()
+
+    // A clean session would die the same way: none is made.
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(harness.dead).toHaveLength(1)
+    const tab = harness.controller.list()[0]!
+    expect(tab.status).toBe('error')
+    expect(tab.canRetry).toBe(true)
+    expect(storedTabs()[0]!['lastSessionId']).toBe('живая')
+
+    const said = notices(harness.controller, 'a')
+    expect(said.some((n) => n.text.includes('Прошлую переписку'))).toBe(false)
+    expect(said.at(-1)).toMatchObject({
+      text: 'Claude Code не вошёл в аккаунт. Войдите и нажмите «Повторить».',
+      action: 'login'
+    })
+  })
+
+  test('«Повторить», пока вход не сделан, снова пробует ту же переписку', async () => {
+    const harness = makeController({ everyStreamFails: 'Not logged in · Please run /login' })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
+    await harness.controller.restore()
+    await vi.waitFor(() => expect(harness.controller.list()[0]!.canRetry).toBe(true))
+    await harness.controller.whenSettled()
+
+    await harness.controller.retry('a')
+    await vi.waitFor(() => expect(harness.dead).toHaveLength(2))
+    await vi.waitFor(() => expect(harness.controller.list()[0]!.canRetry).toBe(true))
+    await harness.controller.whenSettled()
+
+    expect(harness.resumedWith).toEqual(['живая', 'живая'])
+    expect(harness.controller.list()[0]!.status).toBe('error')
+    expect(storedTabs()[0]!['lastSessionId']).toBe('живая')
+  })
+
+  test('guard: ненайденная переписка — прежнее восстановление и прежний текст', async () => {
+    const harness = makeController({ resumeFailsOnSend: true })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    const dead = harness.manager.get('a')!
+
+    dead.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(harness.manager.get('a')).not.toBe(dead))
+    await harness.controller.whenSettled()
+
+    const said = notices(harness.controller, 'a')
+    expect(said.at(-1)!.text).toBe(
+      'Прошлую переписку открыть не удалось: No conversation found with session ID: пропавшая'
+    )
+    expect(said.some((n) => n.action === 'login')).toBe(false)
+    expect(harness.created.at(-1)!.resume).toBeUndefined()
+    expect(harness.controller.list()[0]!.canRetry).toBeFalsy()
+  })
+
+  test('другая причина до init — подмена, но текст «Сессия не запустилась»', async () => {
+    const harness = makeController({ resumeFails: true })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+
+    const said = notices(harness.controller, 'a')
+    expect(said.at(-1)!.text).toBe('Сессия не запустилась: Сессия пропавшая не открывается')
+    expect(said.some((n) => n.text.includes('Прошлую переписку'))).toBe(false)
+    expect(harness.created.at(-1)!.resume).toBeUndefined()
   })
 })

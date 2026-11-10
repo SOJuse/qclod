@@ -44,7 +44,8 @@ export function ChatPane({
   const setAttachments = useAppStore((s) => s.setAttachments)
 
   const busySinceByTab = useAppStore((s) => s.busySinceByTab)
-  const status = tabs.find((t) => t.id === tabId)?.status ?? 'stopped'
+  const tab = tabs.find((t) => t.id === tabId)
+  const status = tab?.status ?? 'stopped'
 
   return (
     <section
@@ -99,6 +100,15 @@ export function ChatPane({
           // limits are not this session's. The snapshot outranks them.
           void window.qclod
             .restartTab(tabId)
+            .then(() => window.qclod.panel(tabId))
+            .then((snapshot) => useAppStore.getState().setPanelSnapshot(tabId, snapshot))
+        }}
+        canRetry={tab?.canRetry === true}
+        onRetry={() => {
+          // The same conversation again; the new session's panel replaces the
+          // dead one's whole, as on restart.
+          void window.qclod
+            .retryTab(tabId)
             .then(() => window.qclod.panel(tabId))
             .then((snapshot) => useAppStore.getState().setPanelSnapshot(tabId, snapshot))
         }}

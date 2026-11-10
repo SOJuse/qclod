@@ -19,6 +19,7 @@ import type {
 import { isDirectory, loadTabs, saveTabs, type LoadedTab } from '../store/tabsStore'
 import { seedFromTranscript, type AgentSession, type SessionSeed } from '../agent/AgentSession'
 import { EMPTY_PANEL } from '../agent/panelData'
+import { classifyStartFailure } from '../agent/startFailure'
 import type { AgentSessionManager } from '../agent/AgentSessionManager'
 
 export interface TabHistory {
@@ -86,6 +87,13 @@ export class TabController {
   private readonly ribbonRevs = new Map<TabId, number>()
   /** The plan's windows as last reported; they are the account's, not a tab's. */
   private planLimits: PanelData['limits'] | null = null
+  /**
+   * Tabs whose session is being swapped — restart, retry, recovery — from
+   * before the old one closes until the new one is up. While a tab is here
+   * the swapper gives it its session: anyone else starting one (a click on
+   * the tab) would open the conversation being left, a second time.
+   */
+  private readonly replacing = new Set<TabId>()
 
   constructor(private readonly deps: TabControllerDeps) {}
 
@@ -233,30 +241,57 @@ export class TabController {
     }
   }
 
+  /** «Начать заново»: a new session, and the old conversation is let go. */
   async restart(id: TabId): Promise<void> {
+    await this.replaceSession(id, (tab) => {
+      // Forgotten on disk now, not when the new session first answers: a
+      // launch in between would pick the old conversation back up.
+      delete tab.lastSessionId
+      this.persist()
+      this.emit()
+    })
+  }
+
+  /**
+   * «Повторить»: the session never got to the conversation — no agent, not
+   * logged in — so the same conversation is opened again once the cause is
+   * fixed. Unlike `restart`, the stored id is kept and resumed.
+   */
+  async retry(id: TabId): Promise<void> {
+    await this.replaceSession(id, () => undefined)
+  }
+
+  /**
+   * Closes the tab's session and starts the next one in its place. The
+   * conversation the window shows stays, and the new session's items number
+   * on after it — as on recovery from a dead session. A fresh ribbon here
+   * would leave the window holding items main no longer has, and new ones
+   * under the same ids. `prepare` runs once the old session is gone and
+   * before the new one starts.
+   */
+  private async replaceSession(id: TabId, prepare: (tab: TabState) => void): Promise<void> {
     const tab = this.tabs.find((t) => t.id === id)
     if (!tab) return
-    // The conversation the window shows stays, and the new session's items
-    // number on after it — as on recovery from a dead session. A fresh
-    // ribbon here would leave the window holding items main no longer has,
-    // and new ones under the same ids.
     const seed = this.deps.manager.get(id)?.successorSeed()
     // In place before the old session goes: while it closes the tab has no
     // session, and a snapshot taken then must not come back empty.
     if (seed) this.previews.set(id, seed)
     else this.previews.delete(id)
-    await this.deps.manager.close(id)
-    // Closed while the old session was closing: nothing to restart.
-    if (!this.tabs.includes(tab)) {
-      this.previews.delete(id)
-      return
+    this.replacing.add(id)
+    try {
+      await this.deps.manager.close(id)
+      // Closed while the old session was closing: nothing to start.
+      if (!this.tabs.includes(tab)) {
+        this.previews.delete(id)
+        return
+      }
+      // Someone else has given the tab a session meanwhile: it stays.
+      if (this.deps.manager.get(id)) return
+      prepare(tab)
+      await this.startSession(id)
+    } finally {
+      this.replacing.delete(id)
     }
-    // Forgotten on disk now, not when the new session first answers: a
-    // launch in between would pick the old conversation back up.
-    delete tab.lastSessionId
-    this.persist()
-    this.emit()
-    await this.ensureSession(id)
   }
 
   /** Records a launch option the user changed while the tab was running. */
@@ -287,6 +322,12 @@ export class TabController {
   // ------------------------------------------------------------- sessions
 
   private async ensureSession(id: TabId): Promise<void> {
+    // Being swapped: the swapper starts the session.
+    if (this.replacing.has(id)) return
+    await this.startSession(id)
+  }
+
+  private async startSession(id: TabId): Promise<void> {
     const tab = this.tabs.find((t) => t.id === id)
     if (!tab) return
     // A folder that is gone cannot host an agent; the tab stays, flagged, so
@@ -395,9 +436,13 @@ export class TabController {
    * The history stays on screen — the new session continues the dead one's
    * ribbon — but the panel starts over: it describes the new session.
    *
+   * Except when the agent is not logged in: a clean session would die the
+   * same way, so the tab stays as it is, in error, with «Войти» and
+   * «Повторить».
+   *
    * The stored id is not erased here. It is replaced once the new session
    * introduces itself (`rememberSession`), and not before: an agent that
-   * dies before init for reasons of its own — not logged in, a crash at
+   * dies before init for reasons of its own — a crash at
    * start — kills the clean session the same way, and then nothing shows
    * the conversation was at fault. Retrying a truly dead id on the next
    * launch costs one more notice; erasing a live one costs the conversation.
@@ -407,6 +452,19 @@ export class TabController {
     const reason = dead.error ?? 'неизвестная причина'
     const tab = this.tabs.find((t) => t.id === id)
     if (!tab) return
+
+    // The raw error, before `explain` rewords it for the ribbon.
+    const cause = classifyStartFailure(reason)
+    if (cause === 'not-logged-in') {
+      // A clean session would die the same way. The tab keeps its session,
+      // its error and its conversation, and offers the way out.
+      this.patch(id, { canRetry: true })
+      this.emitRibbon(
+        id,
+        dead.notice('Claude Code не вошёл в аккаунт. Войдите и нажмите «Повторить».', 'error', 'login')
+      )
+      return
+    }
 
     // Launched as the tab would be, minus «без проверок»: the clean session
     // is a new one, and that mode is never inherited (spec 5.4).
@@ -418,20 +476,31 @@ export class TabController {
     const seed = dead.successorSeed()
     // Shown while the dead session closes, so a snapshot then is not empty.
     this.previews.set(id, seed)
-    await this.deps.manager.close(id)
-    // Closed while the dead session was closing: no agent for a tab that
-    // is gone, and nothing resent to it.
-    if (!this.tabs.includes(tab)) {
+    this.replacing.add(id)
+    try {
+      await this.deps.manager.close(id)
+      // Closed while the dead session was closing: no agent for a tab that
+      // is gone, and nothing resent to it.
+      if (!this.tabs.includes(tab)) {
+        this.previews.delete(id)
+        return
+      }
+      // Someone else has given the tab a session meanwhile: it stays.
+      if (this.deps.manager.get(id)) return
+      const fresh = this.deps.manager.create(id, tab.cwd, launch, seed)
       this.previews.delete(id)
-      return
+      this.adopt(id, fresh)
+      const said =
+        cause === 'missing-conversation'
+          ? `Прошлую переписку открыть не удалось: ${reason}`
+          : `Сессия не запустилась: ${reason}`
+      this.emitRibbon(id, fresh.notice(said))
+      await fresh.start()
+      for (const sent of unsent) fresh.resend(sent)
+      this.rememberSession(id, fresh)
+    } finally {
+      this.replacing.delete(id)
     }
-    const fresh = this.deps.manager.create(id, tab.cwd, launch, seed)
-    this.previews.delete(id)
-    this.adopt(id, fresh)
-    this.emitRibbon(id, fresh.notice(`Прошлую переписку открыть не удалось: ${reason}`))
-    await fresh.start()
-    for (const sent of unsent) fresh.resend(sent)
-    this.rememberSession(id, fresh)
   }
 
   /**
@@ -473,6 +542,11 @@ export class TabController {
       if (!current()) return
       const patch: Partial<TabState> = { status }
       if (session.error !== undefined) patch.error = session.error
+      // A start that never made an agent never reached the conversation:
+      // the same one can be tried again. (Not logged in is told apart in
+      // `recoverFromDeadSession`, which knows why the agent died.)
+      const tab = this.tabs.find((t) => t.id === id)
+      patch.canRetry = status === 'error' && !session.launched && Boolean(tab?.lastSessionId)
       if (status === 'waiting' || status === 'idle') {
         if (this.activeId !== id) patch.badge = true
       }

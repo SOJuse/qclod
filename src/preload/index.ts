@@ -45,6 +45,7 @@ const api = {
   updateTab: (id: TabId, patch: Partial<PersistedTab>): Promise<TabState | undefined> =>
     ipcRenderer.invoke(CHANNELS.tabsUpdate, id, patch),
   restartTab: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.tabsRestart, id),
+  retryTab: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.tabsRetry, id),
 
   send: (id: TabId, input: UserInput): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.agentSend, id, input),

@@ -393,6 +393,22 @@
   color: var(--danger);
 }
 
+.row-notice-action {
+  margin-left: var(--button-sm-gap);
+  padding: var(--button-sm-pad);
+  border: 1px solid var(--border);
+  border-radius: var(--button-sm-radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--button-sm-font-size);
+  cursor: pointer;
+}
+
+.row-notice-action:hover {
+  border-color: var(--border-accent);
+}
+
 /* ---------------------------------------------------------------- the todo */
 
 .todo-panel {

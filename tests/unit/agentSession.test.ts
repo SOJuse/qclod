@@ -1499,6 +1499,46 @@ describe('AgentSession: ожидание вне хода', () => {
   })
 })
 
+describe('AgentSession: «Стоп» не трогает следующий ход', () => {
+  test('сообщение, отправленное пока прерывание в пути, не теряет ход и свой вопрос', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      nextTurn: [
+        { kind: 'askQuestion', question: 'Куда?', options: ['Справа', 'Снизу'] },
+        { kind: 'text', text: 'понял' }
+      ]
+    })
+    const rec = watch(session)
+    await session.start()
+
+    // The interrupt is on its way and not back yet.
+    let interrupted!: () => void
+    driver.interrupt = () => new Promise<void>((resolve) => (interrupted = resolve))
+    const stopping = session.interrupt()
+    await vi.waitFor(() => expect(interrupted).toBeDefined())
+
+    // The user does not wait for it: a new message, and the new turn asks.
+    session.send({ text: 'дальше', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+
+    interrupted()
+    await stopping
+
+    // The Stop was for the turn before: this turn and its question stay.
+    expect(session.status).toBe('waiting')
+    const card = rec.items.find((i) => i.kind === 'question') as { toolUseId: string }
+    session.answerQuestion(card.toolUseId, 'Справа')
+
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('понял'), { timeout: 2000 })
+    await settle(session)
+    // Answered in place, through updatedInput — not sent again as a message.
+    expect(driver.questionAnswers).toEqual([{ 'Куда?': 'Справа' }])
+    expect(driver.sent.map((s) => s.text)).toEqual(['дальше'])
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+})
+
 describe('AgentSession: после dispose молчит', () => {
   test('поздний сбой и поздняя правка панели закрытой сессии никуда не уходят', async () => {
     const { session } = makeSession({ steps: [], nextTurn: [] })

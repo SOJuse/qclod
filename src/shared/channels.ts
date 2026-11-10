@@ -18,6 +18,7 @@ export const CHANNELS = Object.freeze({
   tabsActivate: 'tabs:activate',
   tabsUpdate: 'tabs:update',
   tabsRestart: 'tabs:restart',
+  tabsRetry: 'tabs:retry',
 
   agentSend: 'agent:send',
   agentInterrupt: 'agent:interrupt',
@@ -75,6 +76,7 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.tabsActivate,
   CHANNELS.tabsUpdate,
   CHANNELS.tabsRestart,
+  CHANNELS.tabsRetry,
   CHANNELS.agentSend,
   CHANNELS.agentInterrupt,
   CHANNELS.agentPermissionMode,

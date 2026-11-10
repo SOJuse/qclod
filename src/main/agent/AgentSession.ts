@@ -145,14 +145,23 @@ export class AgentSession {
   private disposed = false
   /** Whether a driver was ever made; see `launched`. */
   private launchedAgent = false
+  /**
+   * Which turn this is: one more for every message given to the agent. Each
+   * open question, permission and plan remembers the turn it was asked in,
+   * so «Стоп» refuses only what belongs to the turn it stopped.
+   */
+  private turn = 0
   /** Questions the agent asked through canUseTool, waiting on the user. */
   private readonly pendingQuestions = new Map<
     string,
-    { input: Record<string, unknown>; resolve: (answer: PermissionAnswer) => void }
+    { input: Record<string, unknown>; resolve: (answer: PermissionAnswer) => void; turn: number }
   >()
-  private readonly pendingPlans = new Map<string, (answer: PermissionAnswer) => void>()
+  private readonly pendingPlans = new Map<
+    string,
+    { resolve: (answer: PermissionAnswer) => void; turn: number }
+  >()
   /** Permission questions still waiting on the user; aborting one refuses it. */
-  private readonly openPermissions = new Map<string, AbortController>()
+  private readonly openPermissions = new Map<string, { controller: AbortController; turn: number }>()
   /**
    * How many questions, permissions and plans are open at once. The tab
    * shows «ждёт» while any is, so answering one of two keeps it waiting.
@@ -309,18 +318,18 @@ export class AgentSession {
 
     this.emit(this.builder.resolvePlan(requestId, approve ? 'approved' : 'rejected'))
     if (!approve) {
-      waiting({ behavior: 'deny' })
+      waiting.resolve({ behavior: 'deny' })
       return
     }
 
     // The mode must be in place before the tool runs, not racing it.
     await this.setPermissionMode('acceptEdits')
-    waiting({ behavior: 'allow' })
+    waiting.resolve({ behavior: 'allow' })
   }
 
   /** Something Qclod itself needs to say — a crash, a session that would not resume. */
-  notice(text: string, tone: 'info' | 'error' = 'info'): RibbonChange[] {
-    return this.builder.notice(text, tone)
+  notice(text: string, tone: 'info' | 'error' = 'info', action?: 'login' | 'retry'): RibbonChange[] {
+    return this.builder.notice(text, tone, action)
   }
 
   async start(resumeId?: string): Promise<void> {
@@ -494,6 +503,7 @@ export class AgentSession {
   private deliver(sent: UserInput): void {
     if (!this.driver) return
     if (this.session === null) this.unintroduced.push(sent)
+    this.turn += 1
     this.turnRunning = true
     this.setStatus('busy')
     this.driver.send(sent)
@@ -504,44 +514,57 @@ export class AgentSession {
    * the SDK: the real one abandons a pending `canUseTool` without saying so,
    * and a card answered after that would set the tab working on a turn that
    * is already over.
+   *
+   * The stop is for the turn under way when it was pressed. The user need
+   * not wait for it to land: a message sent meanwhile starts a turn of its
+   * own, and that turn — its status, its first question — is left alone.
    */
   async interrupt(): Promise<void> {
     if (!this.driver) return
+    const stopped = this.turn
     this.cancelWaits()
     await this.driver.interrupt().catch(() => undefined)
-    this.turnRunning = false
     // A question asked while the interrupt was on its way belongs to the
     // turn being stopped and is refused with it; left open, it would hold a
     // count of one behind an idle tab.
-    this.cancelWaits()
+    this.cancelWaits({ upTo: stopped })
+    if (this.turn !== stopped) return
+    this.turnRunning = false
     this.setStatus('idle')
   }
 
   /**
-   * Refuses everything still waiting on the user. Permission and plan cards
-   * show as denied and rejected; a question card stays as it is, and a click
-   * on it later goes as a message (see `answerQuestion`).
+   * Refuses what is still waiting on the user — everything, or only what was
+   * asked in turn `upTo` or before. Permission and plan cards show as denied
+   * and rejected; a question card stays as it is, and a click on it later
+   * goes as a message (see `answerQuestion`).
    */
-  private cancelWaits(): void {
-    this.waits = 0
+  private cancelWaits(scope: { upTo?: number } = {}): void {
+    const ours = (wait: { turn: number }): boolean =>
+      scope.upTo === undefined || wait.turn <= scope.upTo
 
-    const permissions = [...this.openPermissions]
-    this.openPermissions.clear()
-    for (const [requestId, controller] of permissions) {
+    const permissions = [...this.openPermissions].filter(([, wait]) => ours(wait))
+    for (const [requestId, { controller }] of permissions) {
+      this.openPermissions.delete(requestId)
       this.emit(this.builder.resolvePermission(requestId, 'denied'))
       controller.abort()
     }
 
-    const questions = [...this.pendingQuestions.values()]
-    this.pendingQuestions.clear()
-    for (const waiting of questions) waiting.resolve({ behavior: 'deny' })
-
-    const plans = [...this.pendingPlans]
-    this.pendingPlans.clear()
-    for (const [requestId, resolve] of plans) {
-      this.emit(this.builder.resolvePlan(requestId, 'rejected'))
-      resolve({ behavior: 'deny' })
+    const questions = [...this.pendingQuestions].filter(([, wait]) => ours(wait))
+    for (const [toolUseId, waiting] of questions) {
+      this.pendingQuestions.delete(toolUseId)
+      waiting.resolve({ behavior: 'deny' })
     }
+
+    const plans = [...this.pendingPlans].filter(([, wait]) => ours(wait))
+    for (const [requestId, waiting] of plans) {
+      this.pendingPlans.delete(requestId)
+      this.emit(this.builder.resolvePlan(requestId, 'rejected'))
+      waiting.resolve({ behavior: 'deny' })
+    }
+
+    // What is left open is what still holds the tab waiting.
+    this.waits = this.openPermissions.size + this.pendingQuestions.size + this.pendingPlans.size
   }
 
   private enterWait(): void {
@@ -813,7 +836,8 @@ export class AgentSession {
     const cancel = (): void => controller.abort()
     if (opts.signal?.aborted) return { behavior: 'deny' }
     opts.signal?.addEventListener('abort', cancel, { once: true })
-    this.openPermissions.set(requestId, controller)
+    const wait = { controller, turn: this.turn }
+    this.openPermissions.set(requestId, wait)
     this.enterWait()
 
     let answer: PermissionAnswer
@@ -832,7 +856,7 @@ export class AgentSession {
     if (controller.signal.aborted) answer = { behavior: 'deny' }
 
     // Still open unless «Стоп» already closed it — and marked its card.
-    if (this.openPermissions.get(requestId) === controller) {
+    if (this.openPermissions.get(requestId) === wait) {
       this.openPermissions.delete(requestId)
       this.leaveWait()
       this.emit(
@@ -858,7 +882,7 @@ export class AgentSession {
     return new Promise<PermissionAnswer>((resolve) => {
       // The SDK gave up on the plan: it can no longer be approved.
       const onAbort = (): void => {
-        if (this.pendingPlans.get(requestId) !== settle) return
+        if (this.pendingPlans.get(requestId)?.resolve !== settle) return
         this.pendingPlans.delete(requestId)
         this.leaveWait()
         this.emit(this.builder.resolvePlan(requestId, 'rejected'))
@@ -869,7 +893,7 @@ export class AgentSession {
         resolve(answer)
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
-      this.pendingPlans.set(requestId, settle)
+      this.pendingPlans.set(requestId, { resolve: settle, turn: this.turn })
     })
   }
 
@@ -903,7 +927,7 @@ export class AgentSession {
         resolve(answer)
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
-      this.pendingQuestions.set(toolUseId, { input, resolve: settle })
+      this.pendingQuestions.set(toolUseId, { input, resolve: settle, turn: this.turn })
     })
   }
 

@@ -70,6 +70,12 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     await controller.restart(id)
   })
 
+  ipcMain.handle(CHANNELS.tabsRetry, async (_e, id: unknown) => {
+    if (!isString(id)) return
+    broker.cancelTab(id)
+    await controller.retry(id)
+  })
+
   ipcMain.handle(CHANNELS.agentSend, (_e, id: unknown, input: unknown) => {
     if (!isString(id)) return
     const session = manager.get(id)

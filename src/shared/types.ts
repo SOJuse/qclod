@@ -117,7 +117,13 @@ export type RibbonItem =
       summary?: string
     })
   /** Something Qclod itself needs to say: a crash, a session that would not resume. */
-  | (RibbonBase & { kind: 'notice'; text: string; tone: 'info' | 'error' })
+  | (RibbonBase & {
+      kind: 'notice'
+      text: string
+      tone: 'info' | 'error'
+      /** A way out the notice offers: «Войти» opens the login terminal. */
+      action?: 'login' | 'retry'
+    })
 
 export interface TodoItem {
   content: string
@@ -218,6 +224,12 @@ export interface TabState extends PersistedTab {
   badge: boolean
   error?: string
   missingCwd?: boolean
+  /**
+   * The session never got to the conversation — no agent found, not logged
+   * in — and the tab still knows which one it was: «Повторить» opens that
+   * same conversation, where «Начать заново» would drop it.
+   */
+  canRetry?: boolean
 }
 
 export interface CommandInfo {

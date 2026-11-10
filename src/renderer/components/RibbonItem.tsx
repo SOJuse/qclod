@@ -52,6 +52,28 @@ function seconds(ms: number): string {
 }
 
 /**
+ * Something Qclod itself says. A notice about logging in carries the way to
+ * do it: the same terminal the setup screen opens.
+ */
+export function NoticeRow({ item }: { item: Extract<Item, { kind: 'notice' }> }): JSX.Element {
+  return (
+    <div className={`row-notice is-${item.tone}`}>
+      {item.text}
+      {item.action === 'login' && (
+        <button
+          type="button"
+          className="row-notice-action"
+          data-testid="notice-login"
+          onClick={() => void window.qclod.openTerminal()}
+        >
+          Войти
+        </button>
+      )}
+    </div>
+  )
+}
+
+/**
  * One row of the conversation.
  *
  * Reports its own height so the ribbon can place the rows above and below it
@@ -196,7 +218,7 @@ export function RibbonRow({
         )
 
       case 'notice':
-        return <div className={`row-notice is-${item.tone}`}>{item.text}</div>
+        return <NoticeRow item={item} />
 
       default:
         return <div />

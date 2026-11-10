@@ -129,8 +129,12 @@
   font-size: 12px;
 }
 
+/* The buttons sit together at the right end, «Повторить» first. */
+.composer-dead > span {
+  margin-right: auto;
+}
+
 .composer-dead button {
-  margin-left: auto;
   padding: 4px 11px;
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -143,6 +147,11 @@
 
 .composer-dead button:hover {
   border-color: var(--border-accent);
+}
+
+.composer-dead button.is-primary {
+  border-color: var(--border-accent);
+  color: var(--accent);
 }
 
 .composer-input:disabled {

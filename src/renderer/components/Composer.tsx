@@ -30,10 +30,48 @@ interface Props {
   onOpenPalette: () => void
   onCycleMode: () => void
   onRestart: () => void
+  /** Set when the session never reached its conversation and can open it again. */
+  canRetry?: boolean
+  onRetry: () => void
   onPickFiles: () => void
 }
 
 const MAX_MATCHES = 8
+
+/**
+ * The line above a dead session's input. When the session never got to its
+ * conversation, «Повторить» opens that same conversation and comes first;
+ * «Начать заново» lets it go.
+ */
+export function DeadStrip({
+  canRetry = false,
+  onRetry,
+  onRestart
+}: {
+  canRetry?: boolean
+  onRetry: () => void
+  onRestart: () => void
+}): JSX.Element {
+  return (
+    <div className="composer-dead" data-testid="composer-dead">
+      <span>Сессия прервалась</span>
+      {canRetry ? (
+        <>
+          <button type="button" className="is-primary" data-testid="composer-retry" onClick={onRetry}>
+            Повторить
+          </button>
+          <button type="button" data-testid="composer-restart" onClick={onRestart}>
+            Начать заново
+          </button>
+        </>
+      ) : (
+        <button type="button" data-testid="composer-restart" onClick={onRestart}>
+          Запустить заново
+        </button>
+      )}
+    </div>
+  )
+}
 
 /**
  * The one input line.
@@ -58,6 +96,8 @@ export function Composer({
   onOpenPalette,
   onCycleMode,
   onRestart,
+  canRetry = false,
+  onRetry,
   onPickFiles
 }: Props): JSX.Element {
   const field = useRef<HTMLTextAreaElement | null>(null)
@@ -221,14 +261,7 @@ export function Composer({
         )
       }}
     >
-      {dead && (
-        <div className="composer-dead" data-testid="composer-dead">
-          <span>Сессия прервалась</span>
-          <button type="button" data-testid="composer-restart" onClick={onRestart}>
-            Запустить заново
-          </button>
-        </div>
-      )}
+      {dead && <DeadStrip canRetry={canRetry} onRetry={onRetry} onRestart={onRestart} />}
 
       {attachments.length > 0 && (
         <div className="composer-chips" data-testid="composer-chips">

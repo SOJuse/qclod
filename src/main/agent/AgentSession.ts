@@ -719,7 +719,14 @@ export class AgentSession {
     const task = this.backgroundTasks.tasks.find((t) => t.taskId === taskId)
     if (!driver || task?.status !== 'running') return
     // The task's notification, not this call, tells the list it has ended.
-    await driver.stopTask(taskId).catch(() => undefined)
+    // A refusal is the user's to see: it reaches the row that asked.
+    await driver.stopTask(taskId)
+  }
+
+  /** The agent is gone: its background tasks are cut off with it. */
+  private cutOffBackground(): void {
+    const tasks = this.backgroundTasks.endAll('interrupted')
+    if (tasks) this.emitPanel(this.collector.setBackgroundTasks(tasks))
   }
 
   /** Everything the panel knows about this tab right now. */
@@ -776,7 +783,10 @@ export class AgentSession {
         this.onMessage(message)
       }
       // The stream ending by itself means the agent exited.
-      if (this.driver === driver) this.setStatus('stopped')
+      if (this.driver === driver) {
+        this.cutOffBackground()
+        this.setStatus('stopped')
+      }
     } catch (err) {
       if (this.driver === driver) this.fail(err)
     }
@@ -1027,6 +1037,7 @@ export class AgentSession {
     // must not stay live (a click could save a rule from a dead session).
     this.cancelWaits()
     if (dead) void dead.dispose().catch(() => undefined)
+    this.cutOffBackground()
     this.failure = text
     this.emit(this.builder.closeOpen())
     this.emit(this.builder.notice(explain(text), 'error'))

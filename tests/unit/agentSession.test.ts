@@ -1322,6 +1322,47 @@ describe('AgentSession: фоновые команды', () => {
     expect(stop).toHaveBeenCalledTimes(1)
     await session.dispose()
   })
+
+  test('отказ остановить доходит до того, кто просил, задача работает дальше', async () => {
+    const { session } = makeSession({
+      steps: [],
+      stopTaskError: 'задача уже закончилась',
+      nextTurn: [{ kind: 'backgroundBash', command: 'npm run dev', taskId: 'b1', finish: null }]
+    })
+    await session.start()
+    session.send({ text: 'запусти', attachments: [] })
+    await vi.waitFor(() => expect(session.panel.backgroundTasks[0]?.status).toBe('running'), {
+      timeout: 2000,
+      interval: 5
+    })
+    await expect(session.stopTask('b1')).rejects.toThrow('задача уже закончилась')
+    expect(session.panel.backgroundTasks[0]?.status).toBe('running')
+    await session.dispose()
+  })
+
+  test('агент упал — работавшие задачи прерваны, законченные остались как были', async () => {
+    const { session } = makeSession({
+      steps: [],
+      nextTurn: [
+        { kind: 'backgroundBash', command: 'npm run build', taskId: 'b1', finish: null },
+        { kind: 'backgroundBash', command: 'npm run dev', taskId: 'b2', finish: null },
+        { kind: 'crash', message: 'процесс агента завершился' }
+      ]
+    })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'запусти', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('error'), { timeout: 2000, interval: 5 })
+
+    expect(session.panel.backgroundTasks).toEqual([
+      expect.objectContaining({ taskId: 'b2', status: 'interrupted', endedAt: expect.any(Number) }),
+      expect.objectContaining({ taskId: 'b1', status: 'interrupted', endedAt: expect.any(Number) })
+    ])
+    // The window was told, not just the session.
+    const last = rec.panels.filter((p) => p.backgroundTasks !== undefined).at(-1)
+    expect(last?.backgroundTasks?.every((t) => t.status === 'interrupted')).toBe(true)
+    await session.dispose()
+  })
 })
 
 

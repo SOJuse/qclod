@@ -4,6 +4,8 @@ import type { BackgroundTask } from '../../shared/types'
 const MAX_TASKS = 20
 /** Bash calls whose command is kept until their task_started comes. */
 const MAX_COMMANDS = 200
+/** Foreground shells held in case they move to the background. */
+const MAX_FOREGROUND = 50
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -26,6 +28,12 @@ function endStatus(status: unknown): BackgroundTask['status'] | null {
     default:
       return null
   }
+}
+
+/** The same task, running again: no end time. */
+function reopened(task: BackgroundTask): BackgroundTask {
+  const { endedAt: _gone, ...rest } = task
+  return { ...rest, status: 'running' }
 }
 
 /**
@@ -103,7 +111,6 @@ export class BackgroundTracker {
     if (!taskId || m['ambient'] === true || m['skip_transcript'] === true) return null
     const type = str(m['task_type'])
     if (type === 'local_agent') return null
-    if (this.list.some((t) => t.taskId === taskId)) return null
 
     const toolUseId = str(m['tool_use_id'])
     const command = toolUseId ? this.commands.get(toolUseId) : undefined
@@ -119,7 +126,20 @@ export class BackgroundTracker {
     }
     if (m['is_backgrounded'] === false) {
       this.foreground.set(taskId, task)
+      if (this.foreground.size > MAX_FOREGROUND) {
+        const oldest = this.foreground.keys().next().value
+        if (oldest !== undefined) this.foreground.delete(oldest)
+      }
       return null
+    }
+    // A resumed task keeps its task_id: it is the same row, running again.
+    const known = this.list.find((t) => t.taskId === taskId)
+    if (known) {
+      if (known.status === 'running') return null
+      this.guessed.delete(taskId)
+      this.list = this.list.filter((t) => t !== known)
+      const kept = task.command ?? known.command
+      return this.add({ ...task, ...(kept ? { command: kept } : {}) })
     }
     return this.add(task)
   }
@@ -140,10 +160,7 @@ export class BackgroundTracker {
     if (ended) return this.onEnded(taskId, ended) ?? (moved ? this.copy() : null)
     // A task taken for finished is still running after all.
     if (patch['status'] === 'running' && this.guessed.delete(taskId)) {
-      return this.replace(taskId, (t) => {
-        const { endedAt: _gone, ...rest } = t
-        return { ...rest, status: 'running' }
-      })
+      return this.replace(taskId, reopened)
     }
     return moved ? this.copy() : null
   }
@@ -174,12 +191,30 @@ export class BackgroundTracker {
       )
     )
     const gone = this.list.filter((t) => t.status === 'running' && !live.has(t.taskId))
-    if (gone.length === 0) return null
+    // Taken for finished by an earlier, stale payload, and listed again now.
+    const back = this.list.filter((t) => this.guessed.has(t.taskId) && live.has(t.taskId))
+    if (gone.length === 0 && back.length === 0) return null
     const at = this.now()
     for (const t of gone) this.guessed.add(t.taskId)
-    this.list = this.list.map((t) =>
-      gone.includes(t) ? { ...t, status: 'completed' as const, endedAt: at } : t
-    )
+    for (const t of back) this.guessed.delete(t.taskId)
+    this.list = this.list.map((t) => {
+      if (gone.includes(t)) return { ...t, status: 'completed' as const, endedAt: at }
+      if (back.includes(t)) return reopened(t)
+      return t
+    })
+    return this.copy()
+  }
+
+  /**
+   * The agent behind these tasks is gone: whatever still ran is cut off, and
+   * nothing will ever say how it ended. Null when nothing was running.
+   */
+  endAll(status: BackgroundTask['status']): BackgroundTask[] | null {
+    if (!this.list.some((t) => t.status === 'running')) return null
+    const at = this.now()
+    this.foreground.clear()
+    this.guessed.clear()
+    this.list = this.list.map((t) => (t.status === 'running' ? { ...t, status, endedAt: at } : t))
     return this.copy()
   }
 

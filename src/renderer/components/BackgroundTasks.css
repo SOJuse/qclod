@@ -183,8 +183,27 @@
   cursor: pointer;
 }
 
-.bg-stop:hover {
+.bg-stop:hover:not(:disabled) {
   border-color: var(--danger);
+}
+
+.bg-stop:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The stop was refused: said in the row, in words, with the reason. */
+.bg-task-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0 var(--space-2) var(--space-1) calc(var(--space-2) + var(--space-3));
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+
+.bg-task-error > svg {
+  flex: 0 0 auto;
 }
 
 .bg-stop:focus-visible {

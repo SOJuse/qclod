@@ -110,6 +110,8 @@ export interface FakeScript {
   contextUsageDelayMs?: number
   /** taskOutput() answers null: a CLI that cannot read a task's output. */
   taskOutputUnavailable?: boolean
+  /** stopTask() rejects with this message and the task keeps running. */
+  stopTaskError?: string
   canUseTool?: (
     toolName: string,
     input: Record<string, unknown>,

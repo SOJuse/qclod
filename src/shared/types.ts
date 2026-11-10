@@ -273,7 +273,8 @@ export interface BackgroundTask {
   description: string
   /** The Bash call's command, when the task came from one. */
   command?: string
-  status: 'running' | 'completed' | 'failed' | 'stopped'
+  /** interrupted: the agent itself died while the task ran; no end was ever reported. */
+  status: 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted'
   /** epoch ms */
   startedAt: number
   endedAt?: number

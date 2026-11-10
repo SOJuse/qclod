@@ -812,8 +812,10 @@ export function createFakeSdk(script = {}) {
         yield got.value
       }
     } finally {
-      // Not awaited: a read may still be pending inside, and return() queues
-      // behind it.
+      // A read still pending inside is orphaned: whatever it ends with is
+      // dropped, never left as an unhandled rejection. return() is not
+      // awaited — it queues behind that read.
+      next?.catch(() => undefined)
       inner.return?.().catch(() => undefined)
     }
   }
@@ -907,6 +909,8 @@ export function createFakeSdk(script = {}) {
     },
     /** Ends a running shell: its notification and the emptied list, outside any turn. */
     async stopTask(taskId) {
+      // A CLI that refuses: the task goes on as if nothing was asked.
+      if (script.stopTaskError) throw new Error(script.stopTaskError)
       const shell = shells.get(taskId)
       if (!shell || shell.stopped) return
       shell.stopped = true

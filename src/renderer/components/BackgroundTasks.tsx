@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { ChevronRight, CircleCheck, CircleDot, CircleStop, CircleX, ChevronUp } from 'lucide-react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ChevronRight, ChevronUp, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleStop, CircleX } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BackgroundTask, TabId, TaskOutput } from '../../shared/types'
 import { plural } from '../../shared/format'
+import { remoteErrorText, stripAnsi } from '../chat/stripAnsi'
 import { CategoryIcon } from '../ui/icons'
 import './BackgroundTasks.css'
 
@@ -11,7 +12,7 @@ interface Props {
   tasks: BackgroundTask[]
 }
 
-/** How often an opened, running task's output is read again. */
+/** The pause between one read of an opened, running task's output and the next. */
 const POLL_MS = 1000
 
 export const OUTPUT_UNAVAILABLE = 'Вывод недоступен в этой версии Claude Code'
@@ -20,7 +21,8 @@ const STATUS: Record<BackgroundTask['status'], { word: string; icon: LucideIcon;
   running: { word: 'работает', icon: CircleDot, color: 'var(--cat-command)' },
   completed: { word: 'готова', icon: CircleCheck, color: 'var(--status-ok)' },
   failed: { word: 'ошибка', icon: CircleX, color: 'var(--status-critical)' },
-  stopped: { word: 'остановлена', icon: CircleStop, color: 'var(--text-faint)' }
+  stopped: { word: 'остановлена', icon: CircleStop, color: 'var(--text-faint)' },
+  interrupted: { word: 'прервана', icon: CircleSlash, color: 'var(--status-warn)' }
 }
 
 /** 0:07, 2:05, 61:40 — how long a task has run. */
@@ -64,18 +66,25 @@ export function BackgroundTasks({ tabId, tasks }: Props): JSX.Element | null {
     return () => document.removeEventListener('mousedown', away)
   }, [open])
 
+  // Esc closes the open list wherever focus is — the input included — and
+  // goes no further: closing a list must not stop the agent. Caught on the
+  // window before anything else hears it.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== 'Escape' || ev.isComposing) return
+      ev.preventDefault()
+      ev.stopImmediatePropagation()
+      setOpen(false)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [open])
+
   if (tasks.length === 0) return null
 
-  // An open list's Esc is the list's alone: it must not stop the agent.
-  const onKeyDown = (ev: KeyboardEvent<HTMLSpanElement>): void => {
-    if (ev.key !== 'Escape' || !open) return
-    ev.preventDefault()
-    ev.stopPropagation()
-    setOpen(false)
-  }
-
   return (
-    <span className="bg" ref={self} onKeyDown={onKeyDown}>
+    <span className="bg" ref={self}>
       <button
         type="button"
         className={`bg-counter${open ? ' is-open' : ''}${running > 0 ? ' is-running' : ''}`}
@@ -121,11 +130,34 @@ function TaskRow({
   expanded: boolean
   onToggle: () => void
 }): JSX.Element {
+  const [stopping, setStopping] = useState(false)
+  const [stopError, setStopError] = useState<string | null>(null)
   const status = STATUS[task.status]
   const StatusIcon = status.icon
   const elapsed = (task.endedAt ?? Date.now()) - task.startedAt
   const label = task.command ?? task.description
   const outputId = `bg-output-${task.taskId}`
+  const running = task.status === 'running'
+
+  // Its end clears what was said about stopping it.
+  useEffect(() => {
+    if (!running) {
+      setStopping(false)
+      setStopError(null)
+    }
+  }, [running])
+
+  const stop = async (): Promise<void> => {
+    setStopping(true)
+    setStopError(null)
+    try {
+      // On success the button stays disabled: the task's notification ends it.
+      await window.qclod.stopTask(tabId, task.taskId)
+    } catch (err) {
+      setStopping(false)
+      setStopError(remoteErrorText(err))
+    }
+  }
 
   return (
     <li className={`bg-task is-${task.status}`} data-testid="bg-task" data-status={task.status}>
@@ -151,17 +183,24 @@ function TaskRow({
           <StatusIcon size={12} color={status.color} aria-hidden="true" />
           {status.word}
         </span>
-        {task.status === 'running' && (
+        {running && (
           <button
             type="button"
             className="bg-stop"
             data-testid="bg-stop"
-            onClick={() => void window.qclod.stopTask(tabId, task.taskId)}
+            disabled={stopping}
+            onClick={() => void stop()}
           >
-            Остановить
+            {stopping ? 'Останавливаю…' : 'Остановить'}
           </button>
         )}
       </div>
+      {stopError !== null && (
+        <div className="bg-task-error" data-testid="bg-stop-error" role="alert">
+          <CircleAlert size={12} color="var(--status-critical)" aria-hidden="true" />
+          <span>Не удалось остановить: {stopError}</span>
+        </div>
+      )}
       {expanded && <TaskOutputView id={outputId} tabId={tabId} task={task} />}
     </li>
   )
@@ -170,8 +209,9 @@ function TaskRow({
 type OutputState = { kind: 'loading' } | { kind: 'unavailable' } | { kind: 'ready'; value: TaskOutput }
 
 /**
- * The end of the command's output, read while the row is open: every second
- * while it runs, and once more when it has ended.
+ * The end of the command's output, read while the row is open: again a
+ * second after each answer while it runs — never two reads at once — and
+ * once more when it has ended.
  */
 function TaskOutputView({ id, tabId, task }: { id: string; tabId: TabId; task: BackgroundTask }): JSX.Element {
   const [state, setState] = useState<OutputState>({ kind: 'loading' })
@@ -181,17 +221,21 @@ function TaskOutputView({ id, tabId, task }: { id: string; tabId: TabId; task: B
 
   useEffect(() => {
     let live = true
+    let timer: ReturnType<typeof setTimeout> | null = null
     const read = async (): Promise<void> => {
       const out = await window.qclod.taskOutput(tabId, task.taskId).catch(() => null)
       if (!live) return
-      setState(out === null ? { kind: 'unavailable' } : { kind: 'ready', value: out })
+      setState(
+        out === null
+          ? { kind: 'unavailable' }
+          : { kind: 'ready', value: { ...out, output: stripAnsi(out.output) } }
+      )
+      if (running) timer = setTimeout(() => void read(), POLL_MS)
     }
     void read()
-    if (!running) return () => void (live = false)
-    const timer = setInterval(() => void read(), POLL_MS)
     return () => {
       live = false
-      clearInterval(timer)
+      if (timer) clearTimeout(timer)
     }
   }, [tabId, task.taskId, running])
 
@@ -211,7 +255,7 @@ function TaskOutputView({ id, tabId, task }: { id: string; tabId: TabId; task: B
   }
 
   const empty =
-    state.kind === 'loading' ? 'Читаю вывод…' : running ? 'Пока ничего не вывела' : 'Ничего не вывела'
+    state.kind === 'loading' ? 'Вывод загружается…' : running ? 'Пока ничего не вывела' : 'Ничего не вывела'
   return (
     <div id={id} className="bg-output-wrap">
       {state.kind === 'ready' && state.value.truncated && (

@@ -83,7 +83,8 @@ for await (const message of driver.messages) { /* ... */ }
 `{output, totalBytes, truncated}` — последние 8 КиБ того, что накопили куски
 `backgroundBash`, полный размер в байтах и признак обрезки; для чужого id —
 `null`; со скриптом `taskOutputUnavailable: true` — всегда `null` (CLI, который
-не умеет читать вывод). `stopTask(id)` у работающей задачи сразу, вне очереди
+не умеет читать вывод). Со скриптом `stopTaskError: '…'` `stopTask` бросает
+ошибку с этим текстом, а задача работает дальше. `stopTask(id)` у работающей задачи сразу, вне очереди
 хода, выдаёт `task_notification` со `status: 'stopped'` и
 `background_tasks_changed` без неё; куски после этого не копятся, своего
 уведомления задача больше не шлёт. Формы — из `sdk.d.ts`

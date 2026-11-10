@@ -107,6 +107,52 @@ describe('BackgroundTracker', () => {
     expect(list?.[0]?.endedAt).toBeUndefined()
   })
 
+  test('«законченная» по устаревшему списку снова работает, когда список её называет', () => {
+    t.apply(taskStarted({ task_id: 'b1', task_type: 'local_bash', is_backgrounded: true }))
+    t.apply(changed([]))
+    expect(t.tasks[0]?.status).toBe('completed')
+    const list = t.apply(changed([{ task_id: 'b1' }]))
+    expect(list?.[0]).toMatchObject({ taskId: 'b1', status: 'running' })
+    expect(list?.[0]?.endedAt).toBeUndefined()
+    // A real end is never healed by a list.
+    t.apply(notification('b1', 'stopped'))
+    expect(t.apply(changed([{ task_id: 'b1' }]))).toBeNull()
+  })
+
+  test('возобновлённая задача с тем же id снова работает и встаёт первой', () => {
+    t.apply(assistantToolUse('tu1', 'Bash', { command: 'npm run dev' }))
+    t.apply(taskStarted({ task_id: 'b1', tool_use_id: 'tu1', task_type: 'local_bash', is_backgrounded: true }))
+    t.apply(taskStarted({ task_id: 'b2', task_type: 'local_bash', is_backgrounded: true }))
+    t.apply(notification('b1', 'stopped'))
+    clock = 7000
+    const list = t.apply(taskStarted({ task_id: 'b1', task_type: 'local_bash', is_backgrounded: true }))
+    expect(list?.map((x) => x.taskId)).toEqual(['b1', 'b2'])
+    expect(list?.[0]).toMatchObject({ status: 'running', startedAt: 7000, command: 'npm run dev' })
+    expect(list?.[0]?.endedAt).toBeUndefined()
+    // A second task_started for a running task changes nothing.
+    expect(t.apply(taskStarted({ task_id: 'b1', task_type: 'local_bash', is_backgrounded: true }))).toBeNull()
+  })
+
+  test('endAll: работающие прерваны с временем конца, законченные не тронуты', () => {
+    t.apply(taskStarted({ task_id: 'b1', task_type: 'local_bash', is_backgrounded: true }))
+    t.apply(taskStarted({ task_id: 'b2', task_type: 'local_bash', is_backgrounded: true }))
+    t.apply(notification('b1', 'completed'))
+    clock = 8000
+    const list = t.endAll('interrupted')
+    expect(list?.find((x) => x.taskId === 'b2')).toMatchObject({ status: 'interrupted', endedAt: 8000 })
+    expect(list?.find((x) => x.taskId === 'b1')?.status).toBe('completed')
+    expect(t.endAll('interrupted')).toBeNull()
+  })
+
+  test('передний план помнится не бесконечно', () => {
+    for (let i = 0; i < 60; i++) {
+      t.apply(taskStarted({ task_id: `f${i}`, task_type: 'local_bash', is_backgrounded: false }))
+    }
+    // The oldest were forgotten: moving one to the background lists nothing.
+    expect(t.apply(updated('f0', { is_backgrounded: true }))).toBeNull()
+    expect(t.apply(updated('f59', { is_backgrounded: true }))?.[0]?.taskId).toBe('f59')
+  })
+
   test('уже законченную задачу пустой список не трогает', () => {
     t.apply(taskStarted({ task_id: 'b1', task_type: 'local_bash', is_backgrounded: true }))
     t.apply(notification('b1', 'stopped'))
@@ -120,7 +166,7 @@ describe('BackgroundTracker', () => {
       t.apply(taskStarted({ task_id: 'f1', tool_use_id: 'tu9', task_type: 'local_bash', is_backgrounded: false }))
     ).toBeNull()
     expect(t.tasks).toEqual([])
-    // Its end while still in the foreground adds nothing either.
+    // Moved to the background: from now on it is listed, with its command.
     clock = 2000
     expect(t.apply(updated('f1', { is_backgrounded: true }))).toEqual([
       expect.objectContaining({ taskId: 'f1', command: 'npm test', status: 'running' })

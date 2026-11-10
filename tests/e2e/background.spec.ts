@@ -130,6 +130,62 @@ test('законченная задача остаётся в списке с и
   }
 })
 
+test('отказ остановить виден в строке задачи, задача работает дальше', async () => {
+  const { app, profile } = await launch({
+    steps: [],
+    stopTaskError: 'задача уже закончилась',
+    nextTurn: [{ kind: 'backgroundBash', command: 'npm run dev', finish: null }]
+  })
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('[data-testid="status-context"]')).toBeVisible({ timeout: 15000 })
+    await send(win, 'запусти')
+    await win.locator('[data-testid="status-bg"]').click({ timeout: 15000 })
+    const task = win.locator('[data-testid="bg-task"]')
+    await task.locator('[data-testid="bg-stop"]').click()
+    await expect(task.locator('[data-testid="bg-stop-error"]')).toHaveText(
+      'Не удалось остановить: задача уже закончилась'
+    )
+    await expect(task).toContainText('работает')
+    // The button is back for another try.
+    await expect(task.locator('[data-testid="bg-stop"]')).toBeEnabled()
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('Esc из поля ввода закрывает список и не прерывает агента', async () => {
+  const { app, profile } = await launch({
+    steps: [],
+    nextTurn: [
+      { kind: 'backgroundBash', command: 'npm run dev', finish: null },
+      { kind: 'tool', name: 'Read', input: { file_path: 'a.ts' }, pauseMs: 8000 }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('[data-testid="status-context"]')).toBeVisible({ timeout: 15000 })
+    await send(win, 'запусти')
+    const nowLine = win.locator('[data-testid="now-line"]')
+    await expect(nowLine).toHaveClass(/is-turn/, { timeout: 15000 })
+
+    await win.locator('[data-testid="status-bg"]').click()
+    await expect(win.locator('[data-testid="bg-list"]')).toBeVisible()
+    // Focus back in the input without a click (a click outside closes the list by itself).
+    await win.locator('[data-testid="composer-input"]').focus()
+    await win.keyboard.press('Escape')
+
+    await expect(win.locator('[data-testid="bg-list"]')).toHaveCount(0)
+    // The turn goes on: Esc was the list's.
+    await expect(nowLine).toHaveClass(/is-turn/)
+    // With the list closed, Esc is the agent's again.
+    await win.keyboard.press('Escape')
+    await expect(win.locator('[data-testid="now-line"].is-turn')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
 test('CLI без чтения вывода — понятная строка вместо пустоты', async () => {
   const { app, profile } = await launch({
     steps: [],

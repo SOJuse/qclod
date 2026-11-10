@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { CHANNELS } from '../shared/channels'
 import type {
   EnvironmentReport,
+  LoginProgress,
   AppSettings,
   CommandInfo,
   HotkeyRegistration,
@@ -19,6 +20,7 @@ import type {
   TabId,
   TabState,
   TaskOutput,
+  UpdateState,
   UserInput
 } from '../shared/types'
 
@@ -138,9 +140,16 @@ const api = {
   checkEnvironment: (): Promise<EnvironmentReport> => ipcRenderer.invoke(CHANNELS.setupCheck),
   installAgent: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.setupInstall),
   cancelInstall: (): Promise<void> => ipcRenderer.invoke(CHANNELS.setupCancel),
-  openTerminal: (command?: string): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.setupTerminal, command),
+  /** Opens `claude auth login` in its own window and starts watching for success. */
+  login: (): Promise<void> => ipcRenderer.invoke(CHANNELS.setupLogin),
   onSetupOutput: (cb: (line: string) => void) => on(CHANNELS.setupOutput, cb),
+  onLoginProgress: (cb: (p: LoginProgress) => void) => on(CHANNELS.setupLoginProgress, cb),
+
+  /** Whether a new version of Qclod is downloaded and waits for a restart. */
+  getUpdate: (): Promise<UpdateState> => ipcRenderer.invoke(CHANNELS.updateGet),
+  /** Quits and installs the downloaded version; false when there is none. */
+  restartToUpdate: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.updateRestart),
+  onUpdateChanged: (cb: (s: UpdateState) => void) => on(CHANNELS.updateChanged, cb),
 
   onRibbon: (cb: (e: RibbonEvent) => void) => on(CHANNELS.ribbonChanged, cb),
   onPanel: (cb: (e: PanelEvent) => void) => on(CHANNELS.panelChanged, cb),

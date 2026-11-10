@@ -25,9 +25,18 @@ interface Props {
   models: ModelOption[]
   onPatch: (patch: Partial<AppSettings>) => Promise<AppSettings>
   onClose: () => void
+  /** A field to start in, selected: the setup screen opens settings for the agent path. */
+  focusField?: 'agentPath'
 }
 
-export function SettingsScreen({ settings, version, models, onPatch: save, onClose }: Props): JSX.Element {
+export function SettingsScreen({
+  settings,
+  version,
+  models,
+  onPatch: save,
+  onClose,
+  focusField
+}: Props): JSX.Element {
   const [hotkeyStatus, setHotkeyStatus] = useState<HotkeyRegistration | null>(null)
   const [rules, setRules] = useState<PermissionRuleView[]>([])
   const [saved, setSaved] = useState(false)
@@ -44,7 +53,8 @@ export function SettingsScreen({ settings, version, models, onPatch: save, onClo
 
   useEffect(() => {
     // Focus inside the sheet is what lets Esc reach it.
-    sheet.current?.focus()
+    // A field that asked for focus keeps it; it is inside the sheet, so Esc still works.
+    if (!focusField) sheet.current?.focus()
     return () => clearTimeout(savedTimer.current)
   }, [])
 
@@ -142,6 +152,8 @@ export function SettingsScreen({ settings, version, models, onPatch: save, onClo
               <input
                 type="text"
                 data-testid="setting-agentPath"
+                autoFocus={focusField === 'agentPath'}
+                onFocus={focusField === 'agentPath' ? (e) => e.target.select() : undefined}
                 defaultValue={settings.agentPath}
                 onBlur={(e) => onPatch({ agentPath: e.target.value })}
               />

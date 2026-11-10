@@ -1,6 +1,6 @@
 appId: io.github.sojuse.qclod
 productName: Qclod
-copyright: Copyright © 2026 noreply
+copyright: Copyright © 2026 SOJuse
 
 directories:
   output: dist
@@ -39,7 +39,21 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: Qclod
   artifactName: Qclod-${version}-setup.${ext}
+  uninstallDisplayName: Qclod
+  installerLanguages: [ru_RU]
+  language: '1049'
+  multiLanguageInstaller: false
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/installerSidebar.bmp
+  installerHeader: build/installerHeader.bmp
+  include: build/installer.nsh
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
 
-# The spec has no auto-update: a new version is a new installer, downloaded
-# by hand.
-publish: null
+# Updates come from public GitHub releases. releaseType must be "release":
+# the default is a draft, and electron-updater does not see drafts.
+publish:
+  provider: github
+  owner: SOJuse
+  repo: qclod
+  releaseType: release

@@ -595,3 +595,63 @@ test('два фоновых подагента — «2 агента», клик 
     await close(app, profile)
   }
 })
+
+test('новая вкладка без входа: Войти, и вкладка продолжает', async () => {
+  const profile = mkdtempSync(join(tmpdir(), 'qclod-chat-'))
+  const app = await electron.launch({
+    args: ['.'],
+    env: {
+      ...process.env,
+      QCLOD_USER_DATA: profile,
+      QCLOD_FAKE_AUTH: JSON.stringify({ sequence: ['in'], pollMs: 50 }),
+      QCLOD_FAKE_SDK_SCRIPT: JSON.stringify({
+        steps: [],
+        nextTurn: [
+          // The first session dies before it introduces itself, as an agent
+          // that is not logged in does; the one started after login answers.
+          { kind: 'crash', message: 'Not logged in · Please run /login', times: 1, beforeInit: true },
+          { kind: 'text', text: 'ответ после входа' }
+        ]
+      })
+    } as Record<string, string>
+  })
+  try {
+    const win = await app.firstWindow()
+    const ribbon = win.locator('[data-testid="ribbon"]')
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.waitFor({ timeout: 15000 })
+
+    await input.click()
+    await input.fill('сделай отчёт')
+    await input.press('Enter')
+
+    const login = win.locator('[data-testid="notice-login"]')
+    await expect(login).toBeVisible({ timeout: 15000 })
+    await expect(ribbon).toContainText('Нажмите «Войти» — после входа вкладка продолжит сама.')
+    await expect(ribbon).not.toContainText('Not logged in')
+
+    await login.click()
+    await expect(ribbon).toContainText('ответ после входа', { timeout: 15000 })
+    await expect
+      .poll(() =>
+        app.evaluate(() => (globalThis as { __qclodLoginOpens?: string[] }).__qclodLoginOpens?.length ?? 0)
+      )
+      .toBe(1)
+
+    // The resend draws no second bubble (its echo matches the first), so the
+    // bubble count only shows nothing was sent anew. The answer count is what
+    // shows the message reached the new session once: every send the fake
+    // gets plays a turn and says this text. The driver-level «sent exactly
+    // once» is checked in tabController.test.ts.
+    const users = win.locator('[data-testid="ribbon-user"]')
+    const answers = win.locator('[data-testid="ribbon-agentText"]').filter({ hasText: 'ответ после входа' })
+    await expect(users).toHaveCount(1)
+    await expect(answers).toHaveCount(1)
+    // A second, unwanted resend would show within this time.
+    await win.waitForTimeout(1000)
+    await expect(users).toHaveCount(1)
+    await expect(answers).toHaveCount(1)
+  } finally {
+    await close(app, profile)
+  }
+})

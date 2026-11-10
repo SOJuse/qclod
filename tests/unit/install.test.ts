@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { cmdShellArgs, InstallSlot, quoteArg, runInstaller, type InstallHandle } from '@main/setup/install'
+import { cmdShellArgs, installWithFallback, InstallSlot, quoteArg, runInstaller, type InstallHandle } from '@main/setup/install'
 
 function alive(pid: number): boolean {
   try {
@@ -240,5 +240,68 @@ describe('quoteArg', () => {
 describe('cmdShellArgs', () => {
   test('cmd без автозапуска, с выключенным отложенным раскрытием, строка в одной паре кавычек', () => {
     expect(cmdShellArgs('winget install x')).toEqual(['/d', '/v:off', '/s', '/c', '"winget install x"'])
+  })
+})
+
+describe('installWithFallback', () => {
+  type Start = NonNullable<Parameters<typeof installWithFallback>[3]>
+  function fakeStart(): {
+    start: Start
+    calls: string[]
+    dones: Array<(ok: boolean) => void>
+    cancels: number[]
+  } {
+    const calls: string[] = []
+    const dones: Array<(ok: boolean) => void> = []
+    const cancels: number[] = []
+    const start: Start = (method, _out, onDone) => {
+      calls.push(method)
+      dones.push(onDone)
+      const i = calls.length
+      return { cancel: () => void cancels.push(i) }
+    }
+    return { start, calls, dones, cancels }
+  }
+
+  test('winget упал — пробует npm', () => {
+    const f = fakeStart()
+    const lines: string[] = []
+    const results: boolean[] = []
+    installWithFallback(['winget', 'npm'], (l) => lines.push(l), (ok) => results.push(ok), f.start)
+    f.dones[0](false)
+    expect(f.calls).toEqual(['winget', 'npm'])
+    expect(lines).toContain('winget не справился — пробую через npm.')
+    f.dones[1](true)
+    expect(results).toEqual([true])
+  })
+
+  test('оба упали — false один раз', () => {
+    const f = fakeStart()
+    const results: boolean[] = []
+    installWithFallback(['winget', 'npm'], () => undefined, (ok) => results.push(ok), f.start)
+    f.dones[0](false)
+    f.dones[1](false)
+    expect(results).toEqual([false])
+  })
+
+  test('отмена не запускает запасной путь', () => {
+    const f = fakeStart()
+    const results: boolean[] = []
+    const handle = installWithFallback(['winget', 'npm'], () => undefined, (ok) => results.push(ok), f.start)
+    handle.cancel()
+    expect(f.cancels).toEqual([1])
+    f.dones[0](false)
+    expect(f.calls).toEqual(['winget'])
+    expect(results).toEqual([false])
+  })
+
+  test('пустой список — сразу false и строка', () => {
+    const f = fakeStart()
+    const lines: string[] = []
+    const results: boolean[] = []
+    installWithFallback([], (l) => lines.push(l), (ok) => results.push(ok), f.start)
+    expect(lines).toEqual(['Нечем установить: нет ни winget, ни Node.js.'])
+    expect(results).toEqual([false])
+    expect(f.calls).toEqual([])
   })
 })

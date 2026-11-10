@@ -385,13 +385,27 @@ export interface ToolReport {
   found: boolean
   version?: string
   path?: string
+  /** Why the agent was not found, when there is something specific to say. */
+  problem?: string
 }
+
+/** What `claude auth status` says; 'unknown' when it could not be asked or read. */
+export type AuthStatus = 'in' | 'out' | 'unknown'
+
+/** The login watch, as the setup screen hears it. */
+export type LoginProgress = 'waiting' | 'in' | 'timeout'
+
+/** The app's own update: nothing to say yet, or a new version downloaded and waiting for a restart. */
+export type UpdateState = { kind: 'idle' } | { kind: 'ready'; version: string }
 
 /** What the machine has, for the setup screen. */
 export interface EnvironmentReport {
   agent: ToolReport
   /** How this machine can install the agent, if it has to. */
   installMethod: 'winget' | 'npm' | null
+  /** null when there is no agent to ask. */
+  auth: AuthStatus | null
+  /** The agent is there and not known to be logged out. */
   ready: boolean
 }
 

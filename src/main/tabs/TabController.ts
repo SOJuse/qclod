@@ -20,7 +20,7 @@ import type {
 import { isDirectory, loadTabs, saveTabs, type LoadedTab } from '../store/tabsStore'
 import { MAX_QUEUED, seedFromTranscript, type AgentSession, type SessionSeed } from '../agent/AgentSession'
 import { EMPTY_PANEL } from '../agent/panelData'
-import { classifyStartFailure } from '../agent/startFailure'
+import { classifyStartFailure, LOGIN_NEEDED_TEXT } from '../agent/startFailure'
 import type { AgentSessionManager } from '../agent/AgentSessionManager'
 
 export interface TabHistory {
@@ -266,8 +266,52 @@ export class TabController {
    * goes to the new one as it was sent, once (it is on screen already).
    */
   async retry(id: TabId): Promise<void> {
+    // Already being swapped — a second click, or a retry after login racing
+    // the user's own: that swap resends what was unsent, and a second one
+    // would close its new session mid-turn and send it all again.
+    if (this.replacing.has(id)) return
     const unsent = this.deps.manager.get(id)?.sentBeforeInit ?? []
+    // Resent only into the session this retry starts (`replaceSession`).
     await this.replaceSession(id, () => undefined, unsent)
+  }
+
+  /**
+   * The user has just logged in: every tab that stopped for want of it
+   * carries on by itself, as «Повторить» would — what was written there goes
+   * to the new session once. One at a time, so the agents do not all start
+   * at once; one that cannot carry on says so in its own ribbon and does not
+   * hold the others back.
+   */
+  async afterLogin(): Promise<void> {
+    const waiting = this.tabs.flatMap((tab) => {
+      const session = this.deps.manager.get(tab.id)
+      return session && this.waitsForLogin(tab.id, session) ? [{ id: tab.id, session }] : []
+    })
+    for (const { id, session } of waiting) {
+      // Asked again just before: while an earlier tab was retried this one
+      // may have been retried by hand, closed, or retried by another login.
+      if (!this.waitsForLogin(id, session)) continue
+      try {
+        await this.retry(id)
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        // The tab's ribbon is its session's, or — between sessions — its preview's.
+        const builder = this.deps.manager.get(id) ?? this.previews.get(id)?.builder
+        if (builder) this.emitRibbon(id, builder.notice(`Сессия не запустилась: ${reason}`, 'error'))
+        else console.warn(`Вкладка ${id} не продолжила после входа: ${reason}`)
+      }
+    }
+  }
+
+  /** The tab's session is still this one, died for want of a login, and nobody is swapping it. */
+  private waitsForLogin(id: TabId, session: AgentSession): boolean {
+    return (
+      this.deps.manager.get(id) === session &&
+      !this.replacing.has(id) &&
+      session.status === 'error' &&
+      session.error !== undefined &&
+      classifyStartFailure(session.error) === 'not-logged-in'
+    )
   }
 
   /**
@@ -277,15 +321,15 @@ export class TabController {
    * would leave the window holding items main no longer has, and new ones
    * under the same ids. `prepare` runs once the old session is gone and
    * before the new one starts. `unsent` and the old session's queue go to
-   * the new one (`handOver`).
+   * the new one (`handOver`). True when it started the tab's new session.
    */
   private async replaceSession(
     id: TabId,
     prepare: (tab: TabState) => void,
     unsent: UserInput[] = []
-  ): Promise<void> {
+  ): Promise<boolean> {
     const tab = this.tabs.find((t) => t.id === id)
-    if (!tab) return
+    if (!tab) return false
     const old = this.deps.manager.get(id)
     const seed = old?.successorSeed()
     // Taken before the old session goes: closing it would drop the queue.
@@ -300,15 +344,19 @@ export class TabController {
       // Closed while the old session was closing: nothing to start.
       if (!this.tabs.includes(tab)) {
         this.previews.delete(id)
-        return
+        return false
       }
       // Someone else has given the tab a session meanwhile: it stays, and
-      // takes over what was owed.
-      if (!this.deps.manager.get(id)) {
+      // takes over the queue. What never reached an agent is resent only
+      // into a session started here: one someone else gave the tab was sent
+      // its own messages.
+      const started = !this.deps.manager.get(id)
+      if (started) {
         prepare(tab)
         await this.startSession(id)
       }
-      this.handOver(id, this.deps.manager.get(id), unsent, queued)
+      this.handOver(id, this.deps.manager.get(id), started ? unsent : [], queued)
+      return started
     } finally {
       this.replacing.delete(id)
       this.held.delete(id)
@@ -517,12 +565,10 @@ export class TabController {
       // A clean session would die the same way. The tab keeps its session,
       // its error and its conversation, and offers the way out.
       this.patch(id, { canRetry: true })
-      // Said once: a «Повторить» that fails the same way, with nothing sent
-      // since, does not stack a second copy under the first.
-      const text = 'Claude Code не вошёл в аккаунт. Войдите и нажмите «Повторить».'
-      const since = dead.items.slice(dead.items.findLastIndex((i) => i.kind === 'user') + 1)
-      const told = since.some((i) => i.kind === 'notice' && i.action === 'login' && i.text === text)
-      if (!told) this.emitRibbon(id, dead.notice(text, 'error', 'login'))
+      // Said once: the dead session's own `fail` has usually said it already,
+      // and a «Повторить» that fails the same way, with nothing sent since,
+      // does not stack a second copy under the first.
+      if (!dead.toldToLogIn()) this.emitRibbon(id, dead.notice(LOGIN_NEEDED_TEXT, 'error', 'login'))
       return
     }
 
@@ -610,10 +656,13 @@ export class TabController {
       const patch: Partial<TabState> = { status }
       if (session.error !== undefined) patch.error = session.error
       // A start that never made an agent never reached the conversation:
-      // the same one can be tried again. (Not logged in is told apart in
-      // `recoverFromDeadSession`, which knows why the agent died.)
+      // the same one can be tried again. So can a session whose agent is not
+      // logged in, conversation or not — once the user logs in it will go.
       const tab = this.tabs.find((t) => t.id === id)
-      patch.canRetry = status === 'error' && !session.launched && Boolean(tab?.lastSessionId)
+      const notLoggedIn =
+        session.error !== undefined && classifyStartFailure(session.error) === 'not-logged-in'
+      patch.canRetry =
+        status === 'error' && ((!session.launched && Boolean(tab?.lastSessionId)) || notLoggedIn)
       if (status === 'waiting' || status === 'idle') {
         if (this.activeId !== id) patch.badge = true
       }

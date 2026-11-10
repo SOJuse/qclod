@@ -1,0 +1,110 @@
+/*
+ * A downloaded update: one quiet strip across the window under the title bar.
+ * The accent is spent on the icon alone; the text stays plain so the strip
+ * reads as news, not an alarm. The warning line uses --warn only when a
+ * restart would cut work short.
+ */
+.update-banner {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text);
+  animation: update-banner-in var(--dur) var(--ease);
+}
+
+.update-banner-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: var(--tool-chip-size);
+  height: var(--tool-chip-size);
+  border-radius: var(--radius-pill);
+  background: var(--accent-fill);
+  color: var(--accent);
+}
+
+.update-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.update-banner-line,
+.update-banner-warning {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.update-banner-warning {
+  margin-top: var(--gap-hair);
+  color: var(--warn);
+}
+
+.update-banner-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+}
+
+.update-banner-button {
+  padding: var(--button-sm-pad);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--button-sm-radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--button-sm-font-size);
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
+}
+
+.update-banner-button:hover {
+  border-color: var(--border-accent);
+  background: var(--hover-fill);
+}
+
+.update-banner-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.update-banner-button.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.update-banner-button.is-primary:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+
+@keyframes update-banner-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-banner {
+    animation: none;
+  }
+  .update-banner-button {
+    transition: none;
+  }
+}

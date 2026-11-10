@@ -34,7 +34,14 @@ export type FakeStep =
   | FakeBackgroundAgentStep
   | FakeBackgroundBashStep
   | { kind: 'compact'; preTokens: number; postTokens: number; trigger?: 'auto' | 'manual' }
-  | { kind: 'crash'; message: string }
+  /**
+   * Throws mid-stream. `times`: only the first N sessions (drivers made) play
+   * it, later ones skip it; each session counts once, as it is made, in
+   * fake-sdk-crashes.json in QCLOD_USER_DATA (no such folder — always crashes).
+   * Read from top-level `steps` and `nextTurn`.
+   * `beforeInit`: thrown before the turn's system/init and echo.
+   */
+  | { kind: 'crash'; message: string; times?: number; beforeInit?: boolean }
   /** Says «картинок: N; типы: …; байт: M» about the images of the last send. */
   | { kind: 'reportInput' }
 

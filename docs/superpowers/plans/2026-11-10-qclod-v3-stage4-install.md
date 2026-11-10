@@ -79,7 +79,7 @@ test('автор — SOJuse, почты нет', () => {
   expect(pkg.repository).toEqual({ type: 'git', url: 'https://github.com/SOJuse/qclod.git' })
   expect(yml).toMatch(/^appId: io\.github\.sojuse\.qclod$/m)
   expect(yml).toMatch(/^copyright: Copyright © 2026 SOJuse$/m)
-  expect(JSON.stringify(pkg) + yml).not.toMatch(/sojuse|@[a-z0-9-]+\.[a-z]{2,}/i)
+  expect(JSON.stringify(pkg) + yml).not.toMatch(/@[a-z0-9-]+\.[a-z]{2,}/i)
 })
 test('appId приложения совпадает с установщиком', () => {
   expect(yml).toContain(`appId: ${APP_ID}`)
@@ -91,7 +91,7 @@ test('обновления берутся из публичных релизов
 
 - [ ] **Step 2: Run** `npx vitest run tests/unit/buildConfig.test.ts` — Expected: FAIL на `author`.
 - [ ] **Step 3: Implement.** Значения ровно из теста. `publish: null` и комментарий «The spec has no auto-update» заменяются блоком `publish` (`releaseType: release` обязателен: по умолчанию electron-builder делает черновик, а черновики `electron-updater` не видит). В `src/main/index.ts` на верхнем уровне, рядом с остальной ранней настройкой: `app.setAppUserModelId(APP_ID)` — иначе уведомления Windows не совпадут с ярлыком, который NSIS создаёт с этим AUMID.
-- [ ] **Step 4: Run** `npx vitest run tests/unit/buildConfig.test.ts tests/unit/mentions.test.ts` — PASS; `git grep -n sojuse` — пусто.
+- [ ] **Step 4: Run** `npx vitest run tests/unit/buildConfig.test.ts tests/unit/mentions.test.ts` — PASS; рабочей почты владельца нет ни в одном файле (`git grep` по ней — пусто).
 - [ ] **Step 5: Commit** `build: author SOJuse, appId io.github.sojuse.qclod, publish to GitHub releases`
 
 ---
@@ -496,7 +496,7 @@ jobs:
 - новый раздел «Обновление» перед «Результат прогона»: «Поставить версию N из релиза, выпустить N+1 тегом, открыть N: через ~10 с баннер «Скачана новая версия…»; «Перезапустить» при работающем агенте предупреждает, ставит N+1 и открывает Qclod со всеми вкладками; при включённом «сворачивать в трей» приложение не остаётся в трее.»; «С выключенной сетью Qclod запускается и работает, баннера нет.»; «Перед тегом: `npm run typecheck`, `npm run test:unit`, `npm run test:e2e` зелёные локально — workflow их не гоняет.»
 - строка «`/remote-control` помечена недоступной» остаётся (её снимает этап 5).
 
-- [ ] **Step 1: Write the check first** — `tests/unit/buildConfig.test.ts` дополняется: `README.md` существует, содержит «Выполнить в любом случае» и `SOJuse/qclod/releases`, не содержит `sojuse` и `@` с доменом; `release-smoke.md` содержит «claude auth login» и не содержит «Открыть терминал».
+- [ ] **Step 1: Write the check first** — `tests/unit/buildConfig.test.ts` дополняется: `README.md` существует, содержит «Выполнить в любом случае» и `SOJuse/qclod/releases`, не содержит рабочую почту владельца и вообще `@` с доменом; `release-smoke.md` содержит «claude auth login» и не содержит «Открыть терминал».
 - [ ] **Step 2: Run** `npx vitest run tests/unit/buildConfig.test.ts` — FAIL.
 - [ ] **Step 3: Write** README и правки чек-листа по пунктам выше.
 - [ ] **Step 4: Run** `npx vitest run tests/unit/buildConfig.test.ts` — PASS; затем полный `npm run typecheck && npm run test:unit && npm run test:e2e` — зелено.

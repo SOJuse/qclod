@@ -14,9 +14,14 @@ describe('проверка релизной сборки на тестовые �
       'QCLOD_PREPARE_DELAY_MS',
       'QCLOD_PREPARE_FAIL',
       'QCLOD_ALLOW_REAL',
+      'QCLOD_FAKE_INSTALL',
+      'QCLOD_FAKE_AUTH',
+      'QCLOD_FAKE_UPDATE',
       'QCLOD_E2E_INVISIBLE',
       '__qclodShellLog',
+      '__qclodLoginOpens',
       '__qclodRealAgentStarts',
+      '__qclodUpdateRestarts',
       'Тестовая сборка не запускает'
     ]
     for (const name of names) expect(seamsIn(`x = process.env['${name}'];`)).toEqual([name])

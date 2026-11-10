@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type {
   Attachment,
   CommandInfo,
@@ -21,9 +21,9 @@ import {
   acceptCommand,
   commandItems,
   completeCommand,
-  effortItems,
+  bareLocalStep,
   findSlashQuery,
-  modelItems,
+  stepItems,
   type SlashOutcome,
   type SlashStep
 } from '../input/slash'
@@ -44,6 +44,8 @@ interface Props {
   models: ModelOption[]
   model: string | null
   effort: EffortLevel | null
+  /** The tab has a running session; /model and /effort need one to apply. */
+  started: boolean
   /** Bumped by whoever took focus away, to hand it back. */
   focusToken: number
   /** False for a pane that is on screen but not the one being typed into. */
@@ -129,6 +131,7 @@ export function Composer({
   models,
   model,
   effort,
+  started,
   focusToken,
   autoFocus = true,
   onDraftChange,
@@ -157,6 +160,7 @@ export function Composer({
   const [step, setStep] = useState<SlashStep>(COMMANDS_STEP)
   /** The text Esc closed the list on; typing anything brings the list back. */
   const [dismissedFor, setDismissedFor] = useState<string | null>(null)
+  const menuId = useId()
 
   const history = ((): InputHistory => {
     let existing = histories.current.get(tabId)
@@ -194,7 +198,7 @@ export function Composer({
     if (step.kind !== 'commands' && draft.startsWith(prefix) && !draft.includes('\n')) {
       const query = draft.slice(prefix.length)
       const items =
-        step.kind === 'model' ? modelItems(models, query) : effortItems(models, model, query)
+        stepItems({ kind: step.kind }, { models, model, effort, started }, query)
       const current = step.kind === 'model' ? model : effort
       const initial = Math.max(0, items.findIndex((item) => item.id === current))
       return { kind: 'slash', step, key: `${step.kind}:${query}`, items, initial }
@@ -257,6 +261,19 @@ export function Composer({
   )
 
   const submit = useCallback(async (): Promise<void> => {
+    // A bare «/model» is ours: it opens the list again rather than going to
+    // the session, where it would do nothing.
+    const local = bareLocalStep(draft)
+    if (local) {
+      setStep(local)
+      setDismissedFor(null)
+      const text = `/${local.kind} `
+      if (text === draft) return
+      pendingCaret.current = text.length
+      onDraftChange(text)
+      setCaret(text.length)
+      return
+    }
     const text = draft.trim()
     if (!text && attachments.length === 0) return
     const ready = await materialize(attachments)
@@ -336,7 +353,19 @@ export function Composer({
   }
 
   function onKeyDown(ev: React.KeyboardEvent<HTMLTextAreaElement>): void {
-    const action = resolveComposerKey(ev as unknown as Parameters<typeof resolveComposerKey>[0], context())
+    const action = resolveComposerKey(
+      {
+        key: ev.key,
+        code: ev.code,
+        ctrlKey: ev.ctrlKey,
+        shiftKey: ev.shiftKey,
+        altKey: ev.altKey,
+        metaKey: ev.metaKey,
+        isComposing: ev.nativeEvent.isComposing,
+        keyCode: ev.keyCode
+      },
+      context()
+    )
 
     switch (action) {
       case 'native':
@@ -439,12 +468,19 @@ export function Composer({
           items={menuItems}
           selected={selected}
           onPick={(item) => pick(item)}
+          id={menuId}
           testId="mention-popup"
           itemTestId="mention-item"
         />
       )}
       {menu.kind === 'slash' && (
-        <SlashMenu step={menu.step} items={menuItems} selected={selected} onPick={(item) => pick(item)} />
+        <SlashMenu
+          id={menuId}
+          step={menu.step}
+          items={menuItems}
+          selected={selected}
+          onPick={(item) => pick(item)}
+        />
       )}
 
       <div className="composer-row">
@@ -462,6 +498,10 @@ export function Composer({
           ref={field}
           className="composer-input"
           data-testid="composer-input"
+          aria-autocomplete="list"
+          aria-expanded={popupOpen}
+          aria-controls={popupOpen ? menuId : undefined}
+          aria-activedescendant={popupOpen ? `${menuId}-${selected}` : undefined}
           rows={1}
           disabled={dead}
           placeholder={

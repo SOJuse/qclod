@@ -298,3 +298,68 @@ test('усилие в панели выбирается из уровней, к�
     await close(app, profile)
   }
 })
+
+test('/model, пока сессия не прислала моделей, — не тупик и не уходит агенту', async () => {
+  const { app, profile } = await launch({ steps: [], init: { commands: COMMANDS, models: [] } })
+  try {
+    const win = await app.firstWindow()
+    const input = await ready(win)
+
+    await input.pressSequentially('/model')
+    await input.press('Enter')
+
+    // One row that says why there is nothing to pick, and it holds Enter.
+    const items = win.locator('[data-testid="slash-item"]')
+    await expect(items).toHaveCount(1)
+    await expect(items.first()).toContainText('Список моделей загружается')
+    await expect(items.first()).toHaveAttribute('aria-disabled', 'true')
+    await input.press('Enter')
+    await expect(input).toHaveValue('/model ')
+    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
+
+    // Closed with Esc, «/model » is still never sent: Enter brings the list back.
+    await input.press('Escape')
+    await expect(win.locator('[data-testid="slash-menu"]')).toHaveCount(0)
+    await input.press('Enter')
+    await expect(win.locator('[data-testid="slash-menu"]')).toBeVisible()
+    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('поле ввода говорит экранному диктору, какая строка выбрана', async () => {
+  const { app, profile } = await launch({ steps: [], init: { commands: COMMANDS } })
+  try {
+    const win = await app.firstWindow()
+    const input = await ready(win)
+    await expect(input).toHaveAttribute('aria-expanded', 'false')
+
+    await input.press('/')
+    await input.press('ArrowDown')
+    const second = win.locator('[data-testid="slash-item"]').nth(1)
+    const id = await second.getAttribute('id')
+    expect(id).toBeTruthy()
+    await expect(input).toHaveAttribute('aria-activedescendant', id!)
+    await expect(input).toHaveAttribute('aria-expanded', 'true')
+    await expect(input).toHaveAttribute('aria-autocomplete', 'list')
+    const listId = await win.locator('[data-testid="slash-menu"] [role="listbox"]').getAttribute('id')
+    await expect(input).toHaveAttribute('aria-controls', listId!)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('Shift+Enter при открытом списке переносит строку', async () => {
+  const { app, profile } = await launch({ steps: [], init: { commands: COMMANDS } })
+  try {
+    const win = await app.firstWindow()
+    const input = await ready(win)
+    await input.pressSequentially('/com')
+    await input.press('Shift+Enter')
+    await expect(input).toHaveValue('/com\n')
+    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})

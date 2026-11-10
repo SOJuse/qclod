@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { Ban } from 'lucide-react'
 import './InlineMenu.css'
 
@@ -15,6 +15,12 @@ export interface InlineMenuItem {
 }
 
 interface Props {
+  /**
+   * The listbox's id; row `n` is `${id}-${n}`. The field that drives the list
+   * points at them (`aria-controls`, `aria-activedescendant`), since focus
+   * never leaves it.
+   */
+  id: string
   items: InlineMenuItem[]
   selected: number
   onPick: (item: InlineMenuItem) => void
@@ -30,6 +36,7 @@ interface Props {
  * and the input's keys drive the selection.
  */
 export function InlineMenu({
+  id,
   items,
   selected,
   onPick,
@@ -38,7 +45,6 @@ export function InlineMenu({
   title
 }: Props): JSX.Element | null {
   const list = useRef<HTMLUListElement | null>(null)
-  const baseId = useId()
 
   useEffect(() => {
     list.current?.children[selected]?.scrollIntoView({ block: 'nearest' })
@@ -51,17 +57,17 @@ export function InlineMenu({
       {title && <div className="inline-menu-title">{title}</div>}
       <ul
         className="inline-menu-list"
+        id={id}
         role="listbox"
         ref={list}
         aria-label={title}
-        aria-activedescendant={`${baseId}-${selected}`}
       >
         {items.map((item, index) => {
           const disabled = Boolean(item.disabledReason)
           return (
             <li
               key={item.id}
-              id={`${baseId}-${index}`}
+              id={`${id}-${index}`}
               role="option"
               data-testid={itemTestId}
               aria-selected={index === selected}

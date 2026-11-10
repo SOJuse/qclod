@@ -109,6 +109,7 @@ export function ChatPane({
         draft={draft}
         attachments={attachmentsByTab[tabId] ?? []}
         fileIndex={fileIndexByTab[tabId] ?? []}
+        started={status !== 'stopped'}
         commands={commands ?? []}
         recentCommands={recentCommands}
         models={panel.models}

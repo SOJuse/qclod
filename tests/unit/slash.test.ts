@@ -4,8 +4,10 @@ import {
   commandItems,
   completeCommand,
   effortItems,
+  bareLocalStep,
   findSlashQuery,
-  modelItems
+  modelItems,
+  stepItems
 } from '@renderer/input/slash'
 import { markUnavailable, withLocalCommands } from '../../src/shared/commandFilter'
 import type { CommandInfo, ModelOption } from '../../src/shared/types'
@@ -104,6 +106,36 @@ describe('строки списка', () => {
       { id: 'claude-sonnet-5', primary: 'Sonnet 5', secondary: 'быстрее и дешевле' }
     ])
     expect(modelItems(MODELS, 'son').map((i) => i.id)).toEqual(['claude-sonnet-5'])
+  })
+
+  test('второй шаг до запуска сессии — одна недоступная строка, а не тупик', () => {
+    for (const kind of ['model', 'effort'] as const) {
+      const items = stepItems({ kind }, { models: MODELS, model: null, effort: null, started: false }, '')
+      expect(items).toHaveLength(1)
+      expect(items[0]?.disabledReason).toBe('Сессия ещё не запущена')
+    }
+  })
+
+  test('сессия идёт, а моделей ещё нет — строка «загружается»', () => {
+    const items = stepItems({ kind: 'model' }, { models: [], model: null, effort: null, started: true }, '')
+    expect(items).toHaveLength(1)
+    expect(items[0]?.disabledReason).toBe('Список моделей загружается…')
+  })
+
+  test('сессия идёт — второй шаг даёт настоящие значения', () => {
+    const data = { models: MODELS, model: 'claude-sonnet-5', effort: null, started: true }
+    expect(stepItems({ kind: 'model' }, data, '').map((i) => i.id)).toEqual([
+      'claude-opus-5',
+      'claude-sonnet-5'
+    ])
+    expect(stepItems({ kind: 'effort' }, data, '')).toHaveLength(3)
+  })
+
+  test('/model и /effort без значения — свои, агенту не уходят', () => {
+    expect(bareLocalStep('/model')).toEqual({ kind: 'model' })
+    expect(bareLocalStep('  /effort  ')).toEqual({ kind: 'effort' })
+    expect(bareLocalStep('/model opus')).toBeNull()
+    expect(bareLocalStep('/compact')).toBeNull()
   })
 
   test('второй шаг /effort — уровни выбранной модели', () => {

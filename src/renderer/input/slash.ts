@@ -1,4 +1,4 @@
-import { EFFORT_LEVELS, type CommandInfo, type ModelOption } from '../../shared/types'
+import { EFFORT_LEVELS, type CommandInfo, type EffortLevel, type ModelOption } from '../../shared/types'
 import { filterCommands, isLocalCommand, needsArgument } from '../../shared/commandFilter'
 import { EFFORT_LABEL } from '../labels'
 import type { InlineMenuItem } from '../components/InlineMenu'
@@ -100,6 +100,46 @@ export function effortItems(
   return levels
     .filter((level) => matches(query, level, EFFORT_LABEL[level] ?? ''))
     .map((level) => ({ id: level, primary: EFFORT_LABEL[level] ?? level, hint: level }))
+}
+
+/** What the second step chooses from: the tab's session as the panel knows it. */
+export interface StepData {
+  models: ModelOption[]
+  model: string | null
+  effort: EffortLevel | null
+  /** The tab has a session running — without one nothing can be applied. */
+  started: boolean
+}
+
+/**
+ * The rows of the second step. When there is nothing to pick yet, a single
+ * row says why — an empty list would close and leave «/model» to be sent.
+ */
+export function stepItems(
+  step: { kind: 'model' | 'effort' },
+  data: StepData,
+  query: string
+): InlineMenuItem[] {
+  const waiting = (reason: string): InlineMenuItem[] => [
+    { id: `${step.kind}-waiting`, primary: `/${step.kind}`, disabledReason: reason }
+  ]
+  if (!data.started) return waiting('Сессия ещё не запущена')
+  if (step.kind === 'model') {
+    if (data.models.length === 0) return waiting('Список моделей загружается…')
+    return modelItems(data.models, query)
+  }
+  return effortItems(data.models, data.model, query)
+}
+
+/**
+ * `/model` or `/effort` with no value, as the whole draft. Qclod answers
+ * these with its own list; forwarded bare, the session would do nothing.
+ */
+export function bareLocalStep(text: string): { kind: 'model' | 'effort' } | null {
+  const trimmed = text.trim()
+  if (trimmed === '/model') return { kind: 'model' }
+  if (trimmed === '/effort') return { kind: 'effort' }
+  return null
 }
 
 /** Sends a slash command to the session, as typed. */

@@ -68,6 +68,23 @@ describe('resolveComposerKey', () => {
     expect(resolveComposerKey(key({ key: 'Enter' }), ctx({ popupOpen: true }))).toBe('popupAccept')
   })
 
+  test('Shift+Enter при открытом списке переносит строку, а не выбирает', () => {
+    expect(
+      resolveComposerKey(key({ key: 'Enter', shiftKey: true }), ctx({ popupOpen: true, text: '/c' }))
+    ).toBe('newline')
+  })
+
+  test('во время набора через IME клавиши не перехватываются', () => {
+    // Enter confirms the IME candidate; taking it as «send» would lose the word.
+    expect(
+      resolveComposerKey(key({ key: 'Enter', isComposing: true }), ctx({ text: 'привет', popupOpen: true }))
+    ).toBe('native')
+    expect(resolveComposerKey(key({ key: 'Process', keyCode: 229 }), ctx({ text: 'привет' }))).toBe(
+      'native'
+    )
+    expect(resolveComposerKey(key({ key: 'Escape', isComposing: true }), ctx())).toBe('native')
+  })
+
   test('Tab при открытом списке дописывает выбранное', () => {
     expect(resolveComposerKey(key({ key: 'Tab' }), ctx({ popupOpen: true }))).toBe('popupComplete')
   })

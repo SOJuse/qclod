@@ -35,6 +35,10 @@ export interface KeyLike extends PhysicalKeyEvent {
   shiftKey: boolean
   altKey: boolean
   metaKey: boolean
+  /** True while an IME is composing a character; its keys belong to it. */
+  isComposing?: boolean
+  /** 229 is what the browser reports for a key the IME has taken. */
+  keyCode?: number
 }
 
 type Rule = (ev: KeyLike, ctx: ComposerContext) => ComposerKeyAction | undefined
@@ -56,6 +60,10 @@ const NATIVE_KEYS = new Set(['v', 'z', 'y', 'a', 'x', 'c'])
  * working the moment someone switches layout.
  */
 const RULES: Rule[] = [
+  // An input method is composing: Enter confirms its candidate, Esc cancels
+  // it. Taking either as ours would send half a word or interrupt the agent.
+  (ev) => (ev.isComposing || ev.keyCode === 229 ? 'native' : undefined),
+
   // Esc must always reach the agent, or a half-typed draft would make it
   // uninterruptible. With a popup open it closes the popup first.
   (ev, ctx) => (ev.key === 'Escape' ? (ctx.popupOpen ? 'closePopup' : 'interrupt') : undefined),
@@ -68,7 +76,8 @@ const RULES: Rule[] = [
       : undefined,
 
   // Our list owns Tab, Enter and the arrows while it is open.
-  (ev, ctx) => (ctx.popupOpen && ev.key === 'Enter' ? 'popupAccept' : undefined),
+  // Shift+Enter is still a line break.
+  (ev, ctx) => (ctx.popupOpen && ev.key === 'Enter' && !ev.shiftKey ? 'popupAccept' : undefined),
   (ev, ctx) => (ctx.popupOpen && ev.key === 'Tab' ? 'popupComplete' : undefined),
   (ev, ctx) =>
     ctx.popupOpen && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') ? 'popupNav' : undefined,

@@ -2,6 +2,7 @@ import { InlineMenu, type InlineMenuItem } from './InlineMenu'
 import type { SlashStep } from '../input/slash'
 
 interface Props {
+  id: string
   step: SlashStep
   items: InlineMenuItem[]
   selected: number
@@ -15,9 +16,10 @@ const TITLE: Record<SlashStep['kind'], string | undefined> = {
 }
 
 /** The command list above the input, and the second list for /model and /effort. */
-export function SlashMenu({ step, items, selected, onPick }: Props): JSX.Element | null {
+export function SlashMenu({ id, step, items, selected, onPick }: Props): JSX.Element | null {
   return (
     <InlineMenu
+      id={id}
       items={items}
       selected={selected}
       onPick={onPick}

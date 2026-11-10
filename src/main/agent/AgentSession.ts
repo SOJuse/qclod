@@ -171,10 +171,13 @@ export class AgentSession {
    *
    * Replay must never be mistaken for live traffic: it adds items and touches
    * nothing else — no status change, no panel update, no cost counted twice.
+   * What the old process left running is closed as unfinished at the end:
+   * that process is gone and will never report back.
    */
   replay(messages: unknown[]): RibbonChange[] {
     const changes: RibbonChange[] = []
     for (const message of messages) changes.push(...this.builder.apply(message))
+    changes.push(...this.builder.finishReplay())
     const todo = this.builder.todo
     if (todo) this.todoItems = todo
     return changes

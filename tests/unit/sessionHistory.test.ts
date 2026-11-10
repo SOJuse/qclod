@@ -19,7 +19,6 @@ const sdkSessions = [
 function makeHistory(overrides: Partial<ConstructorParameters<typeof SessionHistory>[0]> = {}) {
   return new SessionHistory({
     listSessions: async () => sdkSessions,
-    getSessionMessages: async () => [],
     ...overrides
   })
 }
@@ -78,22 +77,5 @@ describe('SessionHistory', () => {
     })
 
     await expect(history.list('C:/проект')).resolves.toEqual([])
-  })
-
-  test('сообщения сессии отдаются как есть, для перевода в ленту', async () => {
-    const messages = [{ type: 'user', message: { role: 'user', content: 'привет' } }]
-    const history = makeHistory({ getSessionMessages: async () => messages })
-
-    await expect(history.messages('id-1')).resolves.toEqual(messages)
-  })
-
-  test('нечитаемая сессия даёт пустую переписку, а не падение', async () => {
-    const history = makeHistory({
-      getSessionMessages: async () => {
-        throw new Error('файл сессии повреждён')
-      }
-    })
-
-    await expect(history.messages('id-1')).resolves.toEqual([])
   })
 })

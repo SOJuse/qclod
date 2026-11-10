@@ -28,6 +28,8 @@ interface Harness {
   changed: TabState[][]
   ribbon: RibbonEvent[]
   resumedWith: Array<string | undefined>
+  /** Every history.transcript call: (sessionId, cwd). */
+  transcriptReads: Array<[string, string]>
   /** Every driver the manager actually built, in order. */
   created: Array<{
     resume: string | undefined
@@ -54,6 +56,7 @@ function makeController(
   const ribbon: RibbonEvent[] = []
   const resumedWith: Array<string | undefined> = []
   const created: Harness['created'] = []
+  const transcriptReads: Harness['transcriptReads'] = []
 
   const manager = new AgentSessionManager({
     getAgentPath: () => 'claude',
@@ -85,7 +88,10 @@ function makeController(
     getDefaults: () => options.defaults ?? {},
     history: {
       list: async () => [],
-      messages: async () => options.historyMessages ?? []
+      transcript: async (sessionId, cwd) => {
+        transcriptReads.push([sessionId, cwd])
+        return options.historyMessages ?? []
+      }
     },
     onChanged: (tabs) => changed.push(tabs),
     onRibbon: (event) => ribbon.push(event),
@@ -100,7 +106,7 @@ function makeController(
     await controller.whenSettled()
   }
 
-  return { controller, changed, ribbon, resumedWith, created, speak }
+  return { controller, changed, ribbon, resumedWith, transcriptReads, created, speak }
 }
 
 function writeStoredTabs(tabs: unknown[]): void {
@@ -199,6 +205,25 @@ describe('TabController', () => {
     expect(items.filter((i) => i.kind === 'agentText')[0]).toMatchObject({
       text: 'вчера было это'
     })
+  })
+
+  test('resume читает транскрипт по cwd вкладки', async () => {
+    const { controller, transcriptReads } = makeController()
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'сессия-в-a' },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {}, lastSessionId: 'сессия-в-b' }
+    ])
+
+    await controller.restore()
+    await controller.whenSettled()
+    expect(transcriptReads).toEqual([['сессия-в-a', projectA]])
+
+    await controller.activate('b')
+    await controller.whenSettled()
+    expect(transcriptReads).toEqual([
+      ['сессия-в-a', projectA],
+      ['сессия-в-b', projectB]
+    ])
   })
 
   test('сохранённый идентификатор сессии передаётся как resume', async () => {
@@ -390,7 +415,7 @@ describe('TabController: возобновление не ждёт агента',
       getDefaults: () => ({}),
       history: {
         list: async () => [],
-        messages: async () => [
+        transcript: async () => [
           { type: 'user', message: { role: 'user', content: 'что было вчера' } },
           {
             type: 'assistant',

@@ -113,6 +113,8 @@ export type RibbonItem =
       kind: 'compaction'
       trigger: 'auto' | 'manual'
       freedTokens: number
+      /** What the conversation before it was boiled down to, when the transcript has it. */
+      summary?: string
     })
   /** Something Qclod itself needs to say: a crash, a session that would not resume. */
   | (RibbonBase & { kind: 'notice'; text: string; tone: 'info' | 'error' })

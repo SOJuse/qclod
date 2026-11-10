@@ -203,8 +203,9 @@ describe('resumedSession', () => {
       '<usage><subagent_tokens>93175</subagent_tokens><tool_uses>18</tool_uses><duration_ms>110172</duration_ms></usage>'
     )
 
-    const notice = main.find((l) => (l['origin'] as Line | undefined)?.['kind'] === 'task-notification')!
-    expect(text(notice)).toBe(prompt)
+    // As in the real file: a queued notice is not repeated as a user line.
+    expect(main.filter((l) => l['type'] === 'user' && text(l).includes('<task-notification>'))).toEqual([])
+    expect(queued['parentUuid']).toBe(launched[1]!['uuid'])
   })
 
   test('«Сборка» падает, «Долгий обзор» так и не прислал уведомления', () => {

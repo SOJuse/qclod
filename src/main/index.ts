@@ -12,6 +12,7 @@ import { createDriverFactory } from './agent/createDriver'
 import { PermissionBroker } from './agent/permissions'
 import { loadRules, saveRules } from './agent/permissionStore'
 import { SessionHistory } from './agent/sessionHistory'
+import { loadTranscript } from './agent/transcript'
 import { TabController } from './tabs/TabController'
 import { notifyIfNeeded } from './notifications'
 import { RibbonBatcher } from './ribbonBatcher'
@@ -131,22 +132,27 @@ app.whenReady().then(async () => {
   })
 
   // Under the fixture the past conversations come from the environment too,
-  // so a history test never touches anyone's real session files.
+  // so a history test never touches anyone's real session files: a session
+  // without scripted messages is read from a transcript only when the test
+  // points CLAUDE_CONFIG_DIR at a folder of its own, never from ~/.claude.
   const fakeHistory = process.env['QCLOD_FAKE_HISTORY']
-  const history = process.env['QCLOD_FAKE_SDK']
-    ? (() => {
-        const script = fakeHistory
-          ? (JSON.parse(fakeHistory) as {
-              sessions?: Array<Record<string, unknown>>
-              messages?: Record<string, unknown[]>
-            })
-          : {}
-        return new SessionHistory({
-          listSessions: async () => (script.sessions ?? []) as never,
-          getSessionMessages: async (id: string) => script.messages?.[id] ?? []
+  const fake = process.env['QCLOD_FAKE_SDK']
+    ? fakeHistory
+      ? (JSON.parse(fakeHistory) as {
+          sessions?: Array<Record<string, unknown>>
+          messages?: Record<string, unknown[]>
         })
-      })()
+      : {}
+    : null
+  const history = fake
+    ? new SessionHistory({ listSessions: async () => (fake.sessions ?? []) as never })
     : await import('./agent/sessionHistory').then((m) => m.createSessionHistory())
+  const transcript = async (sessionId: string, cwd: string): Promise<unknown[]> => {
+    if (!fake) return loadTranscript(sessionId, cwd)
+    const scripted = fake.messages?.[sessionId]
+    if (scripted) return scripted
+    return process.env['CLAUDE_CONFIG_DIR'] ? loadTranscript(sessionId, cwd) : []
+  }
 
   const ribbonBatcher = new RibbonBatcher((event) => send(CHANNELS.ribbonChanged, event))
 
@@ -158,7 +164,7 @@ app.whenReady().then(async () => {
     getDefaults: () => ({ ...settings.defaults }),
     history: {
       list: (cwd) => history.list(cwd),
-      messages: (sessionId) => history.messages(sessionId)
+      transcript
     },
     onChanged: (tabs) => {
       send(CHANNELS.tabsChanged, tabs)

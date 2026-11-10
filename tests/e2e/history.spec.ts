@@ -2,6 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication } from '@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resumedSession, writeTranscript } from '../fixtures/transcript.mjs'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -35,7 +36,10 @@ const HISTORY = {
   }
 }
 
-async function launch(history: unknown): Promise<{ app: ElectronApplication; profile: string }> {
+async function launch(
+  history: unknown,
+  extraEnv: Record<string, string> = {}
+): Promise<{ app: ElectronApplication; profile: string }> {
   const profile = mkdtempSync(join(tmpdir(), 'qclod-history-'))
   const app = await electron.launch({
     args: ['.'],
@@ -51,7 +55,8 @@ async function launch(history: unknown): Promise<{ app: ElectronApplication; pro
           ]
         }
       }),
-      QCLOD_FAKE_HISTORY: JSON.stringify(history)
+      QCLOD_FAKE_HISTORY: JSON.stringify(history),
+      ...extraEnv
     } as Record<string, string>
   })
   return { app, profile }
@@ -180,5 +185,55 @@ test('/resume из палитры открывает историю, а не у�
     await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
   } finally {
     await close(app, profile)
+  }
+})
+
+test('открытая из истории сессия показывает то, что было до сжатия', async () => {
+  // The session lives only on disk, the way the CLI leaves it: the fake
+  // history lists it but has no messages for it, so the ribbon can only come
+  // from reading the JSONL under CLAUDE_CONFIG_DIR.
+  const configDir = mkdtempSync(join(tmpdir(), 'qclod-config-'))
+  const sessionId = '0f0e0d0c-0b0a-4908-8706-050403020100'
+  const session = resumedSession(sessionId, process.cwd())
+  writeTranscript(configDir, process.cwd(), sessionId, session.lines, session.subagents)
+
+  const { app, profile } = await launch(
+    {
+      sessions: [
+        { sessionId, summary: 'Почему падает вставка', lastModified: Date.now() - DAY, firstPrompt: 'найди, где падает вставка' }
+      ]
+    },
+    { CLAUDE_CONFIG_DIR: configDir }
+  )
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+    await win.keyboard.press('Control+H')
+    await win.locator('[data-testid="history-item"]').first().click()
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+
+    const ribbon = win.locator('[data-testid="ribbon"]').last()
+    // Before the compaction: the first question and the answer to it.
+    await expect(ribbon.locator('[data-testid="ribbon-user"]').first()).toContainText('найди, где падает вставка', {
+      timeout: 15000
+    })
+    await expect(ribbon).toContainText('смотрю')
+
+    // The compaction is a divider whose summary opens on demand, not a bubble.
+    const divider = ribbon.locator('[data-testid="ribbon-compaction"]')
+    await expect(divider).toHaveCount(1)
+    await expect(divider).toContainText('Что было до сжатия')
+    await expect(ribbon.locator('[data-testid="ribbon-user"]')).toHaveCount(2)
+    await expect(ribbon.locator('[data-testid="ribbon-user"]').last()).toContainText('теперь проверь тесты')
+
+    // All four subagents, each with an honest state.
+    const heads = ribbon.locator('[data-testid="subagent-head"]')
+    await expect(heads).toHaveCount(4)
+    await expect(heads.nth(0)).toContainText('Обзор вставки')
+    await expect(heads.nth(3)).toContainText('Долгий обзор')
+    await expect(ribbon.locator('[data-testid="ribbon-subagent"]').nth(3)).toContainText('не закончил')
+  } finally {
+    await close(app, profile)
+    rmSync(configDir, { recursive: true, force: true })
   }
 })

@@ -1,7 +1,14 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { RibbonBuilder, parseTaskNotifications } from '../../src/shared/ribbon'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
+import { readTranscript } from '../../src/main/agent/transcript'
+import { resumedSession, writeTranscript } from '../fixtures/transcript.mjs'
 import type { RibbonItem } from '../../src/shared/types'
+
+type SubagentCard = Extract<RibbonItem, { kind: 'subagent' }>
 
 // Message shapes below are the SDK's own, taken from node_modules/.../sdk.d.ts
 // and from the live probe (docs/superpowers/notes/2026-11-07-sdk-probe-results.md).
@@ -780,3 +787,87 @@ describe('RibbonBuilder: события задач подагента', () => {
   })
 })
 
+
+describe('RibbonBuilder: сессия, восстановленная из файла', () => {
+  const sessionId = '0f0e0d0c-0b0a-4908-8706-050403020100'
+  const cwd = 'C:\\Users\\u\\proj'
+
+  async function replayed(): Promise<{ b: RibbonBuilder; closing: ReturnType<RibbonBuilder['finishReplay']> }> {
+    const configDir = mkdtempSync(join(tmpdir(), 'qclod-ribbon-'))
+    try {
+      const session = resumedSession(sessionId, cwd)
+      const path = writeTranscript(configDir, cwd, sessionId, session.lines, session.subagents)
+      const b = new RibbonBuilder()
+      for (const message of await readTranscript(path)) b.apply(message)
+      return { b, closing: b.finishReplay() }
+    } finally {
+      rmSync(configDir, { recursive: true, force: true })
+    }
+  }
+
+  test('восстановленная сессия: четыре подагента и честные статусы', async () => {
+    const { b, closing } = await replayed()
+    const agents = only(b.items, 'subagent')
+    expect(agents.map((a) => [a.task, a.state])).toEqual([
+      ['Обзор вставки', 'done'],
+      ['Прогон тестов', 'done'],
+      ['Сборка', 'failed'],
+      ['Долгий обзор', 'unfinished']
+    ])
+    const [explore, tests, build, long] = agents as [SubagentCard, SubagentCard, SubagentCard, SubagentCard]
+    expect(explore.tokens).toBe(18000)
+    expect(explore.summary).toBe('Вставка падает в onPaste: пустой clipboardData.')
+    expect(tests.tokens).toBe(93175)
+    expect(tests.toolCalls).toBe(18)
+    expect(tests.background).toBe(true)
+    expect(build.summary).toContain("Agent type 'builder' not found")
+    expect(long.summary).toBe('не закончил')
+    // finishReplay closed exactly the one still running.
+    expect(closing).toEqual([{ kind: 'update', id: long.id, patch: { state: 'unfinished', summary: 'не закончил' } }])
+
+    // Their steps sit inside their cards, not in the main stream.
+    const nested = b.items.filter((i) => i.parentId === explore.id)
+    expect(nested.map((i) => i.kind)).toEqual(['tool', 'agentText'])
+    expect(nested[0]).toMatchObject({ kind: 'tool', name: 'Read', state: 'done' })
+    expect(b.items.filter((i) => i.parentId === tests.id).map((i) => i.kind)).toEqual(['tool', 'agentText'])
+    // A subagent's prompt is from the main agent, not the person: no bubble.
+    expect(bubbles(b)).toEqual(['найди, где падает вставка', 'теперь проверь тесты'])
+  })
+
+  test('сводка сжатия — не пузырь, а часть разделителя', async () => {
+    const { b } = await replayed()
+    expect(bubbles(b).some((t) => t.includes('This session is being continued'))).toBe(false)
+    const compaction = only(b.items, 'compaction')
+    expect(compaction).toHaveLength(1)
+    expect(compaction[0]!.freedTokens).toBe(160000)
+    expect(compaction[0]!.summary?.startsWith('This session is being continued from a previous conversation')).toBe(
+      true
+    )
+    // It stands after what came before it and before what came after.
+    const at = b.items.indexOf(compaction[0]!)
+    expect(b.items.slice(0, at).some((i) => i.kind === 'agentText' && i.text === 'смотрю')).toBe(true)
+    expect(b.items.slice(at).some((i) => i.kind === 'user' && i.text === 'теперь проверь тесты')).toBe(true)
+  })
+
+  test('сводка сжатия патчит последний разделитель, isMeta пузыря не даёт', () => {
+    const b = new RibbonBuilder()
+    b.apply({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 10, post_tokens: 4 } })
+    const changes = b.apply(userMessage('This session is being continued… сводка', { isCompactSummary: true }))
+    const card = only(b.items, 'compaction')[0]!
+    expect(changes).toEqual([{ kind: 'update', id: card.id, patch: { summary: 'This session is being continued… сводка' } }])
+    expect(card.summary).toBe('This session is being continued… сводка')
+
+    expect(b.apply(userMessage('служебное', { isMeta: true }))).toEqual([])
+    expect(b.apply(userMessage('служебное', { is_meta: true }))).toEqual([])
+    expect(bubbles(b)).toEqual([])
+  })
+
+  test('finishReplay закрывает и инструмент, оставшийся без ответа', () => {
+    const b = new RibbonBuilder()
+    b.apply(assistant([{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } }]))
+    const changes = b.finishReplay()
+    const tool = only(b.items, 'tool')[0]!
+    expect(tool.summary).toBe('не закончил')
+    expect(changes).toEqual([{ kind: 'update', id: tool.id, patch: { state: 'done', summary: 'не закончил' } }])
+  })
+})

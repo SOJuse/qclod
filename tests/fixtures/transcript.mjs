@@ -3,8 +3,26 @@
  *
  * Resuming a session reads its JSONL file, so tests need files that look like
  * the real ones: same folder layout, same raw camelCase lines (`parentUuid`,
- * `isSidechain`, `toolUseResult`, `compactMetadata`…). The shapes here were
- * taken from live transcripts of CLI 2.1.268–2.1.317; nothing is invented.
+ * `isSidechain`, `toolUseResult`, `compactMetadata`…).
+ *
+ * What was checked, and how: one real session of CLI 2.1.268 (with an
+ * auto-compaction, 14 subagent files and background-agent notifications) was
+ * read by a script that printed only key names and value types per line kind,
+ * never a value. Against it these hold: the folder layout and the
+ * `agent-<id>.jsonl` / `.meta.json` pair; the top-level keys this fixture
+ * writes on `user`, `assistant`, `attachment`, `system/compact_boundary`
+ * (`parentUuid: null` plus `logicalParentUuid`), `queue-operation`,
+ * `file-history-snapshot` and `cost-state` lines; `compactMetadata.trigger`,
+ * `preTokens`, `postTokens`; the `queued_command` attachment's `prompt`,
+ * `commandMode`, `timestamp`; the `async_launched` toolUseResult keys;
+ * subagent lines being sidechains with `agentId`, the first one a prompt with
+ * `parentUuid: null`; meta's `agentType`, `description`, `toolUseId`,
+ * `spawnDepth`. Real lines carry more keys than these (`promptId`,
+ * `requestId`, `apiBlockIndex`…); the fixture writes a subset. The real CLI
+ * writes one assistant line per content block, and so does this fixture.
+ * Not present in that file, so taken from sdk-tools.d.ts (`AgentOutput`)
+ * instead: a finished foreground Agent's toolUseResult. The version string
+ * `2.1.317` below is a placeholder, not a checked version.
  *
  * Written as .mjs so unit tests and e2e setup share it without a build step.
  */
@@ -120,7 +138,7 @@ export function resumedSession(sessionId, cwd) {
   const toolResult = (id, content, toolUseResult, isError = false) =>
     user(
       [{ type: 'tool_result', tool_use_id: id, content, ...(isError ? { is_error: true } : {}) }],
-      { toolUseResult }
+      { toolUseResult, sourceToolAssistantUUID: last }
     )
 
   const launched = (agentId, description) => ({
@@ -269,11 +287,9 @@ export function resumedSession(sessionId, cwd) {
       timestamp: new Date(clock).toISOString()
     }
   })
-  user(NOTIFICATION, {
-    origin: { kind: 'task-notification' },
-    promptSource: 'system',
-    queueSkipAttachments: true
-  })
+  // In the real file a notice queued mid-turn arrives as this attachment only;
+  // it is not repeated as a user line. (A user line with origin
+  // task-notification is the other way a notice arrives, never both at once.)
 
   // 7. The last word, with the usage the panel should start from.
   assistant([{ type: 'text', text: 'жду подагентов' }], {

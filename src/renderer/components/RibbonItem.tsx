@@ -179,11 +179,19 @@ export function RibbonRow({
 
       case 'compaction':
         return (
-          <div className="row-compaction">
-            <span>
-              контекст сжат{item.trigger === 'manual' ? ' вручную' : ''} · освободилось{' '}
-              {item.freedTokens.toLocaleString('ru-RU')} токенов
-            </span>
+          <div>
+            <div className="row-compaction">
+              <span>
+                контекст сжат{item.trigger === 'manual' ? ' вручную' : ''} · освободилось{' '}
+                {item.freedTokens.toLocaleString('ru-RU')} токенов
+              </span>
+            </div>
+            {item.summary ? (
+              <details className="row-compaction-summary">
+                <summary>Что было до сжатия</summary>
+                <div className="row-compaction-text">{item.summary}</div>
+              </details>
+            ) : null}
           </div>
         )
 

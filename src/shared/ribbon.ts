@@ -342,6 +342,16 @@ export class RibbonBuilder {
     return changes
   }
 
+  /**
+   * Called once a past conversation has been replayed. Whatever it still shows
+   * as running (a tool, a background subagent) was run by a process that
+   * closed with the app and will never report back, so it is settled the way
+   * closeOpen() settles a session that ended: «не закончил».
+   */
+  finishReplay(): RibbonChange[] {
+    return this.closeOpen()
+  }
+
   apply(message: unknown): RibbonChange[] {
     if (!isObject(message)) return []
     switch (message['type']) {
@@ -603,6 +613,10 @@ export class RibbonBuilder {
     if (!isObject(inner)) return []
     const content = inner['content']
 
+    // The summary a compaction leaves is written as a user message, but nobody
+    // typed it: it belongs to the divider it follows, folded away there.
+    if (message['isCompactSummary'] === true) return this.attachCompactSummary(content)
+
     // The news of a finished subagent, however it reaches us, closes its card;
     // it is never something the person typed.
     const noticeText =
@@ -617,9 +631,13 @@ export class RibbonBuilder {
     for (const notice of parseTaskNotifications(noticeText)) noticed.push(...this.applyNotice(notice))
     const origin = message['origin']
     if (isObject(origin) && origin['kind'] === 'task-notification') return noticed
+    // Context the harness injected (skill text, reminders): never a bubble.
+    if (message['isMeta'] === true || message['is_meta'] === true) return noticed
+    // A subagent's prompt was written by the main agent, not the person.
+    const fromAgent = str(message['parent_tool_use_id']) !== ''
 
     if (typeof content === 'string') {
-      if (message['isSynthetic'] === true || this.consumeEcho(content)) return noticed
+      if (message['isSynthetic'] === true || fromAgent || this.consumeEcho(content)) return noticed
       const text = userText(content)
       return text === '' ? noticed : [...noticed, ...this.appendUser(text)]
     }
@@ -634,7 +652,7 @@ export class RibbonBuilder {
       return changes
     }
 
-    if (message['isSynthetic'] === true) return noticed
+    if (message['isSynthetic'] === true || fromAgent) return noticed
 
     const text = userText(
       blocks
@@ -849,6 +867,22 @@ export class RibbonBuilder {
         freedTokens: Math.max(0, pre - post)
       })
     ]
+  }
+
+  /** Puts a compaction's summary into the latest divider, folded away. */
+  private attachCompactSummary(content: unknown): RibbonChange[] {
+    const summary =
+      typeof content === 'string'
+        ? content
+        : asArray(content)
+            .filter(isObject)
+            .filter((b) => b['type'] === 'text')
+            .map((b) => str(b['text']))
+            .join('\n')
+    const card = this.list.findLast((item) => item.kind === 'compaction')
+    if (!card || card.kind !== 'compaction' || !summary) return []
+    card.summary = summary
+    return [this.update(card.id, { summary })]
   }
 
   // -------------------------------------------------------------- mechanics

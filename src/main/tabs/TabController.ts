@@ -18,7 +18,8 @@ import type { AgentSessionManager } from '../agent/AgentSessionManager'
 
 export interface TabHistory {
   list: (cwd: string) => Promise<SessionSummary[]>
-  messages: (sessionId: string) => Promise<unknown[]>
+  /** A past conversation, read from its transcript in the folder it ran in. */
+  transcript: (sessionId: string, cwd: string) => Promise<unknown[]>
 }
 
 export interface TabControllerDeps {
@@ -223,7 +224,7 @@ export class TabController {
     this.wire(id, session)
 
     const resumeId = tab.lastSessionId
-    if (resumeId) await this.resume(id, session, resumeId)
+    if (resumeId) await this.resume(id, session, resumeId, tab.cwd)
     else await session.start()
 
     this.rememberSession(id, session)
@@ -234,7 +235,7 @@ export class TabController {
    * moved, written by a newer CLI — must not cost the user their tab: they get
    * a clean one and a line in the ribbon saying what happened.
    */
-  private async resume(id: TabId, session: AgentSession, resumeId: string): Promise<void> {
+  private async resume(id: TabId, session: AgentSession, resumeId: string, cwd: string): Promise<void> {
     await session.start(resumeId)
 
     // The conversation is read from the CLI's own transcript on disk, so it
@@ -242,8 +243,9 @@ export class TabController {
     // is what this did — left the tab blank: a resumed CLI sends nothing at
     // all, not even `system/init`, until it is given something to answer. The
     // conversation only appeared after you typed, and whatever you typed was
-    // the thing that unblocked it.
-    const messages = await this.deps.history.messages(resumeId)
+    // the thing that unblocked it. The file is read whole (before the last
+    // compaction too, subagent steps included) and found by the tab's folder.
+    const messages = await this.deps.history.transcript(resumeId, cwd)
     if (messages.length > 0) this.emitRibbon(id, session.replay(messages))
 
     // A resume that will not open fails while the stream runs, long after

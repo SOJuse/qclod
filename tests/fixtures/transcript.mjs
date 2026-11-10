@@ -15,7 +15,9 @@
  * `file-history-snapshot` and `cost-state` lines; `compactMetadata.trigger`,
  * `preTokens`, `postTokens`; the `queued_command` attachment's `prompt`,
  * `commandMode`, `timestamp` (plus `origin`, `source_uuid` on a prompt the
- * person typed mid-turn, which is never also written as a user line); the `async_launched` toolUseResult keys;
+ * person typed mid-turn; in that file none of the 14 such prompts was also
+ * written as a user line with the same text); the `async_launched`
+ * toolUseResult keys;
  * subagent lines being sidechains with `agentId`, the first one a prompt with
  * `parentUuid: null`; meta's `agentType`, `description`, `toolUseId`,
  * `spawnDepth`. Real lines carry more keys than these (`promptId`,
@@ -290,12 +292,13 @@ export function resumedSession(sessionId, cwd) {
       timestamp: new Date(clock).toISOString()
     }
   })
-  // In the real file a notice queued mid-turn arrives as this attachment only;
-  // it is not repeated as a user line. (A user line with origin
-  // task-notification is the other way a notice arrives, never both at once.)
+  // In the one real file checked, none of the 17 notices queued this way was
+  // followed by a user line repeating it; the 10 user lines with origin
+  // task-notification there had no such attachment before them.
 
   // 9. Something the person typed while the agent was busy: queued, then
-  // delivered as an attachment only, never as a user line of its own.
+  // delivered as an attachment. In the file checked, no user line repeated
+  // the text of any of the 14 such prompts.
   lines.push({
     type: 'queue-operation',
     operation: 'enqueue',

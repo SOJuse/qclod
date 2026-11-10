@@ -8,6 +8,7 @@ import {
   loadTranscript,
   readTranscript
 } from '../../src/main/agent/transcript'
+import { RibbonBuilder } from '../../src/shared/ribbon'
 import { encodeProjectDir, resumedSession, writeTranscript } from '../fixtures/transcript.mjs'
 
 type Message = Record<string, unknown>
@@ -188,6 +189,7 @@ describe('transcript: что из него читается', () => {
     )
     expect(notices).toHaveLength(1)
     expect(notices[0]).toMatchObject({ type: 'user', message: { role: 'user' } })
+    expect(notices[0]!['uuid']).toEqual(expect.any(String))
     expect(text(notices[0]!)).toContain('<summary>Agent "Прогон тестов" finished</summary>')
     expect(text(notices[0]!)).toContain('<tool-use-id>toolu_01TestsRun8bQf2Lx9Kd3Vw7</tool-use-id>')
   })
@@ -233,14 +235,61 @@ describe('transcript: что из него читается', () => {
         parent_tool_use_id: null,
         message: { role: 'user', content: [{ type: 'text', text: 'посмотри картинку' }, image] }
       },
+      // Typed by the person, so it stays their message as written; the ribbon
+      // reads the notice out of it on its own.
       {
         type: 'user',
-        origin: { kind: 'task-notification' },
+        uuid: 'b',
         parent_tool_use_id: null,
-        message: { role: 'user', content: notice }
+        message: { role: 'user', content: [{ type: 'text', text: notice }] }
       },
       { type: 'user', uuid: 'd', parent_tool_use_id: null, message: { role: 'user', content: 'повтор' } }
     ])
+  })
+
+  test('набранное вместе с уведомлением: и пузырь, и закрытая карточка', async () => {
+    const configDir = tempDir()
+    const base = { isSidechain: false, sessionId, cwd }
+    const notice =
+      '<task-notification>\n<task-id>a9</task-id>\n<tool-use-id>toolu_bg</tool-use-id>\n' +
+      '<status>completed</status>\n<summary>Agent finished</summary>\n' +
+      '<usage><subagent_tokens>500</subagent_tokens><tool_uses>2</tool_uses><duration_ms>900</duration_ms></usage>\n' +
+      '</task-notification>'
+    const path = writeTranscript(configDir, cwd, sessionId, [
+      {
+        ...base,
+        type: 'assistant',
+        uuid: 'a',
+        parentUuid: null,
+        message: {
+          id: 'm1',
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'toolu_bg', name: 'Agent', input: { description: 'Фон', run_in_background: true } }]
+        }
+      },
+      {
+        ...base,
+        type: 'attachment',
+        uuid: 'b',
+        parentUuid: 'a',
+        attachment: {
+          type: 'queued_command',
+          commandMode: 'prompt',
+          timestamp: 'x',
+          prompt: [
+            { type: 'text', text: 'а ещё проверь сборку' },
+            { type: 'text', text: notice }
+          ]
+        }
+      }
+    ])
+    const b = new RibbonBuilder()
+    for (const message of await readTranscript(path)) b.apply(message)
+
+    const bubbles = b.items.filter((i) => i.kind === 'user')
+    expect(bubbles).toEqual([expect.objectContaining({ kind: 'user', text: 'а ещё проверь сборку' })])
+    const card = b.items.find((i) => i.kind === 'subagent')
+    expect(card).toMatchObject({ kind: 'subagent', task: 'Фон', state: 'done', tokens: 500, toolCalls: 2 })
   })
 
   test('ветка, отрезанная перемоткой, в историю не попадает', async () => {

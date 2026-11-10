@@ -158,19 +158,22 @@ function toMessage(line: Line): Line | null {
   // Whatever was queued while the main agent was busy is written only as this
   // attachment: a background agent's notice, or a message the person typed
   // mid-turn. The stream would have carried either as a user message.
+  // A prompt the person typed stays theirs as written, even with a notice
+  // folded into it: the ribbon reads the notice out of any user text and
+  // shows the rest as their bubble.
   const prompt = queuedPrompt(line)
   if (prompt !== undefined) {
+    const typed = (line['attachment'] as Line)['commandMode'] === 'prompt'
+    const message: Line = { type: 'user', uuid: line['uuid'] }
+    if (typed) return { ...message, message: { role: 'user', content: prompt }, parent_tool_use_id: null }
     const text = textOf(prompt)
     if (text.includes('<task-notification>')) {
       return {
-        type: 'user',
+        ...message,
         origin: { kind: 'task-notification' },
         message: { role: 'user', content: text },
         parent_tool_use_id: null
       }
-    }
-    if (line['attachment'] && (line['attachment'] as Line)['commandMode'] === 'prompt') {
-      return { type: 'user', uuid: line['uuid'], message: { role: 'user', content: prompt }, parent_tool_use_id: null }
     }
   }
 
@@ -199,7 +202,7 @@ function textOf(content: unknown): string {
 
 /**
  * A queued prompt the CLI also wrote out as the very next user line. The
- * files seen so far never do, but showing a message twice is the worse miss.
+ * one real file checked did not, but showing a message twice is the worse miss.
  */
 function repeatedByNext(line: Line, next: Line | undefined): boolean {
   if (!next || next['type'] !== 'user' || !isObject(next['message'])) return false

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { RibbonBuilder } from '../../src/shared/ribbon'
+import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 import type { RibbonItem } from '../../src/shared/types'
 
 // Message shapes below are the SDK's own, taken from node_modules/.../sdk.d.ts
@@ -424,9 +425,9 @@ describe('RibbonBuilder: цифры подагента', () => {
     b.apply(
       userMessage([{ type: 'tool_result', tool_use_id: 'task1', content: 'нашёл в трёх местах' }], {
         tool_use_result: {
-          durationMs: 42000,
-          usage: { input_tokens: 12000, output_tokens: 3000 },
-          toolUseCount: 7
+          totalDurationMs: 42000,
+          totalTokens: 15000,
+          totalToolUseCount: 7
         }
       })
     )
@@ -509,7 +510,7 @@ describe('RibbonBuilder: время подагента', () => {
     clock = 26000
     b.apply(
       userMessage([{ type: 'tool_result', tool_use_id: 'a1', content: 'нашёл' }], {
-        tool_use_result: { usage: { input_tokens: 20000, output_tokens: 9000 } }
+        tool_use_result: { totalTokens: 29000 }
       })
     )
 
@@ -528,10 +529,82 @@ describe('RibbonBuilder: время подагента', () => {
     clock = 99000
     b.apply(
       userMessage([{ type: 'tool_result', tool_use_id: 'a1', content: 'нашёл' }], {
-        tool_use_result: { durationMs: 42000 }
+        tool_use_result: { totalDurationMs: 42000 }
       })
     )
 
     expect(only(b.items, 'subagent')[0]!.durationMs).toBe(42000)
+  })
+})
+
+// Messages from a run of the fake SDK, which plays the CLI's real shapes.
+async function played(steps: object[]): Promise<unknown[]> {
+  const driver = createFakeSdk({ steps: steps as never })
+  const out: unknown[] = []
+  for await (const m of driver.messages) {
+    out.push(m)
+    if ((m as Record<string, unknown>)['type'] === 'result') break
+  }
+  return out
+}
+
+describe('RibbonBuilder: подагент по сообщениям фейка', () => {
+  test('фоновый подагент после async_launched всё ещё работает', async () => {
+    const b = new RibbonBuilder()
+    for (const m of await played([{ kind: 'backgroundAgent', name: 'Прогон тестов', finish: null }])) b.apply(m)
+
+    const card = only(b.items, 'subagent')[0]!
+    expect(card.state).toBe('running')
+    expect(card.background).toBe(true)
+    expect(card.agentId).toEqual(expect.stringMatching(/^a[0-9a-f]{16}$/))
+    expect(card.summary).not.toContain('Async agent launched')
+  })
+
+  test('итоги подагента читаются из totalTokens/totalDurationMs/totalToolUseCount', async () => {
+    const b = new RibbonBuilder()
+    const steps = [
+      {
+        kind: 'subagent',
+        name: 'Обзор',
+        stats: { totalTokens: 18000, totalDurationMs: 42000, totalToolUseCount: 7 },
+        steps: []
+      }
+    ]
+    for (const m of await played(steps)) b.apply(m)
+
+    const card = only(b.items, 'subagent')[0]!
+    expect(card.state).toBe('done')
+    expect(card.tokens).toBe(18000)
+    expect(card.durationMs).toBe(42000)
+    expect(card.toolCalls).toBe(7)
+  })
+
+  test('упавший подагент остаётся подагентом со статусом failed', async () => {
+    const b = new RibbonBuilder()
+    const steps = [
+      {
+        kind: 'toolError',
+        name: 'Agent',
+        input: { description: 'Сборка', subagent_type: 'builder' },
+        error: 'Agent type "builder" not found'
+      }
+    ]
+    for (const m of await played(steps)) b.apply(m)
+
+    const cards = only(b.items, 'subagent')
+    expect(cards).toHaveLength(1)
+    expect(cards[0]!.state).toBe('failed')
+    expect(cards[0]!.summary.startsWith('Agent type')).toBe(true)
+    expect(only(b.items, 'toolError')).toHaveLength(0)
+  })
+
+  test('подагент, работавший при закрытии, — не закончил', async () => {
+    const b = new RibbonBuilder()
+    for (const m of await played([{ kind: 'backgroundAgent', name: 'Прогон тестов', finish: null }])) b.apply(m)
+    b.closeOpen()
+
+    const card = only(b.items, 'subagent')[0]!
+    expect(card.state).toBe('unfinished')
+    expect(card.summary).toBe('не закончил')
   })
 })

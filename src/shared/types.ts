@@ -40,6 +40,9 @@ export interface RibbonBase {
 
 export type ToolState = 'running' | 'done'
 
+/** A subagent can also fail, be stopped, or be left running when the session ended. */
+export type SubagentState = 'running' | 'done' | 'failed' | 'stopped' | 'unfinished'
+
 /**
  * One element of the conversation as the user reads it. Deliberately a view
  * model, not a copy of the SDK's message: the translator (shared/ribbon.ts)
@@ -73,8 +76,14 @@ export type RibbonItem =
       name: string
       /** The task it was given — what it is doing. */
       task: string
-      state: ToolState
+      state: SubagentState
       summary: string
+      /** Launched with run_in_background: the call returns at once, the agent keeps going. */
+      background?: boolean
+      agentId?: string
+      taskId?: string
+      /** The tool it used last, while it works. */
+      lastTool?: string
       /** Set when it finishes, from the tool's own run totals. */
       tokens?: number
       durationMs?: number

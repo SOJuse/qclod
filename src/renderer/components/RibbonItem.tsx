@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { RibbonItem as Item } from '../../shared/types'
+import { AGENT_STATE_LABEL } from './agentState'
 import { PermissionCard } from './PermissionCard'
 import { PlanCard } from './PlanCard'
 import { QuestionCard } from './QuestionCard'
@@ -132,7 +133,15 @@ export function RibbonRow({
               <span className="row-subagent-task">{item.task}</span>
               <span className="row-subagent-stats" data-testid="subagent-stats">
                 {item.state === 'running' ? (
-                  <span className="row-subagent-working">работает…</span>
+                  <span className="row-subagent-working">
+                    {AGENT_STATE_LABEL.running}
+                    {item.lastTool ? ` · ${item.lastTool}` : '…'}
+                  </span>
+                ) : item.state === 'failed' || item.state === 'unfinished' || item.state === 'stopped' ? (
+                  <span className="row-subagent-failed">
+                    {AGENT_STATE_LABEL[item.state]}
+                    {item.state === 'failed' && item.summary ? ` · ${item.summary}` : ''}
+                  </span>
                 ) : (
                   [
                     item.durationMs ? duration(item.durationMs) : null,

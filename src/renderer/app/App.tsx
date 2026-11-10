@@ -58,7 +58,10 @@ export function App(): JSX.Element {
             task: run.task,
             state: run.state,
             ...(run.tokens ? { tokens: run.tokens } : {}),
-            ...(run.durationMs ? { durationMs: run.durationMs } : {})
+            ...(run.durationMs ? { durationMs: run.durationMs } : {}),
+            ...(run.toolCalls ? { toolCalls: run.toolCalls } : {}),
+            ...(run.lastTool ? { lastTool: run.lastTool } : {}),
+            ...(run.summary ? { summary: run.summary } : {})
           }
         }),
     [activeRibbon]

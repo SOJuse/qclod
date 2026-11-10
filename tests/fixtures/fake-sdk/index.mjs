@@ -369,6 +369,16 @@ export function createFakeSdk(script = {}) {
               totalTokens: step.stats?.totalTokens ?? 0,
               totalDurationMs: step.stats?.totalDurationMs ?? 0,
               totalToolUseCount: step.stats?.totalToolUseCount ?? 0,
+              usage: {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: null,
+                cache_read_input_tokens: null,
+                server_tool_use: null,
+                service_tier: null,
+                cache_creation: null
+              },
+              prompt: step.name,
               content: [{ type: 'text', text: 'подагент закончил' }]
             }
           }

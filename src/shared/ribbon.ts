@@ -1,4 +1,4 @@
-import type { Attachment, RibbonChange, RibbonItem, TodoItem, ToolState } from './types'
+import type { Attachment, RibbonChange, RibbonItem, SubagentState, TodoItem, ToolState } from './types'
 
 /**
  * Turns the SDK's message stream into the ribbon the user reads.
@@ -115,14 +115,16 @@ function subagentStats(result: unknown): {
     return undefined
   }
 
+  // AgentOutput (sdk-tools.d.ts) names its totals totalTokens, totalDurationMs
+  // and totalToolUseCount; the older spellings stay as fallbacks.
   const tokens = num(
     result['totalTokens'],
     totals['totalTokens'],
     usage['total_tokens'],
     (Number(usage['input_tokens'] ?? 0) || 0) + (Number(usage['output_tokens'] ?? 0) || 0)
   )
-  const durationMs = num(result['durationMs'], result['duration_ms'], totals['durationMs'])
-  const toolCalls = num(result['toolUseCount'], result['tool_use_count'], totals['toolCalls'])
+  const durationMs = num(result['totalDurationMs'], result['durationMs'], result['duration_ms'], totals['durationMs'])
+  const toolCalls = num(result['totalToolUseCount'], result['toolUseCount'], result['tool_use_count'], totals['toolCalls'])
 
   return {
     ...(tokens ? { tokens } : {}),
@@ -278,9 +280,9 @@ export class RibbonBuilder {
         changes.push(this.update(item.id, { state: 'done', summary: item.summary }))
       }
       if (item.kind === 'subagent' && item.state === 'running') {
-        item.state = 'done'
+        item.state = 'unfinished'
         item.summary = 'не закончил'
-        changes.push(this.update(item.id, { state: 'done', summary: item.summary }))
+        changes.push(this.update(item.id, { state: 'unfinished', summary: item.summary }))
       }
     }
     return changes
@@ -516,7 +518,7 @@ export class RibbonBuilder {
           toolUseId,
           name: str(input['subagent_type']) || 'подагент',
           task: str(input['description']) || clip(str(input['prompt']), 120),
-          state: 'running' as ToolState,
+          state: 'running' as SubagentState,
           summary: '',
           ...(parentId ? { parentId } : {})
         })
@@ -593,7 +595,14 @@ export class RibbonBuilder {
     const text = resultText(block['content'])
 
     if (block['is_error'] === true) {
-      const name = item.kind === 'tool' || item.kind === 'subagent' ? item.name : ''
+      // A failed subagent stays a subagent: it still has a place in the
+      // panel's list and its nested stream, now marked as failed.
+      if (item.kind === 'subagent') {
+        const patch = { state: 'failed' as SubagentState, summary: clip(text, 160) }
+        Object.assign(item, patch)
+        return [this.update(item.id, patch)]
+      }
+      const name = item.kind === 'tool' ? item.name : ''
       const target = item.kind === 'tool' ? item.target : ''
       const replacement: RibbonItem = {
         kind: 'toolError',
@@ -609,6 +618,19 @@ export class RibbonBuilder {
     }
 
     if (item.kind === 'subagent') {
+      // A background agent's call returns at once with async_launched; the
+      // agent itself is only starting. Its text is a launch receipt, not a
+      // result, so the summary is left alone.
+      if (isObject(result) && (result['status'] === 'async_launched' || result['isAsync'] === true)) {
+        const agentId = str(result['agentId'])
+        const launch: Partial<Extract<RibbonItem, { kind: 'subagent' }>> = {
+          background: true,
+          ...(agentId ? { agentId } : {})
+        }
+        Object.assign(item, launch)
+        return [this.update(item.id, launch)]
+      }
+
       const patch: Partial<Extract<RibbonItem, { kind: 'subagent' }>> = { state: 'done', summary: clip(text, 160) }
       const stats = subagentStats(result)
       Object.assign(patch, stats)

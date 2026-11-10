@@ -712,14 +712,18 @@ describe('createFakeSdk: подагент на переднем плане', () 
     const output = finished['tool_use_result'] as Record<string, unknown>
 
     expect(toolResultOf(finished)!['tool_use_id']).toBe(toolUses(out)[0]!.id)
-    expect(output).toEqual({
-      status: 'completed',
-      agentId: expect.stringMatching(/^a[0-9a-f]{16}$/),
-      totalTokens: 18000,
-      totalDurationMs: 42000,
-      totalToolUseCount: 7,
-      content: [{ type: 'text', text: 'подагент закончил' }]
-    })
+    expect(output).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        agentId: expect.stringMatching(/^a[0-9a-f]{16}$/),
+        totalTokens: 18000,
+        totalDurationMs: 42000,
+        totalToolUseCount: 7,
+        prompt: 'Обзор вставки',
+        usage: expect.objectContaining({ input_tokens: 0, output_tokens: 0 }),
+        content: [{ type: 'text', text: 'подагент закончил' }]
+      })
+    )
   })
 
   test('subagent без stats всё равно отдаёт AgentOutput', async () => {

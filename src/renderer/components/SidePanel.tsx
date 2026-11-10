@@ -5,8 +5,10 @@ import {
   type LimitWindow,
   type McpServerInfo,
   type PanelData,
-  type PermissionMode
+  type PermissionMode,
+  type SubagentState
 } from '../../shared/types'
+import { AGENT_STATE_LABEL } from './agentState'
 import './SidePanel.css'
 
 interface Props {
@@ -50,10 +52,14 @@ export interface AgentRun {
   id: string
   name: string
   task: string
-  state: 'running' | 'done'
+  state: SubagentState
   tokens?: number
   durationMs?: number
+  toolCalls?: number
+  lastTool?: string
+  summary?: string
 }
+
 
 function shortDuration(ms: number): string {
   const total = Math.round(ms / 1000)
@@ -227,15 +233,26 @@ export function SidePanel({
                 <div className="panel-line">
                   <span className="panel-agent-kind">{agent.name}</span>
                   <span className="panel-dim">
-                    {agent.state === 'running' ? 'работает' : 'готов'}
+                    {AGENT_STATE_LABEL[agent.state]}
                   </span>
                 </div>
                 <div className="panel-agent-task">{agent.task}</div>
-                {(agent.durationMs || agent.tokens) && (
-                  <div className="panel-line panel-dim panel-agent-stats">
-                    <span>{agent.durationMs ? shortDuration(agent.durationMs) : ''}</span>
-                    <span>{agent.tokens ? `${shortNumber(agent.tokens)} токенов` : ''}</span>
-                  </div>
+                {agent.state === 'running' ? (
+                  (agent.lastTool || agent.toolCalls) && (
+                    <div className="panel-line panel-dim panel-agent-stats">
+                      <span>{agent.lastTool ?? ''}</span>
+                      <span>{agent.toolCalls ? `${agent.toolCalls} инструментов` : ''}</span>
+                    </div>
+                  )
+                ) : agent.state === 'failed' ? (
+                  agent.summary && <div className="panel-dim panel-agent-stats">{agent.summary}</div>
+                ) : (
+                  (agent.durationMs || agent.tokens) && (
+                    <div className="panel-line panel-dim panel-agent-stats">
+                      <span>{agent.durationMs ? shortDuration(agent.durationMs) : ''}</span>
+                      <span>{agent.tokens ? `${shortNumber(agent.tokens)} токенов` : ''}</span>
+                    </div>
+                  )
                 )}
               </li>
             ))}

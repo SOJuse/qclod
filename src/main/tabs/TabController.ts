@@ -242,7 +242,11 @@ export class TabController {
     // and new ones under the same ids.
     const seed = this.deps.manager.get(id)?.successorSeed()
     await this.deps.manager.close(id)
+    // Forgotten on disk now, not when the new session first answers: a
+    // launch in between would pick the old conversation back up.
     delete tab.lastSessionId
+    this.persist()
+    this.emit()
     if (seed) this.previews.set(id, seed)
     else this.previews.delete(id)
     await this.ensureSession(id)
@@ -285,8 +289,9 @@ export class TabController {
 
     // The conversation is already on screen from the record; the session
     // carries on from that same ribbon, so nothing is drawn twice and new
-    // items number on after the old ones.
-    const seed = await this.preview(id)
+    // items number on after the old ones. A record that cannot be read costs
+    // the preview, not the agent.
+    const seed = await this.preview(id).catch(() => null)
     // Closed, or started by another call, while the record was read.
     if (!this.tabs.includes(tab) || this.deps.manager.get(id)) return
 
@@ -358,13 +363,24 @@ export class TabController {
    */
   private async resume(id: TabId, session: AgentSession, resumeId: string): Promise<void> {
     await session.start(resumeId)
+    if (session.status === 'error') {
+      await this.recoverFromDeadSession(id, session)
+      return
+    }
 
-    // A resume that will not open fails while the stream runs, long after
-    // start() returned, so the recovery waits for that rather than for a
-    // status that is still «starting».
-    void session.whenIdle().then(() => {
-      if (session.status === 'error') void this.recoverFromDeadSession(id, session)
+    // Otherwise the failure comes out of the stream, whenever the CLI gets to
+    // it: soon after start, or — since a resumed CLI says nothing until it is
+    // spoken to — only once the first message is sent. Waiting for «idle»
+    // does not see it: start() is idle before the CLI has tried anything.
+    // Until the session introduces itself with init, an error means the
+    // conversation did not open; after that it is the session's own.
+    const stop = session.onStatus((status) => {
+      if (session.sessionId !== null || status === 'stopped') return stop()
+      if (status !== 'error') return
+      stop()
+      this.track(this.recoverFromDeadSession(id, session))
     })
+    session.onSession(() => stop())
   }
 
   /**
@@ -376,7 +392,13 @@ export class TabController {
     if (this.deps.manager.get(id) !== dead) return
     const reason = dead.error ?? 'неизвестная причина'
     const tab = this.tabs.find((t) => t.id === id)
-    if (tab) delete tab.lastSessionId
+    if (tab) {
+      // Off the disk at once, or a launch before the new session's first
+      // answer retries the dead id.
+      delete tab.lastSessionId
+      this.persist()
+      this.emit()
+    }
 
     const seed = dead.successorSeed()
     await this.deps.manager.close(id)

@@ -76,6 +76,24 @@ async function settle(session: AgentSession): Promise<void> {
 }
 
 describe('AgentSession', () => {
+  test('onStatus возвращает отписку, и отписавшийся больше не слышит статусов', async () => {
+    const { session } = makeSession()
+    const heard: SessionStatus[] = []
+    const others: SessionStatus[] = []
+    const stop = session.onStatus((status) => {
+      heard.push(status)
+      // Stopping from inside the call must not skip the next listener.
+      if (status === 'starting') stop()
+    })
+    session.onStatus((status) => others.push(status))
+
+    await session.start()
+    await session.dispose()
+
+    expect(heard).toEqual(['starting'])
+    expect(others).toEqual(['starting', 'idle', 'stopped'])
+  })
+
   test('start поднимает сессию и отдаёт изменения ленты', async () => {
     const { session } = makeSession({ steps: [{ kind: 'text', text: 'привет из агента' }] })
     const rec = watch(session)

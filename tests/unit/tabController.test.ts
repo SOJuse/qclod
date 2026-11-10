@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
@@ -29,6 +29,7 @@ afterEach(() => {
 
 interface Harness {
   controller: TabController
+  manager: AgentSessionManager
   changed: TabState[][]
   ribbon: RibbonEvent[]
   resumedWith: Array<string | undefined>
@@ -47,11 +48,48 @@ interface Harness {
   speak(id: string): Promise<void>
 }
 
+/**
+ * A resume the CLI refuses, the way the real one does: no `system/init`, just
+ * an error out of the stream — at once, some time after start, or only when
+ * the first message is sent. Until then it waits, and it ends on dispose.
+ */
+function deadResume(message: string, failAfter: number | 'firstSend'): AgentDriver {
+  const driver = createFakeSdk({ steps: [] })
+  let fire!: () => void
+  let stop!: () => void
+  const failing = new Promise<'fail'>((resolve) => (fire = () => resolve('fail')))
+  const closed = new Promise<'closed'>((resolve) => (stop = () => resolve('closed')))
+  if (failAfter === 0) fire()
+  else if (typeof failAfter === 'number') setTimeout(fire, failAfter)
+  const send = driver.send.bind(driver)
+  const dispose = driver.dispose.bind(driver)
+  return Object.assign(driver, {
+    messages: (async function* () {
+      if ((await Promise.race([failing, closed])) === 'closed') return
+      throw new Error(message)
+    })(),
+    send: (input: { text: string; attachments: unknown[] }) => {
+      send(input)
+      fire()
+    },
+    dispose: async () => {
+      stop()
+      await dispose()
+    }
+  }) as unknown as AgentDriver
+}
+
 function makeController(
   options: {
     script?: Parameters<typeof createFakeSdk>[0]
     resumeFails?: boolean
     resumeFailsSync?: boolean
+    /** The resume dies this long after start, with nothing said before. */
+    resumeFailsAfterMs?: number
+    /** The resume dies only once the first message is sent. */
+    resumeFailsOnSend?: boolean
+    /** Reading the past conversation's transcript throws. */
+    transcriptFails?: boolean
     defaults?: { model?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan' }
     historyMessages?: unknown[]
     onPanel?: (event: PanelEvent) => void
@@ -78,9 +116,16 @@ function makeController(
       // and the resume attempted while the stream is read. A failure therefore
       // surfaces asynchronously, which is the shape that must be handled.
       if (options.resumeFails && driverOptions.resume) {
-        return createFakeSdk({
-          steps: [{ kind: 'crash', message: `Сессия ${driverOptions.resume} не открывается` }]
-        }) as unknown as AgentDriver
+        return deadResume(`Сессия ${driverOptions.resume} не открывается`, 0)
+      }
+      if (options.resumeFailsAfterMs !== undefined && driverOptions.resume) {
+        return deadResume(
+          `No conversation found with session ID: ${driverOptions.resume}`,
+          options.resumeFailsAfterMs
+        )
+      }
+      if (options.resumeFailsOnSend && driverOptions.resume) {
+        return deadResume(`No conversation found with session ID: ${driverOptions.resume}`, 'firstSend')
       }
       const driver = createFakeSdk(options.script ?? { steps: [] })
       created.push({ resume: driverOptions.resume, permissionMode: driverOptions.permissionMode, driver })
@@ -97,6 +142,7 @@ function makeController(
       list: async () => [],
       transcript: async (sessionId, cwd) => {
         transcriptReads.push([sessionId, cwd])
+        if (options.transcriptFails) throw new Error('транскрипт не читается')
         return options.historyMessages ?? []
       }
     },
@@ -116,7 +162,7 @@ function makeController(
     await controller.whenSettled()
   }
 
-  return { controller, changed, ribbon, resumedWith, transcriptReads, created, speak }
+  return { controller, manager, changed, ribbon, resumedWith, transcriptReads, created, speak }
 }
 
 function writeStoredTabs(tabs: unknown[]): void {
@@ -393,6 +439,115 @@ describe('TabController', () => {
     const id = controller.list()[0]!.id
     expect(ribbon.every((e) => e.tabId === id)).toBe(true)
     expect(ribbon.length).toBeGreaterThan(0)
+  })
+})
+
+function storedTabs(): Array<Record<string, unknown>> {
+  return JSON.parse(readFileSync(join(store, TABS_FILE), 'utf8')) as Array<Record<string, unknown>>
+}
+
+describe('TabController: мёртвая сессия при resume (B4)', () => {
+  const lastNotice = (controller: TabController, id: string): string =>
+    (controller.itemsOf(id).filter((i) => i.kind === 'notice').at(-1) as { text: string } | undefined)
+      ?.text ?? ''
+
+  test('resume, который падает позже старта, всё равно заменяется чистой сессией', async () => {
+    const { controller, manager } = makeController({ resumeFailsAfterMs: 50 })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+
+    await controller.restore()
+    await controller.whenSettled()
+    const dead = manager.get('a')
+    expect(dead).toBeDefined()
+
+    await vi.waitFor(() =>
+      expect(lastNotice(controller, 'a')).toContain('Прошлую переписку открыть не удалось')
+    )
+    await controller.whenSettled()
+    expect(lastNotice(controller, 'a')).toContain('No conversation found')
+    expect(controller.list()[0]!.status).not.toBe('error')
+    expect(manager.get('a')).toBeDefined()
+    expect(manager.get('a')).not.toBe(dead)
+  })
+
+  test('мёртвый id стирается из tabs.json сразу, а не после первого ответа', async () => {
+    const { controller } = makeController({ resumeFailsAfterMs: 50 })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+
+    await controller.restore()
+    await controller.whenSettled()
+    expect(storedTabs()[0]!['lastSessionId']).toBe('пропавшая')
+
+    await vi.waitFor(() =>
+      expect(lastNotice(controller, 'a')).toContain('Прошлую переписку открыть не удалось')
+    )
+    // The fresh session has said nothing yet, so it has no id of its own.
+    expect(controller.sessionIdOf('a')).toBeNull()
+    expect(storedTabs()[0]!['lastSessionId']).toBeUndefined()
+  })
+
+  test('resume, который падает только на первом сообщении, тоже заменяется', async () => {
+    const { controller, manager } = makeController({ resumeFailsOnSend: true })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+
+    await controller.restore()
+    await controller.whenSettled()
+    const dead = manager.get('a')!
+    expect(controller.list()[0]!.status).toBe('idle')
+
+    dead.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() =>
+      expect(lastNotice(controller, 'a')).toContain('Прошлую переписку открыть не удалось')
+    )
+    await controller.whenSettled()
+    expect(controller.list()[0]!.status).not.toBe('error')
+    expect(manager.get('a')).not.toBe(dead)
+    expect(storedTabs()[0]!['lastSessionId']).toBeUndefined()
+  })
+
+  test('ошибка после init — не мёртвый resume: вкладку не подменяют', async () => {
+    // A session that introduced itself opened fine; a later failure is its
+    // own and stays on screen as an error, not as a lost conversation.
+    const { controller, manager } = makeController({
+      script: { steps: [], nextTurn: [{ kind: 'crash', message: 'упал посреди ответа' }] }
+    })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
+
+    await controller.restore()
+    await controller.whenSettled()
+    const session = manager.get('a')!
+    session.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(controller.list()[0]!.status).toBe('error'))
+    await controller.whenSettled()
+
+    expect(manager.get('a')).toBe(session)
+    expect(lastNotice(controller, 'a')).not.toContain('Прошлую переписку открыть не удалось')
+  })
+
+  test('restart тоже сразу забывает прежний id на диске', async () => {
+    const { controller, speak } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    const id = controller.list()[0]!.id
+    await speak(id)
+    expect(storedTabs()[0]!['lastSessionId']).toBe(controller.sessionIdOf(id))
+
+    await controller.restart(id)
+    await controller.whenSettled()
+
+    expect(controller.sessionIdOf(id)).toBeNull()
+    expect(storedTabs()[0]!['lastSessionId']).toBeUndefined()
+  })
+
+  test('превью, которое не читается, не мешает агенту вкладки подняться', async () => {
+    const { controller, resumedWith } = makeController({ transcriptFails: true })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'вчерашняя' }])
+
+    await controller.restore()
+    await controller.whenSettled()
+
+    expect(resumedWith).toContain('вчерашняя')
+    expect(controller.list()[0]!.status).toBe('idle')
   })
 })
 

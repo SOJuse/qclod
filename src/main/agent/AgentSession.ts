@@ -189,8 +189,13 @@ export class AgentSession {
     this.panelListeners.push(cb)
   }
 
-  onStatus(cb: StatusListener): void {
+  /** Returns a function that stops the listener. */
+  onStatus(cb: StatusListener): () => void {
     this.statusListeners.push(cb)
+    return () => {
+      const at = this.statusListeners.indexOf(cb)
+      if (at !== -1) this.statusListeners.splice(at, 1)
+    }
   }
 
   onCommands(cb: (commands: CommandInfo[]) => void): void {
@@ -854,7 +859,8 @@ export class AgentSession {
   private setStatus(status: SessionStatus): void {
     if (this.state === status) return
     this.state = status
-    for (const listener of this.statusListeners) listener(status)
+    // A copy: a listener may stop itself while it is being told.
+    for (const listener of [...this.statusListeners]) listener(status)
     if (this.settled()) {
       const waiters = this.idleWaiters.splice(0)
       for (const resolve of waiters) resolve()

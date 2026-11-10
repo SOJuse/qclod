@@ -100,6 +100,16 @@ export function seedFromTranscript(messages: unknown[]): SessionSeed {
   return { builder, collector }
 }
 
+/** The texts of an AskUserQuestion's questions — the keys its answers go under. */
+function questionTexts(input: Record<string, unknown>): string[] {
+  const questions = input['questions']
+  if (!Array.isArray(questions)) return []
+  return questions.flatMap((q: unknown) => {
+    const text = typeof q === 'object' && q !== null ? (q as Record<string, unknown>)['question'] : undefined
+    return typeof text === 'string' ? [text] : []
+  })
+}
+
 type ChangeListener = (changes: RibbonChange[]) => void
 type PanelListener = (patch: Partial<PanelData>, rev: number) => void
 type StatusListener = (status: SessionStatus) => void
@@ -267,10 +277,21 @@ export class AgentSession {
    * which is what the user would have typed anyway. A stopped question is dropped
    * from `pendingQuestions` the moment it is stopped, so its card lands here.
    */
-  answerQuestion(toolUseId: string, answers: Record<string, string>): void {
+  answerQuestion(toolUseId: string, given: Record<string, string>): void {
+    const waiting = this.pendingQuestions.get(toolUseId)
+    // The window only says which choice goes with which question; what the
+    // questions are comes from here. Foreign keys are dropped, and a card
+    // with a question left unanswered stays open and the agent stays held.
+    const card = this.builder.items.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)
+    const asked = waiting
+      ? questionTexts(waiting.input)
+      : card && card.kind === 'question'
+        ? card.questions.map((q) => q.question)
+        : []
+    if (asked.length === 0 || !asked.every((q) => typeof given[q] === 'string')) return
+    const answers = Object.fromEntries(asked.map((q) => [q, given[q]!]))
     this.emit(this.builder.answerQuestion(toolUseId, answers))
 
-    const waiting = this.pendingQuestions.get(toolUseId)
     if (!waiting) {
       const entries = Object.entries(answers)
       const text =

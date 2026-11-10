@@ -43,12 +43,6 @@ export type ToolState = 'running' | 'done'
 /** A subagent can also fail, be stopped, or be left running when the session ended. */
 export type SubagentState = 'running' | 'done' | 'failed' | 'stopped' | 'unfinished'
 
-/**
- * One element of the conversation as the user reads it. Deliberately a view
- * model, not a copy of the SDK's message: the translator (shared/ribbon.ts)
- * folds a tool call and its result into one item, and a stream of text deltas
- * into one paragraph.
- */
 /** One question of an AskUserQuestion card. */
 export interface QuestionView {
   question: string
@@ -57,6 +51,12 @@ export interface QuestionView {
   multiSelect: boolean
 }
 
+/**
+ * One element of the conversation as the user reads it. Deliberately a view
+ * model, not a copy of the SDK's message: the translator (shared/ribbon.ts)
+ * folds a tool call and its result into one item, and a stream of text deltas
+ * into one paragraph.
+ */
 export type RibbonItem =
   | (RibbonBase & { kind: 'user'; text: string; attachments: Attachment[] })
   | (RibbonBase & { kind: 'agentText'; text: string; streaming: boolean })

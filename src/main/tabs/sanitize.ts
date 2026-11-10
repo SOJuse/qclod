@@ -99,19 +99,17 @@ export function sanitizeInput(value: unknown): UserInput {
   return { text, attachments }
 }
 
-const MAX_QUESTIONS = 4
 const MAX_ANSWER = 2000
 
 /**
- * The answers of a question card: question text -> chosen label(s). AskUserQuestion
- * asks at most four questions and an answer is a choice, not a document, so
- * anything else the window sends is dropped.
+ * The answers of a question card: question text -> chosen label(s). An answer
+ * is a choice, not a document, so non-strings and long values are dropped. Which
+ * keys are real questions is checked by the session, which knows them.
  */
 export function sanitizeQuestionAnswers(value: unknown): Record<string, string> {
   if (!isPlainObject(value)) return {}
   const out: Record<string, string> = {}
   for (const [question, answer] of Object.entries(value)) {
-    if (Object.keys(out).length >= MAX_QUESTIONS) break
     if (typeof answer !== 'string' || answer.length > MAX_ANSWER) continue
     out[question] = answer
   }

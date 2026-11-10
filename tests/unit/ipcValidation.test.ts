@@ -150,7 +150,7 @@ describe('sanitizeOverrides: усилие', () => {
 })
 
 describe('sanitizeQuestionAnswers', () => {
-  test('ответы на вопрос — только строки, не больше четырёх', () => {
+  test('ответы на вопрос — только строки, короткие', () => {
     expect(sanitizeQuestionAnswers({ A: '1', B: 'x, y' })).toEqual({ A: '1', B: 'x, y' })
     // Not an object at all.
     expect(sanitizeQuestionAnswers('Справа')).toEqual({})
@@ -158,9 +158,9 @@ describe('sanitizeQuestionAnswers', () => {
     expect(sanitizeQuestionAnswers(null)).toEqual({})
     // Values that are not strings are dropped.
     expect(sanitizeQuestionAnswers({ A: '1', B: 2, C: { x: 1 } })).toEqual({ A: '1' })
-    // AskUserQuestion asks at most four questions.
+    // Which keys are real questions is the session's call, so none is lost here.
     const many = { a: '1', b: '2', c: '3', d: '4', e: '5' }
-    expect(Object.keys(sanitizeQuestionAnswers(many))).toEqual(['a', 'b', 'c', 'd'])
+    expect(sanitizeQuestionAnswers(many)).toEqual(many)
     // An answer is a choice, not a document.
     expect(sanitizeQuestionAnswers({ A: 'я'.repeat(2001), B: 'я'.repeat(2000) })).toEqual({
       B: 'я'.repeat(2000)

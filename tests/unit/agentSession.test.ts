@@ -800,6 +800,39 @@ describe('AgentSession: id запросов', () => {
     expect(driver.sent).toEqual([])
   })
 
+  test('чужие ключи отбрасываются, неполный ответ не отпускает агента', async () => {
+    const { session, driver } = makeSession({
+      steps: [
+        {
+          kind: 'askQuestion',
+          questions: [
+            { question: 'A', options: ['1', 'x'] },
+            { question: 'B', options: ['2', 'y'] }
+          ]
+        },
+        { kind: 'text', text: 'принял' }
+      ]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    const card = rec.items.find((i) => i.kind === 'question') as { toolUseId: string }
+
+    // One of two questions, and a key that is not a question: still waiting.
+    session.answerQuestion(card.toolUseId, { A: '1', чужой: 'x' })
+    await tick()
+    expect(session.status).toBe('waiting')
+    expect(driver.questionAnswers).toEqual([])
+    expect(rec.items.find((i) => i.kind === 'question')).toMatchObject({ answers: null })
+
+    // Everything asked, plus a stranger: the stranger is dropped.
+    session.answerQuestion(card.toolUseId, { A: '1', B: '2', чужой: 'x' })
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('принял'), { timeout: 2000 })
+    await settle(session)
+    expect(driver.questionAnswers).toEqual([{ A: '1', B: '2' }])
+  })
+
   test('после стопа ответы на несколько вопросов уходят одним сообщением по строке на вопрос', async () => {
     const { session, driver } = makeSession({
       steps: [

@@ -12,5 +12,5 @@ export function qrPath(grid: boolean[][]): string {
 }
 
 export function qrMatrix(text: string): boolean[][] {
-  return encode(text, { ecc: 'M', border: 2 }).data
+  return encode(text, { ecc: 'M', border: 4 }).data
 }

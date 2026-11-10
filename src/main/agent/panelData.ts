@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
+  BackgroundTask,
   EffortLevel,
   McpServerInfo,
   ModelOption,
@@ -50,7 +51,8 @@ export const EMPTY_PANEL: PanelData = {
   effort: null,
   permissionMode: 'default',
   mcp: [],
-  projectSettings: null
+  projectSettings: null,
+  backgroundTasks: []
 }
 
 let lastPanelRev = 0
@@ -214,6 +216,11 @@ export class PanelCollector {
 
   setProjectSettings(info: ProjectSettingsInfo | null): Partial<PanelData> {
     return this.patch({ projectSettings: info })
+  }
+
+  /** The whole list each time: BackgroundTracker hands over a fresh one. */
+  setBackgroundTasks(tasks: BackgroundTask[]): Partial<PanelData> {
+    return this.patch({ backgroundTasks: tasks })
   }
 
   private onInit(m: Record<string, unknown>): Partial<PanelData> {

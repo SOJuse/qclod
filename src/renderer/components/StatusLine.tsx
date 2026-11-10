@@ -12,13 +12,14 @@ import { untilReset } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
 import { EFFORT_LABEL, EFFORT_SHORT, MODE_LABEL } from '../labels'
 import { Dropdown, type DropdownOption } from './Dropdown'
+import { BackgroundTasks } from './BackgroundTasks'
 import './StatusLine.css'
 
 interface Props {
   tabId: string
   data: PanelData
   started: boolean
-  /** Room on the right for what a later part adds (background tasks). */
+  /** Room for another indicator beside the limits; background tasks have their own place after them. */
   slot?: ReactNode
 }
 
@@ -130,6 +131,7 @@ export function StatusLine({ tabId, data, started, slot }: Props): JSX.Element {
           <LimitMeter testId="status-limit-7d" label="нед" name="Лимит на неделю" window={data.limits.sevenDay} waitingFor={waitingFor} />
           {slot}
         </span>
+        <BackgroundTasks tabId={tabId} tasks={data.backgroundTasks} />
       </div>
     </div>
   )

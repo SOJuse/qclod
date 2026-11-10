@@ -25,6 +25,8 @@
  * @typedef {{kind:'backgroundAgent', name:string, agentType?:string, agentId?:string, pauseMs?:number,
  *   progress?:Array<{tokens:number, toolUses:number, durationMs:number, lastTool?:string}>,
  *   finish?:{status:'completed'|'failed'|'stopped', summary:string, tokens:number, toolUses:number, durationMs:number}|null}} BackgroundAgentStep
+ * @typedef {{kind:'backgroundBash', command:string, description?:string, taskId?:string, chunks?:string[], pauseMs?:number,
+ *   finish?:'completed'|'failed'|null}} BackgroundBashStep
  * @typedef {{kind:'compact', preTokens:number, postTokens:number, trigger?:'auto'|'manual'}} CompactStep
  * @typedef {{kind:'crash', message:string}} CrashStep
  * @typedef {{kind:'reportInput'}} ReportInputStep
@@ -85,6 +87,42 @@ export function createFakeSdk(script = {}) {
    * end while the agent is still running.
    */
   const afterTurn = []
+
+  /**
+   * Background shells by task id: what each has written so far, and whether
+   * it is over. taskOutput() reads it the way get_task_output reads the
+   * task's output file.
+   */
+  const shells = new Map()
+
+  /** REPLACE semantics: every shell still running, as sdk.d.ts describes it. */
+  function backgroundTasksChanged() {
+    return {
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      uuid: randomUUID(),
+      session_id: sessionId,
+      tasks: [...shells]
+        .filter(([, shell]) => !shell.stopped)
+        .map(([taskId, shell]) => ({ task_id: taskId, task_type: 'local_bash', description: shell.description }))
+    }
+  }
+
+  /**
+   * Messages that do not wait for a turn: what stopTask() makes the CLI say.
+   * The stream hands them out as soon as they are here, even while it is
+   * waiting for the next send or for a background shell's next piece.
+   */
+  const outOfBand = []
+  let outOfBandWake = null
+  function pushOutOfBand(message) {
+    outOfBand.push(message)
+    if (outOfBandWake) {
+      const resume = outOfBandWake
+      outOfBandWake = null
+      resume()
+    }
+  }
 
   /** Sends waiting to be played as their own turn. */
   const inbox = []
@@ -549,6 +587,75 @@ export function createFakeSdk(script = {}) {
           break
         }
 
+        // A Bash call with run_in_background. Shapes from sdk.d.ts and
+        // sdk-tools.d.ts (BashOutput.backgroundTaskId), not from a live
+        // session. The call returns at once; the command's output grows after
+        // the turn's result, read through taskOutput(), and its end, if any,
+        // is a notification and an emptied background_tasks_changed.
+        case 'backgroundBash': {
+          const id = randomUUID()
+          const taskId = step.taskId ?? `b${randomUUID().replace(/-/g, '').slice(0, 8)}`
+          const description = step.description ?? step.command
+          const outputFile = `C:\\Users\\fake\\AppData\\Local\\Temp\\claude\\tasks\\${taskId}.output`
+          shells.set(taskId, { output: '', stopped: false, description })
+          yield assistant([
+            {
+              type: 'tool_use',
+              id,
+              name: 'Bash',
+              input: {
+                command: step.command,
+                ...(step.description ? { description: step.description } : {}),
+                run_in_background: true
+              }
+            }
+          ])
+          state.executedTools.push('Bash')
+          yield {
+            ...toolResult(id, `Command running in background with ID: ${taskId}`),
+            tool_use_result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: taskId }
+          }
+          yield {
+            type: 'system',
+            subtype: 'task_started',
+            uuid: randomUUID(),
+            session_id: sessionId,
+            task_id: taskId,
+            tool_use_id: id,
+            description,
+            task_type: 'local_bash',
+            is_backgrounded: true
+          }
+          yield backgroundTasksChanged()
+
+          afterTurn.push(async function* () {
+            const shell = shells.get(taskId)
+            for (const chunk of step.chunks ?? []) {
+              await pause(step.pauseMs)
+              if (shell.stopped) return
+              shell.output += chunk
+            }
+            // finish: null — the command never ends by itself.
+            if (!step.finish) return
+            await pause(step.pauseMs)
+            if (shell.stopped) return
+            shell.stopped = true
+            yield {
+              type: 'system',
+              subtype: 'task_notification',
+              uuid: randomUUID(),
+              session_id: sessionId,
+              task_id: taskId,
+              tool_use_id: id,
+              status: step.finish,
+              output_file: outputFile,
+              summary: `Background command "${description}" ${step.finish}`
+            }
+            yield backgroundTasksChanged()
+          })
+          break
+        }
+
         case 'compact':
           yield {
             type: 'system',
@@ -684,8 +791,35 @@ export function createFakeSdk(script = {}) {
 
   const finishTurn = finishTurnImpl
 
+  /** The turn stream with the out-of-band messages let in between its own. */
+  async function* withOutOfBand(inner) {
+    let next = null
+    try {
+      for (;;) {
+        if (outOfBand.length > 0) {
+          yield outOfBand.shift()
+          continue
+        }
+        next ??= inner.next()
+        const arrived = new Promise((resolve) => {
+          outOfBandWake = resolve
+        })
+        const got = await Promise.race([next, arrived.then(() => null)])
+        outOfBandWake = null
+        if (got === null) continue
+        next = null
+        if (got.done) return
+        yield got.value
+      }
+    } finally {
+      // Not awaited: a read may still be pending inside, and return() queues
+      // behind it.
+      inner.return?.().catch(() => undefined)
+    }
+  }
+
   return {
-    messages: stream(),
+    messages: withOutOfBand(stream()),
     send(input) {
       state.sent.push(input)
       inbox.push(input)
@@ -752,6 +886,41 @@ export function createFakeSdk(script = {}) {
           { name: 'MCP tools (deferred)', tokens: 700, kind: 'deferred' }
         ]
       }
+    },
+    /**
+     * The driver's names, not the SDK's (ruling C12): createDriver loads this
+     * fixture as the driver. The tail of what the shell wrote — the last
+     * 8 KiB — with its whole size, as get_task_output answers.
+     */
+    async taskOutput(taskId) {
+      if (script.taskOutputUnavailable) return null
+      const shell = shells.get(taskId)
+      if (!shell) return null
+      const whole = Buffer.from(shell.output, 'utf8')
+      const tail = whole.subarray(Math.max(0, whole.length - 8192))
+      return {
+        // A cut through a multi-byte letter decodes as U+FFFD, like the CLI's.
+        output: tail.toString('utf8'),
+        totalBytes: whole.length,
+        truncated: whole.length > 8192
+      }
+    },
+    /** Ends a running shell: its notification and the emptied list, outside any turn. */
+    async stopTask(taskId) {
+      const shell = shells.get(taskId)
+      if (!shell || shell.stopped) return
+      shell.stopped = true
+      pushOutOfBand({
+        type: 'system',
+        subtype: 'task_notification',
+        uuid: randomUUID(),
+        session_id: sessionId,
+        task_id: taskId,
+        status: 'stopped',
+        output_file: `C:\\Users\\fake\\AppData\\Local\\Temp\\claude\\tasks\\${taskId}.output`,
+        summary: `Background command "${shell.description}" was stopped`
+      })
+      pushOutOfBand(backgroundTasksChanged())
     },
     async dispose() {
       state.disposed = true

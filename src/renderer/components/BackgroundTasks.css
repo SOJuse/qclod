@@ -1,0 +1,245 @@
+/*
+ * Background commands (BackgroundTasks.tsx): a quiet counter at the right end
+ * of the status line, and the list it opens upward. Each row is a command
+ * card in miniature — the amber rule on the left only while it runs — and an
+ * opened row shows the end of the output as a small sunken terminal.
+ */
+
+.bg {
+  position: relative;
+  display: inline-flex;
+}
+
+.bg-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--status-pad);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  color: var(--text-dim);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.bg-counter:hover,
+.bg-counter.is-open {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+/* Nothing running: the icon steps back with the words. */
+.bg-counter:not(.is-running) > svg:first-child {
+  color: var(--text-faint);
+}
+
+.bg-counter:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: 1px;
+}
+
+.bg-chevron {
+  color: var(--text-faint);
+}
+
+/* ------------------------------------------------------------------- list */
+
+.bg-list {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+  z-index: 5;
+  width: min(var(--bg-list-w), calc(100vw - var(--now-gutter) * 2));
+  padding: var(--space-1);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--glow-accent), var(--shadow-menu);
+  backdrop-filter: blur(var(--menu-blur));
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  user-select: text;
+}
+
+.bg-list-title {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.bg-rows {
+  max-height: var(--bg-list-max-h);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.bg-task {
+  border-radius: var(--radius-sm);
+}
+
+.bg-task + .bg-task {
+  margin-top: var(--gap-hair);
+}
+
+/* Only a running command carries the category rule: an ended one is history. */
+.bg-task.is-running {
+  box-shadow: inset var(--rule-category) 0 0 var(--cat-command);
+}
+
+.bg-task-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--menu-row-h);
+  padding: 0 var(--space-2) 0 var(--space-1);
+}
+
+.bg-task-toggle {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--gap-hair) var(--space-1);
+  border: 0;
+  border-radius: var(--radius-hair);
+  background: transparent;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.bg-task-toggle:hover {
+  background: var(--hover-fill);
+}
+
+.bg-task-toggle:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: 0;
+}
+
+.bg-task-chevron {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.bg-task-toggle[aria-expanded='true'] .bg-task-chevron {
+  transform: rotate(90deg);
+}
+
+.bg-task-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A command is shown as typed: no ligature turns «--port» into a dash. */
+.bg-task-label.is-mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-ligatures: none;
+}
+
+.bg-task:not(.is-running) .bg-task-label {
+  color: var(--text-dim);
+}
+
+.bg-task-time {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.bg-task-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.bg-stop {
+  flex: 0 0 auto;
+  padding: var(--status-pad);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-sm);
+  background: var(--danger-fill);
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.bg-stop:hover {
+  border-color: var(--danger);
+}
+
+.bg-stop:focus-visible {
+  outline: 1px solid var(--danger-border);
+  outline-offset: 1px;
+}
+
+/* ----------------------------------------------------------------- output */
+
+.bg-output-wrap {
+  padding: 0 var(--space-2) var(--space-2) calc(var(--space-2) + var(--space-3));
+}
+
+.bg-output-cut {
+  padding-bottom: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.bg-output {
+  max-height: var(--bg-output-max-h);
+  margin: 0;
+  padding: var(--space-2);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-ligatures: none;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.bg-output:focus-visible {
+  outline: 1px solid var(--border-accent);
+}
+
+/* «Пока ничего не вывела», «Вывод недоступен…»: a note, not output. */
+.bg-output.is-note {
+  font-family: var(--font-ui);
+  color: var(--text-faint);
+}
+
+div.bg-output.is-note {
+  margin: 0 var(--space-2) var(--space-2) calc(var(--space-2) + var(--space-3));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-counter,
+  .bg-task-chevron {
+    transition: none;
+  }
+}

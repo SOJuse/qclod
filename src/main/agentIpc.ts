@@ -206,6 +206,18 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     return controller.panelOf(id)
   })
 
+  // The session answers only for a task it lists itself, so a made-up id
+  // never reaches the agent.
+  ipcMain.handle(CHANNELS.agentTaskOutput, async (_e, id: unknown, taskId: unknown) => {
+    if (!isString(id) || !isString(taskId) || taskId === '') return null
+    return (await manager.get(id)?.taskOutput(taskId)) ?? null
+  })
+
+  ipcMain.handle(CHANNELS.agentTaskStop, async (_e, id: unknown, taskId: unknown) => {
+    if (!isString(id) || !isString(taskId) || taskId === '') return
+    await manager.get(id)?.stopTask(taskId)
+  })
+
   ipcMain.handle(CHANNELS.permissionAnswer, (_e, requestId: unknown, answer: unknown) => {
     if (!isString(requestId)) return
     broker.answer(requestId, sanitizeAnswer(answer))

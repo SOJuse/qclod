@@ -257,6 +257,33 @@ export interface PanelData {
   permissionMode: PermissionMode
   mcp: McpServerInfo[]
   projectSettings: ProjectSettingsInfo | null
+  /** Background shells and the like, newest first; subagents have their own cards. */
+  backgroundTasks: BackgroundTask[]
+}
+
+/**
+ * One background task as the status line lists it, from the SDK's task_*
+ * events. The end time is ours: the SDK's notification carries none.
+ */
+export interface BackgroundTask {
+  taskId: string
+  toolUseId?: string
+  /** task_type as the SDK names it: local_bash, monitor, … */
+  type: string
+  description: string
+  /** The Bash call's command, when the task came from one. */
+  command?: string
+  status: 'running' | 'completed' | 'failed' | 'stopped'
+  /** epoch ms */
+  startedAt: number
+  endedAt?: number
+}
+
+/** The end of a background task's output (get_task_output: the last 8 KiB). */
+export interface TaskOutput {
+  output: string
+  totalBytes: number
+  truncated: boolean
 }
 
 // ------------------------------------------------------------------ the rest

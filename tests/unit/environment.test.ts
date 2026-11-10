@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'vitest'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { npmFixture } from './npmFixture'
 import { checkEnvironment } from '@main/setup/environment'
 import { findAgent } from '@main/setup/findAgent'
 import { detectInstallMethod, WINGET_ID, NPM_PACKAGE } from '@main/setup/install'
@@ -19,6 +23,15 @@ describe('checkEnvironment', () => {
     expect(report.ready).toBe(false)
   })
 
+  test('версия старого npm-пакета (cli.js) спрашивается через node', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'qclod-npm-'))
+    const cli = npmFixture(root, 'js')
+    const report = await checkEnvironment(cli)
+
+    expect(report.agent.path).toBe(cli)
+    expect(report.agent.version).toBe('1.0.99')
+  })
+
   test('пустая настройка читается как «claude»', async () => {
     const report = await checkEnvironment('')
     expect(report.ready).toBe(true)
@@ -31,6 +44,26 @@ describe('findAgent', () => {
     // invisible to it; the known install locations are checked directly.
     const withoutPath = { ...process.env, PATH: '', Path: '' }
     expect(findAgent('claude', withoutPath)).toBeTruthy()
+  })
+
+  test('findAgent без PATH находит npm-установку в APPDATA и отдаёт exe', () => {
+    const appData = mkdtempSync(join(tmpdir(), 'qclod-appdata-'))
+    const npm = join(appData, 'npm')
+    mkdirSync(npm)
+    const exe = npmFixture(npm, 'exe')
+    const env = { APPDATA: appData, PATH: '', PATHEXT: '.COM;.EXE;.BAT;.CMD' }
+    expect(findAgent('claude', env)).toBe(exe)
+    expect(exe).toBe(
+      join(npm, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe')
+    )
+  })
+
+  test('findAgent не отдаёт npm-ский sh-скрипт без расширения', () => {
+    const appData = mkdtempSync(join(tmpdir(), 'qclod-appdata-'))
+    const npm = join(appData, 'npm')
+    mkdirSync(npm)
+    writeFileSync(join(npm, 'claude'), '#!/bin/sh\n', 'utf8')
+    expect(findAgent('claude', { APPDATA: appData, PATH: '' })).toBeNull()
   })
 
   test('полный путь, которого нет, не подменяется другим агентом', () => {

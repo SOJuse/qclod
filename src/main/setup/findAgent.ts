@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs'
+import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveExecutable } from '../agent/resolveExecutable'
 
@@ -24,21 +24,24 @@ function knownLocations(env: NodeJS.ProcessEnv): string[] {
       for (const entry of readdirSync(packages)) {
         if (!entry.startsWith('Anthropic.ClaudeCode')) continue
         places.push(join(packages, entry, 'claude.exe'))
-        places.push(join(packages, entry, 'claude'))
       }
     } catch {
       // No winget packages directory: nothing to add.
     }
   }
 
-  // The native installer, and npm's global bin.
+  // The native installer, and npm's global bin. Nothing without an extension:
+  // on Windows that is a sh script, which cannot be started. npm's claude.cmd
+  // is unwrapped into the file it runs; the exe inside the package is also
+  // named, in case the wrapper is gone.
   if (home) {
     places.push(join(home, '.local', 'bin', 'claude.exe'))
-    places.push(join(home, '.local', 'bin', 'claude'))
   }
   if (appData) {
     places.push(join(appData, 'npm', 'claude.cmd'))
-    places.push(join(appData, 'npm', 'claude'))
+    places.push(
+      join(appData, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe')
+    )
   }
 
   return places
@@ -61,8 +64,12 @@ export function findAgent(configured: string, env: NodeJS.ProcessEnv): string | 
     if (wanted !== 'claude') return null
   }
 
-  for (const candidate of knownLocations(env)) {
-    if (existsSync(candidate)) return candidate
+  for (const place of knownLocations(env)) {
+    try {
+      return resolveExecutable(place, env)
+    } catch {
+      // Not there, or nothing runnable there: try the next place.
+    }
   }
   return null
 }

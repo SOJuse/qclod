@@ -34,7 +34,9 @@ export async function checkEnvironment(agentPath: string): Promise<EnvironmentRe
 
   let version: string | undefined
   try {
-    const { stdout } = await run(path, ['--version'], { timeout: 20000, windowsHide: true })
+    // An older npm package is a cli.js, which only node can run.
+    const [file, args] = /\.js$/i.test(path) ? ['node', [path, '--version']] : [path, ['--version']]
+    const { stdout } = await run(file, args, { timeout: 20000, windowsHide: true })
     version = firstVersion(stdout)
   } catch {
     // On disk but would not answer. Still the agent we would run, so it is

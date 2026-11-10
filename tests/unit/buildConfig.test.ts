@@ -13,7 +13,7 @@ describe('сборка', () => {
     expect(pkg.repository).toEqual({ type: 'git', url: 'https://github.com/SOJuse/qclod.git' })
     expect(yml).toMatch(/^appId: io\.github\.sojuse\.qclod$/m)
     expect(yml).toMatch(/^copyright: Copyright © 2026 SOJuse$/m)
-    expect(JSON.stringify(pkg) + yml).not.toMatch(/sojuse|@[a-z0-9-]+\.[a-z]{2,}/i)
+    expect(JSON.stringify(pkg) + yml).not.toMatch(/@[a-z0-9-]+\.[a-z]{2,}/i)
   })
   test('appId приложения совпадает с установщиком', () => {
     expect(yml).toContain(`appId: ${APP_ID}`)
@@ -28,7 +28,6 @@ describe('документы', () => {
     const readme = readFileSync(resolve(root, 'README.md'), 'utf8')
     expect(readme).toContain('Выполнить в любом случае')
     expect(readme).toContain('SOJuse/qclod/releases')
-    expect(readme).not.toMatch(/sojuse/i)
     expect(readme).not.toMatch(/@[a-z0-9-]+\.[a-z]{2,}/i)
   })
   test('чек-лист описывает вход через claude auth login', () => {

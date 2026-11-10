@@ -1,6 +1,7 @@
-import { Bot, Brain, CircleAlert, CircleHelp, FilePenLine, FileText, ListChecks, OctagonAlert, PenLine, Plug, Search, SquareTerminal, TriangleAlert, Wrench } from 'lucide-react'
+import { Bot, Brain, CircleAlert, CircleHelp, FilePenLine, FileText, ListChecks, Octagon, OctagonAlert, PenLine, Plug, Search, SquareTerminal, TriangleAlert, Wrench } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ContextLevel } from '../chat/contextLevel'
+import './icons.css'
 import type { ToolCategory } from '@shared/toolCategory'
 
 export const CATEGORY_ICON: Record<ToolCategory, LucideIcon> = {
@@ -45,6 +46,11 @@ export const LEVEL_LABEL: Record<'context' | 'limit', Record<'warn' | 'critical'
   limit: { warn: 'Лимит близко', critical: 'Лимит почти исчерпан' }
 }
 
+/** The label for a level that is not `ok`; empty at `ok`, where no icon is drawn. */
+export function levelLabel(kind: 'context' | 'limit', level: ContextLevel): string {
+  return level === 'ok' ? '' : LEVEL_LABEL[kind][level]
+}
+
 /** The level's own icon; nothing at `ok`, where there is nothing to notice. */
 export function LevelIcon({
   level,
@@ -57,7 +63,20 @@ export function LevelIcon({
 }): JSX.Element | null {
   if (level === 'ok') return null
   const Icon = LEVEL_ICON[level]
-  return <Icon size={size} color={`var(--status-${level})`} role="img" aria-label={label} data-level-icon={level} />
+  // An empty label means the text beside the icon already says it, so the icon stays
+  // out of the accessibility tree.
+  const spoken = label === '' ? { 'aria-hidden': true } : { role: 'img', 'aria-label': label }
+  const color = `var(--status-${level})`
+  if (level === 'warn') return <Icon size={size} color={color} data-level-icon={level} {...spoken} />
+  // Critical is a solid octagon with the «!» cut out of it (see icons.css): at 12–14px
+  // an outline reads as a circle. A filled Octagon sits under the outlined alert icon.
+  const big = size + 3
+  return (
+    <span className="level-icon-solid">
+      <Octagon size={big} color={color} fill={color} aria-hidden="true" />
+      <Icon size={big} color={color} data-level-icon={level} {...spoken} />
+    </span>
+  )
 }
 
 export function CategoryIcon({

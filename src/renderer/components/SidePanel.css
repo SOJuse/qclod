@@ -353,3 +353,8 @@
   vertical-align: -2px;
   margin-right: 4px;
 }
+
+/* At `ok` the icon is not drawn and the seat must not leave a gap. */
+.panel-context-alert:empty {
+  display: none;
+}

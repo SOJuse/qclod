@@ -101,7 +101,7 @@ export function TitleBar({
           title="Развернуть или вернуть размер"
           onClick={() => void window.qclod.toggleMaximize()}
         >
-          <Square size={CHROME_ICON_SIZE} absoluteStrokeWidth aria-hidden="true" />
+          <Square size={CHROME_ICON_SIZE} aria-hidden="true" />
         </button>
         <button
           type="button"

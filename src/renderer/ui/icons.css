@@ -1,0 +1,17 @@
+/*
+ * The critical level icon: a solid octagon with the «!» knocked out of it. A filled Octagon
+ * sits under Lucide's OctagonAlert, which draws the «!» as its first two paths and the
+ * outline as the last; the «!» is recoloured to the surface so it reads against the fill.
+ */
+.level-icon-solid {
+  display: inline-grid;
+}
+
+.level-icon-solid > svg {
+  grid-area: 1 / 1;
+}
+
+.level-icon-solid path:not(:last-child) {
+  stroke: var(--surface-raised);
+  stroke-width: 2.5;
+}

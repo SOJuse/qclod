@@ -1,4 +1,4 @@
-import { LEVEL_LABEL, LevelIcon } from '../ui/icons'
+import { LevelIcon } from '../ui/icons'
 import { contextLevel } from '../chat/contextLevel'
 import './StatusLine.css'
 
@@ -19,7 +19,7 @@ export function ContextBanner({ percent, onCompact, disabled = false }: Props): 
   return (
     <div className="context-banner" data-testid="context-banner" role="status">
       <span className="context-banner-icon">
-        <LevelIcon level="critical" label={LEVEL_LABEL.context.critical} size={14} />
+        <LevelIcon level="critical" label="" size={14} />
       </span>
       <span className="context-banner-text">Контекст почти заполнен — {Math.round(percent)}%</span>
       <button

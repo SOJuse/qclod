@@ -384,6 +384,11 @@ test('значки кнопок окна одного размера', async () 
       .evaluateAll((s) => s.map((x) => x.getAttribute('width')))
     expect(sizes.length).toBeGreaterThanOrEqual(6)
     expect(new Set(sizes).size).toBe(1)
+    // The same line weight too: a square drawn heavier than its neighbours reads as a different size.
+    const strokes = await win
+      .locator('[data-testid="title-bar"] .window-controls svg')
+      .evaluateAll((s) => s.map((x) => `${x.getAttribute('stroke-width')}|${getComputedStyle(x).strokeWidth}`))
+    expect(new Set(strokes).size).toBe(1)
   } finally {
     await app.close()
   }

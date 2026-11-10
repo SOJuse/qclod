@@ -16,7 +16,7 @@ import { loadTranscript } from './agent/transcript'
 import { TabController } from './tabs/TabController'
 import { pickDefaultCwd } from './tabs/defaultCwd'
 import { notifyIfNeeded } from './notifications'
-import { RibbonBatcher } from './ribbonBatcher'
+import { RendererOutbox } from './rendererOutbox'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -76,10 +76,11 @@ app.whenReady().then(async () => {
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
 
-  function send(channel: string, payload: unknown): void {
+  const outbox = new RendererOutbox((channel, payload) => {
     const win = mainWindow
     if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
-  }
+  })
+  const send = (channel: string, payload: unknown): void => outbox.send(channel, payload)
 
   function showWindow(): void {
     const win = mainWindow
@@ -155,8 +156,6 @@ app.whenReady().then(async () => {
     return process.env['CLAUDE_CONFIG_DIR'] ? loadTranscript(sessionId, cwd) : []
   }
 
-  const ribbonBatcher = new RibbonBatcher((event) => send(CHANNELS.ribbonChanged, event))
-
   const controller = new TabController({
     manager,
     storeDir: userData,
@@ -171,7 +170,7 @@ app.whenReady().then(async () => {
       send(CHANNELS.tabsChanged, tabs)
       tray?.rebuild()
     },
-    onRibbon: (event) => ribbonBatcher.push(event),
+    onRibbon: (event) => outbox.ribbon(event),
     onPanel: (event) => send(CHANNELS.panelChanged, event),
     onCommands: (event) => send(CHANNELS.commandsChanged, event),
     onStatus: (event) => {

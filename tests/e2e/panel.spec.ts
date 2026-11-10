@@ -277,3 +277,37 @@ test('модель и усилие вкладки переживают пере�
     await close(app, profile)
   }
 })
+
+test('разбивка контекста — одна полоса и легенда', async () => {
+  const { app, profile } = await launch({ steps: [{ kind: 'text', text: 'готово' }], contextPercent: 21 })
+  try {
+    const win = await app.firstWindow()
+    const context = win.locator('[data-testid="panel-context"]')
+    await expect(context).toContainText('21%', { timeout: 15000 })
+
+    const bar = context.locator('[data-testid="context-bar"]')
+    await expect(bar).toHaveCount(1)
+    await expect(bar).toHaveAttribute('role', 'img')
+    await expect(bar).toHaveAttribute('aria-label', /Сообщения.*Системный промпт.*Резерв сжатия.*Свободно/)
+    // used x2, reserve, free; the deferred row is not drawn.
+    await expect(bar.locator('.context-seg')).toHaveCount(4)
+
+    const rows = context.locator('[data-testid="context-legend-row"]')
+    await expect(rows).toHaveCount(4)
+    await expect(rows.nth(0)).toContainText('Сообщения')
+    await expect(rows.nth(1)).toContainText('Системный промпт')
+    await expect(rows.nth(2)).toContainText('Резерв сжатия')
+    await expect(rows.nth(3)).toContainText('Свободно')
+    await expect(context.locator('[data-testid="context-legend"]')).not.toContainText('deferred')
+
+    // The swatches must be big enough to show the hatch of the reserve.
+    const box = await rows.nth(2).locator('.context-swatch').boundingBox()
+    expect(box!.width).toBeGreaterThanOrEqual(12)
+    expect(box!.height).toBeGreaterThanOrEqual(10)
+    // The reserve is thin but must stay visible in the bar.
+    const seg = await bar.locator('.context-seg[data-fill="seg-buffer"]').boundingBox()
+    expect(seg!.width).toBeGreaterThanOrEqual(8)
+  } finally {
+    await close(app, profile)
+  }
+})

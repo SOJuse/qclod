@@ -46,7 +46,7 @@ export interface ContextUsage {
   percentage: number
   /** The model the session is on — the CLI knows it before init is sent. */
   model?: string
-  categories: Array<{ name: string; tokens: number; kind?: string }>
+  categories: Array<{ name: string; tokens: number; kind?: 'used' | 'free' | 'buffer' | 'deferred' }>
 }
 
 export interface DriverOptions {

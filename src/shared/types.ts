@@ -173,7 +173,8 @@ export interface ContextInfo {
   used: number
   max: number
   percent: number
-  categories: Array<{ name: string; tokens: number }>
+  /** `kind` is absent in an estimate from the record: all of it is content. */
+  categories: Array<{ name: string; tokens: number; kind?: 'used' | 'free' | 'buffer' }>
   /**
    * Worked out from the conversation's record, not reported by a process —
    * a tab not yet started. The process's own answer replaces it.

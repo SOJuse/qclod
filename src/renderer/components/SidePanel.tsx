@@ -1,6 +1,8 @@
 import type { LimitWindow, McpServerInfo, PanelData, SubagentState } from '../../shared/types'
 import { untilReset } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
+import { CircleAlert } from 'lucide-react'
+import { ContextBreakdown } from './ContextBreakdown'
 import { AGENT_STATE_LABEL } from './agentState'
 import './SidePanel.css'
 
@@ -75,25 +77,20 @@ export function SidePanel({ data, started, agents, onClose }: Props): JSX.Elemen
 
       <Section title="Контекст">
         {data.context ? (
-          <div data-testid="panel-context">
-            <Bar percent={data.context.percent} />
+          <div data-testid="panel-context" data-level={contextLevel(data.context.percent)}>
             <div className="panel-line">
               {/* Worked out from the record until the tab's agent reports its own. */}
               <span>
+                {contextLevel(data.context.percent) !== 'ok' && (
+                  <CircleAlert className="panel-context-alert" size={13} aria-label="Контекст почти заполнен" />
+                )}
                 {data.context.estimated ? '≈ ' : ''}
                 {data.context.percent}% из {Math.round(data.context.max / 1000)}k
                 {data.context.estimated ? ' · по записи' : ''}
               </span>
               <span className="panel-dim">{data.context.used.toLocaleString('ru-RU')}</span>
             </div>
-            <ul className="panel-breakdown">
-              {data.context.categories.map((category) => (
-                <li key={category.name}>
-                  <span>{category.name}</span>
-                  <span className="panel-dim">{category.tokens.toLocaleString('ru-RU')}</span>
-                </li>
-              ))}
-            </ul>
+            <ContextBreakdown context={data.context} />
           </div>
         ) : (
           <Empty started={started} />

@@ -92,3 +92,7 @@ for await (const message of driver.messages) { /* ... */ }
   фоновый «Долгий обзор» без уведомления, ветка «старый вариант», отрезанная
   перемоткой, и служебные строки (`file-history-snapshot`, `cost-state`,
   `queue-operation`), которые читатель обязан пропускать.
+
+`getContextUsage()` отдаёт строки разбивки: `messages` и `system_prompt`
+(`used`), `Autocompact buffer` (`buffer`), `Free space` (`free`) и
+`MCP tools (deferred)` (`deferred`, панель его не рисует).

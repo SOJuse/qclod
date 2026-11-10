@@ -124,7 +124,9 @@ describe('PanelCollector', () => {
       percentage: 21,
       categories: [
         { name: 'messages', tokens: 30000, kind: 'used' },
-        { name: 'free_space', tokens: 158000, kind: 'free' }
+        { name: 'free_space', tokens: 158000, kind: 'free' },
+        { name: 'buffer', tokens: 8000, kind: 'buffer' },
+        { name: 'MCP tools (deferred)', tokens: 900, kind: 'deferred' }
       ]
     })
 
@@ -132,8 +134,25 @@ describe('PanelCollector', () => {
       used: 42000,
       max: 200000,
       percent: 21,
-      categories: [{ name: 'messages', tokens: 30000 }]
+      categories: [
+        { name: 'messages', tokens: 30000, kind: 'used' },
+        { name: 'free_space', tokens: 158000, kind: 'free' },
+        { name: 'buffer', tokens: 8000, kind: 'buffer' }
+      ]
     })
+  })
+
+  test('setContext сохраняет kind и отбрасывает deferred', () => {
+    const patch = new PanelCollector().setContext({
+      totalTokens: 1,
+      maxTokens: 2,
+      percentage: 50,
+      categories: [
+        { name: 'a', tokens: 1, kind: 'used' },
+        { name: 'b', tokens: 1, kind: 'deferred' }
+      ]
+    })
+    expect(patch.context?.categories).toEqual([{ name: 'a', tokens: 1, kind: 'used' }])
   })
 
   test('неизвестное сообщение ничего не меняет', () => {

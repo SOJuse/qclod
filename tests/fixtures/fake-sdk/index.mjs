@@ -732,7 +732,10 @@ export function createFakeSdk(script = {}) {
         percentage: contextPercentNow(),
         categories: [
           { name: 'messages', tokens: 30000, kind: 'used' },
-          { name: 'system_prompt', tokens: 12000, kind: 'used' }
+          { name: 'system_prompt', tokens: 12000, kind: 'used' },
+          { name: 'Autocompact buffer', tokens: 9000, kind: 'buffer' },
+          { name: 'Free space', tokens: 149000, kind: 'free' },
+          { name: 'MCP tools (deferred)', tokens: 700, kind: 'deferred' }
         ]
       }
     },

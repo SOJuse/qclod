@@ -139,10 +139,13 @@ export class PanelCollector {
         used: usage.totalTokens,
         max: usage.maxTokens,
         percent: usage.percentage,
-        // 'free' and 'buffer' rows are the window, not the content in it.
-        categories: usage.categories
-          .filter((c) => c.kind === undefined || c.kind === 'used')
-          .map((c) => ({ name: c.name, tokens: c.tokens }))
+        // 'free' and 'buffer' are parts of the window the bar draws; 'deferred'
+        // tools are not in it yet, so they are not drawn.
+        categories: usage.categories.flatMap((c) =>
+          c.kind === 'deferred'
+            ? []
+            : [{ name: c.name, tokens: c.tokens, ...(c.kind === undefined ? {} : { kind: c.kind }) }]
+        )
       }
     })
   }

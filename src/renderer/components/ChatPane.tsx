@@ -206,7 +206,11 @@ export function ChatPane({
         onDraftChange={(text) => setDraft(tabId, text)}
         onAttachmentsChange={(items) => setAttachments(tabId, items)}
         onSubmit={(text, attachments) => {
-          void window.qclod.send(tabId, { text, attachments })
+          // A tab with no live session takes nothing: the text and chips
+          // come back to the input line rather than vanish.
+          void window.qclod.send(tabId, { text, attachments }).then((taken) => {
+            if (!taken) takeBack([{ text, attachments }])
+          })
         }}
         onInterrupt={() => void window.qclod.interrupt(tabId).then(takeBack)}
         onCycleMode={onCycleMode}

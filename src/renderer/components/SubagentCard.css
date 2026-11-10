@@ -105,6 +105,17 @@
   text-overflow: ellipsis;
 }
 
+/* What came of it, folded: one line, as quiet as the task (--text-faint is too faint for words). */
+.subagent-summary {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
 /* ------------------------------------------------------------ opened body */
 
 .subagent-body {
@@ -159,6 +170,13 @@
   padding-top: var(--space-2);
   border-top: 1px dashed var(--border);
   color: var(--text);
+}
+
+.subagent-report-title {
+  margin-bottom: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-dim);
 }
 
 @media (prefers-reduced-motion: reduce) {

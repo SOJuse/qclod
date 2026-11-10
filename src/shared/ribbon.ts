@@ -7,7 +7,7 @@ import type {
   TodoItem,
   ToolState
 } from './types'
-import { clipForView } from './clip'
+import { clipForView, clipText } from './clip'
 import { clip, lines } from './format'
 
 /**
@@ -170,7 +170,7 @@ function subagentStats(result: unknown): {
 const REPORT_CLIP = 8000
 
 function clipReport(text: string): string {
-  return clipForView(text, REPORT_CLIP) as string
+  return clipText(text, REPORT_CLIP)
 }
 
 /**
@@ -771,7 +771,7 @@ export class RibbonBuilder {
 
     // The text is kept for the card whole-ish: a megabyte of stdout is not.
     const whole = resultText(block['content'])
-    const text = clipForView(whole) as string
+    const text = clipText(whole)
 
     if (block['is_error'] === true) {
       // A failed subagent stays a subagent: it still has a place in the

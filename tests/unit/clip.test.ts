@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { VIEW_CLIP, VIEW_TOTAL, clipForView } from '../../src/shared/clip'
+import { VIEW_CLIP, VIEW_TOTAL, clipForView, clipText } from '../../src/shared/clip'
 
 describe('clipForView', () => {
   test('мегабайт stdout режется до VIEW_CLIP с пометкой', () => {
@@ -63,5 +63,14 @@ describe('clipForView: общий бюджет', () => {
   test('пустые элементы тоже стоят бюджета', () => {
     const out = clipForView({ a: Array.from({ length: 500 }, () => Array.from({ length: 500 }, () => '')) })
     expect(JSON.stringify(out).length).toBeLessThan(VIEW_TOTAL + 100_000)
+  })
+})
+
+describe('clipText', () => {
+  test('строка обрезается с пометкой и остаётся строкой', () => {
+    const out: string = clipText('аб\nвгд', 3)
+    expect(out).toBe('аб\n…[обрезано: 3 символов]')
+    expect(clipText('коротко')).toBe('коротко')
+    expect(clipText('x'.repeat(VIEW_CLIP + 1))).toContain('обрезано: 1')
   })
 })

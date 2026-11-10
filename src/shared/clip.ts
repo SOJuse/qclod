@@ -28,6 +28,11 @@ const NODE_COST = 16
 /** Keys that are never useful on a card and can weigh megabytes. */
 const DROPPED_KEYS = new Set(['originalFile'])
 
+/** The first `keep` characters, with a note of how many were left out. */
+function cut(text: string, keep: number): string {
+  return keep < text.length ? `${text.slice(0, keep)}…[обрезано: ${text.length - keep} символов]` : text
+}
+
 interface Budget {
   left: number
 }
@@ -42,9 +47,7 @@ function clipValue(
   if (typeof value === 'string') {
     const keep = Math.max(0, Math.min(maxChars, budget.left, value.length))
     budget.left -= keep
-    return keep < value.length
-      ? `${value.slice(0, keep)}…[обрезано: ${value.length - keep} символов]`
-      : value
+    return cut(value, keep)
   }
   if (typeof value !== 'object' || value === null) return value
   if (depth >= MAX_DEPTH) return '…[глубже шести уровней]'
@@ -79,4 +82,9 @@ function clipValue(
  */
 export function clipForView(value: unknown, maxChars = VIEW_CLIP, totalChars = VIEW_TOTAL): unknown {
   return clipValue(value, maxChars, 0, '', { left: totalChars })
+}
+
+/** One string, bounded the same way as clipForView, and typed as the string it stays. */
+export function clipText(text: string, maxChars = VIEW_CLIP): string {
+  return cut(text, Math.max(0, maxChars))
 }

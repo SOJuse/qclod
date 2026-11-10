@@ -2,21 +2,13 @@ import { useState } from 'react'
 import { Check, CircleAlert, CircleDashed, CircleStop, LoaderCircle, type LucideIcon } from 'lucide-react'
 import { compactNumber, plural, seconds } from '../../shared/format'
 import type { RibbonItem, SubagentState } from '../../shared/types'
+import { AGENT_STATE_LABEL } from './agentState'
 import { CategoryIcon } from '../ui/icons'
 import { Markdown } from '../markdown/Markdown'
 import { ToolCard } from './ToolCard'
 import './SubagentCard.css'
 
 type SubagentItem = Extract<RibbonItem, { kind: 'subagent' }>
-
-/** How the card words its state: what the agent is doing, from the person's side. */
-const STATE_LABEL: Record<SubagentState, string> = {
-  running: 'идёт',
-  done: 'готово',
-  failed: 'ошибка',
-  stopped: 'остановлен',
-  unfinished: 'не закончил'
-}
 
 const STATE_ICON: Record<SubagentState, LucideIcon> = {
   running: LoaderCircle,
@@ -39,6 +31,20 @@ export const NO_STEPS: RibbonItem[] = []
 /** A step is something the agent did: a call, or another agent it started. Its words are not counted. */
 function isStep(item: RibbonItem): boolean {
   return item.kind === 'tool' || item.kind === 'toolError' || item.kind === 'subagent'
+}
+
+/** What an opened card draws: its steps and its words. Its thoughts are not shown, so they take no place. */
+function isDrawn(item: RibbonItem): boolean {
+  return isStep(item) || item.kind === 'agentText'
+}
+
+/** «ещё 10 шагов» when only calls are hidden; «ещё 11 записей» when words are among them. */
+function moreLabel(hidden: RibbonItem[]): string {
+  const calls = hidden.reduce((n, entry) => (isStep(entry) ? n + 1 : n), 0)
+  const n = hidden.length
+  return calls === n
+    ? `ещё ${n} ${plural(n, 'шаг', 'шага', 'шагов')}`
+    : `ещё ${n} ${plural(n, 'запись', 'записи', 'записей')}`
 }
 
 /** The tool a running agent is on: what it last reported, or else the newest call in its ribbon. */
@@ -94,8 +100,12 @@ export function SubagentCard({
     .filter(Boolean)
     .join(' · ')
 
-  const hidden = Math.max(0, steps.length - shown)
-  const visible = hidden > 0 ? steps.slice(hidden) : steps
+  // Only an opened card pays for sorting its entries.
+  const entries = open ? steps.filter(isDrawn) : NO_STEPS
+  const hiddenCount = Math.max(0, entries.length - shown)
+  const visible = hiddenCount > 0 ? entries.slice(hiddenCount) : entries
+  // Folded and finished, the head says in one line what came of it.
+  const outcome = !open && item.state === 'done' ? item.summary : ''
 
   return (
     <details
@@ -113,7 +123,7 @@ export function SubagentCard({
         </span>
         <span className="subagent-state">
           <StateIcon size={14} className={running ? 'tool-spin' : undefined} aria-hidden="true" />
-          {STATE_LABEL[item.state]}
+          {AGENT_STATE_LABEL[item.state]}
           {tool ? <span className="subagent-tool"> · {tool}</span> : null}
           {failure ? <span className="subagent-failure"> · {failure}</span> : null}
         </span>
@@ -127,20 +137,25 @@ export function SubagentCard({
             {stepCount} {plural(stepCount, 'шаг', 'шага', 'шагов')}
           </span>
         )}
+        {outcome && (
+          <span className="subagent-summary" data-testid="subagent-summary" title={outcome}>
+            {outcome}
+          </span>
+        )}
       </summary>
 
       {open && (
         <div className="subagent-body">
-          {steps.length > 0 && (
+          {entries.length > 0 && (
             <div className="subagent-steps" data-testid="subagent-steps">
-              {hidden > 0 && (
+              {hiddenCount > 0 && (
                 <button
                   type="button"
                   className="subagent-more"
                   data-testid="subagent-more"
                   onClick={() => setShown((n) => n + STEP_PAGE)}
                 >
-                  ещё {hidden} {plural(hidden, 'шаг', 'шага', 'шагов')}
+                  {moreLabel(entries.slice(0, hiddenCount))}
                 </button>
               )}
               {visible.map((step) => (
@@ -150,6 +165,7 @@ export function SubagentCard({
           )}
           {item.report ? (
             <div className="subagent-report" data-testid="subagent-report">
+              <div className="subagent-report-title">Отчёт</div>
               <Markdown text={item.report} tabId={tabId} />
             </div>
           ) : null}

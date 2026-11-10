@@ -354,8 +354,13 @@ test('подагент раскрывается в свою ленту шаго�
     const head = card.locator('[data-testid="subagent-head"]')
     await expect(head).toContainText('Explore')
     await expect(head).toContainText('найти вход')
-    await expect(head).toContainText('готово')
+    await expect(head).toContainText('готов')
+    await expect(head).not.toContainText('готово')
     await expect(head).toContainText('12 с')
+    // Folded and finished, the head says in one line what came of it.
+    const summary = head.locator('[data-testid="subagent-summary"]')
+    await expect(summary).toHaveText('Нашёл два места:')
+    await expect(summary).toHaveAttribute('title', 'Нашёл два места:')
     // Tool calls are steps; the subagent's own words are not counted.
     await expect(card.locator('[data-testid="subagent-step-count"]')).toHaveText('2 шага')
 
@@ -376,6 +381,9 @@ test('подагент раскрывается в свою ленту шаго�
     // The report sits below the steps, as Markdown: its line breaks survive.
     const report = card.locator('[data-testid="subagent-report"]')
     await expect(report).toContainText('Нашёл два места')
+    await expect(report.locator('.subagent-report-title')).toHaveText('Отчёт')
+    // Opened, the report itself is below; the head no longer repeats it.
+    await expect(summary).toHaveCount(0)
     await expect(report.locator('li')).toHaveCount(2)
     const order = await card.evaluate((el) => {
       const s = el.querySelector('[data-testid="subagent-steps"]')!
@@ -449,7 +457,11 @@ test('у подагента с десятками шагов видны посл
     input: { file_path: `C:/проект/f${i}.ts` },
     result: 'ок'
   }))
-  const { app, profile } = await launch({ steps: [{ kind: 'subagent', name: 'перебор', steps: many }] })
+  // Thoughts are not drawn in a card, so they take no place in its window.
+  const thoughts = Array.from({ length: 5 }, (_, i) => ({ kind: 'thinking', text: `мысль ${i}` }))
+  const { app, profile } = await launch({
+    steps: [{ kind: 'subagent', name: 'перебор', steps: [...thoughts, ...many] }]
+  })
   try {
     const win = await app.firstWindow()
     const card = win.locator('[data-testid="ribbon-subagent"]').first()
@@ -486,9 +498,32 @@ test('работающий подагент показывает в шапке, 
   try {
     const win = await app.firstWindow()
     const head = win.locator('[data-testid="subagent-head"]').first()
-    await expect(head).toContainText('идёт', { timeout: 15000 })
+    await expect(head).toContainText('работает', { timeout: 15000 })
     await expect(head).toContainText('· Bash')
     await expect(head.locator('[data-testid="subagent-stats"]')).toContainText('15 с')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('если за кнопкой не только шаги, она считает записи', async () => {
+  const many = Array.from({ length: 60 }, (_, i) => ({
+    kind: 'tool',
+    name: 'Read',
+    input: { file_path: `C:/проект/f${i}.ts` },
+    result: 'ок'
+  }))
+  const { app, profile } = await launch({
+    steps: [{ kind: 'subagent', name: 'перебор', steps: [{ kind: 'text', text: 'начинаю' }, ...many] }]
+  })
+  try {
+    const win = await app.firstWindow()
+    const card = win.locator('[data-testid="ribbon-subagent"]').first()
+    await card.locator('[data-testid="subagent-head"]').click({ timeout: 15000 })
+    const steps = card.locator('[data-testid="subagent-steps"]')
+    await expect(steps.locator('.tool-card')).toHaveCount(50)
+    // Hidden: ten calls and one line of text.
+    await expect(steps.locator('[data-testid="subagent-more"]')).toHaveText('ещё 11 записей')
   } finally {
     await close(app, profile)
   }

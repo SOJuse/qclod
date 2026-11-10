@@ -315,7 +315,10 @@ export class RibbonBuilder {
   /** Records the user's answer to a question card. */
   answerQuestion(toolUseId: string, answer: string): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)
-    if (!item) return []
+    if (!item || item.kind !== 'question') return []
+    // Kept on the item itself: a snapshot (reload, split pane, a session
+    // taking this ribbon over) is built from the items, not from the events.
+    item.answer = answer
     return [this.update(item.id, { answer })]
   }
 

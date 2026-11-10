@@ -279,6 +279,26 @@ describe('RibbonBuilder', () => {
     expect(questions[0]!.answer).toBeNull()
   })
 
+  test('ответ на вопрос остаётся в самих элементах, а не только в событии', () => {
+    const b = new RibbonBuilder()
+    b.apply(
+      assistant([
+        {
+          type: 'tool_use',
+          id: 'q1',
+          name: 'AskUserQuestion',
+          input: { questions: [{ question: 'Где?', header: 'Панель', options: [{ label: 'Справа' }] }] }
+        }
+      ])
+    )
+
+    const changes = b.answerQuestion('q1', 'Справа')
+
+    expect(changes).toEqual([{ kind: 'update', id: only(b.items, 'question')[0]!.id, patch: { answer: 'Справа' } }])
+    // A snapshot is built from the items: a reload must not see the card open again.
+    expect(only(b.items, 'question')[0]!.answer).toBe('Справа')
+  })
+
   test('compact_boundary даёт элемент compaction с числом освобождённых токенов', () => {
     const b = new RibbonBuilder()
     const changes = b.apply({

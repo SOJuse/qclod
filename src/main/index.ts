@@ -14,6 +14,7 @@ import { loadRules, saveRules } from './agent/permissionStore'
 import { SessionHistory } from './agent/sessionHistory'
 import { loadTranscript } from './agent/transcript'
 import { TabController } from './tabs/TabController'
+import { pickDefaultCwd } from './tabs/defaultCwd'
 import { notifyIfNeeded } from './notifications'
 import { RibbonBatcher } from './ribbonBatcher'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
@@ -159,7 +160,7 @@ app.whenReady().then(async () => {
   const controller = new TabController({
     manager,
     storeDir: userData,
-    defaultCwd: process.cwd() || homedir(),
+    defaultCwd: pickDefaultCwd(app.isPackaged, process.cwd(), homedir()),
     // «По умолчанию» in settings means exactly that: a new tab starts with it.
     getDefaults: () => ({ ...settings.defaults }),
     history: {

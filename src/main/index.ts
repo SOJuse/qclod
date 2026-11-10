@@ -18,6 +18,7 @@ import { pickDefaultCwd } from './tabs/defaultCwd'
 import { mergeDefaults } from './tabs/sanitize'
 import { notifyIfNeeded } from './notifications'
 import { RendererOutbox } from './rendererOutbox'
+import { PathResolver } from './files/pathResolver'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -209,11 +210,24 @@ app.whenReady().then(async () => {
     }
   })
 
+  // e2e reads what a click on a path did from here (fileActions.ts). Only the
+  // e2e build has it (buildFlags.d.ts).
+  if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_FAKE_SHELL']) {
+    ;(globalThis as { __qclodShellLog?: unknown[] }).__qclodShellLog = []
+  }
+
   registerAgentIpc({
     getWindow: () => mainWindow,
     controller,
     manager,
     broker,
+    resolver: new PathResolver(),
+    // The setting itself arrives with the path menu (Task 11); until then a
+    // settings file without it means no editor.
+    getEditorCommand: () => {
+      const command = (settings as { editorCommand?: unknown }).editorCommand
+      return typeof command === 'string' ? command : ''
+    },
     rememberDefault: (patch) => {
       settings = mergeDefaults(settings, { defaults: patch })
       saveSettings(userData, settings)

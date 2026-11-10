@@ -27,6 +27,16 @@ describe('ipc channel contract', () => {
     expect(INVOKE_CHANNELS).toContain('tabs:retry')
   })
 
+  test('пути в тексте: проверка и действия — invoke-каналы files:*', () => {
+    expect(CHANNELS.filesResolve).toBe('files:resolve')
+    expect(CHANNELS.filesOpen).toBe('files:open')
+    expect(CHANNELS.filesReveal).toBe('files:reveal')
+    expect(CHANNELS.filesOpenInEditor).toBe('files:openInEditor')
+    for (const name of ['files:resolve', 'files:open', 'files:reveal', 'files:openInEditor']) {
+      expect(INVOKE_CHANNELS).toContain(name)
+    }
+  })
+
   test('терминальных каналов v1 больше нет', () => {
     // The pty is gone; a channel that outlives its feature is a trap for the
     // next reader.

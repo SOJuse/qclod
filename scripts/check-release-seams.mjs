@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const mainDir = join(root, 'out', 'main')
-const SEAM = /QCLOD_(FAKE_SDK|FAKE_HISTORY|PICK_FOLDER|PICK_FILES|CONFIRM_BYPASS)/g
+const SEAM = /QCLOD_(FAKE_SDK|FAKE_HISTORY|FAKE_SHELL|PICK_FOLDER|PICK_FILES|CONFIRM_BYPASS)|__qclodShellLog/g
 
 function* jsFiles(dir) {
   for (const name of readdirSync(dir)) {

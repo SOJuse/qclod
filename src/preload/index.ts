@@ -10,6 +10,7 @@ import type {
   PanelSnapshot,
   PermissionAnswer,
   PersistedTab,
+  ResolvedPath,
   RibbonEvent,
   RibbonSnapshot,
   SessionSummary,
@@ -84,6 +85,17 @@ const api = {
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.dialogPickFolder),
   pickFiles: (): Promise<string[]> => ipcRenderer.invoke(CHANNELS.dialogPickFiles),
   fileIndex: (id: TabId): Promise<string[]> => ipcRenderer.invoke(CHANNELS.filesIndex, id),
+
+  /** Which candidate texts (`src/a.ts:3`) exist, relative to the tab's folder; null where not. */
+  resolvePaths: (tabId: TabId, raws: string[]): Promise<Array<ResolvedPath | null>> =>
+    ipcRenderer.invoke(CHANNELS.filesResolve, tabId, raws),
+  /** Opens with the default program; an executable is shown in Explorer instead. */
+  openPath: (tabId: TabId, absPath: string): Promise<'opened' | 'revealed' | null> =>
+    ipcRenderer.invoke(CHANNELS.filesOpen, tabId, absPath),
+  revealPath: (tabId: TabId, absPath: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.filesReveal, tabId, absPath),
+  openInEditor: (tabId: TabId, absPath: string, line?: number, column?: number): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.filesOpenInEditor, tabId, absPath, line, column),
 
   // File.path was removed in Electron 32; webUtils is the supported way to
   // learn where a dropped or pasted file lives on disk.

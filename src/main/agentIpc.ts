@@ -9,6 +9,8 @@ import type {
   TabId
 } from '../shared/types'
 import { buildFileIndex } from './files/fileIndex'
+import type { PathResolver } from './files/pathResolver'
+import { openInEditor, openPath, revealPath } from './files/fileActions'
 import type { TabController } from './tabs/TabController'
 import { EMPTY_PANEL } from './agent/panelData'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
@@ -28,10 +30,23 @@ export interface AgentIpcDeps {
   broker: PermissionBroker
   /** The last choice becomes what a new tab starts with. */
   rememberDefault: (patch: LaunchOverrides) => void
+  /** One for the whole app: it is also what proves a path may be acted on. */
+  resolver: PathResolver
+  /** The user's editor template; empty means no editor. */
+  getEditorCommand: () => string
 }
 
 function isString(value: unknown): value is string {
   return typeof value === 'string'
+}
+
+/** No path in a chat is this long; a longer string is not worth a stat. */
+const MAX_RAW_LENGTH = 1024
+
+function lineNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 10_000_000
+    ? value
+    : undefined
 }
 
 /**
@@ -199,6 +214,55 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!tab || tab.missingCwd) return []
     return buildFileIndex(tab.cwd)
   })
+
+  // Which of the paths in a tab's text exist, relative to the tab's folder.
+  // Anything that is not a short string answers null in its place.
+  ipcMain.handle(CHANNELS.filesResolve, async (_e, id: unknown, raws: unknown) => {
+    if (!isString(id) || !Array.isArray(raws)) return []
+    const tab = controller.list().find((t) => t.id === id)
+    if (!tab) return raws.map(() => null)
+    const valid = raws.map((r) => isString(r) && r !== '' && r.length <= MAX_RAW_LENGTH)
+    const answers = await deps.resolver.resolve(
+      tab.cwd,
+      raws.filter((_r, i) => valid[i]) as string[]
+    )
+    let next = 0
+    return valid.map((ok) => (ok ? (answers[next++] ?? null) : null))
+  })
+
+  // An action takes only a path main itself found on disk: the renderer
+  // cannot name an arbitrary file and have it opened. Anything else is
+  // silently nothing.
+  const mayAct = (id: unknown, absPath: unknown): absPath is string =>
+    isString(id) &&
+    isString(absPath) &&
+    controller.list().some((t) => t.id === id) &&
+    deps.resolver.knows(absPath)
+
+  ipcMain.handle(CHANNELS.filesOpen, async (_e, id: unknown, absPath: unknown) => {
+    if (!mayAct(id, absPath)) return null
+    return openPath(absPath)
+  })
+
+  ipcMain.handle(CHANNELS.filesReveal, (_e, id: unknown, absPath: unknown) => {
+    if (!mayAct(id, absPath)) return
+    revealPath(absPath)
+  })
+
+  ipcMain.handle(
+    CHANNELS.filesOpenInEditor,
+    (_e, id: unknown, absPath: unknown, line: unknown, column: unknown) => {
+      if (!mayAct(id, absPath)) return
+      const template = deps.getEditorCommand()
+      if (template.trim() === '') return
+      const target: { path: string; line?: number; column?: number } = { path: absPath }
+      const l = lineNumber(line)
+      const c = lineNumber(column)
+      if (l !== undefined) target.line = l
+      if (l !== undefined && c !== undefined) target.column = c
+      openInEditor(template, target)
+    }
+  )
 
   // A native file dialog cannot be driven from a test, so the e2e build
   // answers it from the environment. A release build has no such branch

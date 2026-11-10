@@ -360,3 +360,15 @@ export interface StatusEvent {
   /** The agent was working and has stopped — the only state worth a chime. */
   finished?: boolean
 }
+
+/**
+ * A path from the agent's text that main found on disk. `raw` is the text as
+ * it stands (line suffix included), so the window can match it back.
+ */
+export interface ResolvedPath {
+  raw: string
+  absPath: string
+  isDir: boolean
+  line?: number
+  column?: number
+}

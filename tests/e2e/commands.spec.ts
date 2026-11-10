@@ -221,24 +221,23 @@ test('/effort — второй шаг с уровнями выбранной м�
   }
 })
 
-test('/remote-control помечена и не выполняется', async () => {
+test('/remote-control не уходит в сессию, а включает Remote Control', async () => {
   const { app, profile } = await launch({ steps: [], init: { commands: COMMANDS } })
   try {
     const win = await app.firstWindow()
     const input = await ready(win)
+    await expect(win.locator('[data-testid="remote-toggle"]')).toBeEnabled({ timeout: 15000 })
 
     await input.pressSequentially('/remote')
     const item = win.locator('[data-testid="slash-item"]').first()
-    await expect(item).toContainText('только в терминале')
-    await expect(item).toHaveAttribute('aria-disabled', 'true')
+    await expect(item).toContainText('remote-control')
+    await expect(item).not.toHaveAttribute('aria-disabled', 'true')
 
     await input.press('Enter')
-    // Playwright treats an aria-disabled row as unclickable; a person can still click it.
-    await item.click({ force: true })
 
-    // Still open, nothing sent: the command cannot do anything here.
-    await expect(win.locator('[data-testid="slash-menu"]')).toBeVisible()
-    await expect(input).toHaveValue('/remote')
+    // Qclod's own switch: the field clears, nothing reaches the session.
+    await expect(input).toHaveValue('')
+    await expect(win.locator('[data-testid="tab-remote"]')).toHaveAttribute('data-state', 'on')
     await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
   } finally {
     await close(app, profile)

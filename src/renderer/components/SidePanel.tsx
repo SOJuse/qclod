@@ -1,10 +1,11 @@
-import type { LimitWindow, McpServerInfo, PanelData, SubagentState } from '../../shared/types'
+import type { LimitWindow, McpServerInfo, PanelData, RemoteInfo, SubagentState } from '../../shared/types'
 import { untilReset } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
 import { CircleAlert, PanelRightClose } from 'lucide-react'
 import { hint } from '../app/shortcuts'
 import { ContextBreakdown } from './ContextBreakdown'
 import { AGENT_STATE_LABEL } from './agentState'
+import { RemoteSection } from './RemoteSection'
 import './SidePanel.css'
 
 interface Props {
@@ -13,6 +14,9 @@ interface Props {
   onClose: () => void
   /** Subagents this session has run, newest last. */
   agents: AgentRun[]
+  /** Remote Control of the tab the panel shows. */
+  remote: RemoteInfo
+  onRemote: (enabled: boolean) => void
 }
 
 const MCP_LABEL: Record<McpServerInfo['status'], string> = {
@@ -63,10 +67,13 @@ function money(value: number): string {
  * between «nothing has happened» and «it is zero» matters to someone deciding
  * whether to keep going.
  */
-export function SidePanel({ data, started, agents, onClose }: Props): JSX.Element {
+export function SidePanel({ data, started, agents, remote, onRemote, onClose }: Props): JSX.Element {
   // Model, effort and mode are switched in the status line under the input;
   // the panel names the model and leaves the switching there.
   const chosen = data.models.find((m) => m.value === data.model)
+  // A bridge that is on, or trying to be, leads the panel; off, it waits at the end.
+  const remoteSection = <RemoteSection remote={remote} onToggle={onRemote} />
+  const remoteFirst = remote.state !== 'off'
   return (
     <aside className="panel" data-testid="side-panel">
       <header className="panel-head">
@@ -75,6 +82,8 @@ export function SidePanel({ data, started, agents, onClose }: Props): JSX.Elemen
           <PanelRightClose size={16} aria-hidden="true" />
         </button>
       </header>
+
+      {remoteFirst && remoteSection}
 
       <Section title="Контекст">
         {data.context ? (
@@ -208,6 +217,8 @@ export function SidePanel({ data, started, agents, onClose }: Props): JSX.Elemen
           </div>
         </Section>
       )}
+
+      {!remoteFirst && remoteSection}
     </aside>
   )
 }

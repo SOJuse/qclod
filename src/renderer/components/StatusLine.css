@@ -43,6 +43,57 @@
   border-left: 1px solid var(--border);
 }
 
+/* ---------------------------------------------------------- remote control */
+
+/* Quiet like the lists beside it; on, the icon takes the bridge's colour and its word. */
+.status-remote {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--status-pad);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  color: var(--text-dim);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.status-remote:hover:not(:disabled) {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.status-remote:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: 1px;
+}
+
+.status-remote:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.status-remote > svg {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.status-remote[data-state='on'] > svg {
+  color: var(--ok);
+}
+
+.status-remote[data-state='connecting'] > svg,
+.status-remote[data-state='reconnecting'] > svg {
+  color: var(--warn);
+}
+
+.status-remote[data-state='failed'] > svg {
+  color: var(--danger);
+}
+
 /* ------------------------------------------------------------------ meters */
 
 .status-meter {
@@ -182,7 +233,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .status-meter-fill {
+  .status-meter-fill,
+  .status-remote {
     transition: none;
   }
 }

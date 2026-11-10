@@ -3,8 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   EnvironmentReport,
   HotkeyRegistration,
+  RemoteInfo,
   SessionSummary
 } from '../../shared/types'
+import { REMOTE_OFF } from '../../shared/remote'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { TitleBar } from '../components/TitleBar'
 import { ChatPane } from '../components/ChatPane'
@@ -184,6 +186,14 @@ export function App(): JSX.Element {
     }
     if (!visible && activeTabId) loadPanel(activeTabId)
   }, [activeTabId, panelOverride, setSettings, loadPanel])
+
+  /** Opens the panel the way its button does; one already shown stays as it is. */
+  const revealPanel = useCallback((): void => {
+    const setting = useAppStore.getState().settings?.panelOpen === true
+    if (!panelVisible({ setting, width: widthRef.current, override: panelOverride })) togglePanel()
+  }, [panelOverride, togglePanel])
+
+  const remoteOf = (id: string): RemoteInfo => tabs.find((t) => t.id === id)?.remote ?? REMOTE_OFF
 
   const showPanel = panelVisible({
     setting: settings?.panelOpen === true,
@@ -427,6 +437,7 @@ export function App(): JSX.Element {
             onCycleMode={cycleMode}
             onOpenHistory={openHistory}
             onOpenSession={openSession}
+            onShowPanel={revealPanel}
             notice={
               closeGuardTab === activeTabId
                 ? { testId: 'close-guard', text: 'Агент работает — Ctrl+W ещё раз закроет вкладку' }
@@ -445,6 +456,7 @@ export function App(): JSX.Element {
               onCycleMode={cycleMode}
               onOpenHistory={openHistory}
               onOpenSession={openSession}
+              onShowPanel={revealPanel}
             />
           )}
         </div>
@@ -453,6 +465,8 @@ export function App(): JSX.Element {
             data={panelByTab[activeTabId] ?? EMPTY_PANEL}
             agents={agentRuns}
             started={(tabs.find((t) => t.id === activeTabId)?.status ?? 'stopped') !== 'stopped'}
+            remote={remoteOf(activeTabId)}
+            onRemote={(enabled) => void window.qclod.setRemote(activeTabId, enabled)}
             onClose={togglePanel}
           />
         )}

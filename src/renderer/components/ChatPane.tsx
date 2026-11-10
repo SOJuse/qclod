@@ -3,6 +3,7 @@ import { TriangleAlert } from 'lucide-react'
 import type { SessionSummary, UserInput } from '../../shared/types'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { compactNow, sendCommand } from '../input/slash'
+import { REMOTE_BLOCK_TEXT, REMOTE_OFF, isRemoteLive } from '../../shared/remote'
 import {
   draftWithReturned,
   pendingFromSent,
@@ -34,6 +35,8 @@ interface Props {
   onOpenSession: (fromTabId: string, session: SessionSummary) => void
   /** A warning to show above the input, such as the close-tab guard. */
   notice?: { testId: string; text: string } | null
+  /** Shows the side panel, as its button does: Remote Control's link and QR live there. */
+  onShowPanel: () => void
 }
 
 /**
@@ -53,7 +56,8 @@ export function ChatPane({
   onOpenHistory,
   onCycleMode,
   onOpenSession,
-  notice
+  notice,
+  onShowPanel
 }: Props): JSX.Element {
   const tabs = useAppStore((s) => s.tabs)
   const ribbonByTab = useAppStore((s) => s.ribbonByTab)
@@ -72,7 +76,16 @@ export function ChatPane({
   const ribbonLoaded = useAppStore((s) => s.ribbonRevByTab[tabId] !== undefined)
   const tab = tabs.find((t) => t.id === tabId)
   const status = tab?.status ?? 'stopped'
+  const remote = tab?.remote ?? REMOTE_OFF
   const draft = draftByTab[tabId] ?? ''
+
+  /** The status-line switch and /remote-control: on shows the panel, where the link is. */
+  function toggleRemote(): void {
+    if (remote.blocked) return
+    const enable = !isRemoteLive(remote)
+    void window.qclod.setRemote(tabId, enable)
+    if (enable) onShowPanel()
+  }
   const items = ribbonByTab[tabId]
   const sentTexts = useMemo(
     () => (items ?? []).flatMap((item) => (item.kind === 'user' ? [item.text] : [])),
@@ -199,6 +212,8 @@ export function ChatPane({
         onSendCommand={(text) => sendCommand(tabId, text)}
         onCommandUsed={(name) => useAppStore.getState().noteCommand(name)}
         onOpenHistory={onOpenHistory}
+        onToggleRemote={toggleRemote}
+        remoteBlockedText={remote.blocked ? REMOTE_BLOCK_TEXT[remote.blocked] : null}
         onSetModel={(model) => void window.qclod.setModel(tabId, model)}
         onSetEffort={(level) => void window.qclod.setEffort(tabId, level)}
         focusToken={focusToken}
@@ -243,7 +258,13 @@ export function ChatPane({
         }}
       />
 
-      <StatusLine tabId={tabId} data={panel} started={status !== 'stopped'} />
+      <StatusLine
+        tabId={tabId}
+        data={panel}
+        started={status !== 'stopped'}
+        remote={remote}
+        onToggleRemote={toggleRemote}
+      />
     </section>
   )
 }

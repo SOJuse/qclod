@@ -16,12 +16,14 @@ import { cmdShellArgs, quoteArg } from '../setup/install'
  *
  * Office and OpenDocument files and .rtf are shown, not opened: they can pull
  * a remote template or carry an OLE exploit, and a file the agent wrote has
- * no Mark of the Web, so Office would not open it in Protected View.
+ * no Mark of the Web, so Office would not open it in Protected View. So are
+ * .csv and .tsv: their default program is usually Excel, which runs their
+ * formulas just the same.
  */
 const OPENABLE = new Set([
   // text
   '.txt', '.md', '.markdown', '.json', '.jsonc', '.yaml', '.yml', '.toml', '.ini', '.cfg',
-  '.conf', '.log', '.csv', '.tsv', '.diff', '.patch',
+  '.conf', '.log', '.diff', '.patch',
   // source no default program runs
   '.ts', '.tsx', '.mts', '.cts', '.css', '.scss', '.less', '.c', '.h', '.cpp', '.hpp', '.cc',
   '.rs', '.go', '.java', '.cs',
@@ -199,6 +201,9 @@ export function buildEditorCommand(
     if (!HAS_PLACEHOLDER.test(word)) return word
     if (!word.includes('"')) return quoteArg(fill(word))
     if (/^"[^"]*"$/.test(word)) return quoteArg(fill(word.slice(1, -1)))
+    // The editor reads `\"` as a literal quote: next to a placeholder it
+    // would flip which part of the value is quoted.
+    if (word.includes('\\"')) throw new Error(EDITOR_UNSAFE)
     return word
       .split(/("[^"]*")/)
       .map((part) =>

@@ -100,6 +100,15 @@ export function installAgent(
  * are doubled, or the program would read `\"` as a literal quote
  * (`C:\%PATH%` would arrive as `C:"%PATH%`).
  */
+export function quoteArg(arg: string): string {
+  if (!/[\s"&|<>^()%!]/.test(arg)) return arg
+  const body = arg
+    .replace(/(\\+)$/, '$1$1')
+    .replace(/(\\*)"/g, '$1$1""')
+    .replace(/(\\*)%/g, '$1$1"^%"')
+  return `"${body}"`
+}
+
 /**
  * cmd.exe's arguments for one command line built with `quoteArg`. Quoted
  * whole, as Node does for `shell: true`: with /s cmd strips exactly that
@@ -108,15 +117,6 @@ export function installAgent(
  */
 export function cmdShellArgs(line: string): string[] {
   return ['/d', '/v:off', '/s', '/c', `"${line}"`]
-}
-
-export function quoteArg(arg: string): string {
-  if (!/[\s"&|<>^()%!]/.test(arg)) return arg
-  const body = arg
-    .replace(/(\\+)$/, '$1$1')
-    .replace(/(\\*)"/g, '$1$1""')
-    .replace(/(\\*)%/g, '$1$1"^%"')
-  return `"${body}"`
 }
 
 /**

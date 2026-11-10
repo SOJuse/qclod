@@ -125,6 +125,13 @@
   --path-menu-min-w: 200px;
   --path-menu-max-w: 360px;
 
+  /* The live «now» line above the input: as wide as the input, its list of agents capped. */
+  --now-max-w: 920px;
+  --now-gutter: 20px;
+  --now-list-max-w: 520px;
+  --now-list-max-h: 240px;
+  --now-pulse: 1.8s;
+
   /* The Ctrl+K window of app actions. */
   --palette-top: 12vh;
   --palette-width: 520px;

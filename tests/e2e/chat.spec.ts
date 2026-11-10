@@ -528,3 +528,69 @@ test('если за кнопкой не только шаги, она счита
     await close(app, profile)
   }
 })
+
+test('пока идёт команда, строка «сейчас» говорит «Запускает npm test»', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'text', text: 'слушаю' }],
+    nextTurn: [
+      { kind: 'tool', name: 'Bash', input: { command: 'npm test' }, result: 'ok', pauseMs: 1500 },
+      { kind: 'text', text: 'готово' }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.waitFor({ timeout: 15000 })
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText('слушаю', { timeout: 15000 })
+    await expect(win.locator('[data-testid="now-line"]')).toHaveCount(0)
+
+    await input.click()
+    await input.fill('прогони тесты')
+    await input.press('Enter')
+
+    const line = win.locator('[data-testid="now-line"]')
+    await expect(line.locator('[data-testid="now-what"]')).toHaveText('Запускает', { timeout: 15000 })
+    await expect(line.locator('[data-testid="now-object"]')).toHaveText('npm test')
+    await expect(line).toHaveAttribute('data-category', 'command')
+    await expect(line.locator('[data-testid="now-time"]')).toHaveText(/^\d+:\d\d$/)
+    await expect(line).toHaveCount(0, { timeout: 15000 })
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('два фоновых подагента — «2 агента», клик раскрывает список', async () => {
+  const agent = (name: string, agentType: string, lastTool: string) => ({
+    kind: 'backgroundAgent',
+    name,
+    agentType,
+    pauseMs: 200,
+    progress: [{ tokens: 500, toolUses: 1, durationMs: 3000, lastTool }],
+    finish: null
+  })
+  const { app, profile } = await launch({
+    steps: [agent('прогнать тесты', 'builder', 'Bash'), agent('найти вызовы', 'Explore', 'Grep')]
+  })
+  try {
+    const win = await app.firstWindow()
+    const line = win.locator('[data-testid="now-line"]')
+    const button = line.locator('[data-testid="now-agents"]')
+    await expect(button).toHaveText('2 агента', { timeout: 15000 })
+    // The turn is over: the agents keep going, the turn's clock does not.
+    await expect(line.locator('[data-testid="now-time"]')).toHaveCount(0)
+    await expect(line.locator('[data-testid="now-agents-list"]')).toHaveCount(0)
+
+    await button.click()
+    const list = line.locator('[data-testid="now-agents-list"]')
+    await expect(list.locator('li')).toHaveCount(2)
+    await expect(list).toContainText('прогнать тесты')
+    await expect(list).toContainText('builder')
+    await expect(list.locator('li').first()).toContainText('Bash', { timeout: 10000 })
+    await expect(list).toContainText('найти вызовы')
+
+    await button.click()
+    await expect(list).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})

@@ -31,7 +31,7 @@ test.afterEach(async () => {
   rmSync(project, { recursive: true, force: true })
 })
 
-async function launch(steps: unknown[], settings?: Record<string, unknown>): Promise<Page> {
+async function launch(steps: unknown[], settings?: Record<string, unknown>, nextTurn?: unknown[]): Promise<Page> {
   if (settings) writeFileSync(join(profile, 'settings.json'), JSON.stringify(settings), 'utf8')
   app = await electron.launch({
     args: ['.'],
@@ -39,7 +39,7 @@ async function launch(steps: unknown[], settings?: Record<string, unknown>): Pro
       ...process.env,
       QCLOD_USER_DATA: profile,
       QCLOD_FAKE_SHELL: '1',
-      QCLOD_FAKE_SDK_SCRIPT: JSON.stringify({ steps })
+      QCLOD_FAKE_SDK_SCRIPT: JSON.stringify(nextTurn ? { steps, nextTurn } : { steps })
     } as Record<string, string>
   })
   return app.firstWindow()
@@ -270,4 +270,20 @@ test('меню не закрывает прокрутка, которую дел
   await win.mouse.move(40, 400)
   await win.mouse.wheel(0, 120)
   await expect(menu).toBeHidden()
+})
+
+test('файл в строке «сейчас» — ссылка, которая открывает его', async () => {
+  const win = await launch(SAY('слушаю'), undefined, [
+    { kind: 'tool', name: 'Read', input: { file_path: aTs() }, result: 'export const a = 1', pauseMs: 4000 }
+  ])
+  const input = win.locator('[data-testid="composer-input"]')
+  await expect(win.locator('[data-testid="ribbon"]')).toContainText('слушаю', { timeout: 15000 })
+  await input.click()
+  await input.fill('прочти')
+  await input.press('Enter')
+
+  const link = win.locator('[data-testid="now-line"] [data-testid="now-object"] [data-testid="path-link"]')
+  await expect(link).toHaveText('a.ts', { timeout: 15000 })
+  await link.click()
+  await expect.poll(shellLog).toContainEqual({ action: 'open', path: aTs() })
 })

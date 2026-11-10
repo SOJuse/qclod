@@ -295,25 +295,25 @@ test('пока агент работает, видно что именно он 
     await input.waitFor({ timeout: 15000 })
 
     // Nothing is happening yet, so nothing claims to be.
-    await expect(win.locator('[data-testid="working"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="now-line"]')).toHaveCount(0)
 
     await input.click()
     await input.fill('сделай')
     await input.press('Enter')
 
-    const working = win.locator('[data-testid="working"]')
-    await expect(working).toBeVisible({ timeout: 15000 })
-    await expect(working).toContainText('Esc')
-    await expect(working.locator('[data-testid="working-time"]')).toContainText('секунд')
+    const line = win.locator('[data-testid="now-line"]')
+    await expect(line).toBeVisible({ timeout: 15000 })
+    await expect(line).toHaveAttribute('title', /Esc — прервать/)
+    await expect(line.locator('[data-testid="now-time"]')).toHaveText(/^\d+:\d\d$/)
 
     // The clock runs.
-    const first = await working.locator('[data-testid="working-time"]').innerText()
+    const first = await line.locator('[data-testid="now-time"]').innerText()
     await win.waitForTimeout(2200)
-    const later = await working.locator('[data-testid="working-time"]').innerText()
+    const later = await line.locator('[data-testid="now-time"]').innerText()
     expect(later).not.toBe(first)
 
     // And it goes away when the turn ends.
-    await expect(win.locator('[data-testid="working"]')).toHaveCount(0, { timeout: 20000 })
+    await expect(win.locator('[data-testid="now-line"]')).toHaveCount(0, { timeout: 20000 })
   } finally {
     await close(app, profile)
   }
@@ -325,10 +325,11 @@ test('пока агент ждёт разрешения, строка говор
   })
   try {
     const win = await app.firstWindow()
-    const working = win.locator('[data-testid="working"]')
+    const line = win.locator('[data-testid="now-line"]')
 
-    await expect(working).toBeVisible({ timeout: 15000 })
-    await expect(working.locator('[data-testid="working-what"]')).toContainText('ждёт вашего ответа')
+    await expect(line).toBeVisible({ timeout: 15000 })
+    await expect(line.locator('[data-testid="now-what"]')).toHaveText('Ждёт ответа')
+    await expect(line).toHaveAttribute('data-category', 'waiting')
   } finally {
     await close(app, profile)
   }

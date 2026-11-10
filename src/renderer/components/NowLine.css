@@ -1,0 +1,175 @@
+/*
+ * The live «now» line above the input. A neutral strip; the category colour
+ * (--cat) marks only the rule on the left and the icon chip, as on a tool
+ * card. Every word wears a text token.
+ */
+
+.now-line {
+  --cat: var(--cat-other);
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: min(var(--now-max-w), calc(100% - var(--now-gutter) * 2));
+  margin: 0 auto var(--strip-margin);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-left: var(--rule-category) solid var(--cat);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  color: var(--text);
+}
+
+.now-line[data-category='read'] { --cat: var(--cat-read); }
+.now-line[data-category='search'] { --cat: var(--cat-search); }
+.now-line[data-category='edit'] { --cat: var(--cat-edit); }
+.now-line[data-category='command'] { --cat: var(--cat-command); }
+.now-line[data-category='agent'] { --cat: var(--cat-agent); }
+.now-line[data-category='mcp'] { --cat: var(--cat-mcp); }
+.now-line[data-category='plan'] { --cat: var(--cat-plan); }
+.now-line[data-category='other'] { --cat: var(--cat-other); }
+.now-line[data-category='thinking'],
+.now-line[data-category='writing'] { --cat: var(--text-faint); }
+.now-line[data-category='waiting'] { --cat: var(--cat-plan); }
+
+/* The same tinted square a tool card puts its icon in. While a turn runs it breathes. */
+.now-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tool-chip-size);
+  height: var(--tool-chip-size);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--cat) var(--tool-chip-tint), transparent);
+}
+
+.now-line.is-turn .now-chip svg {
+  animation: now-breathe var(--now-pulse) var(--ease) infinite;
+}
+
+@keyframes now-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.now-what {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.now-object {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.now-object.is-mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.now-fill {
+  flex: 1 1 auto;
+}
+
+.now-time {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.now-agents {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--gap-hair) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.now-agents:hover,
+.now-agents.is-open {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.now-agents:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: 1px;
+}
+
+/* Opens upward, over the ribbon: the input is right below. */
+.now-agents-list {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-1));
+  z-index: 20;
+  width: min(var(--now-list-max-w), 100%);
+  max-height: var(--now-list-max-h);
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  backdrop-filter: blur(var(--menu-blur));
+  box-shadow: var(--shadow-menu);
+}
+
+.now-agent {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-height: var(--menu-row-h);
+  padding: var(--space-1) var(--space-2);
+  border-left: var(--rule-category) solid var(--cat-agent);
+  border-radius: var(--radius-hair);
+}
+
+.now-agent + .now-agent {
+  margin-top: var(--gap-hair);
+}
+
+.now-agent-type {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.now-agent-task {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.now-agent-tool {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .now-line.is-turn .now-chip svg {
+    animation: none;
+  }
+}

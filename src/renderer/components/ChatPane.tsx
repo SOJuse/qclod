@@ -4,7 +4,7 @@ import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { sendCommand } from '../input/slash'
 import { Ribbon } from './Ribbon'
 import { Composer } from './Composer'
-import { Working } from './Working'
+import { NowLine } from './NowLine'
 import './ChatPane.css'
 
 interface Props {
@@ -107,7 +107,7 @@ export function ChatPane({
         }
       />
 
-      <Working status={status} since={busySinceByTab[tabId]} items={ribbonByTab[tabId] ?? []} />
+      <NowLine tabId={tabId} status={status} since={busySinceByTab[tabId]} items={ribbonByTab[tabId] ?? []} />
 
       {notice && (
         <div className="close-guard" data-testid={notice.testId} role="status">

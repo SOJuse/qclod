@@ -234,7 +234,9 @@ app.whenReady().then(async () => {
       saveSettings(userData, settings)
       if (settings.globalHotkey !== previousHotkey) hotkey.apply(settings.globalHotkey)
       return settings
-    }
+    },
+    // Tabs that stopped for want of a login carry on by themselves.
+    onLoggedIn: () => void controller.afterLogin()
   })
 
   // e2e reads what a click on a path did from here (fileActions.ts). Only the

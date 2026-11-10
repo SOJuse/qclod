@@ -19,7 +19,7 @@ import type {
 import { isDirectory, loadTabs, saveTabs, type LoadedTab } from '../store/tabsStore'
 import { seedFromTranscript, type AgentSession, type SessionSeed } from '../agent/AgentSession'
 import { EMPTY_PANEL } from '../agent/panelData'
-import { classifyStartFailure } from '../agent/startFailure'
+import { classifyStartFailure, LOGIN_NEEDED_TEXT } from '../agent/startFailure'
 import type { AgentSessionManager } from '../agent/AgentSessionManager'
 
 export interface TabHistory {
@@ -268,6 +268,36 @@ export class TabController {
   }
 
   /**
+   * The user has just logged in: every tab that stopped for want of it
+   * carries on by itself, as «Повторить» would — what was written there goes
+   * to the new session once. One at a time, so the agents do not all start
+   * at once; one that cannot carry on says so in its own ribbon and does not
+   * hold the others back.
+   */
+  async afterLogin(): Promise<void> {
+    const waiting = this.tabs
+      .map((tab) => tab.id)
+      .filter((id) => {
+        const session = this.deps.manager.get(id)
+        return (
+          session?.status === 'error' &&
+          session.error !== undefined &&
+          classifyStartFailure(session.error) === 'not-logged-in'
+        )
+      })
+    for (const id of waiting) {
+      try {
+        await this.retry(id)
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        // The tab's ribbon is its session's, or — between sessions — its preview's.
+        const builder = this.deps.manager.get(id) ?? this.previews.get(id)?.builder
+        if (builder) this.emitRibbon(id, builder.notice(`Сессия не запустилась: ${reason}`, 'error'))
+      }
+    }
+  }
+
+  /**
    * Closes the tab's session and starts the next one in its place. The
    * conversation the window shows stays, and the new session's items number
    * on after it — as on recovery from a dead session. A fresh ribbon here
@@ -465,9 +495,10 @@ export class TabController {
       // A clean session would die the same way. The tab keeps its session,
       // its error and its conversation, and offers the way out.
       this.patch(id, { canRetry: true })
-      // Said once: a «Повторить» that fails the same way, with nothing sent
-      // since, does not stack a second copy under the first.
-      const text = 'Claude Code не вошёл в аккаунт. Войдите и нажмите «Повторить».'
+      // Said once: the dead session's own `fail` has usually said it already,
+      // and a «Повторить» that fails the same way, with nothing sent since,
+      // does not stack a second copy under the first.
+      const text = LOGIN_NEEDED_TEXT
       const since = dead.items.slice(dead.items.findLastIndex((i) => i.kind === 'user') + 1)
       const told = since.some((i) => i.kind === 'notice' && i.action === 'login' && i.text === text)
       if (!told) this.emitRibbon(id, dead.notice(text, 'error', 'login'))
@@ -551,10 +582,13 @@ export class TabController {
       const patch: Partial<TabState> = { status }
       if (session.error !== undefined) patch.error = session.error
       // A start that never made an agent never reached the conversation:
-      // the same one can be tried again. (Not logged in is told apart in
-      // `recoverFromDeadSession`, which knows why the agent died.)
+      // the same one can be tried again. So can a session whose agent is not
+      // logged in, conversation or not — once the user logs in it will go.
       const tab = this.tabs.find((t) => t.id === id)
-      patch.canRetry = status === 'error' && !session.launched && Boolean(tab?.lastSessionId)
+      const notLoggedIn =
+        session.error !== undefined && classifyStartFailure(session.error) === 'not-logged-in'
+      patch.canRetry =
+        status === 'error' && ((!session.launched && Boolean(tab?.lastSessionId)) || notLoggedIn)
       if (status === 'waiting' || status === 'idle') {
         if (this.activeId !== id) patch.badge = true
       }

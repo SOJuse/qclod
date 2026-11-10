@@ -1,4 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 
 /**
@@ -104,6 +107,57 @@ describe('createFakeSdk', () => {
       for await (const m of driver.messages) seen.push(m)
     }).rejects.toThrow('агент умер')
     expect(kinds(seen)).toContain('assistant')
+  })
+
+  test('crash с times падает только первые times запусков (счётчик в QCLOD_USER_DATA)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qclod-fake-crash-'))
+    vi.stubEnv('QCLOD_USER_DATA', dir)
+    try {
+      const script = {
+        steps: [],
+        nextTurn: [
+          { kind: 'crash' as const, message: 'Not logged in · Please run /login', times: 1 },
+          { kind: 'text' as const, text: 'вторая сессия' }
+        ]
+      }
+      const first = createFakeSdk(script)
+      first.send({ text: 'привет', attachments: [] })
+      await expect(collect(first)).rejects.toThrow('Not logged in')
+      expect(existsSync(join(dir, 'fake-sdk-crashes.json'))).toBe(true)
+
+      const second = createFakeSdk(script)
+      second.send({ text: 'привет', attachments: [] })
+      const said = await collect(second)
+      expect(said.some((m) => JSON.stringify(m).includes('вторая сессия'))).toBe(true)
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('crash с times без QCLOD_USER_DATA падает всегда, как раньше', async () => {
+    vi.stubEnv('QCLOD_USER_DATA', '')
+    try {
+      for (let i = 0; i < 2; i++) {
+        const driver = createFakeSdk({ steps: [{ kind: 'crash', message: 'агент умер', times: 1 }] })
+        await expect(collect(driver)).rejects.toThrow('агент умер')
+      }
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  test('crash с beforeInit падает до system/init: сессия так и не представилась', async () => {
+    const driver = createFakeSdk({
+      steps: [],
+      nextTurn: [{ kind: 'crash', message: 'Not logged in · Please run /login', beforeInit: true }]
+    })
+    driver.send({ text: 'привет', attachments: [] })
+    const seen: Array<Record<string, unknown>> = []
+    await expect(async () => {
+      for await (const m of driver.messages) seen.push(m)
+    }).rejects.toThrow('Not logged in')
+    expect(seen).toEqual([])
   })
 
   test('compact_boundary отдаёт токены до и после', async () => {

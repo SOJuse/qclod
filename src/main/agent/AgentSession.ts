@@ -24,6 +24,7 @@ import { composeText } from './userMessage'
 import { PanelCollector, readProjectSettings } from './panelData'
 import { displayTarget } from './permissionStore'
 import { locateAgent } from '../setup/findAgent'
+import { classifyStartFailure, LOGIN_NEEDED_TEXT } from './startFailure'
 
 export interface AgentSessionOptions {
   tabId: TabId
@@ -1002,8 +1003,26 @@ export class AgentSession {
     if (dead) void dead.dispose().catch(() => undefined)
     this.failure = text
     this.emit(this.builder.closeOpen())
-    this.emit(this.builder.notice(explain(text), 'error'))
+    // «Not logged in · Please run /login» names a command the user has no
+    // terminal for; the notice offers the button instead. The raw words stay
+    // in `error`, where the tab reads why the session died.
+    if (classifyStartFailure(text) !== 'not-logged-in') {
+      this.emit(this.builder.notice(explain(text), 'error'))
+    } else if (!this.toldToLogIn()) {
+      this.emit(this.builder.notice(LOGIN_NEEDED_TEXT, 'error', 'login'))
+    }
     this.setStatus('error')
+  }
+
+  /**
+   * Whether the ribbon already asks to log in, with nothing sent since: a
+   * session that took a dead one's place and died the same way — «Повторить»
+   * before the login was done — does not stack a second copy.
+   */
+  private toldToLogIn(): boolean {
+    const items = this.builder.items
+    const since = items.slice(items.findLastIndex((i) => i.kind === 'user') + 1)
+    return since.some((i) => i.kind === 'notice' && i.action === 'login' && i.text === LOGIN_NEEDED_TEXT)
   }
 
   private emit(changes: RibbonChange[]): void {

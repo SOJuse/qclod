@@ -26,11 +26,52 @@
  *   progress?:Array<{tokens:number, toolUses:number, durationMs:number, lastTool?:string}>,
  *   finish?:{status:'completed'|'failed'|'stopped', summary:string, tokens:number, toolUses:number, durationMs:number}|null}} BackgroundAgentStep
  * @typedef {{kind:'compact', preTokens:number, postTokens:number, trigger?:'auto'|'manual'}} CompactStep
- * @typedef {{kind:'crash', message:string}} CrashStep
+ * @typedef {{kind:'crash', message:string, times?:number, beforeInit?:boolean}} CrashStep
  * @typedef {{kind:'reportInput'}} ReportInputStep
  */
 
 import { randomUUID } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+/** How many times each `crash` step with `times` has fired, by its message. */
+const CRASHES_FILE = 'fake-sdk-crashes.json'
+
+/**
+ * Whether a `crash` step fires this time. Without `times` it always does.
+ * With it, only the first `times` sessions crash; the count is kept in
+ * QCLOD_USER_DATA, since every session is a new driver (the app makes one
+ * per start). Without that folder there is nowhere to count — it always
+ * crashes, as before.
+ */
+function crashesNow(step) {
+  if (step.times === undefined) return true
+  const dir = process.env.QCLOD_USER_DATA
+  if (!dir) return true
+  const file = join(dir, CRASHES_FILE)
+  let counts = {}
+  try {
+    counts = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    // Not written yet: nothing has crashed.
+  }
+  const done = counts[step.message] ?? 0
+  if (done >= step.times) return false
+  counts[step.message] = done + 1
+  writeFileSync(file, JSON.stringify(counts), 'utf8')
+  return true
+}
+
+/**
+ * A `crash` with `beforeInit` is an agent that dies before it introduces
+ * itself — as one that is not logged in does: no `system/init`, no echo,
+ * just the error, once it is given something to answer.
+ */
+function crashBeforeInit(turn) {
+  for (const step of turn) {
+    if (step.kind === 'crash' && step.beforeInit && crashesNow(step)) throw new Error(step.message)
+  }
+}
 
 const DEFAULT_COMMANDS = [
   { name: 'compact', description: 'Сжать контекст', argumentHint: '', builtin: true },
@@ -565,6 +606,8 @@ export function createFakeSdk(script = {}) {
           break
 
         case 'crash':
+          // A beforeInit crash was settled before the turn began.
+          if (step.beforeInit || !crashesNow(step)) break
           throw new Error(step.message)
 
         // What the last send carried, as the agent would count it: the
@@ -626,6 +669,7 @@ export function createFakeSdk(script = {}) {
     // Non-empty steps are a turn sent before the stream opened. An empty
     // script waits for the first message and says nothing until then.
     if (steps.length > 0) {
+      crashBeforeInit(steps)
       yield* introduce()
       yield* play(steps)
       yield* finishTurn()
@@ -644,6 +688,7 @@ export function createFakeSdk(script = {}) {
       const input = inbox.shift()
       if (!input) continue
 
+      crashBeforeInit(script.nextTurn ?? [])
       yield* introduce()
       // The CLI echoes the message back before answering it.
       yield {

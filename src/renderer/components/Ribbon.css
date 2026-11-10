@@ -430,6 +430,11 @@
   border-color: var(--border-accent);
 }
 
+.row-notice-error {
+  margin-top: var(--space-2);
+  color: var(--danger);
+}
+
 /* The conversation is text people copy out of; the chrome around it is not. */
 .ribbon {
   user-select: text;

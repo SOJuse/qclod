@@ -32,9 +32,23 @@ function thinkingLabel(item: Extract<Item, { kind: 'thinking' }>): string {
 
 /**
  * Something Qclod itself says. A notice about logging in carries the way to
- * do it: the same terminal the setup screen opens.
+ * do it: the same login window the setup screen opens. If that window could
+ * not be opened, the reason shows under the notice instead of nothing.
  */
 export function NoticeRow({ item }: { item: Extract<Item, { kind: 'notice' }> }): JSX.Element {
+  const [loginError, setLoginError] = useState<string | null>(null)
+
+  async function login(): Promise<void> {
+    setLoginError(null)
+    try {
+      await window.qclod.login()
+    } catch (err) {
+      // Electron wraps the main side's message; only the reason is worth showing.
+      const message = err instanceof Error ? err.message : String(err)
+      setLoginError(message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
+    }
+  }
+
   return (
     <div className={`row-notice is-${item.tone}`}>
       {item.text}
@@ -43,11 +57,16 @@ export function NoticeRow({ item }: { item: Extract<Item, { kind: 'notice' }> })
           type="button"
           className="row-notice-action"
           data-testid="notice-login"
-          title="Открыть терминал, чтобы войти в Claude Code"
-          onClick={() => void window.qclod.login()}
+          title="Откроется окно входа"
+          onClick={() => void login()}
         >
           Войти
         </button>
+      )}
+      {item.action === 'login' && loginError && (
+        <div className="row-notice-error" data-testid="notice-login-error" role="alert">
+          Не удалось открыть окно входа: {loginError}
+        </div>
       )}
     </div>
   )

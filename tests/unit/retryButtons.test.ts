@@ -1,4 +1,26 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
+
+/**
+ * The tree is walked by calling components as functions, outside any render;
+ * there useState gets a plain slot the test can read and set.
+ */
+const slot = vi.hoisted(() => {
+  const s = { value: undefined as unknown, set: (v: unknown): void => void (s.value = v) }
+  return s
+})
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>()
+  return {
+    ...actual,
+    useState: (init: unknown) => {
+      try {
+        return actual.useState(init)
+      } catch {
+        return [slot.value ?? init, slot.set]
+      }
+    }
+  }
+})
 import { createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DeadStrip } from '../../src/renderer/components/Composer'
@@ -83,6 +105,29 @@ describe('строка-заметка в ленте', () => {
     expect(find(tree, 'notice-login')!.props.children).toBe('Войти')
     click(tree, 'notice-login')
     expect(login).toHaveBeenCalledTimes(1)
+  })
+
+  test('подсказка у «Войти» говорит про окно входа, не про терминал', () => {
+    vi.stubGlobal('window', { qclod: { login: vi.fn(async () => undefined) } })
+    const html = renderToStaticMarkup(createElement(NoticeRow, { item: notice('login') }))
+    expect(html).toContain('title="Откроется окно входа"')
+    expect(html).not.toContain('терминал')
+  })
+
+  test('если окно входа не открылось, под заметкой видна причина', async () => {
+    slot.value = undefined
+    const login = vi.fn(async () => {
+      throw new Error("Error invoking remote method 'setup:login': Error: Claude Code не найден")
+    })
+    vi.stubGlobal('window', { qclod: { login } })
+    const tree = createElement(NoticeRow, { item: notice('login') })
+    click(tree, 'notice-login')
+    await vi.waitFor(() => expect(slot.value).toBe('Claude Code не найден'))
+
+    const shown = find(createElement(NoticeRow, { item: notice('login') }), 'notice-login-error')
+    expect(shown).toBeDefined()
+    expect(renderToStaticMarkup(shown!)).toContain('Не удалось открыть окно входа: Claude Code не найден')
+    slot.value = undefined
   })
 
   test('обычная заметка без кнопки', () => {

@@ -29,6 +29,8 @@ export const CHANNELS = Object.freeze({
   agentCommands: 'agent:commands',
   agentRibbon: 'agent:ribbon',
   agentPanel: 'agent:panelRefresh',
+  agentTaskOutput: 'agent:taskOutput',
+  agentTaskStop: 'agent:taskStop',
 
   permissionAnswer: 'permission:answer',
   permissionRules: 'permission:rules',
@@ -94,6 +96,8 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.agentCommands,
   CHANNELS.agentRibbon,
   CHANNELS.agentPanel,
+  CHANNELS.agentTaskOutput,
+  CHANNELS.agentTaskStop,
   CHANNELS.permissionAnswer,
   CHANNELS.permissionRules,
   CHANNELS.permissionRuleDelete,

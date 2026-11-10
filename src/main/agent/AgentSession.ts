@@ -14,6 +14,7 @@ import type {
   RibbonItem,
   SessionStatus,
   TabId,
+  TaskOutput,
   TodoItem,
   UserInput
 } from '../../shared/types'
@@ -22,6 +23,7 @@ import type { ToolPermissionContext } from './permissionContext'
 import { parseExtraFlags } from './launchFlags'
 import { composeText } from './userMessage'
 import { PanelCollector, readProjectSettings } from './panelData'
+import { BackgroundTracker } from './backgroundTasks'
 import { displayTarget } from './permissionStore'
 import { AgentNotFoundError } from './resolveExecutable'
 import { findAgent } from '../setup/findAgent'
@@ -127,6 +129,7 @@ export class AgentSession {
   private readonly options: AgentSessionOptions
   private readonly builder: RibbonBuilder
   private readonly collector: PanelCollector
+  private readonly backgroundTasks = new BackgroundTracker()
   private readonly changeListeners: ChangeListener[] = []
   private readonly panelListeners: PanelListener[] = []
   private readonly statusListeners: StatusListener[] = []
@@ -779,6 +782,32 @@ export class AgentSession {
     this.mcpTimer = null
   }
 
+  /**
+   * The end of a background task's output. Only a task this tab lists is
+   * asked about: an id from anywhere else never reaches the agent.
+   */
+  async taskOutput(taskId: string): Promise<TaskOutput | null> {
+    const driver = this.driver
+    if (!driver || !this.backgroundTasks.tasks.some((t) => t.taskId === taskId)) return null
+    return driver.taskOutput(taskId).catch(() => null)
+  }
+
+  /** Stops one of this tab's background tasks while it is still running. */
+  async stopTask(taskId: string): Promise<void> {
+    const driver = this.driver
+    const task = this.backgroundTasks.tasks.find((t) => t.taskId === taskId)
+    if (!driver || task?.status !== 'running') return
+    // The task's notification, not this call, tells the list it has ended.
+    // A refusal is the user's to see: it reaches the row that asked.
+    await driver.stopTask(taskId)
+  }
+
+  /** The agent is gone: its background tasks are cut off with it. */
+  private cutOffBackground(): void {
+    const tasks = this.backgroundTasks.endAll('interrupted')
+    if (tasks) this.emitPanel(this.collector.setBackgroundTasks(tasks))
+  }
+
   /** Everything the panel knows about this tab right now. */
   get panel(): PanelData {
     return this.collector.data
@@ -835,7 +864,10 @@ export class AgentSession {
         this.onMessage(message)
       }
       // The stream ending by itself means the agent exited.
-      if (this.driver === driver) this.setStatus('stopped')
+      if (this.driver === driver) {
+        this.cutOffBackground()
+        this.setStatus('stopped')
+      }
     } catch (err) {
       if (this.driver === driver) this.fail(err)
     }
@@ -855,6 +887,8 @@ export class AgentSession {
       this.mode = this.collector.data.permissionMode
       this.emitPanel(panel)
     }
+    const tasks = this.backgroundTasks.apply(message)
+    if (tasks) this.emitPanel(this.collector.setBackgroundTasks(tasks))
     const todo = this.builder.todo
     if (todo) this.todoItems = todo
 
@@ -1086,6 +1120,7 @@ export class AgentSession {
     // must not stay live (a click could save a rule from a dead session).
     this.cancelWaits()
     if (dead) void dead.dispose().catch(() => undefined)
+    this.cutOffBackground()
     this.failure = text
     this.emit(this.builder.closeOpen())
     this.emit(this.builder.notice(explain(text), 'error'))

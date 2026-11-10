@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
+  BackgroundTask,
   EffortLevel,
   McpServerInfo,
   ModelOption,
@@ -52,7 +53,8 @@ export const EMPTY_PANEL: PanelData = {
   permissionMode: 'default',
   mcp: [],
   projectSettings: null,
-  queue: []
+  queue: [],
+  backgroundTasks: []
 }
 
 let lastPanelRev = 0
@@ -221,6 +223,11 @@ export class PanelCollector {
   /** What waits to be sent: the session owns the messages, the panel shows them. */
   setQueue(queue: QueuedMessage[]): Partial<PanelData> {
     return this.patch({ queue })
+  }
+
+  /** The whole list each time: BackgroundTracker hands over a fresh one. */
+  setBackgroundTasks(tasks: BackgroundTask[]): Partial<PanelData> {
+    return this.patch({ backgroundTasks: tasks })
   }
 
   private onInit(m: Record<string, unknown>): Partial<PanelData> {

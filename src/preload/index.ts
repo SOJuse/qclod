@@ -18,6 +18,7 @@ import type {
   StatusEvent,
   TabId,
   TabState,
+  TaskOutput,
   UserInput
 } from '../shared/types'
 
@@ -68,6 +69,11 @@ const api = {
   ribbon: (id: TabId): Promise<RibbonSnapshot> => ipcRenderer.invoke(CHANNELS.agentRibbon, id),
   /** The tab's whole panel with its revision; live MCP follows as an event. */
   panel: (id: TabId): Promise<PanelSnapshot> => ipcRenderer.invoke(CHANNELS.agentPanel, id),
+  /** The end of a background task's output; null when this Claude Code cannot read it. */
+  taskOutput: (id: TabId, taskId: string): Promise<TaskOutput | null> =>
+    ipcRenderer.invoke(CHANNELS.agentTaskOutput, id, taskId),
+  stopTask: (id: TabId, taskId: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.agentTaskStop, id, taskId),
 
   answerPermission: (requestId: string, answer: PermissionAnswer): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.permissionAnswer, requestId, answer),

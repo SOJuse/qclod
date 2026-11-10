@@ -110,7 +110,8 @@ export const EMPTY_PANEL: PanelData = Object.freeze({
   permissionMode: 'default',
   mcp: [],
   projectSettings: null,
-  queue: []
+  queue: [],
+  backgroundTasks: []
 })
 
 interface AppState {

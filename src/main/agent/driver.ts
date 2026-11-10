@@ -5,6 +5,7 @@ import type {
   ModelOption,
   PanelData,
   PermissionAnswer,
+  TaskOutput,
   UserInput
 } from '../../shared/types'
 import type { ToolPermissionContext } from './permissionContext'
@@ -37,6 +38,12 @@ export interface AgentDriver {
    * when the plan has none or this CLI cannot say.
    */
   planLimits(): Promise<PanelData['limits'] | null>
+  /**
+   * The end of a background task's output. Null when this SDK or CLI cannot
+   * read it, or refused to for this task.
+   */
+  taskOutput(taskId: string): Promise<TaskOutput | null>
+  stopTask(taskId: string): Promise<void>
   dispose(): Promise<void>
 }
 

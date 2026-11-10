@@ -320,3 +320,49 @@ describe('sdkDriver: вложения', () => {
     await driver.dispose()
   })
 })
+
+describe('sdkDriver: фоновые задачи', () => {
+  test('taskOutput зовёт getTaskOutput, если он есть', async () => {
+    const getTaskOutput = vi.fn(async (_id: string) => ({
+      output: 'готово 2\n',
+      total_bytes: 20000,
+      truncated: true
+    }))
+    mockQuery({ getTaskOutput })
+    const driver = await createSdkDriver(allowAll())
+    await expect(driver.taskOutput('b1')).resolves.toEqual({
+      output: 'готово 2\n',
+      totalBytes: 20000,
+      truncated: true
+    })
+    expect(getTaskOutput).toHaveBeenCalledWith('b1')
+    await driver.dispose()
+  })
+
+  test('нет getTaskOutput — null без ошибки', async () => {
+    mockQuery()
+    const driver = await createSdkDriver(allowAll())
+    await expect(driver.taskOutput('b1')).resolves.toBeNull()
+    await driver.dispose()
+  })
+
+  test('getTaskOutput бросил — null', async () => {
+    mockQuery({
+      getTaskOutput: async () => {
+        throw new Error('not a shell task')
+      }
+    })
+    const driver = await createSdkDriver(allowAll())
+    await expect(driver.taskOutput('b1')).resolves.toBeNull()
+    await driver.dispose()
+  })
+
+  test('stopTask уходит в Query.stopTask', async () => {
+    const stopTask = vi.fn(async (_id: string) => undefined)
+    mockQuery({ stopTask })
+    const driver = await createSdkDriver(allowAll())
+    await driver.stopTask('b1')
+    expect(stopTask).toHaveBeenCalledWith('b1')
+    await driver.dispose()
+  })
+})

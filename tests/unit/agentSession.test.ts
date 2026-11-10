@@ -1271,6 +1271,100 @@ describe('AgentSession: фоновый подагент переживает х�
   })
 })
 
+describe('AgentSession: фоновые команды', () => {
+  test('список задач идёт в панель, вывод и «Остановить» — только для задач из списка', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      nextTurn: [
+        {
+          kind: 'backgroundBash',
+          command: 'npm run dev',
+          taskId: 'b1',
+          chunks: ['готово 1\n'],
+          pauseMs: 20,
+          finish: null
+        }
+      ]
+    })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'запусти', attachments: [] })
+
+    await vi.waitFor(
+      () =>
+        expect(session.panel.backgroundTasks).toEqual([
+          expect.objectContaining({ taskId: 'b1', command: 'npm run dev', status: 'running' })
+        ]),
+      { timeout: 2000, interval: 5 }
+    )
+    expect(rec.panels.some((p) => p.backgroundTasks !== undefined)).toBe(true)
+
+    await vi.waitFor(
+      async () => expect((await session.taskOutput('b1'))?.output).toBe('готово 1\n'),
+      { timeout: 2000, interval: 10 }
+    )
+    // An id the tab never listed reaches neither the driver nor the agent.
+    const output = vi.spyOn(driver, 'taskOutput')
+    const stop = vi.spyOn(driver, 'stopTask')
+    await expect(session.taskOutput('чужая')).resolves.toBeNull()
+    await session.stopTask('чужая')
+    expect(output).not.toHaveBeenCalled()
+    expect(stop).not.toHaveBeenCalled()
+
+    await session.stopTask('b1')
+    expect(stop).toHaveBeenCalledWith('b1')
+    await vi.waitFor(
+      () => expect(session.panel.backgroundTasks[0]).toMatchObject({ taskId: 'b1', status: 'stopped' }),
+      { timeout: 2000, interval: 5 }
+    )
+    // A finished task is not stopped again.
+    await session.stopTask('b1')
+    expect(stop).toHaveBeenCalledTimes(1)
+    await session.dispose()
+  })
+
+  test('отказ остановить доходит до того, кто просил, задача работает дальше', async () => {
+    const { session } = makeSession({
+      steps: [],
+      stopTaskError: 'задача уже закончилась',
+      nextTurn: [{ kind: 'backgroundBash', command: 'npm run dev', taskId: 'b1', finish: null }]
+    })
+    await session.start()
+    session.send({ text: 'запусти', attachments: [] })
+    await vi.waitFor(() => expect(session.panel.backgroundTasks[0]?.status).toBe('running'), {
+      timeout: 2000,
+      interval: 5
+    })
+    await expect(session.stopTask('b1')).rejects.toThrow('задача уже закончилась')
+    expect(session.panel.backgroundTasks[0]?.status).toBe('running')
+    await session.dispose()
+  })
+
+  test('агент упал — работавшие задачи прерваны, законченные остались как были', async () => {
+    const { session } = makeSession({
+      steps: [],
+      nextTurn: [
+        { kind: 'backgroundBash', command: 'npm run build', taskId: 'b1', finish: null },
+        { kind: 'backgroundBash', command: 'npm run dev', taskId: 'b2', finish: null },
+        { kind: 'crash', message: 'процесс агента завершился' }
+      ]
+    })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'запусти', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('error'), { timeout: 2000, interval: 5 })
+
+    expect(session.panel.backgroundTasks).toEqual([
+      expect.objectContaining({ taskId: 'b2', status: 'interrupted', endedAt: expect.any(Number) }),
+      expect.objectContaining({ taskId: 'b1', status: 'interrupted', endedAt: expect.any(Number) })
+    ])
+    // The window was told, not just the session.
+    const last = rec.panels.filter((p) => p.backgroundTasks !== undefined).at(-1)
+    expect(last?.backgroundTasks?.every((t) => t.status === 'interrupted')).toBe(true)
+    await session.dispose()
+  })
+})
+
 
 describe('AgentSession: панель полна до первого сообщения', () => {
   test('до первого сообщения панель знает контекст, модель, модели и лимиты', async () => {

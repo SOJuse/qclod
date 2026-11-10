@@ -2,6 +2,9 @@ import { useEffect, useRef } from 'react'
 import { Check, CheckCheck, X } from 'lucide-react'
 import type { RibbonItem } from '../../shared/types'
 import { resolveComposerKey } from '../input/keyPrecedence'
+import { createKeyGuard, heldKeys, trackHeldKeys } from '../chat/permissionKeyGuard'
+
+trackHeldKeys()
 
 type Permission = Extract<RibbonItem, { kind: 'permission' }>
 
@@ -12,10 +15,29 @@ interface Props {
   onAnswer: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
 }
 
-/** Text typed into the input line is never taken from the person typing it. */
-function composerHasDraft(): boolean {
+/**
+ * Whether the card may take focus. Only the pane being worked in, and only
+ * from nowhere editable: the field of another pane, a dialog or a sheet is
+ * where the person is typing, and so is this pane's own input line once it
+ * holds a draft. An empty input line of this pane gives way.
+ */
+function mayTakeFocus(card: HTMLElement): boolean {
+  // A window the person is not in cannot be where they are typing, and a key
+  // they press later in another program must not reach a card they never saw.
+  if (!document.hasFocus()) return false
+  const pane = card.closest('[data-testid="chat-pane"]')
+  if (!pane?.classList.contains('is-focused')) return false
   const el = document.activeElement
-  return el instanceof HTMLTextAreaElement && el.dataset['testid'] === 'composer-input' && el.value !== ''
+  if (!(el instanceof HTMLElement)) return true
+  const editable =
+    el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el.isContentEditable
+  if (!editable) return true
+  return (
+    el instanceof HTMLTextAreaElement &&
+    el.dataset['testid'] === 'composer-input' &&
+    pane.contains(el) &&
+    el.value === ''
+  )
 }
 
 /**
@@ -32,6 +54,11 @@ function composerHasDraft(): boolean {
  */
 export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.Element {
   const card = useRef<HTMLDivElement | null>(null)
+  const guard = useRef(createKeyGuard())
+  useEffect(() => {
+    const own = guard.current
+    return () => own.dispose()
+  }, [])
   const pending = item.state === 'pending'
   const takesFocus = pending && active
 
@@ -41,7 +68,7 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
     // input line in one of them, and the card asks only after that.
     const timer = setTimeout(() => {
       const el = card.current
-      if (!el || composerHasDraft()) return
+      if (!el || !mayTakeFocus(el)) return
       el.focus({ preventScroll: true })
       el.scrollIntoView({ block: 'nearest' })
     }, 0)
@@ -61,6 +88,10 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
 
   function onKeyDown(ev: React.KeyboardEvent<HTMLDivElement>): void {
     if (!takesFocus) return
+    // Held, auto-repeating or chorded keys, and keys still in flight when the
+    // card appeared, never answer: only a fresh plain press after it is armed.
+    if (ev.repeat || ev.ctrlKey || ev.altKey || ev.metaKey) return
+    if (!guard.current.allows(ev.code || ev.key, performance.now())) return
     const action = resolveComposerKey(
       {
         key: ev.key,
@@ -97,6 +128,12 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
       className={`row-permission is-${item.state}`}
       data-testid="permission-card"
       tabIndex={pending ? -1 : undefined}
+      onFocus={(ev) => {
+        // Focus arriving from outside arms the keys afresh, however it came.
+        if (!ev.currentTarget.contains(ev.relatedTarget)) {
+          guard.current.focus(performance.now(), heldKeys())
+        }
+      }}
       onKeyDown={onKeyDown}
     >
       <div className="row-permission-head">

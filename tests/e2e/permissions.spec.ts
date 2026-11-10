@@ -1,4 +1,4 @@
-import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test'
+import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +14,11 @@ async function launch(script: unknown): Promise<{ app: ElectronApplication; prof
     } as Record<string, string>
   })
   return { app, profile }
+}
+
+/** The card's keys wake 400 ms after it takes focus. */
+async function armed(win: Page): Promise<void> {
+  await win.waitForTimeout(500)
 }
 
 async function close(app: ElectronApplication, profile: string): Promise<void> {
@@ -200,6 +205,7 @@ test('Enter разрешает, инструмент выполняется', as
     // The card took focus when it appeared.
     await expect(card).toBeFocused()
 
+    await armed(win)
     await win.keyboard.press('Enter')
 
     await expect(card).toContainText('разрешено')
@@ -223,6 +229,7 @@ test('Esc отклоняет', async () => {
     const card = win.locator('[data-testid="permission-card"]')
     await expect(card).toBeFocused({ timeout: 15000 })
 
+    await armed(win)
     await win.keyboard.press('Escape')
 
     await expect(card).toContainText('отклонено')
@@ -246,6 +253,7 @@ test('A разрешает всё такое — второй такой же н
     await expect(win.locator('[data-testid="permission-card"]')).toBeFocused({ timeout: 15000 })
 
     // The physical key: it is «ф» on the Russian layout.
+    await armed(win)
     await win.keyboard.press('KeyA')
 
     await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(2, { timeout: 15000 })
@@ -298,6 +306,7 @@ test('карточка не прячется под полем ввода', asyn
       el.scrollTop = 0
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
     })
+    await armed(win)
     await win.keyboard.press('Enter')
 
     const second = win.locator('[data-testid="permission-card"]', { hasText: 'второй' })
@@ -331,6 +340,82 @@ test('«Разрешить» — главная кнопка, «Отклонит
     await expect(win.locator('[data-testid="permission-allow-all"] kbd')).toHaveText('A')
     await expect(win.locator('[data-testid="permission-deny"] kbd')).toHaveText('Esc')
     await expect(win.locator('[data-testid="permission-deny"]')).toHaveAttribute('title', /Esc/)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('запрос в соседней панели не уводит фокус из той, где пишешь', async () => {
+  const other = mkdtempSync(join(tmpdir(), 'qclod-split-'))
+  const profile = mkdtempSync(join(tmpdir(), 'qclod-perm-'))
+  const app = await electron.launch({
+    args: ['.'],
+    env: {
+      ...process.env,
+      QCLOD_USER_DATA: profile,
+      QCLOD_PICK_FOLDER: other,
+      QCLOD_FAKE_SDK_SCRIPT: JSON.stringify({
+        steps: [{ kind: 'text', text: 'первый чат' }],
+        // The question arrives a few seconds after the message is sent.
+        nextTurn: [
+          { kind: 'tool', name: 'Read', input: { file_path: 'a.ts' }, result: 'x', pauseMs: 2500 },
+          { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }
+        ]
+      })
+    } as Record<string, string>
+  })
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').first().waitFor({ timeout: 15000 })
+    await win.locator('[data-testid="tab-new"]').click()
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+    await win.locator('[data-testid="toggle-split"]').click()
+    await expect(win.locator('[data-testid="chat-pane"]')).toHaveCount(2)
+
+    const left = win.locator('[data-testid="chat-pane"]').first()
+    const right = win.locator('[data-testid="chat-pane"]').last()
+
+    // The right pane asks; then the person goes to the left one and types.
+    await right.locator('[data-testid="composer-input"]').click()
+    await win.keyboard.type('сделай')
+    await win.keyboard.press('Enter')
+    await left.locator('[data-testid="composer-input"]').click()
+
+    await expect(right.locator('[data-testid="permission-card"]')).toBeVisible({ timeout: 15000 })
+
+    // Focus stayed, so what is typed now lands in the pane being written in.
+    await expect(left.locator('[data-testid="composer-input"]')).toBeFocused()
+    await win.keyboard.type('левый черновик')
+    await expect(left.locator('[data-testid="composer-input"]')).toHaveValue('левый черновик')
+    await expect(right.locator('[data-testid="permission-allow"]')).toBeVisible()
+  } finally {
+    await app.close().catch(() => undefined)
+    rmSync(profile, { recursive: true, force: true })
+    rmSync(other, { recursive: true, force: true })
+  }
+})
+
+test('A в первые 400 мс после появления карточки ничего не делает, потом разрешает всё такое', async () => {
+  const { app, profile } = await launch({
+    steps: [
+      { kind: 'askPermission', name: 'Read', input: { file_path: 'C:/проект/auth.ts' } },
+      { kind: 'askPermission', name: 'Read', input: { file_path: 'C:/проект/auth.ts' } }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    const card = win.locator('[data-testid="permission-card"]')
+    await expect(card).toBeFocused({ timeout: 15000 })
+
+    // A keystroke that was already on its way when the card appeared.
+    await win.keyboard.press('KeyA')
+    await expect(win.locator('[data-testid="permission-allow"]')).toBeVisible()
+    await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(0)
+
+    // Armed: a fresh press answers.
+    await armed(win)
+    await win.keyboard.press('KeyA')
+    await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(2, { timeout: 15000 })
   } finally {
     await close(app, profile)
   }

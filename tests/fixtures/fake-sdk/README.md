@@ -43,7 +43,7 @@ for await (const message of driver.messages) { /* ... */ }
 | Шаг | Что выдаёт |
 |---|---|
 | `text` | текст агента |
-| `thinking` | блок размышлений |
+| `thinking` | блок размышлений; с `ms` — потоком, как в живой сессии (`message_start`, `thinking_delta`, пауза `ms`, `content_block_stop`, затем целое сообщение с тем же id), и лента показывает «Думал N с» |
 | `tool` | вызов инструмента и его результат; `output` (объект) уходит как `tool_use_result` рядом с `tool_result` (формы — `sdk-tools.d.ts`); `pauseMs` — пауза между `tool_use` и результатом |
 | `toolError` | вызов и результат с `is_error`; `output` уходит как `tool_use_result` |
 | `askPermission` | спрашивает `canUseTool` с `toolUseID` будущего вызова и `signal`; разрешили — выполняет, отказали — `permission_denied` |

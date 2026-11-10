@@ -30,7 +30,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 30px;
+  min-height: var(--tool-head-h);
   padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
   cursor: pointer;
   list-style: none;
@@ -51,11 +51,26 @@
   outline-offset: -1px;
 }
 
-.tool-icon,
 .tool-status {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
+}
+
+/* The category's one patch of fill: a small tinted square behind its icon. */
+.tool-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tool-chip-size);
+  height: var(--tool-chip-size);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--cat) var(--tool-chip-tint), transparent);
+}
+
+.tool-card.is-error .tool-chip {
+  background: color-mix(in srgb, var(--status-critical) var(--tool-chip-tint), transparent);
 }
 
 .tool-name {
@@ -106,8 +121,12 @@
   font-size: var(--text-sm);
 }
 
+.tool-card.is-compact .tool-chip {
+  --tool-chip-size: var(--tool-chip-size-compact);
+}
+
 .tool-card.is-compact .tool-head {
-  min-height: 24px;
+  min-height: var(--tool-head-h-compact);
   padding-top: var(--gap-hair);
   padding-bottom: var(--gap-hair);
 }
@@ -283,6 +302,12 @@
 }
 
 /* ------------------------------------------------------------------- diff */
+
+.diff-note {
+  padding: 0 var(--space-2) 0 calc(10ch + var(--space-2));
+  color: var(--text-dim);
+  font-style: italic;
+}
 
 .diff,
 .tool-numbered {

@@ -173,9 +173,28 @@ export function createFakeSdk(script = {}) {
           yield assistant([{ type: 'text', text: step.text }])
           break
 
-        case 'thinking':
-          yield assistant([{ type: 'thinking', thinking: step.text ?? 'размышляю' }])
+        case 'thinking': {
+          const text = step.text ?? 'размышляю'
+          if (!step.ms) {
+            yield assistant([{ type: 'thinking', thinking: text }])
+            break
+          }
+          // Timed: streamed like a real session, the block held open `ms`.
+          const messageId = `msg_${randomUUID()}`
+          const event = (e) => ({ type: 'stream_event', uuid: randomUUID(), session_id: sessionId, parent_tool_use_id: null, event: e })
+          yield event({ type: 'message_start', message: { id: messageId, role: 'assistant', content: [] } })
+          yield event({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: text } })
+          await pause(step.ms)
+          yield event({ type: 'content_block_stop', index: 0 })
+          yield {
+            type: 'assistant',
+            uuid: randomUUID(),
+            session_id: sessionId,
+            parent_tool_use_id: null,
+            message: { id: messageId, role: 'assistant', content: [{ type: 'thinking', thinking: text }] }
+          }
           break
+        }
 
         // What a real session looks like with --include-partial-messages: the
         // text arrives as deltas and the complete message follows it.

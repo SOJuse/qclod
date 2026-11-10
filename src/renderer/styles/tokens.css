@@ -98,6 +98,12 @@
   --rule-category: 2px;
   /* An opened tool card's output block scrolls past this height until «Показать всё». */
   --tool-output-max: 320px;
+  /* A tool card's folded line, and the tinted square its category icon sits in. */
+  --tool-head-h: 30px;
+  --tool-head-h-compact: 24px;
+  --tool-chip-size: 20px;
+  --tool-chip-size-compact: 16px;
+  --tool-chip-tint: 18%;
   --gap-hair: 2px;
   --radius-pill: 999px;
 

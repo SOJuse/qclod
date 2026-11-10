@@ -165,8 +165,10 @@ function commandView(input: Obj, output: unknown, fallback: string, failed: bool
     type: 'command',
     command: str(input['command']),
     description: str(input['description']),
+    // Without an output the result text is all there is: an old record's
+    // output, or a failure's error, which the card already shows on top.
     stdout: out ? str(out['stdout']) : failed ? '' : fallback,
-    stderr: out ? str(out['stderr']) : failed ? fallback : '',
+    stderr: out ? str(out['stderr']) : '',
     interrupted: out?.['interrupted'] === true
   }
   const taskId = out ? str(out['backgroundTaskId']) : ''
@@ -301,7 +303,9 @@ export function toolView(item: ToolCardItem): ToolView {
 
   switch (item.name) {
     case 'Bash':
-      if (isObject(output)) return commandView(input, output, resultText(item), failed)
+      if (isObject(output) || typeof input['command'] === 'string') {
+        return commandView(input, output, resultText(item), failed)
+      }
       break
     // A failed edit has no output: showing the input as a diff would show a
     // change that never happened.

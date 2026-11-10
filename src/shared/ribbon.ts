@@ -279,6 +279,15 @@ export class RibbonBuilder {
    */
   private readonly pendingEchoes: string[] = []
   private seq = 0
+  /** When the message before the current one arrived: a thinking block that comes whole took that long. */
+  private previousEventAt: number | undefined
+  private lastEventAt: number | undefined
+  /**
+   * The last point a streamed block could have begun: the message's start or
+   * the end of the block before. Thinking starts there, not at its first
+   * delta, which comes only after the model has been thinking for a while.
+   */
+  private blockBoundaryAt: number | undefined
   private readonly now: () => number
   private replaying: boolean
 
@@ -393,6 +402,8 @@ export class RibbonBuilder {
 
   apply(message: unknown): RibbonChange[] {
     if (!isObject(message)) return []
+    this.previousEventAt = this.lastEventAt
+    this.lastEventAt = this.now()
     switch (message['type']) {
       case 'stream_event':
         return this.onStreamEvent(message)
@@ -437,11 +448,14 @@ export class RibbonBuilder {
       const inner = event['message']
       const id = isObject(inner) ? str(inner['id']) : ''
       if (id) this.streamed.add(id)
+      this.blockBoundaryAt = this.now()
       return []
     }
 
     if (event['type'] === 'content_block_stop') {
-      return this.closeBlock(Number(event['index'] ?? 0))
+      const changes = this.closeBlock(Number(event['index'] ?? 0))
+      this.blockBoundaryAt = this.now()
+      return changes
     }
 
     if (event['type'] !== 'content_block_delta') return []
@@ -485,7 +499,8 @@ export class RibbonBuilder {
         ? { kind: 'agentText', id, text, streaming: true, ...(parentId ? { parentId } : {}) }
         : { kind: 'thinking', id, text, done: false, durationMs: 0, ...(parentId ? { parentId } : {}) }
 
-    this.openBlocks.set(index, { itemId: id, kind, startedAt: this.now() })
+    const startedAt = kind === 'thinking' ? (this.blockBoundaryAt ?? this.now()) : this.now()
+    this.openBlocks.set(index, { itemId: id, kind, startedAt })
     return [...closed, this.append(item)]
   }
 
@@ -509,6 +524,12 @@ export class RibbonBuilder {
       return [this.update(item.id, { done: true, durationMs })]
     }
     return []
+  }
+
+  /** A thinking block that came whole was being thought since the event before it; a replay has no clock. */
+  private wholeThinkingMs(): number {
+    if (this.replaying || this.previousEventAt === undefined) return 0
+    return Math.max(0, this.now() - this.previousEventAt)
   }
 
   private closeOpenBlocks(): RibbonChange[] {
@@ -555,7 +576,7 @@ export class RibbonBuilder {
               id: this.nextId(),
               text: str(block['thinking']),
               done: true,
-              durationMs: 0,
+              durationMs: this.wholeThinkingMs(),
               ...(parentId ? { parentId } : {})
             })
           )

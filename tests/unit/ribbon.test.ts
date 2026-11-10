@@ -164,6 +164,49 @@ describe('RibbonBuilder', () => {
     expect(thinking[0]!.durationMs).toBe(5000)
   })
 
+  test('размышления считаются от начала сообщения, а не от первого куска текста', () => {
+    let clock = 1000
+    const b = new RibbonBuilder({ now: () => clock })
+
+    b.apply(messageStart('msg_t2'))
+    clock = 3000
+    b.apply({
+      type: 'stream_event',
+      uuid: uuid(),
+      session_id: 's1',
+      parent_tool_use_id: null,
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'думаю' } }
+    })
+    clock = 6000
+    b.apply({ type: 'stream_event', uuid: uuid(), session_id: 's1', parent_tool_use_id: null, event: { type: 'content_block_stop', index: 0 } })
+
+    expect(only(b.items, 'thinking')[0]!.durationMs).toBe(5000)
+  })
+
+  test('размышления, пришедшие целиком, считаются от предыдущего события', () => {
+    let clock = 1000
+    const b = new RibbonBuilder({ now: () => clock })
+
+    b.apply({ type: 'system', subtype: 'init', session_id: 's1', uuid: uuid() })
+    clock = 9000
+    b.apply(assistant([{ type: 'thinking', thinking: 'взвешиваю' }]))
+
+    const thinking = only(b.items, 'thinking')
+    expect(thinking[0]!.done).toBe(true)
+    expect(thinking[0]!.durationMs).toBe(8000)
+  })
+
+  test('в повторе истории размышления без длительности', () => {
+    let clock = 1000
+    const b = new RibbonBuilder({ now: () => clock, replay: true })
+
+    b.apply({ type: 'system', subtype: 'init', session_id: 's1', uuid: uuid() })
+    clock = 9000
+    b.apply(assistant([{ type: 'thinking', thinking: 'взвешиваю' }]))
+
+    expect(only(b.items, 'thinking')[0]!.durationMs).toBe(0)
+  })
+
   test('TodoWrite не попадает в ленту, а обновляет список задач', () => {
     const b = new RibbonBuilder()
     const changes = b.apply(

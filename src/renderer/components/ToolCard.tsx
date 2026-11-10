@@ -24,11 +24,17 @@ function title(name: string): string {
   return TOOL_TITLE[name] ?? name
 }
 
-/** The one thing the call was about: the command, the file, the query. */
-function mainArg(item: ToolCardItem, view: ToolView): { text: string; mono: boolean } {
+/**
+ * The one thing the call was about: the command, the file, the query. A
+ * search says what it looked for first and where second.
+ */
+function mainArg(item: ToolCardItem, view: ToolView): { text: string; where?: string; mono: boolean } {
   if (view.type === 'command' && view.command) return { text: view.command.split('\n')[0] ?? '', mono: true }
-  if (item.name === 'Bash' && typeof item.input?.['command'] === 'string') {
-    return { text: item.input['command'].split('\n')[0] ?? '', mono: true }
+  const input = item.input ?? {}
+  const pattern = typeof input['pattern'] === 'string' ? input['pattern'] : ''
+  if (pattern && (item.name === 'Grep' || item.name === 'Glob')) {
+    const where = typeof input['path'] === 'string' ? input['path'] : ''
+    return { text: pattern, mono: false, ...(where ? { where } : {}) }
   }
   return { text: item.target, mono: false }
 }
@@ -39,7 +45,7 @@ function mainArg(item: ToolCardItem, view: ToolView): { text: string; mono: bool
  * Folded, it is a single line: the category's rule and icon, what was done,
  * on what, and what came of it. Opened, it shows the details of that kind of
  * call. A failed call opens by itself: the error is what needs reading.
- * Colour marks only the icon and the rule; every word is in text colours.
+ * Colour marks only the icon chip and the rule; every word is in text colours.
  */
 export function ToolCard({
   item,
@@ -81,12 +87,16 @@ export function ToolCard({
       onToggle={(e) => setOpen(e.currentTarget.open)}
     >
       <summary className="tool-head" data-testid="tool-head">
-        <span className="tool-icon">
+        <span className="tool-chip">
           <CategoryIcon category={category} />
         </span>
         <span className="tool-name">{title(item.name)}</span>
-        <span className={`tool-target${arg.mono ? ' tool-mono' : ''}`} title={arg.text}>
+        <span
+          className={`tool-target${arg.mono ? ' tool-mono' : ''}`}
+          title={arg.where ? `${arg.text} в ${arg.where}` : arg.text}
+        >
           {arg.text}
+          {arg.where && <span className="tool-where"> в {arg.where}</span>}
         </span>
         {outcome && <span className="tool-outcome">{outcome}</span>}
         {running && (

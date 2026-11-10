@@ -799,4 +799,24 @@ describe('createFakeSdk: структурный выход инструмент�
     expect(stamps.map((s) => s.kind)).toEqual(['tool_use', 'tool_result'])
     expect(stamps[1]!.at - stamps[0]!.at).toBeGreaterThanOrEqual(100)
   })
+
+  test('шаг thinking с ms идёт потоком и держит паузу до конца блока', async () => {
+    const driver = createFakeSdk({ steps: [{ kind: 'thinking', text: 'думаю', ms: 120 }] })
+    driver.send({ text: 'go', attachments: [] })
+    const seen: Array<{ what: string; at: number }> = []
+    let wholeId = ''
+    let startId = ''
+    for await (const m of driver.messages) {
+      if (m['type'] === 'stream_event') {
+        const e = m['event'] as { type: string; message?: { id: string }; delta?: { type: string } }
+        if (e.type === 'message_start') startId = e.message!.id
+        seen.push({ what: e.type === 'content_block_delta' ? e.delta!.type : e.type, at: Date.now() })
+      }
+      if (m['type'] === 'assistant') wholeId = (m['message'] as { id: string }).id
+      if (m['type'] === 'result') break
+    }
+    expect(seen.map((x) => x.what)).toEqual(['message_start', 'thinking_delta', 'content_block_stop'])
+    expect(seen[2]!.at - seen[0]!.at).toBeGreaterThanOrEqual(100)
+    expect(wholeId).toBe(startId)
+  })
 })

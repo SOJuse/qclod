@@ -36,11 +36,13 @@ function ViewBody({ item, view, cwd }: { item: ToolCardItem; view: ToolView; cwd
               <code className="tool-mono tool-wrap">{view.command}</code>
             </Fact>
             {view.description && <Fact label="Зачем">{view.description}</Fact>}
-            <Fact label="Папка">
-              <span className="tool-mono" data-testid="tool-cwd">
-                {cwd}
-              </span>
-            </Fact>
+            {cwd && (
+              <Fact label="Папка">
+                <span className="tool-mono" data-testid="tool-cwd">
+                  {cwd}
+                </span>
+              </Fact>
+            )}
             {view.note && <Fact label="Итог">{view.note}</Fact>}
             {view.interrupted && <Fact label="Итог">прервано</Fact>}
             {view.backgroundTaskId && <Fact label="В фоне">задача {view.backgroundTaskId}</Fact>}
@@ -182,29 +184,72 @@ function ViewBody({ item, view, cwd }: { item: ToolCardItem; view: ToolView; cwd
           <Facts>
             <Duration item={item} />
           </Facts>
-          <Args args={argRows(item.input ?? {})} />
+          <Args args={argRows(item.input ?? {}, INPUT_LABEL)} />
           {!failed && view.text && <Output label="Результат" text={view.text} />}
         </>
       )
   }
 }
 
-function argRows(input: Record<string, unknown>): Array<{ key: string; value: string }> {
-  return Object.entries(input).map(([key, value]) => ({
-    key,
-    value: typeof value === 'string' ? value : (JSON.stringify(value) ?? '')
-  }))
+/**
+ * Input fields of the SDK's own tools (sdk-tools.d.ts), in words. A field not
+ * listed keeps its own name, set in monospace: it is a name, not a word.
+ */
+const INPUT_LABEL: Record<string, string> = {
+  command: 'Команда',
+  description: 'Описание',
+  file_path: 'Файл',
+  notebook_path: 'Блокнот',
+  path: 'Где',
+  pattern: 'Шаблон',
+  glob: 'Маска',
+  url: 'Адрес',
+  query: 'Запрос',
+  prompt: 'Задание',
+  content: 'Содержимое',
+  old_string: 'Было',
+  new_string: 'Стало',
+  replace_all: 'Заменить все',
+  offset: 'С строки',
+  limit: 'Строк',
+  timeout: 'Предел времени',
+  run_in_background: 'В фоне',
+  subagent_type: 'Тип агента',
+  todos: 'Задачи',
+  plan: 'План',
+  task_id: 'Задача',
+  shell_id: 'Оболочка'
+}
+
+interface ArgRow {
+  key: string
+  /** Shown as a word, not as the raw field name. */
+  label?: string
+  value: string
+}
+
+function argRows(input: Record<string, unknown>, labels: Record<string, string> = {}): ArgRow[] {
+  return Object.entries(input).map(([key, value]) => {
+    const label = labels[key]
+    return {
+      key,
+      ...(label ? { label } : {}),
+      value: typeof value === 'string' ? value : (JSON.stringify(value) ?? '')
+    }
+  })
 }
 
 /** The call's arguments as a key–value table. */
-function Args({ args }: { args: Array<{ key: string; value: string }> }): JSX.Element | null {
+function Args({ args }: { args: ArgRow[] }): JSX.Element | null {
   if (args.length === 0) return null
   return (
     <table className="tool-args" data-testid="tool-args">
       <tbody>
         {args.map((arg) => (
           <tr key={arg.key}>
-            <th scope="row">{arg.key}</th>
+            <th scope="row" className={arg.label ? undefined : 'tool-mono'}>
+              {arg.label ?? arg.key}
+            </th>
             <td className="tool-mono tool-wrap">{arg.value}</td>
           </tr>
         ))}
@@ -263,9 +308,15 @@ function Output({ label, text, testId }: { label: string; text: string; testId?:
   const [overflows, setOverflows] = useState(false)
   const [whole, setWhole] = useState(false)
 
+  // Re-measured on resize too: a narrower window wraps more and overflows sooner.
   useLayoutEffect(() => {
     const el = pre.current
-    if (el) setOverflows(el.scrollHeight > el.clientHeight + 1)
+    if (!el) return
+    const measure = (): void => setOverflows(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
   }, [text])
 
   return (

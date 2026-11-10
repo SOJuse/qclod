@@ -205,6 +205,18 @@ describe('toolView', () => {
     expect(toolOutcome(item, v)).toBe('ошибка · 1,2 с')
   })
 
+  test('упавшая команда без выхода — всё ещё команда, ошибка не дублируется', () => {
+    const item = failed('Bash', { command: 'npm test', description: 'Run tests' }, 'тесты упали', { durationMs: 1200 })
+    const v = toolView(item)
+    expect(v).toMatchObject({ type: 'command', command: 'npm test', description: 'Run tests', stdout: '', stderr: '' })
+    expect(toolOutcome(item, v)).toBe('ошибка · 1,2 с')
+  })
+
+  test('старая запись команды без выхода — текст результата как вывод', () => {
+    const v = toolView(tool('Bash', { command: 'ls' }, undefined, { detail: 'a\nb' }))
+    expect(v).toMatchObject({ type: 'command', command: 'ls', stdout: 'a\nb', stderr: '' })
+  })
+
   test('ошибка без структурного выхода — текст ошибки', () => {
     const item = failed('Read', { file_path: 'x' }, 'нет файла')
     const v = toolView(item)

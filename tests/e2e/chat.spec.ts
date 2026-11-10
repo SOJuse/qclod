@@ -175,15 +175,47 @@ test('внизу любой карточки — сырые вход и выхо
 
 test('ошибка раскрыта сразу, текст ошибки сверху, категория та же', async () => {
   const { app, profile } = await launch({
-    steps: [{ kind: 'toolError', name: 'Bash', input: { command: 'npm test' }, error: 'тесты упали: 3 из 40' }]
+    steps: [
+      { kind: 'tool', name: 'Bash', input: { command: 'ls' }, result: 'ok', output: { stdout: 'a', stderr: '', interrupted: false } },
+      { kind: 'toolError', name: 'Bash', input: { command: 'npm test', description: 'Run tests' }, error: 'тесты упали: 3 из 40' }
+    ]
   })
   try {
     const win = await app.firstWindow()
-    const c = card(win, 'command')
+    const c = win.locator('.tool-card.is-error[data-category="command"]').first()
     await expect(c).toBeVisible({ timeout: 15000 })
-    await expect(c).toHaveClass(/is-error/)
     await expect(c.locator('[data-testid="tool-error"]')).toContainText('тесты упали: 3 из 40')
-    await expect(c.locator('[data-testid="tool-detail"]')).toContainText('npm test')
+    const body = c.locator('[data-testid="tool-detail"]')
+    // The failed command reads like any command: what ran, why, where.
+    await expect(body).toContainText('Команда')
+    await expect(body).toContainText('npm test')
+    await expect(body).toContainText('Зачем')
+    await expect(c.locator('[data-testid="tool-cwd"]')).toHaveText(/\S/)
+    await expect(c.locator('[data-testid="tool-args"]')).toHaveCount(0)
+    await expect(body).not.toContainText('command')
+    // The error is said once, on top, not again as a stderr block.
+    await expect(c.locator('[data-testid="tool-stderr"]')).toHaveCount(0)
+
+    // The icon sits in a chip tinted by the card's state.
+    const chip = (el: ReturnType<typeof card>): Promise<string> =>
+      el.locator('.tool-chip').evaluate((n) => getComputedStyle(n).backgroundColor)
+    const ok = win.locator('.tool-card.is-done[data-category="command"]').first()
+    const okChip = await chip(ok)
+    expect(okChip).not.toBe('rgba(0, 0, 0, 0)')
+    expect(await chip(c)).not.toBe(okChip)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('мысли, что шли время, — «Думал N с»', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'thinking', text: 'взвешиваю', ms: 1200 }, { kind: 'text', text: 'готово' }]
+  })
+  try {
+    const win = await app.firstWindow()
+    const head = win.locator('[data-testid="ribbon-thinking"] [data-testid="thinking-head"]').first()
+    await expect(head).toHaveText(/Думал (1|2),\d с/, { timeout: 15000 })
   } finally {
     await close(app, profile)
   }
@@ -228,6 +260,74 @@ test('длинный вывод прокручивается, «Показать
 
     await c.getByRole('button', { name: 'Показать всё' }).click()
     await expect.poll(() => out.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('свёрнутый поиск: сначала что ищут, потом где', async () => {
+  const { app, profile } = await launch({ steps: STEPS })
+  try {
+    const win = await app.firstWindow()
+    const target = card(win, 'search').locator('.tool-target')
+    await expect(target).toHaveText(/login.*src/, { timeout: 15000 })
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('аргументы прочих инструментов подписаны по-русски, неизвестные — как есть моноширинно', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'tool', name: 'ToolSearch', input: { query: 'notebook', max_results: 5 }, result: 'нашлось' }]
+  })
+  try {
+    const win = await app.firstWindow()
+    const c = card(win, 'search')
+    await expect(c).toBeVisible({ timeout: 15000 })
+    await c.locator('[data-testid="tool-head"]').click()
+    const args = c.locator('[data-testid="tool-args"]')
+    await expect(args.locator('th').first()).toHaveText('Запрос')
+    const unknown = args.locator('th', { hasText: 'max_results' })
+    await expect(unknown).toHaveClass(/tool-mono/)
+    await expect(args).not.toContainText('query')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('большой дифф показывает 400 строк и «ещё N строк», служебная строка без номера', async () => {
+  const lines = [' a', ...Array.from({ length: 450 }, (_, i) => `+n${i}`), '\\ No newline at end of file']
+  const { app, profile } = await launch({
+    steps: [
+      {
+        kind: 'tool',
+        name: 'Edit',
+        input: { file_path: 'C:/проект/big.ts' },
+        result: 'ok',
+        output: { filePath: 'C:/проект/big.ts', structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 451, lines }] }
+      },
+      {
+        kind: 'tool',
+        name: 'Edit',
+        input: { file_path: 'C:/проект/nl.ts' },
+        result: 'ok',
+        output: { filePath: 'C:/проект/nl.ts', structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-a', '\\ No newline at end of file', '+b'] }] }
+      }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    const big = win.locator('.tool-card[data-category="edit"]').first()
+    await expect(big).toBeVisible({ timeout: 15000 })
+    await big.locator('[data-testid="tool-head"]').click()
+    await expect(big.locator('.diff-line')).toHaveCount(400)
+    await expect(big.locator('[data-testid="tool-diff"]')).toContainText('ещё 51 строка')
+
+    const nl = win.locator('.tool-card[data-category="edit"]').nth(1)
+    await nl.locator('[data-testid="tool-head"]').click()
+    await expect(nl.locator('.diff-line')).toHaveCount(2)
+    // «+b» is new line 1: the note line takes no number.
+    await expect(nl.locator('.diff-line.is-add .diff-no').nth(1)).toHaveText('1')
   } finally {
     await close(app, profile)
   }

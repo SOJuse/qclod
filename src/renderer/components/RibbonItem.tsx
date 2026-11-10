@@ -8,6 +8,7 @@ import { QuestionCard } from './QuestionCard'
 import { NO_STEPS, SubagentCard } from './SubagentCard'
 import { ToolCard } from './ToolCard'
 import { Markdown } from '../markdown/Markdown'
+import { ERROR_ICON } from '../ui/icons'
 
 interface Props {
   item: Item
@@ -65,7 +66,8 @@ export function NoticeRow({ item }: { item: Extract<Item, { kind: 'notice' }> })
       )}
       {item.action === 'login' && loginError && (
         <div className="row-notice-error" data-testid="notice-login-error" role="alert">
-          Не удалось открыть окно входа: {loginError}
+          <ERROR_ICON size={13} aria-hidden="true" />
+          <span>Не удалось открыть окно входа: {loginError}</span>
         </div>
       )}
     </div>

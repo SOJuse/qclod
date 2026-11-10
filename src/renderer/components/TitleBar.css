@@ -123,16 +123,16 @@
 }
 
 .tab-remote[data-state='on'] {
-  color: var(--ok);
+  color: var(--status-ok);
 }
 
 .tab-remote[data-state='connecting'],
 .tab-remote[data-state='reconnecting'] {
-  color: var(--warn);
+  color: var(--status-warn);
 }
 
 .tab-remote[data-state='failed'] {
-  color: var(--danger);
+  color: var(--status-critical);
 }
 
 .tab-badge {

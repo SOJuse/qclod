@@ -168,7 +168,7 @@
   /* The status line under the input: its meters and the lists its buttons open. */
   --meter-w: 48px;
   --meter-h: 6px;
-  --meter-primary-w: 88px;
+  --meter-primary-w: 72px;
   --meter-primary-h: 8px;
   --status-pad: 2px 6px;
   --dropdown-menu-min-w: 220px;

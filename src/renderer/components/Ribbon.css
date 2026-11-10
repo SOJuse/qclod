@@ -357,6 +357,7 @@
 .row-question-done {
   margin-top: var(--space-3);
   font-size: var(--text-sm);
+  line-height: var(--leading);
   color: var(--text-dim);
 }
 
@@ -439,9 +440,19 @@
   border-color: var(--border-accent);
 }
 
+/* The reason keeps the text colour; the critical colour is only on its icon. */
 .row-notice-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
   margin-top: var(--space-2);
-  color: var(--danger);
+  color: var(--text);
+}
+
+.row-notice-error > svg {
+  flex: 0 0 auto;
+  margin-top: var(--gap-hair);
+  color: var(--status-critical);
 }
 
 /* The conversation is text people copy out of; the chrome around it is not. */

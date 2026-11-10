@@ -2,7 +2,13 @@ import { useEffect, useRef } from 'react'
 import { Check, CheckCheck, X } from 'lucide-react'
 import type { RibbonItem } from '../../shared/types'
 import { resolveComposerKey } from '../input/keyPrecedence'
-import { createKeyGuard, heldKeys, trackHeldKeys } from '../chat/permissionKeyGuard'
+import {
+  createKeyGuard,
+  focusedLongEnough,
+  heldKeys,
+  trackHeldKeys,
+  windowFocusedSince
+} from '../chat/permissionKeyGuard'
 
 trackHeldKeys()
 
@@ -16,28 +22,30 @@ interface Props {
 }
 
 /**
- * Whether the card may take focus. Only the pane being worked in, and only
- * from nowhere editable: the field of another pane, a dialog or a sheet is
- * where the person is typing, and so is this pane's own input line once it
- * holds a draft. An empty input line of this pane gives way.
+ * Whether the card may take focus. Only when the window has been in front for
+ * a while before the request came, the pane is the one being worked in, no
+ * dialog, sheet or palette is open, and focus rests on nothing, on this pane's
+ * empty input line, or inside this pane's ribbon. Anything else — another
+ * pane, a settings control, a draft — is where the person is, and the card
+ * just shows.
  */
-function mayTakeFocus(card: HTMLElement): boolean {
-  // A window the person is not in cannot be where they are typing, and a key
-  // they press later in another program must not reach a card they never saw.
-  if (!document.hasFocus()) return false
+function mayTakeFocus(card: HTMLElement, arrivedAt: number): boolean {
+  if (!document.hasFocus() || !focusedLongEnough(windowFocusedSince(), arrivedAt)) return false
   const pane = card.closest('[data-testid="chat-pane"]')
   if (!pane?.classList.contains('is-focused')) return false
+  if (
+    document.querySelector(
+      '[role="dialog"], [aria-modal="true"], [data-testid="settings"], [data-testid="action-palette"]'
+    )
+  ) {
+    return false
+  }
   const el = document.activeElement
-  if (!(el instanceof HTMLElement)) return true
-  const editable =
-    el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el.isContentEditable
-  if (!editable) return true
-  return (
-    el instanceof HTMLTextAreaElement &&
-    el.dataset['testid'] === 'composer-input' &&
-    pane.contains(el) &&
-    el.value === ''
-  )
+  if (!(el instanceof HTMLElement) || el === document.body) return true
+  if (el instanceof HTMLTextAreaElement && el.hasAttribute('data-composer-input')) {
+    return pane.contains(el) && el.value === ''
+  }
+  return !!el.closest('[data-testid="ribbon"]') && pane.contains(el)
 }
 
 /**
@@ -55,6 +63,10 @@ function mayTakeFocus(card: HTMLElement): boolean {
 export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.Element {
   const card = useRef<HTMLDivElement | null>(null)
   const guard = useRef(createKeyGuard())
+  /** When the question came; the window must have been in front before that. */
+  const arrivedAt = useRef(performance.now())
+  /** A Space key-down was refused, so its key-up must not click the button. */
+  const spaceRefused = useRef(false)
   useEffect(() => {
     const own = guard.current
     return () => own.dispose()
@@ -68,7 +80,7 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
     // input line in one of them, and the card asks only after that.
     const timer = setTimeout(() => {
       const el = card.current
-      if (!el || !mayTakeFocus(el)) return
+      if (!el || !mayTakeFocus(el, arrivedAt.current)) return
       el.focus({ preventScroll: true })
       el.scrollIntoView({ block: 'nearest' })
     }, 0)
@@ -82,11 +94,30 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
     const pane = card.current?.closest('[data-testid="chat-pane"]')
     onAnswer(item.requestId, behavior, remember)
     if (hadFocus) {
-      pane?.querySelector<HTMLTextAreaElement>('[data-testid="composer-input"]')?.focus()
+      pane?.querySelector<HTMLTextAreaElement>('[data-composer-input]')?.focus()
     }
   }
 
   function onKeyDown(ev: React.KeyboardEvent<HTMLDivElement>): void {
+    if (!pending) return
+    // A button would click itself on Enter and Space: held, repeating, chorded
+    // or too-early presses are stopped before it can.
+    if (ev.target instanceof HTMLButtonElement && (ev.key === 'Enter' || ev.key === ' ')) {
+      const refused =
+        ev.repeat ||
+        ev.ctrlKey ||
+        ev.altKey ||
+        ev.metaKey ||
+        !guard.current.allows(ev.code || ev.key, performance.now())
+      if (refused) {
+        ev.preventDefault()
+        ev.stopPropagation()
+        if (ev.key === ' ') spaceRefused.current = true
+      } else if (ev.key === ' ') {
+        spaceRefused.current = false
+      }
+      return
+    }
     if (!takesFocus) return
     // Held, auto-repeating or chorded keys, and keys still in flight when the
     // card appeared, never answer: only a fresh plain press after it is armed.
@@ -135,6 +166,11 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
         }
       }}
       onKeyDown={onKeyDown}
+      onKeyUp={(ev) => {
+        if (ev.key !== ' ' || !spaceRefused.current) return
+        spaceRefused.current = false
+        ev.preventDefault()
+      }}
     >
       <div className="row-permission-head">
         <strong>{item.toolName}</strong>

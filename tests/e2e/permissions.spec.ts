@@ -3,7 +3,18 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-async function launch(script: unknown): Promise<{ app: ElectronApplication; profile: string }> {
+/**
+ * A card takes focus only when the window has been in front for a second before
+ * the request, so the script rests that long first (a thinking block, which
+ * adds nothing the tests count).
+ */
+const SETTLE = { kind: 'thinking', text: 'думаю', ms: 1300 }
+
+async function launch(
+  script: { steps: unknown[] } & Record<string, unknown>,
+  settle = true
+): Promise<{ app: ElectronApplication; profile: string }> {
+  if (settle) script = { ...script, steps: [SETTLE, ...script.steps] }
   const profile = mkdtempSync(join(tmpdir(), 'qclod-perm-'))
   const app = await electron.launch({
     args: ['.'],
@@ -32,7 +43,7 @@ test('запрос разрешения появляется в ленте на 
       { kind: 'text', text: 'сейчас запущу тесты' },
       { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }
     ]
-  })
+  }, false)
   try {
     const win = await app.firstWindow()
     const card = win.locator('[data-testid="permission-card"]')
@@ -263,7 +274,7 @@ test('A разрешает всё такое — второй такой же н
   }
 })
 
-test('в поле ввода Enter, A и Esc ничего не разрешают', async () => {
+test('в поле ввода A и Enter ничего не разрешают', async () => {
   const { app, profile } = await launch({
     steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
   })
@@ -416,6 +427,80 @@ test('A в первые 400 мс после появления карточки 
     await armed(win)
     await win.keyboard.press('KeyA')
     await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(2, { timeout: 15000 })
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('Enter в пустом поле ввода при ожидающей карточке ничего не разрешает', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
+  })
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('[data-testid="permission-card"]')).toBeFocused({ timeout: 15000 })
+    await armed(win)
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    await win.keyboard.press('Enter')
+    await expect(win.locator('[data-testid="permission-allow"]')).toBeVisible()
+    await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('Enter и Пробел на сфокусированной кнопке в первые 400 мс ничего не делают', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
+  })
+  try {
+    const win = await app.firstWindow()
+    const card = win.locator('[data-testid="permission-card"]')
+    await expect(card).toBeFocused({ timeout: 15000 })
+    // Tab walks onto the buttons; focus entering the card arms it afresh.
+    const allowAll = win.locator('[data-testid="permission-allow-all"]')
+    await allowAll.focus()
+    await win.keyboard.press('Enter')
+    await win.keyboard.press('Space')
+    await expect(win.locator('[data-testid="permission-allow"]')).toBeVisible()
+    await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(0)
+
+    // Armed now: a fresh Enter on the focused button answers.
+    await armed(win)
+    await win.keyboard.press('Enter')
+    await expect(win.locator('[data-testid="ribbon-tool"]')).toBeVisible({ timeout: 15000 })
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('открытые настройки не теряют фокус, когда приходит запрос', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'text', text: 'готов' }],
+    nextTurn: [
+      { kind: 'tool', name: 'Read', input: { file_path: 'a.ts' }, result: 'x', pauseMs: 2500 },
+      { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText('готов', { timeout: 15000 })
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.fill('сделай')
+    await win.keyboard.press('Enter')
+    await win.locator('[data-testid="open-settings"]').click()
+    const settings = win.locator('[data-testid="settings"]')
+    await expect(settings).toBeVisible()
+
+    await expect(win.locator('[data-testid="permission-card"]')).toBeVisible({ timeout: 15000 })
+    await win.waitForTimeout(600)
+    // Focus is still inside the sheet, and the keys act on the sheet.
+    expect(await win.evaluate(() => !!document.activeElement?.closest('[data-testid="settings"]'))).toBe(true)
+    await win.keyboard.press('Escape')
+    await expect(settings).toHaveCount(0)
+    await expect(win.locator('[data-testid="permission-allow"]')).toBeVisible()
+    await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(1)
   } finally {
     await close(app, profile)
   }

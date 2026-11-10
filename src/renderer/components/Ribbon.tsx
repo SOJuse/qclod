@@ -114,12 +114,6 @@ export function Ribbon({
     if (pendingId !== null) stickToBottom.current = true
   }, [pendingId])
 
-  // A question that appears is never left out of sight above or below: the
-  // ribbon follows the bottom again, where it will be drawn.
-  useLayoutEffect(() => {
-    if (pendingId !== null) stickToBottom.current = true
-  }, [pendingId])
-
   useLayoutEffect(() => {
     const el = viewport.current
     if (!el || !stickToBottom.current) return

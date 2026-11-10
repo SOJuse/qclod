@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { ARM_MS, createKeyGuard } from '@renderer/chat/permissionKeyGuard'
+import { ARM_MS, FOCUS_BEFORE_MS, clearHeldKeys, createKeyGuard, focusedLongEnough } from '@renderer/chat/permissionKeyGuard'
 
 describe('createKeyGuard', () => {
   test('до фокуса карточки клавиши не принимаются', () => {
@@ -31,5 +31,29 @@ describe('createKeyGuard', () => {
     const guard = createKeyGuard()
     guard.focus(1000, new Set(['Enter']))
     expect(guard.allows('KeyA', 5000)).toBe(true)
+  })
+})
+
+describe('focusedLongEnough', () => {
+  test('окно не в фокусе — нет', () => {
+    expect(focusedLongEnough(null, 5000)).toBe(false)
+  })
+
+  test('в фокусе меньше секунды до запроса — нет', () => {
+    expect(focusedLongEnough(4500, 5000)).toBe(false)
+    expect(focusedLongEnough(5000 - FOCUS_BEFORE_MS + 1, 5000)).toBe(false)
+  })
+
+  test('в фокусе секунду и дольше до запроса — да', () => {
+    expect(focusedLongEnough(5000 - FOCUS_BEFORE_MS, 5000)).toBe(true)
+  })
+})
+
+describe('потеря фокуса окном', () => {
+  test('снимает зажатые клавиши со всех карточек', () => {
+    const guard = createKeyGuard()
+    guard.focus(1000, new Set(['Enter']))
+    clearHeldKeys()
+    expect(guard.allows('Enter', 5000)).toBe(true)
   })
 })

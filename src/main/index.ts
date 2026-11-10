@@ -94,6 +94,21 @@ app.whenReady().then(async () => {
     win.focus()
   }
 
+  /**
+   * A question for the agent shows the window but never takes the keyboard:
+   * whatever the person is typing in another program must not land on it.
+   */
+  function showWindowInactive(): void {
+    const win = mainWindow
+    if (!win) return
+    if (win.isMinimized()) {
+      win.flashFrame(true)
+      return
+    }
+    win.showInactive()
+    if (!win.isFocused()) win.flashFrame(true)
+  }
+
   function toggleWindow(): void {
     const win = mainWindow
     if (!win) return
@@ -122,7 +137,9 @@ app.whenReady().then(async () => {
         broker.answer(request.requestId, { behavior: 'deny' })
         return
       }
-      if (shouldRaiseWindowForPermission(controller.activeTabId, request.tabId)) showWindow()
+      if (shouldRaiseWindowForPermission(controller.activeTabId, request.tabId)) {
+        showWindowInactive()
+      }
       manager
         .get(request.tabId)
         ?.showPermissionCard(request.requestId, request.toolName, request.target)

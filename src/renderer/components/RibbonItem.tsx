@@ -145,11 +145,13 @@ export function RibbonRow({
         return <PlanCard item={item} onAnswer={onAnswerPlan} />
 
       case 'permission':
-        return <PermissionCard
+        return (
+          <PermissionCard
             item={item}
             active={item.id === activePermissionId}
             onAnswer={onAnswerPermission}
           />
+        )
 
       case 'question':
         return <QuestionCard item={item} onAnswer={onAnswerQuestion} />

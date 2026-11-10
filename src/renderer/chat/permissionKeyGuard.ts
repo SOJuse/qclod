@@ -11,6 +11,31 @@ const down = new Set<string>()
 /** Sets of keys held at some card's focus; a key-up removes it from each. */
 const watchers = new Set<Set<string>>()
 
+/** How long the window must have had focus before a request for it to be trusted. */
+export const FOCUS_BEFORE_MS = 1000
+
+/** When the window last gained focus, if it has it now. */
+let focusedSince: number | null = null
+
+export function windowFocusedSince(): number | null {
+  return focusedSince
+}
+
+/**
+ * Typing in another program must never reach a card that has just popped up:
+ * the card takes focus only when the window had already been in front for a
+ * while before the request arrived.
+ */
+export function focusedLongEnough(since: number | null, arrivedAt: number): boolean {
+  return since !== null && arrivedAt - since >= FOCUS_BEFORE_MS
+}
+
+/** The window lost focus: key-ups will go elsewhere, so nothing stays held. */
+export function clearHeldKeys(): void {
+  down.clear()
+  for (const held of watchers) held.clear()
+}
+
 export function heldKeys(): ReadonlySet<string> {
   return down
 }
@@ -19,6 +44,11 @@ let tracking = false
 export function trackHeldKeys(): void {
   if (tracking || typeof window === 'undefined') return
   tracking = true
+  // A page that loads in front counts from its first moment.
+  focusedSince = document.hasFocus() ? 0 : null
+  window.addEventListener('focus', () => {
+    focusedSince = performance.now()
+  })
   window.addEventListener(
     'keydown',
     (ev) => {
@@ -35,7 +65,10 @@ export function trackHeldKeys(): void {
     },
     true
   )
-  window.addEventListener('blur', () => down.clear())
+  window.addEventListener('blur', () => {
+    focusedSince = null
+    clearHeldKeys()
+  })
 }
 
 export interface KeyGuard {

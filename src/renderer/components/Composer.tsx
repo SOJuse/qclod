@@ -498,6 +498,7 @@ export function Composer({
           ref={field}
           className="composer-input"
           data-testid="composer-input"
+          data-composer-input=""
           aria-autocomplete="list"
           aria-expanded={popupOpen}
           aria-controls={popupOpen ? menuId : undefined}

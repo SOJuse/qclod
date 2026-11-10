@@ -44,6 +44,8 @@ export type FakeStep =
   | { kind: 'crash'; message: string; times?: number; beforeInit?: boolean }
   /** Says «картинок: N; типы: …; байт: M» about the images of the last send. */
   | { kind: 'reportInput' }
+  /** A question answered on the phone: its signal aborts after afterMs (default 50), then `decision` rules. */
+  | { kind: 'remoteAnswer'; name: string; input?: object; decision: 'allow' | 'deny'; afterMs?: number }
 
 /** An Agent call with run_in_background; its progress and notification come after the turn. */
 export interface FakeBackgroundAgentStep {
@@ -78,6 +80,26 @@ export interface FakeBackgroundBashStep {
   pauseMs?: number
   /** null or absent: the command never ends by itself. */
   finish?: 'completed' | 'failed' | null
+}
+
+/** Mirrors RemoteBlock in src/shared/types.ts. */
+export type FakeRemoteBlock = 'sdk' | 'cli' | 'api_key' | 'provider'
+/** Mirrors RemoteAvailability in src/shared/remote.ts. */
+export type FakeRemoteAvailability =
+  | { available: true }
+  | { available: false; reason: FakeRemoteBlock }
+
+export interface FakeRemoteControl {
+  /** remoteAvailability() says why Remote Control is not there. */
+  blocked?: FakeRemoteBlock
+  /** setRemoteControl(true) rejects with this message. */
+  enableError?: string
+  /** Overrides the default session URL. */
+  sessionUrl?: string
+  /** bridge_state messages after enabling; by default one `connected`. */
+  bridge?: Array<{ state: string; detail?: string; failure_kind?: string; afterMs?: number }>
+  /** Turns typed on the phone after the bridge states. */
+  phoneTurns?: Array<{ text: string; afterMs?: number; steps?: FakeStep[] }>
 }
 
 export interface FakeTaskOutput {
@@ -121,6 +143,7 @@ export interface FakeScript {
   taskOutputUnavailable?: boolean
   /** stopTask() rejects with this message and the task keeps running. */
   stopTaskError?: string
+  remoteControl?: FakeRemoteControl
   canUseTool?: (
     toolName: string,
     input: Record<string, unknown>,
@@ -176,8 +199,16 @@ export interface FakeDriver {
   }>
   taskOutput(taskId: string): Promise<FakeTaskOutput | null>
   stopTask(taskId: string): Promise<void>
+  remoteAvailability(): Promise<FakeRemoteAvailability>
+  setRemoteControl(
+    enabled: boolean,
+    name?: string
+  ): Promise<{ sessionUrl: string; connectUrl?: string } | null>
+  /** Only the fake: a turn typed on the phone. Not recorded in `sent`. */
+  typeOnPhone(text: string, steps?: FakeStep[]): void
   dispose(): Promise<void>
 
+  readonly remoteCalls: Array<{ enabled: boolean; name?: string }>
   readonly sent: Array<{ text: string; attachments: unknown[] }>
   readonly permissionRequests: Array<{ name: string; input: object }>
   readonly executedTools: string[]

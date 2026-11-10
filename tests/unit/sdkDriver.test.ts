@@ -366,3 +366,115 @@ describe('sdkDriver: фоновые задачи', () => {
     await driver.dispose()
   })
 })
+
+describe('sdkDriver: Remote Control', () => {
+  const link = {
+    session_url: 'https://claude.ai/code/session_1',
+    connect_url: 'https://claude.ai/code?environment=e',
+    bridge_session_id: 'b'
+  }
+
+  test('нет метода — недоступно по причине sdk', async () => {
+    mockQuery({ initializationResult: async () => ({}) })
+    const d = await createSdkDriver(allowAll())
+    expect(await d.remoteAvailability()).toEqual({ available: false, reason: 'sdk' })
+    await d.dispose()
+  })
+
+  test('API-ключ — недоступно по причине api_key', async () => {
+    mockQuery({
+      enableRemoteControl: vi.fn(),
+      initializationResult: async () => ({ account: { apiKeySource: 'ANTHROPIC_API_KEY' } })
+    })
+    const d = await createSdkDriver(allowAll())
+    expect(await d.remoteAvailability()).toEqual({ available: false, reason: 'api_key' })
+    await d.dispose()
+  })
+
+  test('initializationResult отклонён — считаем доступным', async () => {
+    mockQuery({
+      enableRemoteControl: vi.fn(),
+      initializationResult: async () => {
+        throw new Error('нет')
+      }
+    })
+    const d = await createSdkDriver(allowAll())
+    expect(await d.remoteAvailability()).toEqual({ available: true })
+    await d.dispose()
+  })
+
+  test('включение передаёт имя и возвращает ссылку', async () => {
+    const enable = vi.fn(async () => link)
+    mockQuery({ enableRemoteControl: enable })
+    const d = await createSdkDriver(allowAll())
+    expect(await d.setRemoteControl(true, 'Qclod — проект')).toEqual({
+      sessionUrl: 'https://claude.ai/code/session_1',
+      connectUrl: 'https://claude.ai/code?environment=e'
+    })
+    expect(enable).toHaveBeenCalledWith(true, 'Qclod — проект')
+    await d.dispose()
+  })
+
+  test('connect_url не https — только sessionUrl', async () => {
+    mockQuery({ enableRemoteControl: async () => ({ ...link, connect_url: 'http://x' }) })
+    const d = await createSdkDriver(allowAll())
+    expect(await d.setRemoteControl(true)).toEqual({ sessionUrl: link.session_url })
+    await d.dispose()
+  })
+
+  test('включение без метода — ошибка', async () => {
+    mockQuery()
+    const d = await createSdkDriver(allowAll())
+    await expect(d.setRemoteControl(true)).rejects.toThrow('enableRemoteControl отсутствует')
+    await d.dispose()
+  })
+
+  test('ответ без https-ссылки — ошибка, а не пустая панель', async () => {
+    mockQuery({ enableRemoteControl: async () => ({ session_url: 'http://x' }) })
+    const d = await createSdkDriver(allowAll())
+    await expect(d.setRemoteControl(true)).rejects.toThrow('CLI не вернул ссылку на сессию')
+    await d.dispose()
+  })
+
+  test('выключение зовёт метод с false', async () => {
+    const enable = vi.fn(async () => ({}))
+    mockQuery({ enableRemoteControl: enable })
+    const d = await createSdkDriver(allowAll())
+    expect(await d.setRemoteControl(false)).toBeNull()
+    expect(enable).toHaveBeenCalledWith(false, undefined)
+    await d.dispose()
+  })
+
+  test('выключение без метода — null; ошибка выключения пробрасывается', async () => {
+    mockQuery()
+    const d1 = await createSdkDriver(allowAll())
+    expect(await d1.setRemoteControl(false)).toBeNull()
+    await d1.dispose()
+    mockQuery({
+      enableRemoteControl: async () => {
+        throw new Error('отказ')
+      }
+    })
+    const d2 = await createSdkDriver(allowAll())
+    await expect(d2.setRemoteControl(false)).rejects.toThrow('отказ')
+    await d2.dispose()
+  })
+
+  test('initializationResult не ответил за 5 с — считаем доступным, таймер не висит', async () => {
+    vi.useFakeTimers()
+    try {
+      mockQuery({
+        enableRemoteControl: vi.fn(),
+        initializationResult: () => new Promise(() => undefined)
+      })
+      const d = await createSdkDriver(allowAll())
+      const pending = d.remoteAvailability()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(await pending).toEqual({ available: true })
+      expect(vi.getTimerCount()).toBe(0)
+      await d.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

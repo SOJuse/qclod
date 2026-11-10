@@ -7,7 +7,7 @@ import type {
   ModelOption,
   SessionStatus
 } from '../../shared/types'
-import { withLocalCommands } from '../../shared/commandFilter'
+import { markRemote, withLocalCommands } from '../../shared/commandFilter'
 import { resolveComposerKey, type ComposerContext } from '../input/keyPrecedence'
 import {
   attachmentLabel,
@@ -28,6 +28,7 @@ import {
   commandItems,
   completeCommand,
   bareLocalStep,
+  bareRemoteToggle,
   findSlashQuery,
   stepItems,
   type SlashOutcome,
@@ -66,6 +67,10 @@ interface Props {
   onSendCommand: (text: string) => void
   onCommandUsed: (name: string) => void
   onOpenHistory: () => void
+  /** Switch Remote Control for this tab (/remote-control, /rc). */
+  onToggleRemote?: () => void
+  /** Why Remote Control cannot be switched on here; its command shows it, greyed out. */
+  remoteBlockedText?: string | null
   onSetModel: (model: string) => void
   onSetEffort: (level: EffortLevel) => void
   onCycleMode: () => void
@@ -158,6 +163,8 @@ export function Composer({
   onSendCommand,
   onCommandUsed,
   onOpenHistory,
+  onToggleRemote,
+  remoteBlockedText = null,
   onSetModel,
   onSetEffort,
   onCycleMode,
@@ -191,7 +198,7 @@ export function Composer({
   // The tab's own messages are the source; the list follows them as they come.
   useEffect(() => history.setEntries(sentTexts), [history, sentTexts])
 
-  const available = withLocalCommands(commands)
+  const available = markRemote(withLocalCommands(commands), remoteBlockedText)
 
   const menu = ((): Menu => {
     if (dismissedFor === draft) return { kind: 'none' }
@@ -311,6 +318,15 @@ export function Composer({
       setCaret(text.length)
       return
     }
+    // «/remote-control» typed whole is the switch too, and never reaches the
+    // session. Where it cannot work the draft stays, and the list says why.
+    if (onToggleRemote && bareRemoteToggle(draft)) {
+      if (remoteBlockedText) return
+      onDraftChange('')
+      setCaret(0)
+      onToggleRemote()
+      return
+    }
     const text = draft.trim()
     if (!text && attachments.length === 0) return
     if (attachments.some(isPreparing)) {
@@ -324,7 +340,7 @@ export function Composer({
     onDraftChange('')
     onAttachmentsChange([])
     onSubmit(text, ready)
-  }, [draft, attachments, history, onDraftChange, onAttachmentsChange, onSubmit])
+  }, [draft, attachments, history, onDraftChange, onAttachmentsChange, onSubmit, onToggleRemote, remoteBlockedText])
 
   // A failed image cancels the waiting send and leaves the text and its error
   // chip in place: only another Enter sends without the image.
@@ -368,6 +384,10 @@ export function Composer({
         return
       case 'fill':
         replaceDraft(outcome.text)
+        return
+      case 'remote':
+        replaceDraft('')
+        onToggleRemote?.()
         return
       case 'history':
         replaceDraft('')

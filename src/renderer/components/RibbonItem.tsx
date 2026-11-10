@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Brain, Image as ImageIcon } from 'lucide-react'
+import { Brain, Image as ImageIcon, Smartphone } from 'lucide-react'
 import { seconds } from '../../shared/format'
 import type { Attachment, RibbonItem as Item } from '../../shared/types'
 import { PermissionCard } from './PermissionCard'
@@ -151,6 +151,16 @@ export function RibbonRow({
       case 'user':
         return (
           <div className="row-user">
+            {item.remote && (
+              <div
+                className="row-user-from"
+                data-testid="user-from-phone"
+                title="Написано через Remote Control — с телефона или claude.ai"
+              >
+                <Smartphone size={12} aria-hidden="true" />
+                с телефона
+              </div>
+            )}
             <div className="row-user-text">{item.text}</div>
             {item.attachments.some((a) => a.kind === 'image') && (
               <div className="row-user-images">

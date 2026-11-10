@@ -20,6 +20,7 @@ import type {
 import { isDirectory, loadTabs, saveTabs, type LoadedTab } from '../store/tabsStore'
 import { MAX_QUEUED, seedFromTranscript, type AgentSession, type SessionSeed } from '../agent/AgentSession'
 import { EMPTY_PANEL } from '../agent/panelData'
+import { isRemoteLive } from '../../shared/remote'
 import { classifyStartFailure, LOGIN_NEEDED_TEXT } from '../agent/startFailure'
 import type { AgentSessionManager } from '../agent/AgentSessionManager'
 
@@ -632,8 +633,19 @@ export class TabController {
    * old one's cost and limits on screen. Its revision outranks them.
    */
   private adopt(id: TabId, session: AgentSession): void {
+    // Judged before the new session's state replaces the tab's.
+    const hadBridge = isRemoteLive(this.tabs.find((t) => t.id === id)?.remote)
     this.wire(id, session)
     this.emitWholePanel(id, session.panelSnapshot())
+    this.patch(id, { remote: session.remote })
+    // A new process starts with Remote Control off; say so rather than let
+    // the phone's link die without a word.
+    if (hadBridge) {
+      this.emitRibbon(
+        id,
+        session.notice('Remote Control выключен: сессия перезапущена. Включите снова, если нужно.')
+      )
+    }
   }
 
   private wire(id: TabId, session: AgentSession): void {
@@ -646,6 +658,9 @@ export class TabController {
       if (!current()) return
       this.deps.onPanel({ tabId: id, patch, rev })
       if (patch.limits) this.sharePlanLimits(patch.limits)
+    })
+    session.onRemote((info) => {
+      if (current()) this.patch(id, { remote: info })
     })
     session.onCommands((commands) => this.deps.onCommands({ tabId: id, commands }))
     session.onSession(() => {

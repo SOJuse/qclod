@@ -2,6 +2,14 @@ import type { RibbonItem } from '../../shared/types'
 
 type Plan = Extract<RibbonItem, { kind: 'plan' }>
 
+/** How a closed plan reads; «elsewhere» was answered on the phone or claude.ai. */
+const DONE_LABEL: Record<Plan['state'], string> = {
+  pending: '',
+  approved: 'принят',
+  rejected: 'отклонён',
+  elsewhere: 'ответили с телефона или claude.ai'
+}
+
 interface Props {
   item: Plan
   onAnswer: (requestId: string, approve: boolean) => void
@@ -42,7 +50,7 @@ export function PlanCard({ item, onAnswer }: Props): JSX.Element {
         </div>
       ) : (
         <div className="row-plan-done">
-          {item.state === 'approved' ? 'принят' : 'отклонён'}
+          {DONE_LABEL[item.state]}
         </div>
       )}
     </div>

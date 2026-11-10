@@ -40,6 +40,18 @@
   line-height: 1.55;
 }
 
+/* A message typed on the phone or claude.ai: the same bubble, one quiet line above. */
+.row-user-from {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  cursor: default;
+}
+
 .row-user-files {
   margin-top: 8px;
   display: flex;
@@ -333,6 +345,12 @@
   color: var(--accent);
   font-size: var(--text-sm);
   cursor: pointer;
+}
+
+.row-question-done {
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
 }
 
 .row-question-submit:disabled {

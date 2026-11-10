@@ -1,19 +1,6 @@
 import type { CommandInfo } from './types'
 
 /**
- * Commands that cannot work here, with the reason the user will read.
- *
- * Remote Control drives the terminal UI Qclod no longer runs — the trade the
- * user accepted knowingly when choosing the SDK rewrite (spec 6.7). It is
- * shown greyed with its reason rather than hidden: a command that vanishes
- * without explanation reads as a bug.
- */
-const UNAVAILABLE: Record<string, string> = {
-  'remote-control': 'Remote Control работает только в терминале, не в Qclod',
-  rc: 'Remote Control работает только в терминале, не в Qclod'
-}
-
-/**
  * Commands Qclod answers itself instead of forwarding.
  *
  * `/resume` in the terminal opens an interactive picker that does not exist in
@@ -23,7 +10,8 @@ const UNAVAILABLE: Record<string, string> = {
 export const LOCAL_COMMANDS: Record<string, string> = {
   resume: 'Открыть прошлый разговор',
   model: 'Выбрать модель',
-  effort: 'Выбрать усилие'
+  effort: 'Выбрать усилие',
+  'remote-control': 'Включить или выключить Remote Control для этой вкладки'
 }
 
 /**
@@ -39,25 +27,40 @@ export function isLocalCommand(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(LOCAL_COMMANDS, name)
 }
 
+/** Qclod's own wording for the commands it answers itself; the rest pass through. */
 export function markUnavailable(commands: CommandInfo[]): CommandInfo[] {
   return commands.map((command) => {
-    const reason = UNAVAILABLE[command.name]
-    if (reason) return { ...command, unavailableReason: reason }
     const local = LOCAL_COMMANDS[command.name]
     return local ? { ...command, description: local } : command
   })
 }
 
 /**
+ * Greys out /remote-control with the reason Remote Control cannot be switched
+ * on right now; `null` leaves the list as it is.
+ */
+export function markRemote(commands: CommandInfo[], blockedText: string | null): CommandInfo[] {
+  if (blockedText === null) return commands
+  return commands.map((command) =>
+    command.name === 'remote-control' ? { ...command, unavailableReason: blockedText } : command
+  )
+}
+
+/**
  * The list the slash menu offers: what the session sent, plus the commands
  * Qclod answers itself when the session did not send them — /model must work
- * before the session has said a word. Then the unworkable ones are marked.
+ * before the session has said a word.
  */
 export function withLocalCommands(commands: CommandInfo[]): CommandInfo[] {
   const present = new Set(commands.map((command) => command.name))
   const missing = Object.entries(LOCAL_COMMANDS)
     .filter(([name]) => !present.has(name))
-    .map(([name, description]) => ({ name, description, argumentHint: '' }))
+    .map(([name, description]) => ({
+      name,
+      description,
+      argumentHint: '',
+      ...(name === 'remote-control' ? { aliases: ['rc'] } : {})
+    }))
   return markUnavailable([...commands, ...missing])
 }
 

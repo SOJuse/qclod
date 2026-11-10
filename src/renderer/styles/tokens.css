@@ -23,6 +23,10 @@
   --warn: #ffc46b;
   --danger: #ff7a7a;
 
+  /* QR code: a scanner needs dark modules on a light field, so the sheet stays light in the dark UI. */
+  --qr-paper: #f4f5fa;
+  --qr-ink: #0b0e1f;
+
   --text: #e6e8f2;
   --text-dim: #99a0bd;
   --text-faint: #666e8c;

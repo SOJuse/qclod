@@ -1262,3 +1262,50 @@ describe('RibbonBuilder: отчёт подагента', () => {
     expect(only(b.items, 'subagent')[0]!.report).toBe('а\nб')
   })
 })
+
+describe('RibbonBuilder: Remote Control', () => {
+  const askQuestionToolUse = (id: string): unknown =>
+    assistant([
+      {
+        type: 'tool_use',
+        id,
+        name: 'AskUserQuestion',
+        input: {
+          questions: [
+            { question: 'Какой вариант?', header: 'Вар', options: [{ label: 'А', description: 'а' }, { label: 'Б', description: 'б' }] }
+          ]
+        }
+      }
+    ])
+
+  test('чужое сообщение при живом мосте — пузырь человека с пометкой', () => {
+    const b = new RibbonBuilder()
+    b.setRemote(true)
+    const [c] = b.apply(userMessage('с телефона'))
+    expect(c).toMatchObject({ kind: 'append', item: { kind: 'user', text: 'с телефона', remote: true } })
+  })
+  test('эхо своего сообщения при живом мосте — без пометки и без второго пузыря', () => {
+    const b = new RibbonBuilder()
+    b.setRemote(true)
+    b.addUser('моё')
+    expect(b.apply(userMessage('моё'))).toEqual([])
+  })
+  test('без моста и в повторе истории — без пометки', () => {
+    const live = new RibbonBuilder()
+    expect((live.apply(userMessage('x'))[0] as any).item.remote).toBeUndefined()
+    const replay = new RibbonBuilder({ replay: true })
+    replay.setRemote(true)
+    expect((replay.apply(userMessage('x'))[0] as any).item.remote).toBeUndefined()
+  })
+  test('разрешение, план и вопрос закрываются как отвеченные в другом месте', () => {
+    const b = new RibbonBuilder()
+    b.addPermission('p1', 'Bash', 'ls')
+    expect(b.resolvePermission('p1', 'elsewhere')[0]).toMatchObject({ kind: 'update', patch: { state: 'elsewhere' } })
+    b.addPlan('pl1', 'план')
+    expect(b.resolvePlan('pl1', 'elsewhere')[0]).toMatchObject({ patch: { state: 'elsewhere' } })
+    b.apply(askQuestionToolUse('q1'))
+    expect(b.closeQuestionElsewhere('q1')[0]).toMatchObject({ patch: { elsewhere: true } })
+    expect(b.closeQuestionElsewhere('q1')).toEqual([])
+    expect(b.closeQuestionElsewhere('nope')).toEqual([])
+  })
+})

@@ -30,6 +30,7 @@
  * @typedef {{kind:'compact', preTokens:number, postTokens:number, trigger?:'auto'|'manual'}} CompactStep
  * @typedef {{kind:'crash', message:string, times?:number, beforeInit?:boolean}} CrashStep
  * @typedef {{kind:'reportInput'}} ReportInputStep
+ * @typedef {{kind:'remoteAnswer', name:string, input?:object, decision:'allow'|'deny', afterMs?:number}} RemoteAnswerStep
  */
 
 import { randomUUID } from 'node:crypto'
@@ -181,8 +182,13 @@ export function createFakeSdk(script = {}) {
     }
   }
 
-  /** Sends waiting to be played as their own turn. */
+  /** Sends (and phone turns) waiting to be played as their own turn. */
   const inbox = []
+  /** What the CLI says by itself between turns: the bridge, a turn typed on the phone. */
+  const outbox = []
+  /** Remote Control calls, as the tests read them. */
+  const remoteCalls = []
+  const remote = script.remoteControl ?? {}
   /** How many sent messages have been answered; the next one plays `turns[answered]`. */
   let answered = 0
   let wake = null
@@ -380,6 +386,29 @@ export function createFakeSdk(script = {}) {
             yield* play([{ kind: 'tool', id, name: step.name, input, result: 'ok' }])
           } else {
             yield permissionDenied(step.name, answer)
+          }
+          break
+        }
+
+        // Answered on the phone: Qclod's question is cancelled after afterMs
+        // (control_cancel_request, so the signal aborts), and the turn goes
+        // on by the decision made there.
+        case 'remoteAnswer': {
+          const id = randomUUID()
+          const input = step.input ?? {}
+          state.permissionRequests.push({ name: step.name, input })
+          // Whatever Qclod answers is ignored: the phone answered. Wait for
+          // the abort of this very signal, then follow the decision.
+          const controller = new AbortController()
+          openAsks.add(controller)
+          canUseTool(step.name, input, { toolUseID: id, signal: controller.signal }).catch(() => undefined)
+          await pause(step.afterMs ?? 50)
+          controller.abort()
+          openAsks.delete(controller)
+          if (step.decision === 'allow') {
+            yield* play([{ kind: 'tool', id, name: step.name, input, result: 'ok' }])
+          } else {
+            yield permissionDenied(step.name, { message: 'отклонено с телефона' })
           }
           break
         }
@@ -804,12 +833,17 @@ export function createFakeSdk(script = {}) {
     // A real session does not end after its answer: it waits for the next
     // message. Without this the app could never be driven past turn one.
     while (!closed) {
+      if (outbox.length > 0) {
+        yield outbox.shift()
+        continue
+      }
       if (inbox.length === 0) {
         await new Promise((resolve) => {
           wake = resolve
         })
       }
       if (closed) break
+      if (outbox.length > 0) continue
       const input = inbox.shift()
       if (!input) continue
 
@@ -823,8 +857,15 @@ export function createFakeSdk(script = {}) {
         parent_tool_use_id: null,
         message: { role: 'user', content: input.text }
       }
-      const turn = script.turns?.[answered] ?? script.nextTurn ?? []
-      answered += 1
+      // A phone turn brings its own steps; Qclod's sends play the script's
+      // turns in order.
+      let turn
+      if (input.phone) {
+        turn = input.steps ?? script.nextTurn ?? []
+      } else {
+        turn = script.turns?.[answered] ?? script.nextTurn ?? []
+        answered += 1
+      }
       yield* play(turn)
       yield* finishTurn()
       yield* drainAfterTurn()
@@ -885,17 +926,80 @@ export function createFakeSdk(script = {}) {
     }
   }
 
+  function wakeStream() {
+    if (wake) {
+      const resume = wake
+      wake = null
+      resume()
+    }
+  }
+
+  function bridgeMessage(item) {
+    return {
+      type: 'system',
+      subtype: 'bridge_state',
+      state: item.state,
+      detail: item.detail ?? null,
+      ...(item.state === 'failed' ? { failure_kind: item.failure_kind ?? 'terminal' } : {}),
+      bridge_epoch: 1,
+      uuid: randomUUID(),
+      session_id: sessionId
+    }
+  }
+
+  function typeOnPhone(text, phoneSteps) {
+    inbox.push({ phone: true, text, steps: phoneSteps })
+    wakeStream()
+  }
+
+  /** The bridge's states, then the turns typed on the phone, each after its pause. */
+  async function runRemoteScript() {
+    for (const item of remote.bridge ?? [{ state: 'connected' }]) {
+      await pause(item.afterMs)
+      if (closed) return
+      outbox.push(bridgeMessage(item))
+      wakeStream()
+    }
+    for (const turn of remote.phoneTurns ?? []) {
+      await pause(turn.afterMs)
+      if (closed) return
+      typeOnPhone(turn.text, turn.steps)
+    }
+  }
+
   return {
     messages: withOutOfBand(stream()),
     send(input) {
       state.sent.push(input)
       inbox.push(input)
-      if (wake) {
-        const resume = wake
-        wake = null
-        resume()
+      wakeStream()
+    },
+    async remoteAvailability() {
+      return remote.blocked ? { available: false, reason: remote.blocked } : { available: true }
+    },
+    /** The CLI's answer to enabling, translated as the real driver does. */
+    async setRemoteControl(enabled, name) {
+      remoteCalls.push(enabled && name !== undefined ? { enabled, name } : { enabled })
+      if (!enabled) {
+        outbox.push({
+          type: 'system',
+          subtype: 'worker_shutting_down',
+          reason: 'remote_control_disabled',
+          uuid: randomUUID(),
+          session_id: sessionId
+        })
+        wakeStream()
+        return null
+      }
+      if (remote.enableError) throw new Error(remote.enableError)
+      void runRemoteScript()
+      return {
+        sessionUrl: remote.sessionUrl ?? 'https://claude.ai/code/session_fake0001',
+        connectUrl: 'https://claude.ai/code?environment=env_fake'
       }
     },
+    /** Only the fake: a turn typed on the phone. */
+    typeOnPhone,
     async interrupt() {
       state.interrupted = true
       for (const controller of openAsks) controller.abort()
@@ -1003,6 +1107,9 @@ export function createFakeSdk(script = {}) {
 
     get sent() {
       return state.sent
+    },
+    get remoteCalls() {
+      return remoteCalls
     },
     get permissionRequests() {
       return state.permissionRequests

@@ -498,6 +498,40 @@ describe('TabController', () => {
     expect(controller.sessionIdOf(id)).not.toBe(before)
   })
 
+  test('Remote Control доходит до вкладки и не пишется в tabs.json', async () => {
+    const { controller, manager, changed } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    const id = controller.list()[0]!.id
+    await manager.get(id)!.setRemote(true)
+
+    expect(changed.at(-1)!.find((t) => t.id === id)!.remote?.state).toBe('on')
+    const raw = readFileSync(join(store, TABS_FILE), 'utf8')
+    expect(raw).not.toContain('remote')
+    expect(raw).not.toContain('session_fake0001')
+  })
+
+  test('перезапуск гасит значок и оставляет заметку', async () => {
+    const { controller, manager, ribbon } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    const id = controller.list()[0]!.id
+    await manager.get(id)!.setRemote(true)
+    expect(controller.list()[0]!.remote?.state).toBe('on')
+
+    await controller.restart(id)
+    await controller.whenSettled()
+
+    expect(controller.list()[0]!.remote?.state).toBe('off')
+    const text = 'Remote Control выключен: сессия перезапущена. Включите снова, если нужно.'
+    const told = ribbon.some(
+      (e) =>
+        e.tabId === id &&
+        e.changes.some((c) => c.kind === 'append' && c.item.kind === 'notice' && c.item.text === text)
+    )
+    expect(told).toBe(true)
+  })
+
   test('изменения ленты уходят наружу с номером вкладки', async () => {
     const { controller, ribbon } = makeController({
       script: { steps: [{ kind: 'text', text: 'привет' }] }

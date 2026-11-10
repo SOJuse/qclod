@@ -36,6 +36,16 @@ const HISTORY = {
   }
 }
 
+/**
+ * The launch environment, never carrying QCLOD_ALLOW_REAL: a test that runs
+ * without the fixture may then only fail, never start the real agent.
+ */
+function withoutRealAgent(env: Record<string, string | undefined>): Record<string, string> {
+  const out = { ...env }
+  delete out['QCLOD_ALLOW_REAL']
+  return out as Record<string, string>
+}
+
 async function launch(
   history: unknown,
   extraEnv: Record<string, string> = {}
@@ -43,7 +53,7 @@ async function launch(
   const profile = mkdtempSync(join(tmpdir(), 'qclod-history-'))
   const app = await electron.launch({
     args: ['.'],
-    env: {
+    env: withoutRealAgent({
       ...process.env,
       QCLOD_USER_DATA: profile,
       QCLOD_FAKE_SDK_SCRIPT: JSON.stringify({
@@ -57,7 +67,7 @@ async function launch(
       }),
       QCLOD_FAKE_HISTORY: JSON.stringify(history),
       ...extraEnv
-    } as Record<string, string>
+    })
   })
   return { app, profile }
 }

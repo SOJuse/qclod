@@ -133,6 +133,16 @@ test('черновик со снимком переживает перезагр
   }
 })
 
+/**
+ * The launch environment, never carrying QCLOD_ALLOW_REAL: a test that runs
+ * without the fixture may then only fail, never start the real agent.
+ */
+function withoutRealAgent(env: Record<string, string | undefined>): Record<string, string> {
+  const out = { ...env }
+  delete out['QCLOD_ALLOW_REAL']
+  return out as Record<string, string>
+}
+
 /** Same as launch, with main's image preparation slowed or failed (e2e seams). */
 async function launchWith(
   script: unknown,
@@ -141,13 +151,13 @@ async function launchWith(
   const profile = mkdtempSync(join(tmpdir(), 'qclod-input-'))
   const app = await electron.launch({
     args: ['.'],
-    env: {
+    env: withoutRealAgent({
       ...process.env,
       QCLOD_USER_DATA: profile,
       QCLOD_FAKE_SDK_SCRIPT: JSON.stringify(script),
       QCLOD_FAKE_SHELL: '1',
       ...env
-    } as Record<string, string>
+    })
   })
   const win = await app.firstWindow()
   await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })

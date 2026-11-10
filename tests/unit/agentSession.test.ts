@@ -737,6 +737,26 @@ describe('AgentSession: сообщение с вложением', () => {
     expect(user.attachments).toEqual([{ ...image, dataBase64: '' }])
   })
 
+  test('большая GIF без миниатюры: в ленте байт нет, есть путь к копии', async () => {
+    const { session, driver } = makeSession({ steps: [], nextTurn: [] })
+    const rec = watch(session)
+    await session.start()
+    await settle(session)
+
+    const gif = {
+      kind: 'image' as const,
+      mediaType: 'image/gif',
+      dataBase64: 'ОЧЕНЬ-МНОГО-БАЙТ',
+      path: 'C:/ud/pastes/paste-1-abcdef01.gif'
+    }
+    session.send({ text: '', attachments: [gif] })
+    await settle(session)
+
+    expect(driver.sent[0]!.attachments).toEqual([gif])
+    const user = rec.items.find((i) => i.kind === 'user') as { attachments: unknown[] }
+    expect(user.attachments).toEqual([{ ...gif, dataBase64: '' }])
+  })
+
   test('эхо составленного сообщения не показывается вторым разом', async () => {
     const { session } = makeSession({ steps: [], nextTurn: [] })
     const rec = watch(session)

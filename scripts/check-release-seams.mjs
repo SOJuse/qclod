@@ -5,10 +5,10 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { seamsIn } from './releaseSeams.mjs'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const mainDir = join(root, 'out', 'main')
-const SEAM = /QCLOD_(FAKE_SDK|FAKE_HISTORY|FAKE_SHELL|PICK_FOLDER|PICK_FILES|CONFIRM_BYPASS)|__qclodShellLog/g
 
 function* jsFiles(dir) {
   for (const name of readdirSync(dir)) {
@@ -32,7 +32,7 @@ if (files.length === 0) {
 
 let found = 0
 for (const file of files) {
-  const names = new Set(readFileSync(file, 'utf8').match(SEAM) ?? [])
+  const names = seamsIn(readFileSync(file, 'utf8'))
   for (const name of names) {
     console.error(`${relative(root, file)}: ${name}`)
     found++

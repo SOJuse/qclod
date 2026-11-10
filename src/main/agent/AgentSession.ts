@@ -496,10 +496,11 @@ export class AgentSession {
     // with their files as chips; the agent — and therefore the echo that comes
     // back — gets the composed version, which is what the dedup must match.
     const text = composeText(input)
-    // The ribbon shows an image by its thumbnail; the full bytes (up to
-    // ~5 MB of base64) would otherwise ride along in every snapshot.
+    // The ribbon shows an image by its thumbnail, or by its copy on disk when
+    // there is none (a large GIF or WebP); the full bytes (up to ~5 MB of
+    // base64) would otherwise ride along in every snapshot.
     const shown = input.attachments.map((a) =>
-      a.kind === 'image' && a.thumbnail ? { ...a, dataBase64: '' } : a
+      a.kind === 'image' && (a.thumbnail || a.path) ? { ...a, dataBase64: '' } : a
     )
     this.emit(this.builder.addUser(input.text, shown, text))
     this.deliver({ ...input, text })

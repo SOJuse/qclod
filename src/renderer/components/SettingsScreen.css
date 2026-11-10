@@ -39,8 +39,7 @@
 .settings-head h2 {
   margin: 0;
   font-size: var(--text-lg);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: var(--weight-strong);
 }
 
 .settings-close {
@@ -78,7 +77,7 @@
 .settings-group h3 {
   margin: 0 0 10px;
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   color: var(--accent);
 }
 
@@ -193,7 +192,7 @@
 }
 
 .settings-rule-tool {
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   flex: 0 0 auto;
 }
 
@@ -226,7 +225,7 @@
   margin: 6px 0 0;
   color: var(--text-faint);
   font-size: var(--text-xs);
-  line-height: 1.45;
+  line-height: var(--leading);
 }
 
 .settings-head-end {

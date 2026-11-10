@@ -38,7 +38,7 @@
 
 .todo-count {
   flex: 0 0 auto;
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }

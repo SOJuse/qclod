@@ -19,6 +19,8 @@ test('окно и страница непрозрачные, нигде нет �
 })
 
 const FONTS_ANSWER = [
+  '## Что нашёл',
+  '',
   'Нашёл, где теряется токен: функция `refresh()` возвращает старое значение, если запрос обновления упал. Ниже — файл и строка, которую стоит поправить.',
   '',
   '```ts',
@@ -99,6 +101,8 @@ test('проза — Inter, код — Geist Mono с кириллицей, шр�
     )
     expect(remote.filter((n) => !local.test(n))).toEqual([])
     await shot(win, '03-fonts')
+    await expect(win.locator('[data-testid="side-panel"]')).toBeVisible()
+    await shot(win, '04-type')
   } finally {
     await app.close()
   }

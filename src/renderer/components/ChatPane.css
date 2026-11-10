@@ -24,8 +24,7 @@
   flex: 0 0 auto;
   padding: 6px 14px;
   border-bottom: 1px solid var(--border);
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  font-size: var(--text-xs);
   color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;

@@ -84,7 +84,7 @@
   border-top: 1px solid var(--border);
   color: var(--warn);
   font-size: var(--text-xs);
-  line-height: 1.45;
+  line-height: var(--leading);
   white-space: normal;
 }
 

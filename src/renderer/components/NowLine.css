@@ -74,7 +74,7 @@
 
 .now-what {
   flex: 0 0 auto;
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   color: var(--text);
 }
 
@@ -163,7 +163,7 @@
 
 .now-agent-type {
   flex: 0 0 auto;
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   color: var(--text);
 }
 

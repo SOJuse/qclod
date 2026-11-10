@@ -51,7 +51,6 @@
   /* A small button inside a line of text: the dead-session strip, a notice. */
   --button-sm-pad: 4px 11px;
   --button-sm-radius: var(--radius);
-  --button-sm-font-size: var(--text-sm);
   --button-sm-gap: 10px;
 
   /* A one-line strip above the input: the dead-session strip. */
@@ -59,7 +58,6 @@
   --strip-gap: 10px;
   --strip-margin: 7px;
   --strip-radius: var(--radius);
-  --strip-font-size: var(--text-sm);
 
   --titlebar-height: 38px;
 

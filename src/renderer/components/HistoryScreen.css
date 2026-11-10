@@ -31,15 +31,15 @@
 
 .history-head h2 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-strong);
 }
 
 .history-cwd {
   display: block;
   margin-top: 3px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -52,7 +52,7 @@
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
-  font-size: 18px;
+  font-size: var(--text-2xl);
   line-height: 1;
   padding: 0 2px;
 }
@@ -70,7 +70,7 @@
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--text-md);
 }
 
 .history-query:focus {
@@ -100,7 +100,7 @@
 
 .history-title {
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--text-md);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -109,7 +109,7 @@
 .history-first {
   margin-top: 2px;
   color: var(--text-dim);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -118,12 +118,12 @@
 .history-when {
   margin-top: 3px;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .history-empty {
   padding: 26px 16px 32px;
   text-align: center;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }

@@ -20,7 +20,7 @@
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--surface-raised);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--text-dim);
   max-width: 260px;
 }
@@ -30,7 +30,7 @@
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1;
   padding: 1px 3px;
   border-radius: 50%;
@@ -130,7 +130,7 @@
   background: transparent;
   color: var(--text);
   font: inherit;
-  line-height: 1.5;
+  line-height: var(--leading);
   padding: 2px 0;
   user-select: text;
 }
@@ -151,7 +151,7 @@
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--text-lg);
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
@@ -189,7 +189,7 @@
   border-radius: var(--strip-radius);
   background: color-mix(in srgb, var(--danger) 9%, var(--surface-raised));
   color: var(--danger);
-  font-size: var(--strip-font-size);
+  font-size: var(--text-sm);
 }
 
 /* The buttons sit together at the right end, «Повторить» first. */
@@ -204,7 +204,7 @@
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: var(--button-sm-font-size);
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 

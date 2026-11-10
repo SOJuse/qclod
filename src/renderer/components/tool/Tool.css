@@ -74,7 +74,7 @@
 
 .tool-name {
   flex: 0 0 auto;
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   color: var(--text);
 }
 
@@ -215,7 +215,7 @@
   color: var(--text);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  line-height: 1.5;
+  line-height: var(--leading);
   white-space: pre-wrap;
   word-break: break-word;
   scrollbar-width: thin;
@@ -277,7 +277,7 @@
 .tool-args th {
   width: 1%;
   white-space: nowrap;
-  font-weight: 400;
+  font-weight: var(--weight-regular);
   color: var(--text-dim);
 }
 
@@ -312,7 +312,7 @@
 .tool-numbered {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  line-height: 1.5;
+  line-height: var(--leading);
 }
 
 .diff {

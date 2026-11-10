@@ -1,8 +1,8 @@
 /* Markdown inside the ribbon. Sized to be read, not scanned. */
 
 .md {
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: var(--text-lg);
+  line-height: var(--leading-prose);
   color: var(--text);
 }
 
@@ -12,6 +12,15 @@
 
 .md > :last-child {
   margin-bottom: 0;
+}
+
+/* Reading measure: prose, headings, lists and quotes stop at ~72ch, left-aligned; code and tables run wider. */
+.md-p,
+.md-h,
+.md-list,
+.md-quote {
+  max-width: var(--prose-max-w);
+  text-align: left;
 }
 
 .md-p {
@@ -24,30 +33,30 @@
 
 .md-h {
   margin: 18px 0 8px;
-  font-weight: 650;
-  line-height: 1.35;
+  font-weight: var(--weight-strong);
+  line-height: var(--leading);
   color: var(--text);
 }
 
 .md-h1 {
-  font-size: 19px;
+  font-size: var(--text-2xl);
   padding-bottom: 5px;
   border-bottom: 1px solid var(--border);
 }
 
 .md-h2 {
-  font-size: 17px;
+  font-size: var(--text-xl);
   color: color-mix(in srgb, var(--accent) 35%, var(--text));
 }
 
 .md-h3 {
-  font-size: 15px;
+  font-size: var(--text-lg);
 }
 
 .md-h4,
 .md-h5,
 .md-h6 {
-  font-size: 14px;
+  font-size: var(--text-lg);
   color: var(--text-dim);
 }
 
@@ -84,8 +93,8 @@ li.md-task {
   height: 13px;
   border: 1px solid var(--border-strong);
   border-radius: 3px;
-  font-size: 10px;
-  line-height: 12px;
+  font-size: var(--text-xs);
+  line-height: 1;
   text-align: center;
   color: transparent;
 }
@@ -99,7 +108,7 @@ li.md-task {
 /* ------------------------------------------------------------- emphasis */
 
 .md strong {
-  font-weight: 680;
+  font-weight: var(--weight-strong);
   color: color-mix(in srgb, var(--accent) 22%, var(--text));
 }
 
@@ -130,7 +139,7 @@ li.md-task {
   border-radius: 4px;
   background: color-mix(in srgb, var(--glow) 12%, var(--surface-sunken));
   border: 1px solid var(--border);
-  font-size: 12.5px;
+  font-size: var(--text-md);
   color: color-mix(in srgb, var(--glow) 30%, var(--text));
   word-break: break-word;
 }
@@ -153,9 +162,7 @@ li.md-task {
 }
 
 .md-codeblock-lang {
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--text-xs);
   color: var(--text-faint);
 }
 
@@ -164,7 +171,7 @@ li.md-task {
   background: transparent;
   color: var(--text-faint);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--text-xs);
   cursor: pointer;
   padding: 1px 4px;
   border-radius: 5px;
@@ -179,8 +186,8 @@ li.md-task {
   margin: 0;
   padding: 10px 12px;
   overflow-x: auto;
-  font-size: 12.5px;
-  line-height: 1.55;
+  font-size: var(--text-md);
+  line-height: var(--leading-prose);
   tab-size: 2;
 }
 
@@ -241,7 +248,7 @@ li.md-task {
 .md-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--text-md);
 }
 
 .md-table th,
@@ -254,8 +261,7 @@ li.md-task {
 .md-table th {
   background: var(--surface-raised);
   color: var(--text-dim);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: var(--weight-strong);
 }
 
 .md-table tr:last-child td {

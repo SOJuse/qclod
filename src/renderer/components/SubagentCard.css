@@ -59,7 +59,7 @@
 
 .subagent-kind {
   flex: 0 0 auto;
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   color: var(--text);
 }
 
@@ -174,7 +174,7 @@
 .subagent-report-title {
   margin-bottom: var(--space-1);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   color: var(--text-dim);
 }
 

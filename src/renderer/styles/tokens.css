@@ -120,6 +120,11 @@
   --warn-fill: rgba(255, 196, 107, 0.08);
   --warn-border: rgba(255, 196, 107, 0.4);
 
+  /* A path in the text and its right-click menu (paths/Paths.css). */
+  --radius-hair: 3px;
+  --path-menu-min-w: 200px;
+  --path-menu-max-w: 360px;
+
   /* The Ctrl+K window of app actions. */
   --palette-top: 12vh;
   --palette-width: 520px;

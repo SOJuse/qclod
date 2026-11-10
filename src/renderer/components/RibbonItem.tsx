@@ -105,7 +105,7 @@ export function RibbonRow({
       case 'agentText':
         return (
           <div className={`row-agent${item.streaming ? ' is-streaming' : ''}`}>
-            <Markdown text={item.text} />
+            <Markdown text={item.text} tabId={tabId} streaming={item.streaming} />
           </div>
         )
 

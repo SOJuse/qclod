@@ -1,0 +1,96 @@
+/* A path that exists: it reads as the text around it until pointed at. */
+
+.path-link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  border-radius: var(--radius-hair);
+}
+
+.path-link:hover,
+.path-link:focus-visible {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: var(--gap-hair);
+}
+
+.path-link:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: 1px;
+}
+
+/* What can be done with it, at the pointer; the same glass as the @ menu. */
+
+.path-menu {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: var(--path-menu-min-w);
+  max-width: var(--path-menu-max-w);
+  padding: var(--space-1);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--glow-accent), var(--shadow-menu);
+  backdrop-filter: blur(var(--menu-blur));
+  font-family: var(--font-ui);
+  animation: path-menu-in var(--dur-fast) var(--ease);
+}
+
+@keyframes path-menu-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.path-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--menu-row-h);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.path-menu-item svg {
+  flex: none;
+  color: var(--text-faint);
+}
+
+/* The chosen row: fill and the thin accent rule on its left, like the @ menu. */
+.path-menu-item.is-active {
+  background: var(--accent-fill);
+  box-shadow: inset var(--rule-category) 0 0 var(--accent);
+  color: var(--text);
+  outline: none;
+}
+
+.path-menu-item.is-active svg {
+  color: var(--accent);
+}
+
+.path-menu-error {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2);
+  border-top: 1px solid var(--border);
+  color: var(--warn);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  white-space: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .path-menu {
+    animation: none;
+  }
+}

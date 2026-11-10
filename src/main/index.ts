@@ -222,12 +222,7 @@ app.whenReady().then(async () => {
     manager,
     broker,
     resolver: new PathResolver(),
-    // The setting itself arrives with the path menu (Task 11); until then a
-    // settings file without it means no editor.
-    getEditorCommand: () => {
-      const command = (settings as { editorCommand?: unknown }).editorCommand
-      return typeof command === 'string' ? command : ''
-    },
+    getEditorCommand: () => settings.editorCommand,
     rememberDefault: (patch) => {
       settings = mergeDefaults(settings, { defaults: patch })
       saveSettings(userData, settings)

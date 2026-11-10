@@ -196,8 +196,15 @@ describe('mergeDefaults', () => {
     soundEnabled: true,
     closeToTray: true,
     panelOpen: true,
+    editorCommand: '',
     defaults: { permissionMode: 'acceptEdits' }
   }
+
+  test('команда редактора — только строка', () => {
+    expect(mergeDefaults(base, { editorCommand: 'code -g {path}:{line}' }).editorCommand).toBe('code -g {path}:{line}')
+    expect(mergeDefaults(base, { editorCommand: 42 as never }).editorCommand).toBe('')
+    expect(mergeDefaults(base, { editorCommand: 'x'.repeat(5000) }).editorCommand).toBe('')
+  })
 
   test('выбор модели в одной вкладке становится умолчанием для новых', () => {
     const next = mergeDefaults(base, { defaults: { model: 'claude-sonnet-5' } })

@@ -300,6 +300,11 @@ export interface AppSettings {
   soundEnabled: boolean
   closeToTray: boolean
   panelOpen: boolean
+  /**
+   * How to open a file in the user's editor: `code -g {path}:{line}`. Empty
+   * means no editor, and the path menu has no such item.
+   */
+  editorCommand: string
   defaults: LaunchOverrides
 }
 

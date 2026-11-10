@@ -66,9 +66,19 @@ export function sanitizeDefaults(value: unknown): LaunchOverrides {
   return out
 }
 
-/** Settings with a patch applied; the defaults inside the patch are sanitised first. */
+const MAX_EDITOR_COMMAND = 1000
+
+/** An editor command is a line of text; anything else (or a runaway one) is no value at all. */
+export function sanitizeEditorCommand(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length <= MAX_EDITOR_COMMAND ? value : undefined
+}
+
+/**
+ * Settings with a patch applied; the defaults inside the patch are sanitised
+ * first, and an editor command that is not a usable string leaves the old one.
+ */
 export function mergeDefaults(settings: AppSettings, patch: Partial<AppSettings>): AppSettings {
-  const { defaults, ...rest } = patch
+  const { defaults, editorCommand, ...rest } = patch
   const merged = { ...settings.defaults, ...(defaults === undefined ? {} : sanitizeDefaults(defaults)) }
   // An empty string is how the settings screen says "as Claude Code has it":
   // the key goes away rather than being stored as an empty value.
@@ -77,7 +87,12 @@ export function mergeDefaults(settings: AppSettings, patch: Partial<AppSettings>
       if (defaults[key] === '') delete merged[key]
     }
   }
-  return { ...settings, ...rest, defaults: merged }
+  return {
+    ...settings,
+    ...rest,
+    editorCommand: sanitizeEditorCommand(editorCommand) ?? settings.editorCommand,
+    defaults: merged
+  }
 }
 
 /**

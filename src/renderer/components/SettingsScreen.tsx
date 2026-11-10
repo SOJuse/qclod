@@ -198,6 +198,26 @@ export function SettingsScreen({ settings, version, models, onPatch: save, onClo
             </Field>
           </Group>
 
+          <Group title="Файлы в ответах">
+            <Field label="Команда редактора">
+              <input
+                type="text"
+                data-testid="setting-editorCommand"
+                maxLength={1000}
+                placeholder="code -g {path}:{line}"
+                spellCheck={false}
+                defaultValue={settings.editorCommand}
+                onBlur={(e) => {
+                  if (e.target.value !== settings.editorCommand) onPatch({ editorCommand: e.target.value })
+                }}
+              />
+            </Field>
+            <p className="settings-note">
+              Для пункта «Открыть в редакторе» в меню пути. Вместо {'{path}'} встанет файл, вместо {'{line}'} и{' '}
+              {'{column}'} — строка и столбец. Пусто — пункта нет.
+            </p>
+          </Group>
+
           <Group title="Разрешено без вопросов">
             {rules.length === 0 ? (
               <p className="settings-note" data-testid="rules-empty">

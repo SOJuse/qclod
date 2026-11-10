@@ -59,4 +59,14 @@ describe('settingsStore', () => {
     expect(DEFAULT_SETTINGS).not.toHaveProperty('fontSize')
     rmSync(dir, { recursive: true, force: true })
   })
+
+  test('команда редактора: по умолчанию пусто, сохранённая читается, не строка — пусто', () => {
+    expect(DEFAULT_SETTINGS.editorCommand).toBe('')
+    const dir = freshDir()
+    writeFileSync(join(dir, SETTINGS_FILE), JSON.stringify({ editorCommand: 'code -g {path}:{line}' }), 'utf8')
+    expect(loadSettings(dir).editorCommand).toBe('code -g {path}:{line}')
+    writeFileSync(join(dir, SETTINGS_FILE), JSON.stringify({ editorCommand: ['rm'] }), 'utf8')
+    expect(loadSettings(dir).editorCommand).toBe('')
+    rmSync(dir, { recursive: true, force: true })
+  })
 })

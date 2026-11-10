@@ -170,10 +170,11 @@ describe('useAppStore: закрытые вкладки', () => {
     store.setDraft(id, 'черновик')
     store.setAttachments(id, [])
     store.setFileIndex(id, ['a'])
+    store.setPaths(id, [['src/a.ts', null]])
   }
   const keysOf = (id: string): string[] => {
     const s = useAppStore.getState()
-    return [s.ribbonByTab, s.ribbonRevByTab, s.todoByTab, s.panelByTab, s.panelRevByTab, s.draftByTab, s.attachmentsByTab, s.fileIndexByTab, s.busySinceByTab]
+    return [s.ribbonByTab, s.ribbonRevByTab, s.todoByTab, s.panelByTab, s.panelRevByTab, s.draftByTab, s.attachmentsByTab, s.fileIndexByTab, s.busySinceByTab, s.pathsByTab]
       .map((m, i) => (id in m ? String(i) : ''))
       .filter(Boolean)
   }
@@ -185,7 +186,7 @@ describe('useAppStore: закрытые вкладки', () => {
     useAppStore.getState().setTabs([tab('A')])
 
     expect(keysOf('B')).toEqual([])
-    expect(keysOf('A')).toHaveLength(8)
+    expect(keysOf('A')).toHaveLength(9)
   })
 
   test('лента вкладки, ещё не пришедшей в списке, не стирается', () => {
@@ -194,7 +195,7 @@ describe('useAppStore: закрытые вкладки', () => {
     useAppStore.getState().setTabs([tab('A')])
 
     expect(useAppStore.getState().ribbonByTab['C']).toBeDefined()
-    expect(keysOf('C')).toHaveLength(8)
+    expect(keysOf('C')).toHaveLength(9)
   })
 
   test('запоздавшие записи для только что закрытой вкладки ничего не оставляют', () => {
@@ -209,8 +210,23 @@ describe('useAppStore: закрытые вкладки', () => {
     store.setDraft('B', 'x')
     store.setAttachments('B', [])
     store.setFileIndex('B', ['a'])
+    store.setPaths('B', [['src/a.ts', null]])
 
     expect(keysOf('B')).toEqual([])
+  })
+})
+
+describe('useAppStore: пути', () => {
+  test('ответы о путях копятся по вкладке, в том числе «нет такого»', () => {
+    const store = useAppStore.getState()
+    const hit = { raw: 'src/a.ts', absPath: 'C:\p\src\a.ts', isDir: false }
+    store.setPaths('P', [['src/a.ts', hit]])
+    store.setPaths('P', [['src/нет.ts', null]])
+    const known = useAppStore.getState().pathsByTab['P']!
+    expect(known.get('src/a.ts')).toEqual(hit)
+    expect(known.has('src/нет.ts')).toBe(true)
+    expect(known.get('src/нет.ts')).toBeNull()
+    expect(useAppStore.getState().pathsByTab['Q']).toBeUndefined()
   })
 })
 

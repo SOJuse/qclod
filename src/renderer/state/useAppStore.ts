@@ -5,6 +5,7 @@ import type {
   CommandInfo,
   PanelData,
   PanelSnapshot,
+  ResolvedPath,
   RibbonChange,
   RibbonItem,
   RibbonSnapshot,
@@ -22,10 +23,13 @@ const PER_TAB_KEYS = [
   'draftByTab',
   'attachmentsByTab',
   'fileIndexByTab',
-  'commandsByTab'
+  'commandsByTab',
+  'pathsByTab'
 ] as const
 
 const RECENT_COMMANDS = 6
+/** Answers about paths kept per tab; the oldest go first past this. */
+const PATHS_PER_TAB = 5000
 
 function closedAfter(state: AppState, tabs: TabState[]): ReadonlySet<TabId> {
   const open = new Set(tabs.map((t) => t.id))
@@ -81,6 +85,11 @@ interface AppState {
   fileIndexByTab: Record<TabId, string[]>
   /** What each session offers after `/`; absent until first asked for. */
   commandsByTab: Record<TabId, CommandInfo[]>
+  /**
+   * What main said about each path text a tab showed: where it is, or null
+   * for "not on disk" — so the same text is never asked about twice.
+   */
+  pathsByTab: Record<TabId, ReadonlyMap<string, ResolvedPath | null>>
   /** The last commands run, newest first — they head the list before anything is typed. */
   recentCommands: string[]
 
@@ -97,6 +106,7 @@ interface AppState {
   setAttachments: (id: TabId, items: PendingAttachment[]) => void
   setFileIndex: (id: TabId, paths: string[]) => void
   setCommands: (id: TabId, commands: CommandInfo[]) => void
+  setPaths: (id: TabId, answers: ReadonlyArray<readonly [string, ResolvedPath | null]>) => void
   noteCommand: (name: string) => void
 }
 
@@ -160,6 +170,7 @@ export const useAppStore = create<AppState>((set) => ({
   attachmentsByTab: {},
   fileIndexByTab: {},
   commandsByTab: {},
+  pathsByTab: {},
   recentCommands: [],
 
   setSettings: (settings) => set({ settings }),
@@ -248,6 +259,19 @@ export const useAppStore = create<AppState>((set) => ({
 
   setCommands: (id, commands) =>
     set((state) => (state.closedTabs.has(id) ? state : { commandsByTab: { ...state.commandsByTab, [id]: commands } })),
+
+  setPaths: (id, answers) =>
+    set((state) => {
+      if (state.closedTabs.has(id) || answers.length === 0) return state
+      const next = new Map(state.pathsByTab[id])
+      for (const [raw, answer] of answers) next.set(raw, answer)
+      // A Map iterates in insertion order: the first keys are the oldest.
+      for (const raw of next.keys()) {
+        if (next.size <= PATHS_PER_TAB) break
+        next.delete(raw)
+      }
+      return { pathsByTab: { ...state.pathsByTab, [id]: next } }
+    }),
 
   noteCommand: (name) =>
     set((state) => ({

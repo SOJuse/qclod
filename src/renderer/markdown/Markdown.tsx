@@ -1,7 +1,56 @@
-import { useMemo } from 'react'
+import { createContext, useContext, useMemo } from 'react'
+import type { ResolvedPath } from '../../shared/types'
+import { pathTexts } from '../paths/linkify'
+import { LinkedText } from '../paths/PathLink'
+import { useResolvedPaths } from '../paths/useResolvedPaths'
 import { parseMarkdown, type Block, type ListItem, type Span } from './parse'
 import { highlight } from './highlight'
 import './Markdown.css'
+
+/** The tab whose folder the paths in this text are relative to, and which of them exist. */
+const Paths = createContext<{ tabId: string; resolved: ReadonlyMap<string, ResolvedPath> } | null>(null)
+
+/**
+ * The path candidates of an answer: its text and inline code. A code block
+ * is code, not a mention; a link's words are the link's.
+ */
+function candidateTexts(blocks: Block[]): string[] {
+  const out = new Set<string>()
+  const spans = (list: Span[]): void => {
+    for (const span of list) {
+      if (span.kind === 'text') for (const t of pathTexts(span.text)) out.add(t)
+      else if (span.kind === 'code') for (const t of pathTexts(span.text, true)) out.add(t)
+      else if (span.kind !== 'link') spans(span.spans)
+    }
+  }
+  const walk = (list: Block[]): void => {
+    for (const block of list) {
+      switch (block.kind) {
+        case 'paragraph':
+        case 'heading':
+          spans(block.spans)
+          break
+        case 'list':
+          for (const item of block.items) {
+            spans(item.spans)
+            walk(item.children)
+          }
+          break
+        case 'quote':
+          walk(block.blocks)
+          break
+        case 'table':
+          for (const cell of block.head) spans(cell)
+          for (const row of block.rows) for (const cell of row) spans(cell)
+          break
+        default:
+          break
+      }
+    }
+  }
+  walk(blocks)
+  return [...out]
+}
 
 /**
  * Renders what the agent wrote the way it meant it.
@@ -10,9 +59,33 @@ import './Markdown.css'
  * string anywhere, so nothing in an answer can become markup. A link opens in
  * the browser rather than navigating the window away from the app.
  */
-export function Markdown({ text }: { text: string }): JSX.Element {
+export function Markdown({
+  text,
+  tabId,
+  streaming = false
+}: {
+  text: string
+  /** Paths in the text become links for this tab; without it the text stays text. */
+  tabId?: string
+  /** A text still being written asks nothing: half a path is not worth a lookup. */
+  streaming?: boolean
+}): JSX.Element {
   const blocks = useMemo(() => parseMarkdown(text), [text])
-  return <div className="md">{blocks.map(renderBlock)}</div>
+  const raws = useMemo(() => (tabId && !streaming ? candidateTexts(blocks) : []), [blocks, tabId, streaming])
+  const resolved = useResolvedPaths(tabId ?? '', raws)
+  const paths = useMemo(() => (tabId ? { tabId, resolved } : null), [tabId, resolved])
+  return (
+    <Paths.Provider value={paths}>
+      <div className="md">{blocks.map(renderBlock)}</div>
+    </Paths.Provider>
+  )
+}
+
+/** Text, with the paths in it as links where the context knows of any. */
+function Linked({ text, code = false }: { text: string; code?: boolean }): JSX.Element {
+  const paths = useContext(Paths)
+  if (!paths || paths.resolved.size === 0) return <>{text}</>
+  return <LinkedText tabId={paths.tabId} text={text} resolved={paths.resolved} code={code} />
 }
 
 function renderBlock(block: Block, index: number): JSX.Element {
@@ -102,7 +175,7 @@ function renderSpan(span: Span, index: number): JSX.Element {
     case 'code':
       return (
         <code key={index} className="md-code">
-          {span.text}
+          <Linked text={span.text} code />
         </code>
       )
     case 'strong':
@@ -127,7 +200,11 @@ function renderSpan(span: Span, index: number): JSX.Element {
         </a>
       )
     default:
-      return <span key={index}>{span.text}</span>
+      return (
+        <span key={index}>
+          <Linked text={span.text} />
+        </span>
+      )
   }
 }
 

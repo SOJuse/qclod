@@ -1,27 +1,67 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { bytes, lines, plural, seconds } from '../../../shared/format'
 import type { ToolCardItem, ToolView } from '../../../shared/toolView'
+import { pathTexts } from '../../paths/linkify'
+import { LinkedText, PathLink } from '../../paths/PathLink'
+import { useResolvedPaths } from '../../paths/useResolvedPaths'
 import { DiffView } from './DiffView'
 import { RawJson } from './RawJson'
+
+/** The tab whose folder the card's paths are relative to. */
+const Tab = createContext('')
 
 /**
  * What an opened tool card shows, by the kind of call: the facts of the call
  * as label and value, then its output in a bounded block. The raw input and
  * output sit folded at the bottom of every card.
  */
-export function ToolBody({ item, view, cwd }: { item: ToolCardItem; view: ToolView; cwd: string }): JSX.Element {
+export function ToolBody({
+  item,
+  view,
+  cwd,
+  tabId
+}: {
+  item: ToolCardItem
+  view: ToolView
+  cwd: string
+  tabId: string
+}): JSX.Element {
   const error = item.kind === 'toolError' ? item.error : ''
   return (
-    <div className="tool-body" data-testid="tool-detail">
-      {error && (
-        <pre className="tool-pre tool-error" data-testid="tool-error">
-          {error}
-        </pre>
-      )}
-      <ViewBody item={item} view={view} cwd={cwd} />
-      <RawJson item={item} />
-    </div>
+    <Tab.Provider value={tabId}>
+      <div className="tool-body" data-testid="tool-detail">
+        {error && (
+          <pre className="tool-pre tool-error" data-testid="tool-error">
+            {error}
+          </pre>
+        )}
+        <ViewBody item={item} view={view} cwd={cwd} />
+        <RawJson item={item} />
+      </div>
+    </Tab.Provider>
   )
+}
+
+/** A whole path, as a link when it exists. */
+function PathText({ path }: { path: string }): JSX.Element {
+  const tabId = useContext(Tab)
+  const raws = useMemo(() => (path ? [path] : []), [path])
+  const target = useResolvedPaths(tabId, raws).get(path)
+  return target ? (
+    <PathLink tabId={tabId} target={target}>
+      {path}
+    </PathLink>
+  ) : (
+    <>{path}</>
+  )
+}
+
+/** Output text with the paths in it as links. */
+function OutputText({ text }: { text: string }): JSX.Element {
+  const tabId = useContext(Tab)
+  const raws = useMemo(() => pathTexts(text), [text])
+  const resolved = useResolvedPaths(tabId, raws)
+  return <LinkedText tabId={tabId} text={text} resolved={resolved} />
 }
 
 function ViewBody({ item, view, cwd }: { item: ToolCardItem; view: ToolView; cwd: string }): JSX.Element | null {
@@ -124,7 +164,7 @@ function ViewBody({ item, view, cwd }: { item: ToolCardItem; view: ToolView; cwd
             <ul className="tool-list tool-mono" data-testid="tool-matches">
               {view.files.map((file, i) => (
                 <li key={i} className="tool-match" data-testid="tool-match">
-                  {file}
+                  <PathText path={file} />
                 </li>
               ))}
             </ul>
@@ -287,7 +327,9 @@ function PathFact({ path }: { path: string }): JSX.Element | null {
   if (!path) return null
   return (
     <Fact label="Файл">
-      <span className="tool-mono tool-wrap">{path}</span>
+      <span className="tool-mono tool-wrap">
+        <PathText path={path} />
+      </span>
     </Fact>
   )
 }
@@ -330,7 +372,7 @@ function Output({ label, text, testId }: { label: string; text: string; testId?:
         )}
       </header>
       <pre ref={pre} className={`tool-pre${whole ? ' is-whole' : ''}`} data-testid={testId}>
-        {text}
+        <OutputText text={text} />
       </pre>
     </section>
   )

@@ -3,6 +3,8 @@ import { CircleAlert, LoaderCircle } from 'lucide-react'
 import { mcpParts, toolCategory } from '../../shared/toolCategory'
 import { toolOutcome, toolView, type ToolCardItem, type ToolView } from '../../shared/toolView'
 import { CategoryIcon } from '../ui/icons'
+import { PathLink } from '../paths/PathLink'
+import { useResolvedPaths } from '../paths/useResolvedPaths'
 import { ToolBody } from './tool/ToolBody'
 import './tool/Tool.css'
 
@@ -28,13 +30,21 @@ function title(name: string): string {
  * The one thing the call was about: the command, the file, the query. A
  * search says what it looked for first and where second.
  */
-function mainArg(item: ToolCardItem, view: ToolView): { text: string; where?: string; mono: boolean } {
+function mainArg(
+  item: ToolCardItem,
+  view: ToolView
+): { text: string; where?: string; mono: boolean; path?: string } {
   if (view.type === 'command' && view.command) return { text: view.command.split('\n')[0] ?? '', mono: true }
   const input = item.input ?? {}
   const pattern = typeof input['pattern'] === 'string' ? input['pattern'] : ''
   if (pattern && (item.name === 'Grep' || item.name === 'Glob')) {
     const where = typeof input['path'] === 'string' ? input['path'] : ''
     return { text: pattern, mono: false, ...(where ? { where } : {}) }
+  }
+  // The head shows a file by its name; the link opens the file at its full path.
+  for (const key of ['file_path', 'path', 'notebook_path']) {
+    const path = input[key]
+    if (typeof path === 'string' && path !== '') return { text: item.target, mono: false, path }
   }
   return { text: item.target, mono: false }
 }
@@ -50,11 +60,12 @@ function mainArg(item: ToolCardItem, view: ToolView): { text: string; where?: st
 export function ToolCard({
   item,
   cwd,
+  tabId,
   compact = false
 }: {
   item: ToolCardItem
   cwd: string
-  /** Used by PathLink (Task 11) to ask the tab's session about paths. */
+  /** Whose folder the paths in the card are relative to. */
   tabId: string
   compact?: boolean
 }): JSX.Element {
@@ -75,6 +86,9 @@ export function ToolCard({
       ? item.summary
       : toolOutcome(item, view)
   const arg = mainArg(item, view)
+  // A path is looked up once the call is done: a running one may still be creating it.
+  const argPaths = useMemo(() => (arg.path && !running ? [arg.path] : []), [arg.path, running])
+  const argTarget = useResolvedPaths(tabId, argPaths).get(arg.path ?? '')
 
   const classes = ['tool-card', failed ? 'is-error' : running ? 'is-running' : 'is-done']
   if (compact) classes.push('is-compact')
@@ -95,7 +109,13 @@ export function ToolCard({
           className={`tool-target${arg.mono ? ' tool-mono' : ''}`}
           title={arg.where ? `${arg.text} в ${arg.where}` : arg.text}
         >
-          {arg.text}
+          {argTarget ? (
+            <PathLink tabId={tabId} target={argTarget}>
+              {arg.text}
+            </PathLink>
+          ) : (
+            arg.text
+          )}
           {arg.where && <span className="tool-where"> в {arg.where}</span>}
         </span>
         {outcome && <span className="tool-outcome">{outcome}</span>}
@@ -110,7 +130,7 @@ export function ToolCard({
           </span>
         )}
       </summary>
-      {open && <ToolBody item={item} view={view} cwd={cwd} />}
+      {open && <ToolBody item={item} view={view} cwd={cwd} tabId={tabId} />}
     </details>
   )
 }

@@ -604,7 +604,7 @@ export class RibbonBuilder {
     }
 
     if (item.kind === 'subagent') {
-      const patch: Partial<RibbonItem> = { state: 'done', summary: clip(text, 160) }
+      const patch: Partial<Extract<RibbonItem, { kind: 'subagent' }>> = { state: 'done', summary: clip(text, 160) }
       const stats = subagentStats(result)
       Object.assign(patch, stats)
 

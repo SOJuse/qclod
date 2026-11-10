@@ -199,3 +199,51 @@ describe('prepareImage: GIF и WebP', () => {
     })
   })
 })
+
+describe('prepareImage: слишком большие до декодирования', () => {
+  /** A real PNG head: signature, then IHDR with the given size. */
+  function pngHead(width: number, height: number): Buffer {
+    const ihdr = Buffer.alloc(25)
+    ihdr.writeUInt32BE(13, 0)
+    ihdr.write('IHDR', 4, 'latin1')
+    ihdr.writeUInt32BE(width, 8)
+    ihdr.writeUInt32BE(height, 12)
+    return Buffer.concat([PNG, ihdr])
+  }
+
+  /** A real JPEG head: SOI, an APP0 segment, then SOF0 with the given size. */
+  function jpegHead(width: number, height: number): Buffer {
+    const app0 = Buffer.from([0xff, 0xe0, 0x00, 0x04, 0x00, 0x00])
+    const sof = Buffer.alloc(11)
+    sof.writeUInt16BE(0xffc0, 0)
+    sof.writeUInt16BE(9, 2)
+    sof[4] = 8
+    sof.writeUInt16BE(height, 5)
+    sof.writeUInt16BE(width, 7)
+    return Buffer.concat([Buffer.from([0xff, 0xd8]), app0, sof])
+  }
+
+  test('PNG или JPEG больше 16384 по стороне не декодируется', async () => {
+    const electron = await import('electron')
+    const decode = vi.spyOn(electron.nativeImage, 'createFromBuffer')
+    for (const head of [pngHead(20_000, 100), pngHead(100, 16_385), jpegHead(100, 17_000)]) {
+      expect(prepareImage(userData, head.toString('base64'), 'image/png')).toEqual({
+        error: 'Картинка слишком большая'
+      })
+    }
+    expect(decode).not.toHaveBeenCalled()
+    decode.mockRestore()
+  })
+
+  test('PNG в пределах по заголовку идёт дальше как обычно', () => {
+    const head = pngHead(16_384, 16_384)
+    // The fake decoder reads the size from the text after the head.
+    const data = Buffer.concat([head, Buffer.from(' 800x600 ', 'latin1')]).toString('base64')
+    expect(ok(prepareImage(userData, data, 'image/png'))).toMatchObject({ width: 800, height: 600 })
+  })
+
+  test('больше 50 МБ — отказ сразу', () => {
+    const data = Buffer.concat([PNG, Buffer.alloc(50 * 1024 * 1024)]).toString('base64')
+    expect(prepareImage(userData, data, 'image/png')).toEqual({ error: 'Картинка слишком большая' })
+  })
+})

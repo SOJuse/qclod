@@ -66,6 +66,22 @@ export const MCP_POLL_MS = 2000
 /** …this many times at most, so one that never comes up is not asked about forever. */
 export const MCP_POLL_MAX = 15
 
+/** Messages waiting their turn; one more is handed back rather than kept. */
+export const MAX_QUEUED = 20
+
+/** What a session whose agent simply went away says, and keeps as its error. */
+const AGENT_EXITED = 'Агент завершил работу'
+
+/** A queued image handed back to the window: its copy on disk stands for its bytes. */
+function withoutCopiedBytes(input: UserInput): UserInput {
+  return {
+    ...input,
+    attachments: input.attachments.map((a) =>
+      a.kind === 'image' && a.path ? { ...a, dataBase64: '' } : a
+    )
+  }
+}
+
 /**
  * Turns what the SDK said into something worth reading. «Claude Code process
  * exited with code 1» tells the user nothing they can act on (spec 6.10).
@@ -446,7 +462,8 @@ export class AgentSession {
     this.launchedAgent = true
 
     this.pump = this.readMessages(this.driver)
-    this.setStatus('idle')
+    // What was sent while the agent was starting goes now.
+    if (!this.sendQueued()) this.setStatus('idle')
     this.emitPanel(this.collector.setProjectSettings(readProjectSettings(this.options.cwd)))
 
     // The panel is filled now rather than after the first answer. `system/init`
@@ -504,17 +521,23 @@ export class AgentSession {
   }
 
   /**
-   * A message from the user. While a turn is under way it waits in the queue
-   * and goes when the turn ends; otherwise it goes now.
+   * A message from the user. While a turn is under way, or while the agent
+   * is still starting, it waits in the queue and goes when the agent is free;
+   * otherwise it goes now. False when the session cannot take it — not
+   * started, dead, or the queue full — so the window can give it back.
    */
-  send(input: UserInput): void {
-    if (!this.driver) return
-    if (this.turnRunning && this.stopsInFlight === 0) {
+  send(input: UserInput): boolean {
+    if (this.disposed) return false
+    const starting = !this.driver && this.state === 'starting'
+    if (!this.driver && !starting) return false
+    if (starting || (this.turnRunning && this.stopsInFlight === 0)) {
+      if (this.queue.length >= MAX_QUEUED) return false
       this.queue.push({ id: randomUUID(), input })
       this.emitQueue()
-      return
+      return true
     }
     this.sendNow(input)
+    return true
   }
 
   private sendNow(input: UserInput): void {
@@ -574,8 +597,10 @@ export class AgentSession {
     if (!this.driver) return []
     const stopped = this.turn
     // Taken before anything is awaited: the turn's result could otherwise
-    // arrive first and send the next one off after all (ruling C7).
-    const returned = this.takeQueue()
+    // arrive first and send the next one off after all (ruling C7). An image
+    // with its copy on disk goes back without its bytes: the window has the
+    // copy, and main reads it again on the next send.
+    const returned = this.takeQueue().map(withoutCopiedBytes)
     this.cancelWaits()
     this.stopsInFlight += 1
     try {
@@ -863,11 +888,9 @@ export class AgentSession {
         if (this.driver !== driver) break
         this.onMessage(message)
       }
-      // The stream ending by itself means the agent exited.
-      if (this.driver === driver) {
-        this.cutOffBackground()
-        this.setStatus('stopped')
-      }
+      // The stream ending by itself means the agent exited: the session is
+      // dead, as after a crash, only without an error of its own to show.
+      if (this.driver === driver) this.fail(new Error(AGENT_EXITED), { quiet: true })
     } catch (err) {
       if (this.driver === driver) this.fail(err)
     }
@@ -1108,7 +1131,7 @@ export class AgentSession {
    * be happening: a blinking caret and a card reading «работает…» describe an
    * agent that no longer exists.
    */
-  private fail(err: unknown): void {
+  private fail(err: unknown, opts: { quiet?: boolean } = {}): void {
     // A closed session has nothing left to fail; a late callback of its
     // would write into a ribbon its successor carries on.
     if (this.disposed) return
@@ -1123,7 +1146,9 @@ export class AgentSession {
     this.cutOffBackground()
     this.failure = text
     this.emit(this.builder.closeOpen())
-    this.emit(this.builder.notice(explain(text), 'error'))
+    this.emit(
+      opts.quiet ? this.builder.notice(`${text}.`, 'info') : this.builder.notice(explain(text), 'error')
+    )
     this.setStatus('error')
   }
 

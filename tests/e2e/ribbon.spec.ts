@@ -153,6 +153,12 @@ test('план — полоска «Задачи 1/3» над полем, лен
     const list = win.locator('[data-testid="todo-list"]')
     await expect(list).toBeVisible()
     await expect(list.locator('[data-testid="todo-item"]')).toHaveCount(3)
+
+    // Esc closes the list, even from the input line, and nothing else.
+    await win.locator('[data-testid="composer-input"]').focus()
+    await win.keyboard.press('Escape')
+    await expect(list).toHaveCount(0)
+    await expect(strip).toBeVisible()
   } finally {
     await close(app, profile)
   }

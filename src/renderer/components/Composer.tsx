@@ -287,6 +287,10 @@ export function Composer({
     [attachments, onAttachmentsChange, onImagePrepared]
   )
 
+  // A crashed session cannot carry a message: accepting one would show it in
+  // the ribbon, set the tab working, and deliver it nowhere (spec 6.10).
+  const dead = status === 'error'
+
   /** Enter pressed while an image was still being prepared: send once it is. */
   const [sendWhenReady, setSendWhenReady] = useState(false)
 
@@ -316,6 +320,7 @@ export function Composer({
     const ready = materialize(attachments)
     // Nothing left to send: only a failed image, which stays to be seen.
     if (!text && ready.length === 0) return
+    // Cleared now; a message the tab could not take comes back (onSubmit).
     onDraftChange('')
     onAttachmentsChange([])
     onSubmit(text, ready)
@@ -323,7 +328,7 @@ export function Composer({
 
   // A failed image cancels the waiting send and leaves the text and its error
   // chip in place: only another Enter sends without the image.
-  const queued = queuedSendStep(sendWhenReady, attachments)
+  const queued = queuedSendStep(sendWhenReady, attachments, dead)
   useEffect(() => {
     if (queued === 'send') void submit()
     else if (queued === 'cancel') setSendWhenReady(false)
@@ -477,9 +482,6 @@ export function Composer({
   }
 
   const busy = status === 'busy' || status === 'waiting'
-  // A crashed session cannot carry a message: accepting one would show it in
-  // the ribbon, set the tab working, and deliver it nowhere (spec 6.10).
-  const dead = status === 'error'
 
   return (
     <div

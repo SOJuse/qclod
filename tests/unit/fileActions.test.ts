@@ -61,6 +61,11 @@ describe('isRunnable', () => {
     expect(isRunnable(`C:\\p\\${n}`)).toBe(false)
   )
 
+  // Excel opens a .csv the agent wrote without Protected View, formulas and all.
+  test.each(['data.csv', 'data.TSV'])('%s — только показывается', (n) =>
+    expect(isRunnable(`C:\\p\\${n}`)).toBe(true)
+  )
+
   test('неизвестный тип и файл без расширения считаются исполняемыми', () => {
     expect(isRunnable('C:\\p\\a.xyz')).toBe(true)
     expect(isRunnable('C:\\p\\README')).toBe(true)
@@ -220,6 +225,13 @@ describe('buildEditorCommand', () => {
     expect(() =>
       buildEditorCommand('ed --file="{path}"', { path: 'C:\\a&echo INJECTED2&b.ts' })
     ).toThrow(/кавычк/)
+  })
+
+  test('обратный слеш перед кавычкой рядом с плейсхолдером — отказ', () => {
+    // The editor would read \" as a literal quote, and the quoting would flip.
+    for (const template of ['ed --file=\\"{path}"', 'ed --file="{path}\\"', 'ed --a="{line}\\":{path}']) {
+      expect(() => buildEditorCommand(template, { path: 'C:\\a.ts' }), template).toThrow(/безопасно/)
+    }
   })
 
   test('непарная кавычка в шаблоне — отказ', () => {

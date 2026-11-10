@@ -2,6 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { catchCopies, copiedText } from './helpers/clipboard'
 
 type ShellEntry = { action: 'open' | 'reveal' | 'editor'; path: string; line?: number }
 
@@ -49,10 +50,6 @@ async function shellLog(): Promise<ShellEntry[]> {
   return app!.evaluate(() => (globalThis as { __qclodShellLog?: ShellEntry[] }).__qclodShellLog ?? [])
 }
 
-async function clipboardText(): Promise<string> {
-  return app!.evaluate(({ clipboard }) => clipboard.readText())
-}
-
 const SAY = (text: string): unknown[] => [{ kind: 'text', text }]
 const aTs = (): string => join(project, 'src', 'a.ts')
 
@@ -76,6 +73,7 @@ test('правый клик — меню; «Скопировать относи�
   const link = win.locator('[data-testid="path-link"]').first()
   await expect(link).toBeVisible({ timeout: 15000 })
 
+  await catchCopies(win)
   await link.click({ button: 'right' })
   const menu = win.locator('[data-testid="path-menu"]')
   await expect(menu).toBeVisible()
@@ -85,7 +83,7 @@ test('правый клик — меню; «Скопировать относи�
 
   await items.filter({ hasText: 'Скопировать относительный путь' }).click()
   await expect(menu).toBeHidden()
-  await expect.poll(clipboardText).toBe('src\\a.ts')
+  await expect.poll(() => copiedText(win)).toBe('src\\a.ts')
   // Copying does not open anything.
   expect(await shellLog()).toEqual([])
 })
@@ -95,6 +93,7 @@ test('меню с клавиатуры: Shift+F10, стрелки, Enter; Esc з
   const link = win.locator('[data-testid="path-link"]').first()
   await expect(link).toBeVisible({ timeout: 15000 })
 
+  await catchCopies(win)
   await link.focus()
   await win.keyboard.press('Shift+F10')
   const menu = win.locator('[data-testid="path-menu"]')
@@ -110,7 +109,7 @@ test('меню с клавиатуры: Shift+F10, стрелки, Enter; Esc з
   await win.keyboard.press('ArrowDown')
   await win.keyboard.press('Enter')
   await expect(menu).toBeHidden()
-  await expect.poll(clipboardText).toBe(aTs())
+  await expect.poll(() => copiedText(win)).toBe(aTs())
 })
 
 test('«Показать в проводнике»', async () => {

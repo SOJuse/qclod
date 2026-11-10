@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { checkEnvironment } from './setup/environment'
 import { detectInstallMethod, installAgent, InstallSlot } from './setup/install'
 import { CHANNELS } from '../shared/channels'
+import { offScreen } from './window'
 import type { AppSettings } from '../shared/types'
 
 export interface BaseIpcDeps {
@@ -74,13 +75,16 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
     spawn('x-terminal-emulator', ['-e', agent], { detached: true }).unref()
   })
 
+  // Off screen (e2e) the window stays where it is: a maximize would put it on
+  // the monitor.
   ipcMain.handle(CHANNELS.windowMinimize, () => {
+    if (offScreen) return
     getWindow()?.minimize()
   })
 
   ipcMain.handle(CHANNELS.windowMaximize, () => {
     const win = getWindow()
-    if (!win) return false
+    if (!win || offScreen) return false
     if (win.isMaximized()) win.unmaximize()
     else win.maximize()
     return win.isMaximized()

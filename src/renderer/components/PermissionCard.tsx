@@ -3,6 +3,8 @@ import { Check, CheckCheck, X } from 'lucide-react'
 import type { RibbonItem } from '../../shared/types'
 import { resolveComposerKey } from '../input/keyPrecedence'
 import {
+  arrivalOf,
+  claimFocusOffer,
   createKeyGuard,
   focusedLongEnough,
   heldKeys,
@@ -63,8 +65,8 @@ function mayTakeFocus(card: HTMLElement, arrivedAt: number): boolean {
 export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.Element {
   const card = useRef<HTMLDivElement | null>(null)
   const guard = useRef(createKeyGuard())
-  /** When the question came; the window must have been in front before that. */
-  const arrivedAt = useRef(performance.now())
+  /** When the question came — first shown, not this mount; the window must have been in front before that. */
+  const arrivedAt = arrivalOf(item.requestId, performance.now())
   /** A Space key-down was refused, so its key-up must not click the button. */
   const spaceRefused = useRef(false)
   useEffect(() => {
@@ -80,12 +82,15 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
     // input line in one of them, and the card asks only after that.
     const timer = setTimeout(() => {
       const el = card.current
-      if (!el || !mayTakeFocus(el, arrivedAt.current)) return
+      // Offered once per request: a remount (scrolled back, tab shown again)
+      // must not pull focus from wherever the person has gone since.
+      if (!el || !claimFocusOffer(item.requestId)) return
+      if (!mayTakeFocus(el, arrivedAt)) return
       el.focus({ preventScroll: true })
       el.scrollIntoView({ block: 'nearest' })
     }, 0)
     return () => clearTimeout(timer)
-  }, [takesFocus, item.requestId])
+  }, [takesFocus, item.requestId, arrivedAt])
 
   function answer(behavior: 'allow' | 'deny', remember?: boolean): void {
     // Focus goes back to the input line, so the next thing typed lands there

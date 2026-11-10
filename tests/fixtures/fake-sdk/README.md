@@ -109,7 +109,8 @@ for await (const message of driver.messages) { /* ... */ }
 и затем само, вне хода, выдаёт
 `{type:'system', subtype:'bridge_state', state, detail, failure_kind?, bridge_epoch:1, uuid, session_id}`
 (`failure_kind` только при `failed`, по умолчанию `terminal`), а потом ходы с
-телефона. Выключение отвечает `null` и выдаёт
+телефона. Сообщения моста и ходы с телефона из очереди выдаются только между
+ходами (настоящий CLI может вставлять их и посреди хода). Выключение отвечает `null` и выдаёт
 `{type:'system', subtype:'worker_shutting_down', reason:'remote_control_disabled'}`.
 Ход с телефона — `user`-сообщение той же формы, что эхо, шаги
 (`steps ?? nextTurn`) и `result`; в `sent` он не попадает. Формы взяты из

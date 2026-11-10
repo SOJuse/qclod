@@ -2051,6 +2051,49 @@ describe('AgentSession: Remote Control', () => {
     await session.dispose()
   })
 
+  test('выключение и тут же включение из «нет связи» оставляют мост включённым', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    await session.setRemote(true)
+    session.handle({
+      type: 'system',
+      subtype: 'bridge_state',
+      state: 'failed',
+      detail: null,
+      failure_kind: 'terminal',
+      bridge_epoch: 1,
+      uuid: 'u',
+      session_id: 's'
+    } as never)
+    expect(session.remote.state).toBe('failed')
+    await Promise.all([session.setRemote(false), session.setRemote(true)])
+    expect(driver.remoteCalls.map((c) => c.enabled)).toEqual([true, false, true])
+    expect(session.remote.state).toBe('on')
+    expect(session.remote.url).toBeTruthy()
+    await session.dispose()
+  })
+
+  test('выключение и тут же включение из «на связи» заканчиваются включённым мостом', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    await session.setRemote(true)
+    await Promise.all([session.setRemote(false), session.setRemote(true)])
+    expect(driver.remoteCalls.map((c) => c.enabled)).toEqual([true, false, true])
+    expect(session.remote.state).toBe('on')
+    expect(session.remote.url).toBeTruthy()
+    await session.dispose()
+  })
+
+  test('два включения за одним выключением шлют один запрос', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    await session.setRemote(true)
+    await Promise.all([session.setRemote(false), session.setRemote(true), session.setRemote(true)])
+    expect(driver.remoteCalls.map((c) => c.enabled)).toEqual([true, false, true])
+    expect(session.remote.state).toBe('on')
+    await session.dispose()
+  })
+
   test('мост, ответивший раньше включения, не теряет ссылку', async () => {
     const { session, driver } = makeSession()
     await session.start()

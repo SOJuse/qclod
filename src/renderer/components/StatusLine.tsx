@@ -9,7 +9,7 @@ import {
   type PermissionMode,
   type RemoteInfo
 } from '../../shared/types'
-import { REMOTE_BLOCK_TEXT, REMOTE_STATE_LABEL } from '../../shared/remote'
+import { REMOTE_BLOCK_TEXT, REMOTE_STATE_LABEL, isRemoteLive } from '../../shared/remote'
 import { untilReset } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
 import { EFFORT_LABEL, EFFORT_SHORT, MODE_LABEL } from '../labels'
@@ -162,7 +162,7 @@ function RemoteToggle({ remote, onToggle }: { remote: RemoteInfo; onToggle: () =
       data-testid="remote-toggle"
       data-state={remote.state}
       aria-label={off ? 'Remote Control' : `Remote Control: ${word}`}
-      aria-pressed={!off}
+      aria-pressed={isRemoteLive(remote)}
       title={title}
       disabled={remote.blocked !== undefined}
       onClick={onToggle}

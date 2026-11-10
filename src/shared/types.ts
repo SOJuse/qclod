@@ -348,7 +348,7 @@ export interface CommandInfo {
   argumentHint: string
   aliases?: string[]
   builtin?: boolean
-  /** Set when the command cannot work here, e.g. /remote-control (spec 6.7). */
+  /** Set when the command cannot work here, e.g. /remote-control when Remote Control is blocked. */
   unavailableReason?: string
 }
 

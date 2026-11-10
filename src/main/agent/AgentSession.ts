@@ -308,6 +308,8 @@ export class AgentSession {
   }
 
   private async enableRemote(name?: string): Promise<void> {
+    // The last click wins: a «включить» waits for a «выключить» already on its way.
+    while (this.disabling) await this.disabling
     if (this.enabling) return this.enabling
     const driver = this.driver
     if (!driver || this.remoteInfo.blocked || isRemoteLive(this.remoteInfo)) return
@@ -365,7 +367,7 @@ export class AgentSession {
       this.setRemoteInfo({ ...this.remoteInfo, problem: `Не удалось выключить Remote Control: ${message}` })
       return
     }
-    if (this.driver === driver) this.setRemoteInfo(REMOTE_OFF)
+    if (this.driver === driver && this.remoteInfo.state !== 'connecting') this.setRemoteInfo(REMOTE_OFF)
   }
 
   /** Whether this login and CLI can run Remote Control at all; asked once the process is up. */

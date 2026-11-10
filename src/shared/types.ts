@@ -327,6 +327,17 @@ export interface TabState extends PersistedTab {
    * same conversation, where «Начать заново» would drop it.
    */
   canRetry?: boolean
+  /** Remote Control of this tab; live-only, never written to tabs.json. */
+  remote?: RemoteInfo
+}
+
+export type RemoteState = 'off' | 'connecting' | 'on' | 'reconnecting' | 'failed'
+export type RemoteBlock = 'sdk' | 'cli' | 'api_key' | 'provider'
+export interface RemoteInfo {
+  state: RemoteState
+  url?: string
+  problem?: string
+  blocked?: RemoteBlock
 }
 
 export interface CommandInfo {

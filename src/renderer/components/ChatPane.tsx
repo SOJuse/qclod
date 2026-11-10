@@ -91,6 +91,8 @@ export function ChatPane({
         key={tabId}
         items={ribbonByTab[tabId] ?? []}
         todo={todoByTab[tabId] ?? []}
+        cwd={tab?.cwd ?? ''}
+        tabId={tabId}
         onAnswerPermission={(requestId, behavior, remember) => {
           void window.qclod.answerPermission(requestId, {
             behavior,

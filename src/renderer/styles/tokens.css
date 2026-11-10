@@ -96,6 +96,8 @@
   --space-5: 24px;
 
   --rule-category: 2px;
+  /* An opened tool card's output block scrolls past this height until «Показать всё». */
+  --tool-output-max: 320px;
   --gap-hair: 2px;
   --radius-pill: 999px;
 

@@ -79,6 +79,8 @@ export type ToolView =
 
 /** How many lines of a file a card previews. */
 const PREVIEW_LINES = 12
+/** How many first lines of a written file a card shows. */
+const WRITE_HEAD_LINES = 20
 /** A call shorter than this prints no time: «0,0 с» reads as noise. */
 const MIN_PRINTED_MS = 100
 
@@ -204,7 +206,7 @@ function writeView(input: Obj, output: unknown): ToolView {
     path: (out ? str(out['filePath']) : '') || str(input['file_path']),
     created,
     size: counts.size ?? content.length,
-    head: all.slice(0, PREVIEW_LINES),
+    head: all.slice(0, WRITE_HEAD_LINES),
     totalLines,
     hunks: hunks ?? [],
     added: counts.added ?? added,

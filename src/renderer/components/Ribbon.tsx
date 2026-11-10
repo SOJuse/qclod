@@ -7,6 +7,9 @@ import './Ribbon.css'
 interface Props {
   items: Item[]
   todo: TodoItem[]
+  /** The tab's folder, for the tool cards. */
+  cwd: string
+  tabId: string
   onAnswerPermission: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
   onAnswerQuestion: (toolUseId: string, answers: Record<string, string>) => void
   onAnswerPlan: (requestId: string, approve: boolean) => void
@@ -33,6 +36,8 @@ const ASSUMED_ROW_HEIGHT = 44
 export function Ribbon({
   items,
   todo,
+  cwd,
+  tabId,
   onAnswerPermission,
   onAnswerQuestion,
   onAnswerPlan
@@ -117,6 +122,8 @@ export function Ribbon({
             key={item.id}
             item={item}
             children={items.filter((child) => child.parentId === item.id)}
+            cwd={cwd}
+            tabId={tabId}
             onMeasure={measure}
             onAnswerPermission={onAnswerPermission}
             onAnswerQuestion={onAnswerQuestion}

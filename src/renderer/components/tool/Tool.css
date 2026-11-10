@@ -1,0 +1,357 @@
+/*
+ * Tool cards. Neutral surfaces; the category colour (--cat) marks only the
+ * icon and the rule on the left. Every word wears a text token.
+ */
+
+.tool-card {
+  --cat: var(--cat-other);
+  margin: var(--space-1) 0;
+  border: 1px solid var(--border);
+  border-left: var(--rule-category) solid var(--cat);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  color: var(--text);
+}
+
+.tool-card[data-category='read'] { --cat: var(--cat-read); }
+.tool-card[data-category='search'] { --cat: var(--cat-search); }
+.tool-card[data-category='edit'] { --cat: var(--cat-edit); }
+.tool-card[data-category='command'] { --cat: var(--cat-command); }
+.tool-card[data-category='agent'] { --cat: var(--cat-agent); }
+.tool-card[data-category='mcp'] { --cat: var(--cat-mcp); }
+.tool-card[data-category='plan'] { --cat: var(--cat-plan); }
+.tool-card[data-category='other'] { --cat: var(--cat-other); }
+
+/* ------------------------------------------------------------ folded line */
+
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 30px;
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  border-radius: var(--radius-sm);
+}
+
+.tool-head::-webkit-details-marker {
+  display: none;
+}
+
+.tool-head:hover {
+  background: var(--hover-fill);
+}
+
+.tool-head:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: -1px;
+}
+
+.tool-icon,
+.tool-status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tool-name {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tool-target {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.tool-outcome {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-card.is-error .tool-outcome {
+  color: var(--text);
+}
+
+.tool-spin {
+  color: var(--text-dim);
+  animation: tool-spin 0.9s linear infinite;
+}
+
+@keyframes tool-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-spin {
+    animation: none;
+  }
+}
+
+.tool-card.is-compact {
+  margin: var(--gap-hair) 0;
+  font-size: var(--text-sm);
+}
+
+.tool-card.is-compact .tool-head {
+  min-height: 24px;
+  padding-top: var(--gap-hair);
+  padding-bottom: var(--gap-hair);
+}
+
+/* ------------------------------------------------------------ opened body */
+
+.tool-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border-top: 1px solid var(--border);
+  user-select: text;
+}
+
+.tool-mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.tool-wrap {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tool-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  margin: 0;
+}
+
+.tool-facts:empty {
+  display: none;
+}
+
+.tool-facts dt {
+  color: var(--text-dim);
+}
+
+.tool-facts dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.tool-output {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.tool-output-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.tool-output-more {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.tool-output-more:hover {
+  color: var(--text);
+}
+
+.tool-pre {
+  margin: 0;
+  padding: var(--space-2);
+  max-height: var(--tool-output-max);
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.tool-pre.is-whole {
+  max-height: none;
+}
+
+/* The error is read first: on top, set apart by a rule in the status colour. */
+.tool-error {
+  border-left: var(--rule-category) solid var(--status-critical);
+}
+
+.tool-more {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.tool-list {
+  margin: 0;
+  padding: var(--space-1) 0;
+  list-style: none;
+  max-height: var(--tool-output-max);
+  overflow: auto;
+}
+
+.tool-list li {
+  padding: var(--gap-hair) 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.tool-result {
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-result-url {
+  color: var(--text-dim);
+}
+
+.tool-args {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--text-sm);
+}
+
+.tool-args th,
+.tool-args td {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tool-args th {
+  width: 1%;
+  white-space: nowrap;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.tool-args td {
+  color: var(--text);
+}
+
+.tool-raw > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  width: max-content;
+}
+
+.tool-raw > summary:hover {
+  color: var(--text);
+}
+
+.tool-raw > .tool-pre {
+  margin-top: var(--space-1);
+}
+
+/* ------------------------------------------------------------------- diff */
+
+.diff,
+.tool-numbered {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.diff {
+  max-height: var(--tool-output-max);
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  padding: var(--space-1) 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.tool-numbered {
+  padding: var(--space-1) 0;
+}
+
+.diff-hunk + .diff-hunk {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px dashed var(--border);
+}
+
+.diff-line,
+.tool-numbered-line {
+  display: flex;
+  min-width: 0;
+}
+
+.diff-line.is-add {
+  background: color-mix(in srgb, var(--cat-edit) 16%, transparent);
+}
+
+.diff-line.is-del {
+  background: color-mix(in srgb, var(--status-critical) 16%, transparent);
+}
+
+.diff-no {
+  flex: 0 0 auto;
+  width: 4ch;
+  padding-right: var(--space-1);
+  text-align: right;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.diff-sign {
+  flex: 0 0 auto;
+  width: 2ch;
+  text-align: center;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.diff-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: var(--space-2);
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-numbered .diff-no {
+  padding-right: var(--space-2);
+}

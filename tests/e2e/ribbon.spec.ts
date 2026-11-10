@@ -65,7 +65,7 @@ test('карточка инструмента свёрнута, по клику 
     const card = win.locator('[data-testid="ribbon-tool"]').first()
     await expect(card).toBeVisible({ timeout: 15000 })
 
-    await expect(card).toContainText('Read')
+    await expect(card).toContainText('Чтение')
     await expect(card).toContainText('auth.ts')
     await expect(card).toContainText('3 строки')
     await expect(card.locator('[data-testid="tool-detail"]')).toBeHidden()
@@ -104,7 +104,7 @@ test('размышления свёрнуты в строку с длитель�
     const block = win.locator('[data-testid="ribbon-thinking"]').first()
 
     await expect(block).toBeVisible({ timeout: 15000 })
-    await expect(block).toContainText('думал')
+    await expect(block).toContainText('Думал')
     await expect(block.locator('[data-testid="thinking-text"]')).toBeHidden()
 
     await block.locator('[data-testid="thinking-head"]').click()
@@ -169,7 +169,7 @@ test('подагент сворачивает свои вызовы внутрь
 
     await card.locator('[data-testid="subagent-head"]').click()
     await expect(nested).toBeVisible()
-    await expect(nested).toContainText('Grep')
+    await expect(nested).toContainText('Поиск')
   } finally {
     await close(app, profile)
   }

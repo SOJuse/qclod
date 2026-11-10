@@ -91,7 +91,8 @@ describe('toolView', () => {
     const item = tool('Write', { file_path: 'n.ts', content }, { type: 'create', filePath: 'n.ts', content, structuredPatch: [] })
     const v = toolView(item)
     expect(v).toMatchObject({ type: 'write', created: true, totalLines: 40, size: content.length, added: 40, removed: 0 })
-    expect(v.type === 'write' && v.head.length).toBeGreaterThan(0)
+    // The opened card shows the first 20 lines of a written file.
+    expect(v.type === 'write' && v.head).toEqual(Array.from({ length: 20 }, (_, i) => `l${i}`))
     expect(toolOutcome(item, v)).toBe('новый · 40 строк')
   })
 

@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react'
+import { Brain } from 'lucide-react'
+import { compactNumber, plural, seconds } from '../../shared/format'
 import type { RibbonItem as Item } from '../../shared/types'
 import { AGENT_STATE_LABEL } from './agentState'
 import { PermissionCard } from './PermissionCard'
@@ -10,45 +12,19 @@ import { Markdown } from '../markdown/Markdown'
 interface Props {
   item: Item
   children: Item[]
+  /** The tab's folder: where its commands run. */
+  cwd: string
+  tabId: string
   onMeasure: (id: string, height: number) => void
   onAnswerPermission: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
   onAnswerQuestion: (toolUseId: string, answers: Record<string, string>) => void
   onAnswerPlan: (requestId: string, approve: boolean) => void
 }
 
-/** «42 с», «3 мин 20 с» — a length a person reads, not milliseconds. */
-function duration(ms: number): string {
-  const total = Math.round(ms / 1000)
-  if (total < 60) return `${total} с`
-  const minutes = Math.floor(total / 60)
-  const rest = total % 60
-  return rest === 0 ? `${minutes} мин` : `${minutes} мин ${rest} с`
-}
-
-/** 15000 → «15k»: the magnitude is what matters, not the digits. */
-function compact(value: number): string {
-  if (value < 1000) return String(value)
-  if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`
-  return `${(value / 1_000_000).toFixed(1)}M`
-}
-
-function plural(n: number, one: string, few: string, many: string): string {
-  const tens = n % 100
-  const ones = n % 10
-  if (tens >= 11 && tens <= 14) return many
-  if (ones === 1) return one
-  if (ones >= 2 && ones <= 4) return few
-  return many
-}
-
-function seconds(ms: number): string {
-  const s = Math.max(1, Math.round(ms / 1000))
-  const tens = s % 100
-  const ones = s % 10
-  if (tens >= 11 && tens <= 14) return `${s} секунд`
-  if (ones === 1) return `${s} секунду`
-  if (ones >= 2 && ones <= 4) return `${s} секунды`
-  return `${s} секунд`
+/** «Думал 12 с»; a block that came whole has no length to print. «Думает…» while it streams. */
+function thinkingLabel(item: Extract<Item, { kind: 'thinking' }>): string {
+  if (!item.done) return 'Думает…'
+  return item.durationMs >= 100 ? `Думал ${seconds(item.durationMs)}` : 'Думал'
 }
 
 /**
@@ -83,6 +59,8 @@ export function NoticeRow({ item }: { item: Extract<Item, { kind: 'notice' }> })
 export function RibbonRow({
   item,
   children,
+  cwd,
+  tabId,
   onMeasure,
   onAnswerPermission,
   onAnswerQuestion,
@@ -133,11 +111,12 @@ export function RibbonRow({
 
       case 'thinking':
         return (
-          <details className="row-thinking">
-            <summary data-testid="thinking-head">
-              {item.done ? `думал ${seconds(item.durationMs)}` : 'думает…'}
+          <details className="thinking">
+            <summary className="thinking-head" data-testid="thinking-head">
+              <Brain size={14} aria-hidden="true" />
+              {thinkingLabel(item)}
             </summary>
-            <div className="row-thinking-text" data-testid="thinking-text">
+            <div className="thinking-text" data-testid="thinking-text">
               {item.text}
             </div>
           </details>
@@ -145,7 +124,7 @@ export function RibbonRow({
 
       case 'tool':
       case 'toolError':
-        return <ToolCard item={item} />
+        return <ToolCard item={item} cwd={cwd} tabId={tabId} />
 
       case 'subagent':
         return (
@@ -166,8 +145,8 @@ export function RibbonRow({
                   </span>
                 ) : (
                   [
-                    item.durationMs ? duration(item.durationMs) : null,
-                    item.tokens ? `${compact(item.tokens)} токенов` : null,
+                    item.durationMs ? seconds(item.durationMs) : null,
+                    item.tokens ? `${compactNumber(item.tokens)} токенов` : null,
                     item.toolCalls ? `${item.toolCalls} ${plural(item.toolCalls, 'вызов', 'вызова', 'вызовов')}` : null,
                     `${children.length} в ленте`
                   ]
@@ -180,7 +159,7 @@ export function RibbonRow({
               {children.map((child) => (
                 <div key={child.id} data-testid={`ribbon-${child.kind}`}>
                   {child.kind === 'tool' || child.kind === 'toolError' ? (
-                    <ToolCard item={child} />
+                    <ToolCard item={child} cwd={cwd} tabId={tabId} compact />
                   ) : child.kind === 'agentText' ? (
                     <div className="row-agent">{child.text}</div>
                   ) : null}

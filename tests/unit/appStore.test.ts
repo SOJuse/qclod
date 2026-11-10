@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'vitest'
-import { EMPTY_PANEL, useAppStore } from '../../src/renderer/state/useAppStore'
-import type { TabState } from '../../src/shared/types'
+import { EMPTY_PANEL, MISSING_TTL_MS, pathSettled, useAppStore } from '../../src/renderer/state/useAppStore'
+import type { RibbonItem, TabState } from '../../src/shared/types'
 
 // One store per process: every test starts from the state it was created with.
 const initial = useAppStore.getState()
@@ -223,10 +223,45 @@ describe('useAppStore: пути', () => {
     store.setPaths('P', [['src/a.ts', hit]])
     store.setPaths('P', [['src/нет.ts', null]])
     const known = useAppStore.getState().pathsByTab['P']!
-    expect(known.get('src/a.ts')).toEqual(hit)
+    expect(known.get('src/a.ts')?.target).toEqual(hit)
     expect(known.has('src/нет.ts')).toBe(true)
-    expect(known.get('src/нет.ts')).toBeNull()
+    expect(known.get('src/нет.ts')?.target).toBeNull()
     expect(useAppStore.getState().pathsByTab['Q']).toBeUndefined()
+  })
+})
+
+describe('useAppStore: «нет такого файла» не навсегда', () => {
+  const hit = { raw: 'src/a.ts', absPath: 'C:\p\src\a.ts', isDir: false }
+  const tool = (name: string, state: 'running' | 'done'): RibbonItem =>
+    ({ kind: 'tool', id: `t-${name}`, toolUseId: `u-${name}`, name, target: '', summary: '', detail: '', state }) as RibbonItem
+
+  test('ответ «нет» устаревает через 10 секунд, «есть» — нет', () => {
+    expect(pathSettled({ target: null, at: 1000 }, 1000 + MISSING_TTL_MS - 1)).toBe(true)
+    expect(pathSettled({ target: null, at: 1000 }, 1000 + MISSING_TTL_MS)).toBe(false)
+    expect(pathSettled({ target: hit, at: 1000 }, 1000 + 10 * MISSING_TTL_MS)).toBe(true)
+    expect(pathSettled(undefined, 0)).toBe(false)
+  })
+
+  test('результат Write, Edit, NotebookEdit или Bash стирает «нет» вкладки, «есть» остаются', () => {
+    for (const name of ['Write', 'Edit', 'NotebookEdit', 'Bash']) {
+      const id = `W-${name}`
+      const store = useAppStore.getState()
+      store.setPaths(id, [['src/a.ts', hit], ['src/b.ts', null]])
+      store.applyRibbon(id, [{ kind: 'append', item: tool(name, 'running') }], 1)
+      // Still running: nothing has been written yet.
+      expect(useAppStore.getState().pathsByTab[id]!.has('src/b.ts')).toBe(true)
+      store.applyRibbon(id, [{ kind: 'update', id: `t-${name}`, patch: { state: 'done' } as never }], 2)
+      const known = useAppStore.getState().pathsByTab[id]!
+      expect(known.has('src/b.ts')).toBe(false)
+      expect(known.get('src/a.ts')?.target).toEqual(hit)
+    }
+  })
+
+  test('чтение файла «нет» не стирает', () => {
+    const store = useAppStore.getState()
+    store.setPaths('R', [['src/b.ts', null]])
+    store.applyRibbon('R', [{ kind: 'append', item: tool('Read', 'done') }], 1)
+    expect(useAppStore.getState().pathsByTab['R']!.has('src/b.ts')).toBe(true)
   })
 })
 

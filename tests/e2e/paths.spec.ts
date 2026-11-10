@@ -207,3 +207,29 @@ test('пути в выводе команды и в списке найденн�
   await search.locator('[data-testid="tool-head"]').click()
   await expect(search.locator('[data-testid="tool-match"] [data-testid="path-link"]')).toHaveText(aTs())
 })
+
+test('путь, названный до создания файла, становится ссылкой после Write', async () => {
+  const later = join(project, 'src', 'b.ts')
+  const win = await launch([
+    { kind: 'text', text: 'Создам src/b.ts' },
+    {
+      kind: 'tool',
+      name: 'Write',
+      input: { file_path: later, content: 'export {}' },
+      result: 'ok',
+      pauseMs: 3000
+    },
+    { kind: 'text', text: 'Готово: src/b.ts' }
+  ])
+  const first = win.locator('[data-testid="ribbon-agentText"]').first()
+  await expect(first).toContainText('Создам src/b.ts', { timeout: 15000 })
+  // Main has said "no such file" by now.
+  await win.waitForTimeout(1000)
+  await expect(first.locator('[data-testid="path-link"]')).toHaveCount(0)
+  writeFileSync(later, 'export {}\n', 'utf8')
+
+  const second = win.locator('[data-testid="ribbon-agentText"]').nth(1)
+  await expect(second.locator('[data-testid="path-link"]')).toHaveText('src/b.ts', { timeout: 15000 })
+  // The earlier mention is asked again too.
+  await expect(first.locator('[data-testid="path-link"]')).toHaveText('src/b.ts')
+})

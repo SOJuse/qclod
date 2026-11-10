@@ -44,6 +44,20 @@ describe('PathResolver', () => {
     expect(stat).toHaveBeenCalledTimes(1)
   })
 
+  test('«нет» не запоминается: созданный следом файл находится сразу', async () => {
+    const files: string[] = []
+    const stat = vi.fn(async (p: string) => {
+      if (files.includes(p)) return { isDirectory: () => false }
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    })
+    const resolver = new PathResolver({ stat })
+    expect(await resolver.resolve(CWD, ['src/b.ts'], 't1')).toEqual([null])
+    files.push('C:\\proj\\src\\b.ts')
+    expect(await resolver.resolve(CWD, ['src/b.ts'], 't1')).toEqual([
+      { raw: 'src/b.ts', absPath: 'C:\\proj\\src\\b.ts', isDir: false }
+    ])
+  })
+
   test('после TTL путь проверяется снова', async () => {
     vi.useFakeTimers()
     try {

@@ -118,15 +118,19 @@ export class PathResolver {
 
   private async lookup(abs: string): Promise<Entry> {
     const now = Date.now()
+    // Only a "yes" is reused. Agents name a file before they create it, and
+    // the window asks again right after a write: a remembered "no" would hide
+    // the new file. Within one call a path is still looked up once.
     const cached = this.cache.get(abs)
-    if (cached && now - cached.at <= this.ttlMs) return cached
+    if (cached && cached.exists && now - cached.at <= this.ttlMs) return cached
 
     let entry: Entry
     try {
       const st = await this.stat(abs)
       entry = { exists: true, isDir: st.isDirectory(), at: now }
     } catch {
-      entry = { exists: false, isDir: false, at: now }
+      this.cache.delete(abs)
+      return { exists: false, isDir: false, at: now }
     }
     remember(this.cache, abs, entry, this.maxEntries)
     return entry

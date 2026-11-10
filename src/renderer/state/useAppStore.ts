@@ -30,6 +30,49 @@ const PER_TAB_KEYS = [
 const RECENT_COMMANDS = 6
 /** Answers about paths kept per tab; the oldest go first past this. */
 const PATHS_PER_TAB = 5000
+/**
+ * How long "no such file" holds. Agents name a file before they create it,
+ * so a "no" is only a recent fact; a "yes" holds (an action re-checks it).
+ */
+export const MISSING_TTL_MS = 10_000
+/** Tools whose result may have made a file that was not there before. */
+const WRITING_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit', 'Bash'])
+
+/** What main said about one path text, and when. */
+export interface PathAnswer {
+  target: ResolvedPath | null
+  at: number
+}
+
+/** Whether an answer still stands, so the text need not be asked about again. */
+export function pathSettled(answer: PathAnswer | undefined, now = Date.now()): boolean {
+  if (!answer) return false
+  return answer.target !== null || now - answer.at < MISSING_TTL_MS
+}
+
+/** Whether these changes finish a call that writes files (in its result or its error). */
+function finishesWrite(items: RibbonItem[], changes: RibbonChange[]): boolean {
+  const ids = new Set<string>()
+  for (const change of changes) {
+    if (change.kind === 'append') ids.add(change.item.id)
+    else if (change.kind === 'update') ids.add(change.id)
+  }
+  if (ids.size === 0) return false
+  return items.some(
+    (item) =>
+      ids.has(item.id) &&
+      ((item.kind === 'tool' && item.state !== 'running') || item.kind === 'toolError') &&
+      WRITING_TOOLS.has(item.name)
+  )
+}
+
+/** A tab's answers without its "no"s: after a write they may be wrong. */
+function withoutMissing(
+  known: ReadonlyMap<string, PathAnswer> | undefined
+): ReadonlyMap<string, PathAnswer> | undefined {
+  if (!known || ![...known.values()].some((a) => a.target === null)) return known
+  return new Map([...known].filter(([, a]) => a.target !== null))
+}
 
 function closedAfter(state: AppState, tabs: TabState[]): ReadonlySet<TabId> {
   const open = new Set(tabs.map((t) => t.id))
@@ -89,7 +132,7 @@ interface AppState {
    * What main said about each path text a tab showed: where it is, or null
    * for "not on disk" — so the same text is never asked about twice.
    */
-  pathsByTab: Record<TabId, ReadonlyMap<string, ResolvedPath | null>>
+  pathsByTab: Record<TabId, ReadonlyMap<string, PathAnswer>>
   /** The last commands run, newest first — they head the list before anything is typed. */
   recentCommands: string[]
 
@@ -207,7 +250,11 @@ export const useAppStore = create<AppState>((set) => ({
   setRibbon: (id, snapshot) =>
     set((state) => {
       if (state.closedTabs.has(id) || snapshot.rev < (state.ribbonRevByTab[id] ?? -1)) return state
+      // A whole ribbon at once may carry writes this window never saw arrive.
+      const known = state.pathsByTab[id]
+      const paths = withoutMissing(known)
       return {
+        ...(paths !== known && paths ? { pathsByTab: { ...state.pathsByTab, [id]: paths } } : {}),
         ribbonByTab: { ...state.ribbonByTab, [id]: snapshot.items },
         ribbonRevByTab: { ...state.ribbonRevByTab, [id]: snapshot.rev },
         ...(snapshot.todo ? { todoByTab: { ...state.todoByTab, [id]: snapshot.todo } } : {})
@@ -218,9 +265,12 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => {
       if (state.closedTabs.has(id) || rev <= (state.ribbonRevByTab[id] ?? -1)) return state
       const { items, todo } = reduceRibbon(state.ribbonByTab[id] ?? [], changes)
+      const known = state.pathsByTab[id]
+      const paths = finishesWrite(items, changes) ? withoutMissing(known) : known
       return {
         ribbonByTab: { ...state.ribbonByTab, [id]: items },
         ribbonRevByTab: { ...state.ribbonRevByTab, [id]: rev },
+        ...(paths !== known && paths ? { pathsByTab: { ...state.pathsByTab, [id]: paths } } : {}),
         ...(todo ? { todoByTab: { ...state.todoByTab, [id]: todo } } : {})
       }
     }),
@@ -264,7 +314,12 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => {
       if (state.closedTabs.has(id) || answers.length === 0) return state
       const next = new Map(state.pathsByTab[id])
-      for (const [raw, answer] of answers) next.set(raw, answer)
+      const at = Date.now()
+      for (const [raw, target] of answers) {
+        // Re-inserted, so a fresh answer counts as the newest one.
+        next.delete(raw)
+        next.set(raw, { target, at })
+      }
       // A Map iterates in insertion order: the first keys are the oldest.
       for (const raw of next.keys()) {
         if (next.size <= PATHS_PER_TAB) break

@@ -11,6 +11,10 @@ export type ComposerKeyAction =
   | 'popupComplete'
   | 'openMentions'
   | 'cyclePermissionMode'
+  /** Only ever resolved for the permission card while it has focus (ruling C16). */
+  | 'permissionAllow'
+  | 'permissionAllowAll'
+  | 'permissionDeny'
   | 'submit'
   | 'newline'
   | 'historyPrev'
@@ -27,6 +31,12 @@ export interface ComposerContext {
   hasAttachments?: boolean
   caretAtStart: boolean
   caretAtEnd: boolean
+  /**
+   * The keys of a permission card are being resolved. Set by the card while IT
+   * has focus, never by the input line: a reply that starts with «ф» (KeyA on
+   * the Russian layout) must not grant a blanket permission (ruling C16).
+   */
+  pendingPermission?: boolean
 }
 
 export interface KeyLike extends PhysicalKeyEvent {
@@ -66,7 +76,32 @@ const RULES: Rule[] = [
 
   // Esc must always reach the agent, or a half-typed draft would make it
   // uninterruptible. With a popup open it closes the popup first.
-  (ev, ctx) => (ev.key === 'Escape' ? (ctx.popupOpen ? 'closePopup' : 'interrupt') : undefined),
+  (ev, ctx) => {
+    if (ev.key !== 'Escape') return undefined
+    if (ctx.popupOpen) return 'closePopup'
+    return ctx.pendingPermission ? 'permissionDeny' : 'interrupt'
+  },
+
+  // A permission card with focus: Enter allows, A allows all of the kind. Only
+  // on an empty field without attachments — with text, Enter is a send.
+  (ev, ctx) =>
+    ctx.pendingPermission &&
+    ev.key === 'Enter' &&
+    !ev.shiftKey &&
+    ctx.text === '' &&
+    !ctx.hasAttachments
+      ? 'permissionAllow'
+      : undefined,
+  (ev, ctx) =>
+    ctx.pendingPermission &&
+    ctx.text === '' &&
+    !ev.ctrlKey &&
+    !ev.altKey &&
+    !ev.metaKey &&
+    !ev.shiftKey &&
+    physicalKey(ev) === 'a'
+      ? 'permissionAllowAll'
+      : undefined,
 
   // Native editing. The field is a plain textarea and the browser does these
   // correctly; intercepting them is how undo gets broken.

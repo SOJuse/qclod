@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { RibbonItem as Item } from '../../shared/types'
 import { childrenByParent } from '../chat/children'
+import { oldestPendingPermission } from '../chat/pendingPermission'
 import { RibbonRow } from './RibbonItem'
 import './Ribbon.css'
 
@@ -52,6 +53,7 @@ export function Ribbon({
   // Both come from one pass over the ribbon per change, not one per card.
   const rows = useMemo(() => items.filter((item) => item.parentId === undefined), [items])
   const byParent = useMemo(() => childrenByParent(items), [items])
+  const pendingId = useMemo(() => oldestPendingPermission(items)?.id ?? null, [items])
 
   const offsets: number[] = []
   let total = 0
@@ -106,6 +108,18 @@ export function Ribbon({
     stickToBottom.current = true
   }, [])
 
+  // A question that appears is never left out of sight above or below: the
+  // ribbon follows the bottom again, where it will be drawn.
+  useLayoutEffect(() => {
+    if (pendingId !== null) stickToBottom.current = true
+  }, [pendingId])
+
+  // A question that appears is never left out of sight above or below: the
+  // ribbon follows the bottom again, where it will be drawn.
+  useLayoutEffect(() => {
+    if (pendingId !== null) stickToBottom.current = true
+  }, [pendingId])
+
   useLayoutEffect(() => {
     const el = viewport.current
     if (!el || !stickToBottom.current) return
@@ -124,6 +138,7 @@ export function Ribbon({
             byParent={byParent}
             cwd={cwd}
             tabId={tabId}
+            activePermissionId={pendingId}
             onMeasure={measure}
             onAnswerPermission={onAnswerPermission}
             onAnswerQuestion={onAnswerQuestion}

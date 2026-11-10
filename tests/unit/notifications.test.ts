@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { notificationFor } from '@main/notifications'
+import { notificationFor, shouldRaiseWindowForPermission } from '@main/notifications'
 import { DEFAULT_SETTINGS } from '@main/store/settingsStore'
 
 const base = {
@@ -58,5 +58,19 @@ describe('notificationFor', () => {
     const waiting = notificationFor({ ...base, status: 'waiting' })
     const idle = notificationFor({ ...base, status: 'idle' })
     expect(waiting?.body).not.toBe(idle?.body)
+  })
+})
+
+describe('shouldRaiseWindowForPermission', () => {
+  test('вкладка запроса активна — окно показывается', () => {
+    expect(shouldRaiseWindowForPermission('t1', 't1')).toBe(true)
+  })
+
+  test('фоновая вкладка — окно не всплывает, остаются бейдж и уведомление', () => {
+    expect(shouldRaiseWindowForPermission('t1', 't2')).toBe(false)
+  })
+
+  test('активной вкладки нет — не всплывает', () => {
+    expect(shouldRaiseWindowForPermission(null, 't2')).toBe(false)
   })
 })

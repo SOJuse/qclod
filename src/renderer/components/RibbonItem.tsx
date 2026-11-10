@@ -16,6 +16,8 @@ interface Props {
   /** The tab's folder: where its commands run. */
   cwd: string
   tabId: string
+  /** The permission the keys answer, if any. */
+  activePermissionId?: string | null
   onMeasure: (id: string, height: number) => void
   onAnswerPermission: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
   onAnswerQuestion: (toolUseId: string, answers: Record<string, string>) => void
@@ -62,6 +64,7 @@ export function RibbonRow({
   byParent,
   cwd,
   tabId,
+  activePermissionId = null,
   onMeasure,
   onAnswerPermission,
   onAnswerQuestion,
@@ -142,7 +145,11 @@ export function RibbonRow({
         return <PlanCard item={item} onAnswer={onAnswerPlan} />
 
       case 'permission':
-        return <PermissionCard item={item} onAnswer={onAnswerPermission} />
+        return <PermissionCard
+            item={item}
+            active={item.id === activePermissionId}
+            onAnswer={onAnswerPermission}
+          />
 
       case 'question':
         return <QuestionCard item={item} onAnswer={onAnswerQuestion} />

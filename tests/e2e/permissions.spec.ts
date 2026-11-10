@@ -188,3 +188,150 @@ test('пока ждём ответа, вкладка в состоянии waiti
     await close(app, profile)
   }
 })
+
+test('Enter разрешает, инструмент выполняется', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
+  })
+  try {
+    const win = await app.firstWindow()
+    const card = win.locator('[data-testid="permission-card"]')
+    await expect(card).toBeVisible({ timeout: 15000 })
+    // The card took focus when it appeared.
+    await expect(card).toBeFocused()
+
+    await win.keyboard.press('Enter')
+
+    await expect(card).toContainText('разрешено')
+    await expect(win.locator('[data-testid="ribbon-tool"]')).toBeVisible({ timeout: 15000 })
+    // Focus is back where the typing goes.
+    await expect(win.locator('[data-testid="composer-input"]')).toBeFocused()
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('Esc отклоняет', async () => {
+  const { app, profile } = await launch({
+    steps: [
+      { kind: 'askPermission', name: 'Bash', input: { command: 'rm -rf /' } },
+      { kind: 'text', text: 'хорошо, не буду' }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    const card = win.locator('[data-testid="permission-card"]')
+    await expect(card).toBeFocused({ timeout: 15000 })
+
+    await win.keyboard.press('Escape')
+
+    await expect(card).toContainText('отклонено')
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText('хорошо, не буду', {
+      timeout: 15000
+    })
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('A разрешает всё такое — второй такой же не спрашивается', async () => {
+  const { app, profile } = await launch({
+    steps: [
+      { kind: 'askPermission', name: 'Read', input: { file_path: 'C:/проект/auth.ts' } },
+      { kind: 'askPermission', name: 'Read', input: { file_path: 'C:/проект/auth.ts' } }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('[data-testid="permission-card"]')).toBeFocused({ timeout: 15000 })
+
+    // The physical key: it is «ф» on the Russian layout.
+    await win.keyboard.press('KeyA')
+
+    await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(2, { timeout: 15000 })
+    await expect(win.locator('[data-testid="permission-card"]')).toHaveCount(1)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('в поле ввода Enter, A и Esc ничего не разрешают', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
+  })
+  try {
+    const win = await app.firstWindow()
+    const card = win.locator('[data-testid="permission-card"]')
+    await expect(card).toBeFocused({ timeout: 15000 })
+
+    // Back to the input line with a click, then a reply that starts with «ф».
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    await win.keyboard.press('KeyA')
+    await win.keyboard.press('Enter')
+    await expect(input).toBeFocused()
+    await expect(card).toContainText('npm test')
+    await expect(win.locator('[data-testid="permission-allow"]')).toBeVisible()
+    await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('карточка не прячется под полем ввода', async () => {
+  const steps: unknown[] = Array.from({ length: 20 }, (_, i) => ({
+    kind: 'text',
+    text: `шаг ${i + 1}: читаю файлы и думаю дальше`
+  }))
+  steps.push({ kind: 'askPermission', name: 'Bash', input: { command: 'первый' } })
+  steps.push({ kind: 'askPermission', name: 'Bash', input: { command: 'второй' } })
+  const { app, profile } = await launch({ steps })
+  try {
+    const win = await app.firstWindow()
+    const first = win.locator('[data-testid="permission-card"]', { hasText: 'первый' })
+    await expect(first).toBeVisible({ timeout: 20000 })
+
+    // Read back up the story, then answer; the next question arrives while
+    // the ribbon is scrolled away from the bottom.
+    // Two frames, so the ribbon has heard that it is no longer following the bottom.
+    await win.locator('[data-testid="ribbon"]').evaluate(async (el) => {
+      el.scrollTop = 0
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+    })
+    await win.keyboard.press('Enter')
+
+    const second = win.locator('[data-testid="permission-card"]', { hasText: 'второй' })
+    await expect(second).toBeVisible({ timeout: 15000 })
+    await expect
+      .poll(async () => {
+        const card = await second.boundingBox()
+        const composer = await win.locator('[data-testid="composer"]').boundingBox()
+        return card !== null && composer !== null && card.y + card.height <= composer.y
+      })
+      .toBe(true)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('«Разрешить» — главная кнопка, «Отклонить» — опасная', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
+  })
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('[data-testid="permission-allow"]')).toHaveClass(/btn-primary/, {
+      timeout: 15000
+    })
+    await expect(win.locator('[data-testid="permission-deny"]')).toHaveClass(/btn-danger/)
+    await expect(win.locator('[data-testid="permission-allow-all"]')).not.toHaveClass(
+      /btn-primary|btn-danger/
+    )
+    await expect(win.locator('[data-testid="permission-allow"] kbd')).toHaveText('Enter')
+    await expect(win.locator('[data-testid="permission-allow-all"] kbd')).toHaveText('A')
+    await expect(win.locator('[data-testid="permission-deny"] kbd')).toHaveText('Esc')
+    await expect(win.locator('[data-testid="permission-deny"]')).toHaveAttribute('title', /Esc/)
+  } finally {
+    await close(app, profile)
+  }
+})

@@ -136,3 +136,76 @@ describe('resolveComposerKey: вложение без текста', () => {
     expect(resolveComposerKey(key({ key: 'Enter' }), ctx({ text: '' }))).toBe('insert')
   })
 })
+
+describe('ожидающее разрешение', () => {
+  test('Enter на пустом поле при ожидающем разрешении — разрешить', () => {
+    expect(resolveComposerKey(key({ key: 'Enter' }), ctx({ pendingPermission: true }))).toBe(
+      'permissionAllow'
+    )
+  })
+
+  test('Enter с текстом при ожидающем разрешении — отправка, не разрешение', () => {
+    expect(
+      resolveComposerKey(key({ key: 'Enter' }), ctx({ text: 'и ещё', pendingPermission: true }))
+    ).toBe('submit')
+  })
+
+  test('Enter с вложением — отправка', () => {
+    expect(
+      resolveComposerKey(key({ key: 'Enter' }), ctx({ hasAttachments: true, pendingPermission: true }))
+    ).toBe('submit')
+  })
+
+  test('Shift+Enter остаётся переводом строки', () => {
+    expect(
+      resolveComposerKey(key({ key: 'Enter', shiftKey: true }), ctx({ pendingPermission: true }))
+    ).toBe('newline')
+  })
+
+  test('A (на русской раскладке «ф») — разрешить всё такое', () => {
+    expect(
+      resolveComposerKey(key({ key: 'ф', code: 'KeyA' }), ctx({ pendingPermission: true }))
+    ).toBe('permissionAllowAll')
+  })
+
+  test('A с текстом в поле — просто буква', () => {
+    expect(
+      resolveComposerKey(key({ key: 'ф', code: 'KeyA' }), ctx({ text: 'п', pendingPermission: true }))
+    ).toBe('insert')
+  })
+
+  test('Ctrl+A остаётся выделением', () => {
+    expect(
+      resolveComposerKey(key({ key: 'a', code: 'KeyA', ctrlKey: true }), ctx({ pendingPermission: true }))
+    ).toBe('native')
+  })
+
+  test('A без ожидающего разрешения — просто буква', () => {
+    expect(resolveComposerKey(key({ key: 'a', code: 'KeyA' }), ctx())).toBe('insert')
+  })
+
+  test('Esc при ожидающем разрешении — отклонить, а не прервать', () => {
+    expect(resolveComposerKey(key({ key: 'Escape' }), ctx({ pendingPermission: true }))).toBe(
+      'permissionDeny'
+    )
+  })
+
+  test('Esc при открытой подсказке и разрешении — сначала закрыть подсказку', () => {
+    expect(
+      resolveComposerKey(key({ key: 'Escape' }), ctx({ popupOpen: true, pendingPermission: true }))
+    ).toBe('closePopup')
+  })
+
+  test('Esc без ожидающего разрешения по-прежнему прерывает', () => {
+    expect(resolveComposerKey(key({ key: 'Escape' }), ctx())).toBe('interrupt')
+  })
+
+  test('клавиши метода ввода (IME) не разрешают и не отклоняют', () => {
+    expect(
+      resolveComposerKey(key({ key: 'Enter', isComposing: true }), ctx({ pendingPermission: true }))
+    ).toBe('native')
+    expect(
+      resolveComposerKey(key({ key: 'Escape', keyCode: 229 }), ctx({ pendingPermission: true }))
+    ).toBe('native')
+  })
+})

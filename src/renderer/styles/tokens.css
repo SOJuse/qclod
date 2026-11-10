@@ -16,6 +16,8 @@
   --surface-sunken: rgba(9, 10, 19, 0.62);
 
   --accent: #6e8bff;
+  /* Text on a solid accent fill: the primary button. */
+  --on-accent: #0b0e1f;
   --glow: #b07cff;
   --ok: #67d8a0;
   --warn: #ffc46b;

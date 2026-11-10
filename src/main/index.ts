@@ -16,7 +16,7 @@ import { loadTranscript } from './agent/transcript'
 import { TabController } from './tabs/TabController'
 import { pickDefaultCwd } from './tabs/defaultCwd'
 import { mergeDefaults } from './tabs/sanitize'
-import { notifyIfNeeded } from './notifications'
+import { notifyIfNeeded, shouldRaiseWindowForPermission } from './notifications'
 import { RendererOutbox } from './rendererOutbox'
 import { PathResolver } from './files/pathResolver'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
@@ -122,7 +122,7 @@ app.whenReady().then(async () => {
         broker.answer(request.requestId, { behavior: 'deny' })
         return
       }
-      showWindow()
+      if (shouldRaiseWindowForPermission(controller.activeTabId, request.tabId)) showWindow()
       manager
         .get(request.tabId)
         ?.showPermissionCard(request.requestId, request.toolName, request.target)

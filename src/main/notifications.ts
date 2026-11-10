@@ -67,3 +67,15 @@ export function notifyIfNeeded(input: {
   notification.on('click', input.onActivate)
   notification.show()
 }
+
+/**
+ * A permission request raises the window only when it is for the tab being
+ * looked at. For a background tab the status badge and the notification say
+ * so, and the window stays where the user left it.
+ */
+export function shouldRaiseWindowForPermission(
+  activeTabId: string | null,
+  requestTabId: string
+): boolean {
+  return activeTabId !== null && activeTabId === requestTabId
+}

@@ -2,7 +2,8 @@ import { describe, expect, test } from 'vitest'
 import {
   filterCommands,
   isLocalCommand,
-  markUnavailable
+  markUnavailable,
+  withLocalCommands
 } from '../../src/shared/commandFilter'
 import type { CommandInfo } from '../../src/shared/types'
 
@@ -100,5 +101,25 @@ describe('команды, которые Qclod выполняет сам', () =>
     expect(markUnavailable([cmd('compact', { description: 'Сжать контекст' })])[0]!.description).toBe(
       'Сжать контекст'
     )
+  })
+})
+
+describe('withLocalCommands', () => {
+  test('локальные команды есть, даже если сессия их не прислала', () => {
+    expect(withLocalCommands([]).map((c) => c.name)).toEqual(
+      expect.arrayContaining(['resume', 'model', 'effort'])
+    )
+  })
+
+  test('присланную сессией команду не дублирует, а недоступную помечает', () => {
+    const result = withLocalCommands([
+      cmd('model', { description: 'Set the model', argumentHint: '<model>' }),
+      cmd('remote-control')
+    ])
+    expect(result.filter((c) => c.name === 'model')).toHaveLength(1)
+    // The session's own hint stays; the description is ours.
+    expect(result.find((c) => c.name === 'model')?.argumentHint).toBe('<model>')
+    expect(result.find((c) => c.name === 'model')?.description).not.toBe('Set the model')
+    expect(result.find((c) => c.name === 'remote-control')?.unavailableReason).toBeTruthy()
   })
 })

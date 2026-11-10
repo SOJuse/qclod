@@ -170,3 +170,45 @@ test('Esc прерывает агента, даже когда в поле ес�
     await close(app, profile)
   }
 })
+
+test('@ показывает файлы списком над полем, Tab подставляет выбранный', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'qclod-mention-'))
+  mkdirSync(join(project, 'src'), { recursive: true })
+  writeFileSync(join(project, 'src', 'Composer.tsx'), 'x', 'utf8')
+  writeFileSync(join(project, 'src', 'ComposerView.tsx'), 'x', 'utf8')
+
+  const { app, profile } = await launch({ steps: [] }, { QCLOD_PICK_FOLDER: project })
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+    // A tab in the folder with the files, so the index is known.
+    await win.locator('[data-testid="tab-new"]').click()
+    const input = win.locator('[data-testid="composer-input"]')
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2)
+    await input.click()
+
+    await input.pressSequentially('глянь @Compo')
+    const popup = win.locator('[data-testid="mention-popup"]')
+    await expect(popup).toBeVisible()
+    await expect(popup.locator('[data-testid="mention-item"]')).toHaveCount(2)
+    await expect(win.locator('[data-testid="slash-menu"]')).toHaveCount(0)
+
+    await input.press('ArrowDown')
+    const second = popup.locator('[data-testid="mention-item"]').nth(1)
+    await expect(second).toHaveAttribute('aria-selected', 'true')
+    const name = await second.locator('.inline-menu-primary').textContent()
+    await input.press('Tab')
+    await expect(input).toHaveValue(`глянь @src/${name} `)
+    await expect(popup).toHaveCount(0)
+
+    // Esc closes the list and keeps the text, as it does for commands.
+    await input.pressSequentially('и @Compo')
+    await expect(popup).toBeVisible()
+    await input.press('Escape')
+    await expect(popup).toHaveCount(0)
+    await expect(input).toHaveValue(`глянь @src/${name} и @Compo`)
+  } finally {
+    await close(app, profile)
+    rmSync(project, { recursive: true, force: true })
+  }
+})

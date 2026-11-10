@@ -7,7 +7,8 @@ export type ComposerKeyAction =
   | 'closePopup'
   | 'popupNav'
   | 'popupAccept'
-  | 'openPalette'
+  /** Tab on an open list: write the choice into the field, run nothing. */
+  | 'popupComplete'
   | 'openMentions'
   | 'cyclePermissionMode'
   | 'submit'
@@ -19,7 +20,7 @@ export type ComposerKeyAction =
 
 export interface ComposerContext {
   text: string
-  /** The composer's own popup — mentions or the command palette — is open. */
+  /** The list above the input — files after `@`, commands after `/` — is open. */
   popupOpen: boolean
   hasSelection: boolean
   /** A file is attached, so there is something to send even with no text. */
@@ -66,19 +67,18 @@ const RULES: Rule[] = [
       ? 'native'
       : undefined,
 
-  // Our popup owns Tab, Enter and the arrows while it is open.
-  (ev, ctx) =>
-    ctx.popupOpen && (ev.key === 'Tab' || ev.key === 'Enter') ? 'popupAccept' : undefined,
+  // Our list owns Tab, Enter and the arrows while it is open.
+  (ev, ctx) => (ctx.popupOpen && ev.key === 'Enter' ? 'popupAccept' : undefined),
+  (ev, ctx) => (ctx.popupOpen && ev.key === 'Tab' ? 'popupComplete' : undefined),
   (ev, ctx) =>
     ctx.popupOpen && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') ? 'popupNav' : undefined,
 
   // Shift+Tab cycles the permission mode, as it does in the terminal.
   (ev) => (ev.key === 'Tab' ? 'cyclePermissionMode' : undefined),
 
-  // A slash on an empty line is a command; mid-sentence it is a path, a date
-  // or a fraction, and must stay one.
-  (ev, ctx) =>
-    ev.key === '/' && ctx.text === '' && !ev.ctrlKey && !ev.altKey ? 'openPalette' : undefined,
+  // A slash is always just typed. The command list opens from the text
+  // itself (a slash at the start, see input/slash.ts), right above the field —
+  // there is no separate window to jump into.
 
   (ev) => (ev.key === '@' && !ev.ctrlKey && !ev.altKey ? 'openMentions' : undefined),
 

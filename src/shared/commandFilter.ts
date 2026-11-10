@@ -22,8 +22,8 @@ const UNAVAILABLE: Record<string, string> = {
  */
 export const LOCAL_COMMANDS: Record<string, string> = {
   resume: 'Открыть прошлый разговор',
-  model: 'Выбрать модель в панели',
-  effort: 'Выбрать усилие в панели'
+  model: 'Выбрать модель',
+  effort: 'Выбрать усилие'
 }
 
 /**
@@ -48,6 +48,19 @@ export function markUnavailable(commands: CommandInfo[]): CommandInfo[] {
   })
 }
 
+/**
+ * The list the slash menu offers: what the session sent, plus the commands
+ * Qclod answers itself when the session did not send them — /model must work
+ * before the session has said a word. Then the unworkable ones are marked.
+ */
+export function withLocalCommands(commands: CommandInfo[]): CommandInfo[] {
+  const present = new Set(commands.map((command) => command.name))
+  const missing = Object.entries(LOCAL_COMMANDS)
+    .filter(([name]) => !present.has(name))
+    .map(([name, description]) => ({ name, description, argumentHint: '' }))
+  return markUnavailable([...commands, ...missing])
+}
+
 /** Subsequence match: `cmp` finds `compact`. Returns null when it does not fit. */
 function score(text: string, needle: string): number | null {
   if (needle === '') return 0
@@ -68,7 +81,7 @@ function score(text: string, needle: string): number | null {
 }
 
 /**
- * The palette's list.
+ * The slash menu's list.
  *
  * With no query the recent commands come first — five or six names do most of
  * the work and should not need typing. With a query everything is searched by

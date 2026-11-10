@@ -1,4 +1,6 @@
-import { useAppStore } from '../state/useAppStore'
+import { useEffect, useRef } from 'react'
+import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
+import { sendCommand } from '../input/slash'
 import { Ribbon } from './Ribbon'
 import { Composer } from './Composer'
 import { Working } from './Working'
@@ -13,7 +15,7 @@ interface Props {
   /** Shown only when there are two panes: one of them has to say which is which. */
   showTitle: boolean
   onFocus: () => void
-  onOpenPalette: () => void
+  onOpenHistory: () => void
   onCycleMode: () => void
 }
 
@@ -31,7 +33,7 @@ export function ChatPane({
   title,
   showTitle,
   onFocus,
-  onOpenPalette,
+  onOpenHistory,
   onCycleMode
 }: Props): JSX.Element {
   const tabs = useAppStore((s) => s.tabs)
@@ -42,10 +44,31 @@ export function ChatPane({
   const fileIndexByTab = useAppStore((s) => s.fileIndexByTab)
   const setDraft = useAppStore((s) => s.setDraft)
   const setAttachments = useAppStore((s) => s.setAttachments)
+  const commands = useAppStore((s) => s.commandsByTab[tabId])
+  const recentCommands = useAppStore((s) => s.recentCommands)
+  const panel = useAppStore((s) => s.panelByTab[tabId]) ?? EMPTY_PANEL
 
   const busySinceByTab = useAppStore((s) => s.busySinceByTab)
   const tab = tabs.find((t) => t.id === tabId)
   const status = tab?.status ?? 'stopped'
+  const draft = draftByTab[tabId] ?? ''
+
+  // The session's commands are asked for the first time a slash is typed in
+  // this tab; after that the main process pushes every change. A session that
+  // has not started yet answers with nothing, so that answer is not kept and
+  // the next keystroke asks again — Qclod's own commands show meanwhile.
+  const asking = useRef(new Set<string>())
+  const wantsCommands = draft.startsWith('/') && commands === undefined
+  useEffect(() => {
+    if (!wantsCommands || asking.current.has(tabId)) return
+    asking.current.add(tabId)
+    void window.qclod
+      .commands(tabId)
+      .then((list) => {
+        if (list.length > 0) useAppStore.getState().setCommands(tabId, list)
+      })
+      .finally(() => asking.current.delete(tabId))
+  }, [wantsCommands, tabId, draft])
 
   return (
     <section
@@ -83,9 +106,19 @@ export function ChatPane({
       <Composer
         tabId={tabId}
         status={status}
-        draft={draftByTab[tabId] ?? ''}
+        draft={draft}
         attachments={attachmentsByTab[tabId] ?? []}
         fileIndex={fileIndexByTab[tabId] ?? []}
+        commands={commands ?? []}
+        recentCommands={recentCommands}
+        models={panel.models}
+        model={panel.model}
+        effort={panel.effort}
+        onSendCommand={(text) => sendCommand(tabId, text)}
+        onCommandUsed={(name) => useAppStore.getState().noteCommand(name)}
+        onOpenHistory={onOpenHistory}
+        onSetModel={(model) => void window.qclod.setModel(tabId, model)}
+        onSetEffort={(level) => void window.qclod.setEffort(tabId, level)}
         focusToken={focusToken}
         autoFocus={focused}
         onDraftChange={(text) => setDraft(tabId, text)}
@@ -112,7 +145,6 @@ export function ChatPane({
             .then(() => window.qclod.panel(tabId))
             .then((snapshot) => useAppStore.getState().setPanelSnapshot(tabId, snapshot))
         }}
-        onOpenPalette={onOpenPalette}
         onPickFiles={() => {
           void window.qclod.pickFiles().then((paths) => {
             if (paths.length === 0) return

@@ -1,4 +1,4 @@
-import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test'
+import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -30,28 +30,48 @@ const COMMANDS = [
   { name: 'remote-control', description: 'Удалённое управление', argumentHint: '' }
 ]
 
-test('/ открывает палитру со списком из SDK, а не захардкоженным', async () => {
+async function ready(win: Page): Promise<ReturnType<Page['locator']>> {
+  const input = win.locator('[data-testid="composer-input"]')
+  await input.waitFor({ timeout: 15000 })
+  await input.click()
+  return input
+}
+
+test('/ показывает список прямо над полем, модалки нет', async () => {
   const { app, profile } = await launch({ steps: [], init: { commands: COMMANDS } })
   try {
     const win = await app.firstWindow()
-    const input = win.locator('[data-testid="composer-input"]')
-    await input.waitFor({ timeout: 15000 })
+    const input = await ready(win)
 
-    await input.click()
     await input.press('/')
 
-    const palette = win.locator('[data-testid="command-palette"]')
-    await expect(palette).toBeVisible()
-    await expect(palette.locator('[data-testid="palette-item"]')).toHaveCount(COMMANDS.length)
-    // A command this project defines, not one of five we invented.
-    await expect(palette).toContainText('моя-команда')
-    await expect(palette).toContainText('Команда из этого проекта')
+    const menu = win.locator('[data-testid="slash-menu"]')
+    await expect(menu).toBeVisible()
+    await expect(win.locator('[data-testid="command-palette"]')).toHaveCount(0)
+    await expect(input).toBeFocused()
+    await expect(input).toHaveValue('/')
+
+    // Right above the input, not floating somewhere over the conversation.
+    const list = await menu.boundingBox()
+    const field = await win.locator('.composer-row').boundingBox()
+    expect(list && field).toBeTruthy()
+    expect(list!.y + list!.height).toBeLessThanOrEqual(field!.y)
+    expect(field!.y - (list!.y + list!.height)).toBeLessThan(40)
+
+    // The session's own list, every command once, including this project's.
+    await expect(menu.locator('[data-testid="slash-item"]')).toHaveCount(6)
+    await expect(menu).toContainText('/моя-команда')
+    await expect(menu).toContainText('Команда из этого проекта')
+    // The argument hint is shown beside the name.
+    await expect(
+      menu.locator('[data-testid="slash-item"]', { hasText: '/model' })
+    ).toContainText('<model>')
   } finally {
     await close(app, profile)
   }
 })
 
-test('выбор команды отправляет её агенту', async () => {
+test('набор фильтрует, Enter выполняет', async () => {
   const { app, profile } = await launch({
     steps: [],
     init: { commands: COMMANDS },
@@ -59,15 +79,16 @@ test('выбор команды отправляет её агенту', async (
   })
   try {
     const win = await app.firstWindow()
-    const input = win.locator('[data-testid="composer-input"]')
-    await input.waitFor({ timeout: 15000 })
+    const input = await ready(win)
 
-    await input.click()
-    await input.press('/')
-    await win.locator('[data-testid="palette-query"]').fill('cmp')
-    await win.locator('[data-testid="palette-query"]').press('Enter')
+    await input.pressSequentially('/cmp')
+    const items = win.locator('[data-testid="slash-item"]')
+    await expect(items.first()).toContainText('/compact')
+    await expect(items.first()).toHaveAttribute('aria-selected', 'true')
+    await input.press('Enter')
 
-    await expect(win.locator('[data-testid="command-palette"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="slash-menu"]')).toHaveCount(0)
+    await expect(input).toHaveValue('')
     await expect(win.locator('[data-testid="ribbon-user"]')).toContainText('/compact')
     await expect(win.locator('[data-testid="ribbon"]')).toContainText('контекст сжат', {
       timeout: 15000
@@ -77,84 +98,189 @@ test('выбор команды отправляет её агенту', async (
   }
 })
 
-test('недоступная команда помечена и не выбирается', async () => {
+test('стрелки выбирают строку', async () => {
   const { app, profile } = await launch({ steps: [], init: { commands: COMMANDS } })
   try {
     const win = await app.firstWindow()
-    const input = win.locator('[data-testid="composer-input"]')
-    await input.waitFor({ timeout: 15000 })
+    const input = await ready(win)
 
-    await input.click()
     await input.press('/')
-    await win.locator('[data-testid="palette-query"]').fill('remote')
+    const items = win.locator('[data-testid="slash-item"]')
+    await expect(items.nth(0)).toHaveAttribute('aria-selected', 'true')
+    await input.press('ArrowDown')
+    await expect(items.nth(1)).toHaveAttribute('aria-selected', 'true')
+    await expect(items.nth(0)).toHaveAttribute('aria-selected', 'false')
+    await input.press('ArrowUp')
+    await expect(items.nth(0)).toHaveAttribute('aria-selected', 'true')
+  } finally {
+    await close(app, profile)
+  }
+})
 
-    const item = win.locator('[data-testid="palette-item"]').first()
-    await expect(item).toContainText('только в терминале')
-    await item.click()
+test('Tab дописывает команду, не отправляя', async () => {
+  const { app, profile } = await launch({ steps: [], init: { commands: COMMANDS } })
+  try {
+    const win = await app.firstWindow()
+    const input = await ready(win)
 
-    // Still open, nothing sent: the command cannot do anything here.
-    await expect(win.locator('[data-testid="command-palette"]')).toBeVisible()
+    await input.pressSequentially('/comp')
+    await expect(win.locator('[data-testid="slash-menu"]')).toBeVisible()
+    await input.press('Tab')
+
+    await expect(input).toHaveValue('/compact ')
+    await expect(input).toBeFocused()
+    await expect(win.locator('[data-testid="slash-menu"]')).toHaveCount(0)
     await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
   } finally {
     await close(app, profile)
   }
 })
 
-test('Esc закрывает палитру и возвращает текст', async () => {
+test('Esc закрывает список, текст остаётся', async () => {
   const { app, profile } = await launch({ steps: [], init: { commands: COMMANDS } })
   try {
     const win = await app.firstWindow()
-    const input = win.locator('[data-testid="composer-input"]')
-    await input.waitFor({ timeout: 15000 })
+    const input = await ready(win)
 
-    await input.click()
-    await input.press('/')
-    await expect(win.locator('[data-testid="command-palette"]')).toBeVisible()
+    await input.pressSequentially('/com')
+    await expect(win.locator('[data-testid="slash-menu"]')).toBeVisible()
+    await input.press('Escape')
 
-    await win.locator('[data-testid="palette-query"]').press('Escape')
-
-    await expect(win.locator('[data-testid="command-palette"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="slash-menu"]')).toHaveCount(0)
+    await expect(input).toHaveValue('/com')
     await expect(input).toBeFocused()
-    await input.type('обычный текст')
-    await expect(input).toHaveValue('обычный текст')
+
+    // Typing on brings it back.
+    await input.press('p')
+    await expect(win.locator('[data-testid="slash-menu"]')).toBeVisible()
   } finally {
     await close(app, profile)
   }
 })
 
-test('/model открывает выбор модели в панели, а не уходит пустым', async () => {
+test('/model — второй шаг со списком моделей', async () => {
+  const { app, profile } = await launch({ steps: [], init: { commands: COMMANDS } })
+  try {
+    const win = await app.firstWindow()
+    const input = await ready(win)
+    const picker = win.locator('[data-testid="panel-model"]')
+    await expect(picker).toHaveValue('claude-opus-5')
+
+    await input.pressSequentially('/model')
+    await input.press('Enter')
+
+    const items = win.locator('[data-testid="slash-item"]')
+    await expect(win.locator('[data-testid="slash-menu"]')).toBeVisible()
+    await expect(items).toHaveCount(2)
+    await expect(items.nth(1)).toContainText('Sonnet 5')
+    await expect(items.nth(1)).toContainText('быстрее и дешевле')
+    // Sending "/model" with no argument would have done nothing at all.
+    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
+
+    await input.press('ArrowDown')
+    await input.press('Enter')
+
+    await expect(picker).toHaveValue('claude-sonnet-5')
+    await expect(input).toHaveValue('')
+    await expect(win.locator('[data-testid="slash-menu"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('/effort — второй шаг с уровнями выбранной модели', async () => {
+  const { app, profile } = await launch({ steps: [] })
+  try {
+    const win = await app.firstWindow()
+    const input = await ready(win)
+    // Sonnet offers three levels where Opus offers five.
+    await win.locator('[data-testid="panel-model"]').selectOption('claude-sonnet-5')
+    await input.click()
+
+    await input.pressSequentially('/effort')
+    await input.press('Enter')
+
+    const items = win.locator('[data-testid="slash-item"]')
+    await expect(items).toHaveCount(3)
+    await input.press('ArrowDown')
+    await input.press('ArrowDown')
+    await input.press('Enter')
+
+    await expect(win.locator('[data-testid="panel-effort"]')).toHaveValue('high')
+    await expect(input).toHaveValue('')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('/remote-control помечена и не выполняется', async () => {
+  const { app, profile } = await launch({ steps: [], init: { commands: COMMANDS } })
+  try {
+    const win = await app.firstWindow()
+    const input = await ready(win)
+
+    await input.pressSequentially('/remote')
+    const item = win.locator('[data-testid="slash-item"]').first()
+    await expect(item).toContainText('только в терминале')
+    await expect(item).toHaveAttribute('aria-disabled', 'true')
+
+    await input.press('Enter')
+    // Playwright treats an aria-disabled row as unclickable; a person can still click it.
+    await item.click({ force: true })
+
+    // Still open, nothing sent: the command cannot do anything here.
+    await expect(win.locator('[data-testid="slash-menu"]')).toBeVisible()
+    await expect(input).toHaveValue('/remote')
+    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('команда с параметром подставляется в поле, а не отправляется половиной', async () => {
   const { app, profile } = await launch({
     steps: [],
     init: {
-      commands: [
-        { name: 'model', description: 'Сменить модель', argumentHint: '<model>', builtin: true }
-      ]
+      commands: [{ name: 'rename', description: 'Переименовать сессию', argumentHint: '<название>' }]
     }
   })
   try {
     const win = await app.firstWindow()
-    const input = win.locator('[data-testid="composer-input"]')
-    await input.waitFor({ timeout: 15000 })
+    const input = await ready(win)
 
-    await input.click()
-    await input.press('/')
-    await win.locator('[data-testid="palette-item"]').first().click()
+    await input.pressSequentially('/ren')
+    await input.press('Enter')
 
-    const picker = win.locator('[data-testid="panel-model"]')
-    await expect(picker).toBeFocused()
-    // Sending "/model" with no argument would have done nothing at all.
+    await expect(input).toHaveValue('/rename ')
+    await expect(input).toBeFocused()
+    await expect(win.locator('[data-testid="slash-menu"]')).toHaveCount(0)
     await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
 
-    // The real list, from the session.
-    await expect(picker.locator('option')).toHaveCount(2)
-    await picker.selectOption('claude-sonnet-5')
-    await expect(picker).toHaveValue('claude-sonnet-5')
+    // And finishing it sends the whole thing.
+    await input.pressSequentially('переезд на SDK')
+    await input.press('Enter')
+    await expect(win.locator('[data-testid="ribbon-user"]')).toContainText('/rename переезд на SDK')
   } finally {
     await close(app, profile)
   }
 })
 
-test('усилие выбирается из уровней, которые поддерживает модель', async () => {
+test('слеш посреди текста — не команда', async () => {
+  const { app, profile } = await launch({ steps: [], init: { commands: COMMANDS } })
+  try {
+    const win = await app.firstWindow()
+    const input = await ready(win)
+
+    await input.pressSequentially('путь src/a')
+    await expect(input).toHaveValue('путь src/a')
+    await expect(win.locator('[data-testid="slash-menu"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('усилие в панели выбирается из уровней, которые поддерживает модель', async () => {
   const { app, profile } = await launch({ steps: [] })
   try {
     const win = await app.firstWindow()
@@ -168,37 +294,6 @@ test('усилие выбирается из уровней, которые по
     // Sonnet offers three levels where Opus offers five.
     await win.locator('[data-testid="panel-model"]').selectOption('claude-sonnet-5')
     await expect(effort.locator('option')).toHaveCount(3)
-  } finally {
-    await close(app, profile)
-  }
-})
-
-test('команда с параметром подставляется в поле, а не отправляется половиной', async () => {
-  const { app, profile } = await launch({
-    steps: [],
-    init: {
-      commands: [
-        { name: 'rename', description: 'Переименовать сессию', argumentHint: '<название>' }
-      ]
-    }
-  })
-  try {
-    const win = await app.firstWindow()
-    const input = win.locator('[data-testid="composer-input"]')
-    await input.waitFor({ timeout: 15000 })
-
-    await input.click()
-    await input.press('/')
-    await win.locator('[data-testid="palette-item"]').first().click()
-
-    await expect(input).toHaveValue('/rename ')
-    await expect(input).toBeFocused()
-    await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
-
-    // And finishing it sends the whole thing.
-    await input.type('переезд на SDK')
-    await input.press('Enter')
-    await expect(win.locator('[data-testid="ribbon-user"]')).toContainText('/rename переезд на SDK')
   } finally {
     await close(app, profile)
   }

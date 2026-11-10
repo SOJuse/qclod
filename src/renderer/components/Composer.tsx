@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { Attachment, SessionStatus } from '../../shared/types'
+import type {
+  Attachment,
+  CommandInfo,
+  EffortLevel,
+  ModelOption,
+  SessionStatus
+} from '../../shared/types'
+import { withLocalCommands } from '../../shared/commandFilter'
 import { resolveComposerKey, type ComposerContext } from '../input/keyPrecedence'
 import {
   attachmentLabel,
@@ -10,7 +17,18 @@ import {
 } from '../input/attachments'
 import { applyMention, findMentionQuery } from '../input/mentions'
 import { InputHistory } from '../input/history'
-import { MentionPopup } from './MentionPopup'
+import {
+  acceptCommand,
+  commandItems,
+  completeCommand,
+  effortItems,
+  findSlashQuery,
+  modelItems,
+  type SlashOutcome,
+  type SlashStep
+} from '../input/slash'
+import { InlineMenu, type InlineMenuItem } from './InlineMenu'
+import { SlashMenu } from './SlashMenu'
 import './Composer.css'
 
 interface Props {
@@ -19,6 +37,13 @@ interface Props {
   draft: string
   attachments: PendingAttachment[]
   fileIndex: string[]
+  /** What the session offers after `/`, as it sent it. */
+  commands: CommandInfo[]
+  recentCommands: string[]
+  /** For the second step of /model and /effort. */
+  models: ModelOption[]
+  model: string | null
+  effort: EffortLevel | null
   /** Bumped by whoever took focus away, to hand it back. */
   focusToken: number
   /** False for a pane that is on screen but not the one being typed into. */
@@ -27,7 +52,12 @@ interface Props {
   onAttachmentsChange: (items: PendingAttachment[]) => void
   onSubmit: (text: string, attachments: Attachment[]) => void
   onInterrupt: () => void
-  onOpenPalette: () => void
+  /** A slash command picked from the list, to send as it is. */
+  onSendCommand: (text: string) => void
+  onCommandUsed: (name: string) => void
+  onOpenHistory: () => void
+  onSetModel: (model: string) => void
+  onSetEffort: (level: EffortLevel) => void
   onCycleMode: () => void
   onRestart: () => void
   /** Set when the session never reached its conversation and can open it again. */
@@ -37,6 +67,13 @@ interface Props {
 }
 
 const MAX_MATCHES = 8
+
+const COMMANDS_STEP: SlashStep = { kind: 'commands' }
+
+type Menu =
+  | { kind: 'none' }
+  | { kind: 'mention'; start: number; items: InlineMenuItem[] }
+  | { kind: 'slash'; step: SlashStep; key: string; items: InlineMenuItem[]; initial: number }
 
 /**
  * The line above a dead session's input. When the session never got to its
@@ -87,13 +124,22 @@ export function Composer({
   draft,
   attachments,
   fileIndex,
+  commands,
+  recentCommands,
+  models,
+  model,
+  effort,
   focusToken,
   autoFocus = true,
   onDraftChange,
   onAttachmentsChange,
   onSubmit,
   onInterrupt,
-  onOpenPalette,
+  onSendCommand,
+  onCommandUsed,
+  onOpenHistory,
+  onSetModel,
+  onSetEffort,
   onCycleMode,
   onRestart,
   canRetry = false,
@@ -102,8 +148,15 @@ export function Composer({
 }: Props): JSX.Element {
   const field = useRef<HTMLTextAreaElement | null>(null)
   const histories = useRef(new Map<string, InputHistory>())
-  const [mentionIndex, setMentionIndex] = useState(0)
   const [caret, setCaret] = useState(0)
+  /** Where the caret goes once a text we set ourselves is in the field. */
+  const pendingCaret = useRef<number | null>(null)
+  /** The row picked with the arrows, remembered for the list it was picked in. */
+  const [selection, setSelection] = useState({ key: '', index: 0 })
+  /** The second list of /model or /effort, once its command was chosen. */
+  const [step, setStep] = useState<SlashStep>(COMMANDS_STEP)
+  /** The text Esc closed the list on; typing anything brings the list back. */
+  const [dismissedFor, setDismissedFor] = useState<string | null>(null)
 
   const history = ((): InputHistory => {
     let existing = histories.current.get(tabId)
@@ -114,13 +167,52 @@ export function Composer({
     return existing
   })()
 
-  const query = findMentionQuery(draft, caret)
-  const matches = query
-    ? fileIndex
-        .filter((path) => path.toLowerCase().includes(query.query.toLowerCase()))
+  const available = withLocalCommands(commands)
+
+  const menu = ((): Menu => {
+    if (dismissedFor === draft) return { kind: 'none' }
+
+    const mention = findMentionQuery(draft, caret)
+    if (mention) {
+      const needle = mention.query.toLowerCase()
+      const items = fileIndex
+        .filter((path) => path.toLowerCase().includes(needle))
         .slice(0, MAX_MATCHES)
-    : []
-  const popupOpen = matches.length > 0
+        .map((path): InlineMenuItem => {
+          const slash = path.lastIndexOf('/')
+          return {
+            id: path,
+            primary: path.slice(slash + 1),
+            ...(slash > 0 ? { secondary: path.slice(0, slash) } : {})
+          }
+        })
+      if (items.length > 0) return { kind: 'mention', start: mention.start, items }
+    }
+
+    // The second list stays while the field still reads «/model …».
+    const prefix = `/${step.kind} `
+    if (step.kind !== 'commands' && draft.startsWith(prefix) && !draft.includes('\n')) {
+      const query = draft.slice(prefix.length)
+      const items =
+        step.kind === 'model' ? modelItems(models, query) : effortItems(models, model, query)
+      const current = step.kind === 'model' ? model : effort
+      const initial = Math.max(0, items.findIndex((item) => item.id === current))
+      return { kind: 'slash', step, key: `${step.kind}:${query}`, items, initial }
+    }
+
+    const slash = findSlashQuery(draft, caret)
+    if (!slash) return { kind: 'none' }
+    const items = commandItems(available, slash.query, recentCommands)
+    return { kind: 'slash', step: COMMANDS_STEP, key: `commands:${slash.query}`, items, initial: 0 }
+  })()
+  const menuItems = menu.kind === 'none' ? [] : menu.items
+  const menuKey =
+    menu.kind === 'mention' ? `mention:${draft}:${caret}` : menu.kind === 'slash' ? menu.key : ''
+  const popupOpen = menuItems.length > 0
+  const selected = Math.min(
+    selection.key === menuKey ? selection.index : menu.kind === 'slash' ? menu.initial : 0,
+    Math.max(0, menuItems.length - 1)
+  )
 
   // The field grows with its content instead of scrolling a three-line box.
   useLayoutEffect(() => {
@@ -128,6 +220,12 @@ export function Composer({
     if (!el) return
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 260)}px`
+    // Placed before the next keystroke can land: a frame later, fast typing
+    // has already gone in at the old spot.
+    if (pendingCaret.current !== null) {
+      el.setSelectionRange(pendingCaret.current, pendingCaret.current)
+      pendingCaret.current = null
+    }
   }, [draft])
 
   // Switching tabs, or closing something that stole focus, puts the cursor
@@ -138,6 +236,17 @@ export function Composer({
     if (!autoFocus) return
     field.current?.focus()
   }, [tabId, focusToken, autoFocus])
+
+  // Once «/model » is edited away, the second list is done with.
+  useEffect(() => {
+    if (step.kind !== 'commands' && !draft.startsWith(`/${step.kind} `)) setStep(COMMANDS_STEP)
+  }, [draft, step])
+
+  // A list belongs to the tab it was opened in.
+  useEffect(() => {
+    setStep(COMMANDS_STEP)
+    setDismissedFor(null)
+  }, [tabId])
 
   const addAttachments = useCallback(
     (items: PendingAttachment[]) => {
@@ -169,14 +278,61 @@ export function Composer({
     }
   }
 
-  function acceptMention(path: string): void {
-    if (!query) return
-    const result = applyMention(draft, query.start, caret, path)
-    onDraftChange(result.text)
-    requestAnimationFrame(() => {
-      field.current?.setSelectionRange(result.caret, result.caret)
-      setCaret(result.caret)
-    })
+  /** Replaces the field's text and puts the caret where the next typing goes. */
+  function replaceDraft(text: string, at = text.length): void {
+    // The same text re-renders nothing, so the caret is placed right here.
+    if (text === draft) field.current?.setSelectionRange(at, at)
+    else pendingCaret.current = at
+    onDraftChange(text)
+    setCaret(at)
+  }
+
+  function runOutcome(outcome: SlashOutcome): void {
+    switch (outcome.kind) {
+      case 'none':
+        return
+      case 'send':
+        history.push(outcome.text)
+        replaceDraft('')
+        onSendCommand(outcome.text)
+        return
+      case 'fill':
+        replaceDraft(outcome.text)
+        return
+      case 'history':
+        replaceDraft('')
+        onOpenHistory()
+        return
+      case 'step':
+        setStep(outcome.step)
+        replaceDraft(outcome.text)
+        return
+    }
+  }
+
+  /**
+   * Enter or a click runs the row; Tab only writes it out. A file, and a value
+   * in the second step, are simply taken either way — there is nothing to run.
+   */
+  function pick(item: InlineMenuItem | undefined, complete = false): void {
+    if (!item || item.disabledReason || menu.kind === 'none') return
+    if (menu.kind === 'mention') {
+      const result = applyMention(draft, menu.start, caret, item.id)
+      replaceDraft(result.text, result.caret)
+      return
+    }
+    if (menu.step.kind !== 'commands') {
+      if (menu.step.kind === 'model') onSetModel(item.id)
+      else onSetEffort(item.id as EffortLevel)
+      setStep(COMMANDS_STEP)
+      replaceDraft('')
+      return
+    }
+    const command = available.find((c) => c.name === item.id)
+    if (!command) return
+    const outcome = complete ? completeCommand(command) : acceptCommand(command)
+    if (!complete && outcome.kind !== 'none') onCommandUsed(command.name)
+    runOutcome(outcome)
   }
 
   function onKeyDown(ev: React.KeyboardEvent<HTMLTextAreaElement>): void {
@@ -196,28 +352,25 @@ export function Composer({
         return
 
       case 'closePopup':
+        // The list goes; the text stays exactly as typed.
         ev.preventDefault()
-        setMentionIndex(0)
-        setCaret(-1)
+        setDismissedFor(draft)
+        setStep(COMMANDS_STEP)
         return
 
-      case 'popupNav':
+      case 'popupNav': {
         ev.preventDefault()
-        setMentionIndex((index) => {
-          const next = ev.key === 'ArrowUp' ? index - 1 : index + 1
-          return (next + matches.length) % matches.length
-        })
+        const count = menuItems.length
+        const next = ev.key === 'ArrowUp' ? selected - 1 : selected + 1
+        setSelection({ key: menuKey, index: (next + count) % count })
         return
+      }
 
       case 'popupAccept':
+      case 'popupComplete':
+        // For a file, Tab takes it as Enter always did.
         ev.preventDefault()
-        acceptMention(matches[mentionIndex] ?? matches[0] ?? '')
-        setMentionIndex(0)
-        return
-
-      case 'openPalette':
-        ev.preventDefault()
-        onOpenPalette()
+        pick(menuItems[selected], action === 'popupComplete')
         return
 
       case 'cyclePermissionMode':
@@ -281,8 +434,17 @@ export function Composer({
         </div>
       )}
 
-      {popupOpen && (
-        <MentionPopup items={matches} selected={mentionIndex} onPick={acceptMention} />
+      {menu.kind === 'mention' && (
+        <InlineMenu
+          items={menuItems}
+          selected={selected}
+          onPick={(item) => pick(item)}
+          testId="mention-popup"
+          itemTestId="mention-item"
+        />
+      )}
+      {menu.kind === 'slash' && (
+        <SlashMenu step={menu.step} items={menuItems} selected={selected} onPick={(item) => pick(item)} />
       )}
 
       <div className="composer-row">

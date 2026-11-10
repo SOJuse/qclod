@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { PendingAttachment } from '../input/attachments'
 import type {
   AppSettings,
+  CommandInfo,
   PanelData,
   PanelSnapshot,
   RibbonChange,
@@ -20,8 +21,11 @@ const PER_TAB_KEYS = [
   'panelRevByTab',
   'draftByTab',
   'attachmentsByTab',
-  'fileIndexByTab'
+  'fileIndexByTab',
+  'commandsByTab'
 ] as const
+
+const RECENT_COMMANDS = 6
 
 function closedAfter(state: AppState, tabs: TabState[]): ReadonlySet<TabId> {
   const open = new Set(tabs.map((t) => t.id))
@@ -75,6 +79,10 @@ interface AppState {
   draftByTab: Record<TabId, string>
   attachmentsByTab: Record<TabId, PendingAttachment[]>
   fileIndexByTab: Record<TabId, string[]>
+  /** What each session offers after `/`; absent until first asked for. */
+  commandsByTab: Record<TabId, CommandInfo[]>
+  /** The last commands run, newest first — they head the list before anything is typed. */
+  recentCommands: string[]
 
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
@@ -88,6 +96,8 @@ interface AppState {
   setDraft: (id: TabId, text: string) => void
   setAttachments: (id: TabId, items: PendingAttachment[]) => void
   setFileIndex: (id: TabId, paths: string[]) => void
+  setCommands: (id: TabId, commands: CommandInfo[]) => void
+  noteCommand: (name: string) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -149,6 +159,8 @@ export const useAppStore = create<AppState>((set) => ({
   draftByTab: {},
   attachmentsByTab: {},
   fileIndexByTab: {},
+  commandsByTab: {},
+  recentCommands: [],
 
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
@@ -232,6 +244,14 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => (state.closedTabs.has(id) ? state : { attachmentsByTab: { ...state.attachmentsByTab, [id]: items } })),
 
   setFileIndex: (id, paths) =>
-    set((state) => (state.closedTabs.has(id) ? state : { fileIndexByTab: { ...state.fileIndexByTab, [id]: paths } }))
+    set((state) => (state.closedTabs.has(id) ? state : { fileIndexByTab: { ...state.fileIndexByTab, [id]: paths } })),
+
+  setCommands: (id, commands) =>
+    set((state) => (state.closedTabs.has(id) ? state : { commandsByTab: { ...state.commandsByTab, [id]: commands } })),
+
+  noteCommand: (name) =>
+    set((state) => ({
+      recentCommands: [name, ...state.recentCommands.filter((n) => n !== name)].slice(0, RECENT_COMMANDS)
+    }))
 
 }))

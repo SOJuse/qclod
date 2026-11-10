@@ -213,3 +213,33 @@ describe('useAppStore: закрытые вкладки', () => {
     expect(keysOf('B')).toEqual([])
   })
 })
+
+describe('useAppStore: команды', () => {
+  test('недавние команды — до шести, свежая сверху, без повторов', () => {
+    const store = useAppStore.getState()
+    for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'b']) store.noteCommand(name)
+    expect(useAppStore.getState().recentCommands).toEqual(['b', 'g', 'f', 'e', 'd', 'c'])
+  })
+
+  test('команды хранятся по вкладкам и уходят вместе с закрытой вкладкой', () => {
+    const tab = (id: string): TabState => ({
+      id,
+      cwd: 'C:\p',
+      title: id,
+      overrides: {},
+      status: 'idle',
+      badge: false
+    })
+    const store = useAppStore.getState()
+    store.setTabs([tab('A'), tab('B')])
+    store.setCommands('A', [{ name: 'compact', description: '', argumentHint: '' }])
+    store.setCommands('B', [{ name: 'clear', description: '', argumentHint: '' }])
+    useAppStore.getState().setTabs([tab('A')])
+
+    expect(useAppStore.getState().commandsByTab['A']?.[0]?.name).toBe('compact')
+    expect(useAppStore.getState().commandsByTab['B']).toBeUndefined()
+    // A late answer for the closed tab is dropped.
+    useAppStore.getState().setCommands('B', [])
+    expect(useAppStore.getState().commandsByTab['B']).toBeUndefined()
+  })
+})

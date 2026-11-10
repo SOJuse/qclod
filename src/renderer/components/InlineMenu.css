@@ -1,0 +1,96 @@
+/* The list above the input: files after @, commands after /. */
+
+.inline-menu {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 0;
+  right: 0;
+  z-index: 5;
+  padding: var(--space-1);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--glow-accent), var(--shadow-menu);
+  backdrop-filter: blur(var(--menu-blur));
+}
+
+.inline-menu-title {
+  padding: var(--space-1) var(--space-2) var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.inline-menu-list {
+  /* Eight rows, then it scrolls. */
+  max-height: calc(var(--menu-row-h) * 8);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.inline-menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  height: var(--menu-row-h);
+  overflow: hidden;
+  padding: 0 var(--space-2);
+  line-height: var(--menu-row-h);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.inline-menu-item:hover {
+  background: var(--hover-fill);
+}
+
+/* The chosen row carries a thin accent rule on its left edge, like the
+   category rule on a ribbon card, so it reads without relying on the fill. */
+.inline-menu-item.is-selected {
+  background: var(--accent-fill);
+  box-shadow: inset var(--rule-category) 0 0 var(--accent);
+  color: var(--text);
+}
+
+.inline-menu-primary {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.inline-menu-hint {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.inline-menu-secondary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  color: var(--text-dim);
+}
+
+.inline-menu-item.is-disabled {
+  cursor: not-allowed;
+}
+
+.inline-menu-item.is-disabled .inline-menu-primary,
+.inline-menu-item.is-disabled .inline-menu-secondary {
+  color: var(--text-faint);
+}
+
+.inline-menu-ban {
+  margin-right: var(--space-1);
+  vertical-align: text-bottom;
+}

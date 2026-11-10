@@ -101,6 +101,11 @@
 
   --backdrop: rgba(6, 7, 14, 0.5);
   --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.55);
+
+  /* The list that opens above the input (InlineMenu). */
+  --shadow-menu: 0 18px 40px rgba(0, 0, 0, 0.45);
+  --menu-blur: 14px;
+  --menu-row-h: 28px;
   --hover-fill: rgba(255, 255, 255, 0.07);
   --accent-fill: rgba(110, 139, 255, 0.16);
   --accent-fill-strong: rgba(110, 139, 255, 0.3);

@@ -66,11 +66,14 @@ describe('resolveComposerKey', () => {
   test('стрелки ведут по подсказке, пока она открыта', () => {
     expect(resolveComposerKey(key({ key: 'ArrowUp' }), ctx({ popupOpen: true }))).toBe('popupNav')
     expect(resolveComposerKey(key({ key: 'Enter' }), ctx({ popupOpen: true }))).toBe('popupAccept')
-    expect(resolveComposerKey(key({ key: 'Tab' }), ctx({ popupOpen: true }))).toBe('popupAccept')
   })
 
-  test('/ в пустом поле открывает палитру команд', () => {
-    expect(resolveComposerKey(key({ key: '/' }), ctx({ text: '' }))).toBe('openPalette')
+  test('Tab при открытом списке дописывает выбранное', () => {
+    expect(resolveComposerKey(key({ key: 'Tab' }), ctx({ popupOpen: true }))).toBe('popupComplete')
+  })
+
+  test('/ в пустом поле просто печатается — список откроется из текста, модалки нет', () => {
+    expect(resolveComposerKey(key({ key: '/' }), ctx({ text: '' }))).toBe('insert')
     // Mid-sentence a slash is just a slash — a path, a date, a fraction.
     expect(resolveComposerKey(key({ key: '/' }), ctx({ text: 'путь src' }))).toBe('insert')
   })

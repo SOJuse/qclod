@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  CommandInfo,
   EnvironmentReport,
   HotkeyRegistration,
   SessionSummary
@@ -8,26 +7,22 @@ import type {
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { TitleBar } from '../components/TitleBar'
 import { ChatPane } from '../components/ChatPane'
-import { CommandPalette } from '../components/CommandPalette'
 import { SidePanel } from '../components/SidePanel'
 import { HistoryScreen } from '../components/HistoryScreen'
 import { SetupScreen } from '../components/SetupScreen'
-import { isLocalCommand, markUnavailable, needsArgument } from '../../shared/commandFilter'
 import { SettingsScreen } from '../components/SettingsScreen'
 import './App.css'
 
 /**
  * The window: tabs across the top, the conversation below.
  *
- * The composer (Task 10), the command palette (Task 11) and the side panel
- * (Task 12) land next; each arrives with its own tests rather than as a mock
- * that looks finished.
+ * Commands are typed in the composer itself: a slash opens their list right
+ * above the input, so there is no palette window here any more.
  */
 export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [version, setVersion] = useState('')
   const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
-  const [paletteOpen, setPaletteOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
   const [focusToken, setFocusToken] = useState(0)
@@ -88,8 +83,6 @@ export function App(): JSX.Element {
     setSplitTabId(other.id)
     void window.qclod.activateTab(other.id)
   }, [setSplitTabId])
-  const [commands, setCommands] = useState<CommandInfo[]>([])
-  const [recentCommands, setRecentCommands] = useState<string[]>([])
   const settings = useAppStore((s) => s.settings)
   const tabs = useAppStore((s) => s.tabs)
   const activeTabId = useAppStore((s) => s.activeTabId)
@@ -118,9 +111,9 @@ export function App(): JSX.Element {
       window.qclod.onRibbon((event) => applyRibbon(event.tabId, event.changes, event.rev)),
       window.qclod.onPanel((event) => applyPanel(event.tabId, event.patch, event.rev)),
       // The list is live: a plugin installed mid-session changes it.
-      window.qclod.onCommandsChanged((event) => {
-        if (event.tabId === useAppStore.getState().activeTabId) setCommands(event.commands)
-      })
+      window.qclod.onCommandsChanged((event) =>
+        useAppStore.getState().setCommands(event.tabId, event.commands)
+      )
     ]
     return () => {
       for (const off of unsubscribers) off()
@@ -153,24 +146,6 @@ export function App(): JSX.Element {
     void window.qclod.setSettings({ panelOpen: next }).then(setSettings)
     if (next && activeTabId) loadPanel(activeTabId)
   }, [activeTabId, setSettings, loadPanel])
-
-  /** Opens the panel if needed and puts the cursor on the control. */
-  const revealPanelControl = useCallback(
-    async (testId: string): Promise<void> => {
-      if (!useAppStore.getState().settings?.panelOpen) {
-        const next = await window.qclod.setSettings({ panelOpen: true })
-        setSettings(next)
-        const id = useAppStore.getState().activeTabId
-        if (id) loadPanel(id)
-      }
-      requestAnimationFrame(() => {
-        const control = document.querySelector<HTMLSelectElement>(`[data-testid="${testId}"]`)
-        control?.focus()
-        control?.scrollIntoView({ block: 'center' })
-      })
-    },
-    [setSettings, loadPanel]
-  )
 
   const openHistory = useCallback((): void => {
     if (!activeTabId) return
@@ -301,10 +276,7 @@ export function App(): JSX.Element {
             showTitle={splitTabId !== null}
             onFocus={() => undefined}
             onCycleMode={cycleMode}
-            onOpenPalette={() => {
-              setPaletteOpen(true)
-              void window.qclod.commands(activeTabId).then(setCommands)
-            }}
+            onOpenHistory={openHistory}
           />
           {splitTabId && (
             <ChatPane
@@ -316,10 +288,7 @@ export function App(): JSX.Element {
               // Clicking the other pane makes it the one everything acts on.
               onFocus={() => swapPanes()}
               onCycleMode={cycleMode}
-              onOpenPalette={() => {
-                setPaletteOpen(true)
-                void window.qclod.commands(splitTabId).then(setCommands)
-              }}
+              onOpenHistory={openHistory}
             />
           )}
         </div>
@@ -352,46 +321,6 @@ export function App(): JSX.Element {
           </button>
         )}
       </div>
-      {paletteOpen && (
-        <CommandPalette
-          commands={markUnavailable(commands)}
-          recent={recentCommands}
-          onClose={() => {
-            setPaletteOpen(false)
-            setFocusToken((n) => n + 1)
-          }}
-          onPick={(command) => {
-            setPaletteOpen(false)
-            setRecentCommands((names) =>
-              [command.name, ...names.filter((n) => n !== command.name)].slice(0, 6)
-            )
-
-            // Some commands are ours to answer. /resume opens an interactive
-            // picker the terminal has and a headless session does not; /model
-            // and /effort need a value, and the panel already knows the real
-            // list to choose from.
-            if (isLocalCommand(command.name)) {
-              if (command.name === 'resume') openHistory()
-              else void revealPanelControl(command.name === 'model' ? 'panel-model' : 'panel-effort')
-              return
-            }
-
-            // A command that needs an argument is put in the input rather than
-            // sent half-finished.
-            if (needsArgument(command)) {
-              useAppStore.getState().setDraft(activeTabId, `/${command.name} `)
-              setFocusToken((n) => n + 1)
-              return
-            }
-
-            setFocusToken((n) => n + 1)
-            void window.qclod.send(activeTabId, {
-              text: `/${command.name}`,
-              attachments: []
-            })
-          }}
-        />
-      )}
       {historyOpen && (
         <HistoryScreen
           cwd={tabs.find((t) => t.id === activeTabId)?.cwd ?? ''}

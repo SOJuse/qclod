@@ -165,7 +165,7 @@ test('кнопка в заголовке открывает историю', asy
   }
 })
 
-test('/resume из палитры открывает историю, а не уходит агенту', async () => {
+test('/resume из списка команд открывает историю, а не уходит агенту', async () => {
   const { app, profile } = await launch(HISTORY)
   try {
     const win = await app.firstWindow()
@@ -173,12 +173,11 @@ test('/resume из палитры открывает историю, а не у�
     await input.waitFor({ timeout: 15000 })
 
     await input.click()
-    await input.press('/')
-    await win.locator('[data-testid="palette-query"]').fill('resume')
+    await input.pressSequentially('/resume')
 
-    const item = win.locator('[data-testid="palette-item"]').first()
+    const item = win.locator('[data-testid="slash-item"]').first()
     await expect(item).toContainText('Открыть прошлый разговор')
-    await item.click()
+    await input.press('Enter')
 
     await expect(win.locator('[data-testid="history-screen"]')).toBeVisible()
     // Forwarding it would have shown "/resume" in the ribbon and done nothing.

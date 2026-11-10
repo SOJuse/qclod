@@ -30,6 +30,7 @@
 }
 
 /* ------------------------------------------------------------- headings */
+/* h1 2xl; h2 and h3 both xl, told apart by weight (strong vs medium); h4-h6 lg, dim. */
 
 .md-h {
   margin: 18px 0 8px;
@@ -50,7 +51,8 @@
 }
 
 .md-h3 {
-  font-size: var(--text-lg);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-medium);
 }
 
 .md-h4,

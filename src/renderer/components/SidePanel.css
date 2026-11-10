@@ -24,7 +24,7 @@
   background: var(--surface-sunken);
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   font-weight: var(--weight-strong);
 }
 

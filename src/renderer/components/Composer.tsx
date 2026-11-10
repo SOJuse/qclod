@@ -316,7 +316,6 @@ export function Composer({
     const ready = materialize(attachments)
     // Nothing left to send: only a failed image, which stays to be seen.
     if (!text && ready.length === 0) return
-    history.push(draft)
     onDraftChange('')
     onAttachmentsChange([])
     onSubmit(text, ready)
@@ -359,7 +358,6 @@ export function Composer({
       case 'none':
         return
       case 'send':
-        history.push(outcome.text)
         replaceDraft('')
         onSendCommand(outcome.text)
         return
@@ -589,7 +587,7 @@ export function Composer({
           }
           value={draft}
           onChange={(ev) => {
-            history.reset()
+            history.edit()
             onDraftChange(ev.target.value)
             setCaret(ev.target.selectionStart)
           }}

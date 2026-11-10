@@ -230,7 +230,13 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
         wake = null
         resume()
       }
-      await session.return(undefined).catch(() => undefined)
+      // close() ends the CLI process (sdk.d.ts); return() only stops reading
+      // the stream and can leave the process behind.
+      try {
+        session.close()
+      } catch {
+        // Already gone.
+      }
     }
   }
 }

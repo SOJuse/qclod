@@ -16,10 +16,10 @@ const sdk = vi.hoisted(() => {
   function fakeQuery(args: { prompt: unknown; options: Record<string, unknown> }): unknown {
     calls.push(args)
     return {
-      ...extra,
       close: () => undefined,
       interrupt: async () => undefined,
       return: async () => ({ done: true, value: undefined }),
+      ...extra,
       async *[Symbol.asyncIterator]() {
         // An empty session: no message ever arrives.
       }
@@ -90,6 +90,18 @@ describe('sdkDriver: canUseTool', () => {
     // The same signal, not a copy: aborting it must reach whoever waits.
     expect(seen[0]!.signal).toBe(signal)
     await driver.dispose()
+  })
+
+  test('dispose закрывает запрос SDK через close(), а не return()', async () => {
+    const close = vi.fn()
+    const ret = vi.fn(async () => ({ done: true, value: undefined }))
+    mockQuery({ close, return: ret })
+    const driver = await createSdkDriver(driverOptions(async () => ({ behavior: 'allow' })))
+
+    await driver.dispose()
+
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(ret).not.toHaveBeenCalled()
   })
 
   test('allow с updatedInput уходит в SDK как updatedInput', async () => {

@@ -9,6 +9,7 @@ export interface AgentSessionManagerOptions {
   createDriver: DriverFactory
   askPermission: (request: PermissionRequest, signal: AbortSignal) => Promise<PermissionAnswer>
   confirmBypass?: () => Promise<boolean>
+  disposeTimeoutMs?: number
 }
 
 /**
@@ -37,6 +38,9 @@ export class AgentSessionManager {
       createDriver: this.options.createDriver,
       askPermission: this.options.askPermission,
       ...(this.options.confirmBypass ? { confirmBypass: this.options.confirmBypass } : {}),
+      ...(this.options.disposeTimeoutMs === undefined
+        ? {}
+        : { disposeTimeoutMs: this.options.disposeTimeoutMs }),
       ...(seed ? { seed } : {})
     })
     this.sessions.set(tabId, session)

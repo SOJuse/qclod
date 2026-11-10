@@ -287,6 +287,28 @@ describe('AgentSessionManager', () => {
     })
   }
 
+  test('disposeAll менеджера тоже не виснет на таком драйвере', async () => {
+    const manager = new AgentSessionManager({
+      getAgentPath: () => 'claude',
+      resolveAgent: () => 'C:/bin/claude.exe',
+      askPermission: async () => ({ behavior: 'deny' as const }),
+      disposeTimeoutMs: 50,
+      createDriver: () => {
+        const driver = createFakeSdk({ steps: [] })
+        ;(driver as unknown as { dispose: () => Promise<void> }).dispose = () => new Promise(() => {})
+        return driver as unknown as AgentDriver
+      }
+    })
+    const session = manager.create('tab-1', 'C:/проект', {})
+    await session.start()
+
+    const started = Date.now()
+    await manager.disposeAll()
+
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(session.status).toBe('stopped')
+  })
+
   test('create отдаёт сессию, get находит её по вкладке', () => {
     const manager = makeManager()
     const session = manager.create('tab-1', 'C:/проект', {})
@@ -540,6 +562,77 @@ describe('AgentSession: после падения агента', () => {
     expect(driver.sent).toHaveLength(0)
     expect(rec.items.filter((i) => i.kind === 'user')).toHaveLength(0)
     expect(rec.statuses.at(-1)).toBe('error')
+  })
+
+  test('упавшая сессия закрывает свой драйвер', async () => {
+    const { session, driver } = makeSession({
+      steps: [{ kind: 'crash', message: 'агент умер' }]
+    })
+
+    await session.start()
+    await settle(session)
+
+    expect(session.status).toBe('error')
+    await vi.waitFor(() => expect(driver.disposed).toBe(true), { timeout: 2000 })
+  })
+
+  test('упавшая сессия снимает карточку разрешения, поздний клик ничего не делает', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session, driver } = brokeredSession(broker, sessions, {
+      nextTurn: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    session.send({ text: 'прогони тесты', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+
+    // The pump's catch path: the stream died while a card was open.
+    ;(session as unknown as { fail: (e: unknown) => void }).fail(new Error('агент умер'))
+    await tick()
+    expect(session.status).toBe('error')
+    expect(rec.items.filter((i) => i.kind === 'permission')[0]).toMatchObject({ state: 'denied' })
+
+    broker.answer(asked[0]!.requestId, { behavior: 'allow' })
+    await tick()
+
+    expect(session.status).toBe('error')
+    expect(driver.executedTools).not.toContain('Bash')
+  })
+
+  test('после падения клик по вопросу идёт сообщением, а не ответом на месте', async () => {
+    const { session, driver } = makeSession({
+      steps: [{ kind: 'askQuestion', question: 'Какой?', options: ['Справа', 'Снизу'] }]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    ;(session as unknown as { fail: (e: unknown) => void }).fail(new Error('агент умер'))
+    await tick()
+    expect(session.status).toBe('error')
+
+    const card = rec.items.find((i) => i.kind === 'question') as { toolUseId: string }
+    session.answerQuestion(card.toolUseId, 'Справа')
+    await tick()
+
+    // No live question to answer in place, and no driver to take a message.
+    expect(driver.questionAnswers).toEqual([])
+    expect(driver.sent).toHaveLength(0)
+    expect(session.status).toBe('error')
+  })
+
+  test('драйвер, который не закрывается, не держит dispose дольше срока', async () => {
+    const { session, driver } = makeSession({ steps: [] }, { disposeTimeoutMs: 50 })
+    ;(driver as unknown as { dispose: () => Promise<void> }).dispose = () => new Promise(() => {})
+    await session.start()
+
+    const started = Date.now()
+    await session.dispose()
+
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(session.status).toBe('stopped')
   })
 
   test('незавершённые элементы не продолжают притворяться живыми', async () => {

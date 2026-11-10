@@ -50,9 +50,14 @@ export interface AgentSessionOptions {
   confirmBypass?: () => Promise<boolean>
   /** How long to wait before asking again about a server still coming up. */
   mcpPollMs?: number
+  /** How long `dispose` waits for the agent to close before giving up. */
+  disposeTimeoutMs?: number
   /** A ribbon and panel already on screen, taken over instead of new ones. */
   seed?: SessionSeed
 }
+
+/** The longest `dispose` waits for the agent process to go away. */
+export const DISPOSE_TIMEOUT_MS = 5000
 
 /** A server still `pending` or `connecting` is asked about again after this long… */
 export const MCP_POLL_MS = 2000
@@ -462,7 +467,7 @@ export class AgentSession {
    */
   async interrupt(): Promise<void> {
     if (!this.driver) return
-    this.cancelWaits()
+        this.cancelWaits()
     await this.driver.interrupt().catch(() => undefined)
     this.setStatus('idle')
   }
@@ -602,13 +607,23 @@ export class AgentSession {
     this.disposed = true
     this.stopMcpPolling()
     // A question nobody can answer any more must not hold the agent open.
-    this.cancelWaits()
+        this.cancelWaits()
 
     const driver = this.driver
     this.driver = null
-    if (driver) await driver.dispose().catch(() => undefined)
-    await this.pump?.catch(() => undefined)
+    const pump = this.pump
     this.pump = null
+    // A driver that never closes must not hold a tab close or the app's exit.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const limit = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, this.options.disposeTimeoutMs ?? DISPOSE_TIMEOUT_MS)
+    })
+    const closing = (async () => {
+      if (driver) await driver.dispose().catch(() => undefined)
+      await pump?.catch(() => undefined)
+    })()
+    await Promise.race([closing, limit])
+    clearTimeout(timer)
     this.setStatus('stopped')
   }
 
@@ -625,6 +640,9 @@ export class AgentSession {
   private async readMessages(driver: AgentDriver): Promise<void> {
     try {
       for await (const message of driver.messages) {
+        // A driver that failed or was disposed is dead: whatever it still
+        // delivers must not bring the session back to life.
+        if (this.driver !== driver) break
         this.onMessage(message)
       }
       // The stream ending by itself means the agent exited.
@@ -865,7 +883,12 @@ export class AgentSession {
    */
   private fail(err: unknown): void {
     const text = err instanceof Error ? err.message : String(err)
+    const dead = this.driver
     this.driver = null
+    // The process may still be alive; and cards nobody can answer any more
+    // must not stay live (a click could save a rule from a dead session).
+        this.cancelWaits()
+    if (dead) void dead.dispose().catch(() => undefined)
     this.failure = text
     this.emit(this.builder.closeOpen())
     this.emit(this.builder.notice(explain(text), 'error'))

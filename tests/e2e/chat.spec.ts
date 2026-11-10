@@ -638,7 +638,11 @@ test('новая вкладка без входа: Войти, и вкладка
       )
       .toBe(1)
 
-    // What the user wrote went to the new session once: one bubble, one answer.
+    // The resend draws no second bubble (its echo matches the first), so the
+    // bubble count only shows nothing was sent anew. The answer count is what
+    // shows the message reached the new session once: every send the fake
+    // gets plays a turn and says this text. The driver-level «sent exactly
+    // once» is checked in tabController.test.ts.
     const users = win.locator('[data-testid="ribbon-user"]')
     const answers = win.locator('[data-testid="ribbon-agentText"]').filter({ hasText: 'ответ после входа' })
     await expect(users).toHaveCount(1)

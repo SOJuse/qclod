@@ -1578,6 +1578,93 @@ describe('TabController: новая вкладка без входа', () => {
     }
   })
 
+  /** A tab whose new session died for want of a login, and a switch that logs the user in. */
+  async function stoppedForLogin(): Promise<{ harness: Harness; id: string; logIn: () => void }> {
+    const loggedIn = { value: false }
+    const harness = makeController({ freshFailsOnSend: () => (loggedIn.value ? undefined : NOT_LOGGED_IN) })
+    const { id } = harness.controller.create(projectA)
+    await harness.controller.whenSettled()
+    harness.manager.get(id)!.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(harness.controller.list()[0]!.canRetry).toBe(true))
+    await harness.controller.whenSettled()
+    return { harness, id, logIn: () => (loggedIn.value = true) }
+  }
+
+  /** Every message any working session was given, and how many were made. */
+  const allSent = (harness: Harness): unknown[] => harness.created.flatMap((c) => c.driver.sent)
+
+  test('afterLogin во время «Повторить» на той же вкладке: сообщение уходит один раз', async () => {
+    const { harness, id, logIn } = await stoppedForLogin()
+    logIn()
+
+    await Promise.all([harness.controller.retry(id), harness.controller.afterLogin()])
+    await harness.controller.whenSettled()
+
+    expect(harness.created).toHaveLength(1)
+    expect(allSent(harness)).toEqual([{ text: 'привет', attachments: [] }])
+    expect(harness.manager.get(id)!.status).toBe('idle')
+  })
+
+  test('«Повторить» во время afterLogin на той же вкладке: сообщение уходит один раз', async () => {
+    const { harness, id, logIn } = await stoppedForLogin()
+    logIn()
+
+    await Promise.all([harness.controller.afterLogin(), harness.controller.retry(id)])
+    await harness.controller.whenSettled()
+
+    expect(harness.created).toHaveLength(1)
+    expect(allSent(harness)).toEqual([{ text: 'привет', attachments: [] }])
+  })
+
+  test('двойной клик «Повторить»: сообщение уходит один раз', async () => {
+    const { harness, id, logIn } = await stoppedForLogin()
+    logIn()
+
+    await Promise.all([harness.controller.retry(id), harness.controller.retry(id)])
+    await harness.controller.whenSettled()
+
+    expect(harness.created).toHaveLength(1)
+    expect(allSent(harness)).toEqual([{ text: 'привет', attachments: [] }])
+  })
+
+  test('второй afterLogin поверх первого: одна новая сессия, сообщение уходит один раз', async () => {
+    const { harness, logIn } = await stoppedForLogin()
+    logIn()
+
+    await Promise.all([harness.controller.afterLogin(), harness.controller.afterLogin()])
+    await harness.controller.whenSettled()
+
+    expect(harness.created).toHaveLength(1)
+    expect(allSent(harness)).toEqual([{ text: 'привет', attachments: [] }])
+  })
+
+  test('вкладку, которую «Повторили» руками, пока afterLogin занят другой, он не трогает', async () => {
+    const loggedIn = { value: false }
+    const harness = makeController({ freshFailsOnSend: () => (loggedIn.value ? undefined : NOT_LOGGED_IN) })
+    const first = harness.controller.create(projectA)
+    const second = harness.controller.create(projectB)
+    await harness.controller.whenSettled()
+    harness.manager.get(first.id)!.send({ text: 'раз', attachments: [] })
+    harness.manager.get(second.id)!.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() =>
+      expect(harness.controller.list().every((t) => t.canRetry === true)).toBe(true)
+    )
+    await harness.controller.whenSettled()
+    loggedIn.value = true
+
+    const afterLogin = harness.controller.afterLogin()
+    await harness.controller.retry(second.id)
+    const byHand = harness.manager.get(second.id)
+    await afterLogin
+    await harness.controller.whenSettled()
+
+    // The session the user started stays; nothing was sent to the tab twice.
+    expect(harness.manager.get(second.id)).toBe(byHand)
+    expect(harness.created).toHaveLength(2)
+    const sent = allSent(harness).map((s) => (s as { text: string }).text)
+    expect(sent.sort()).toEqual(['два', 'раз'])
+  })
+
   test('afterLogin: сбой одной вкладки не останавливает остальные', async () => {
     const harness = makeController({ freshFailsOnSend: () => NOT_LOGGED_IN })
     const first = harness.controller.create(projectA)

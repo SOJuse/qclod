@@ -260,10 +260,16 @@ export class TabController {
    * goes to the new one as it was sent, once (it is on screen already).
    */
   async retry(id: TabId): Promise<void> {
+    // Already being swapped — a second click, or a retry after login racing
+    // the user's own: that swap resends what was unsent, and a second one
+    // would close its new session mid-turn and send it all again.
+    if (this.replacing.has(id)) return
     const unsent = this.deps.manager.get(id)?.sentBeforeInit ?? []
-    await this.replaceSession(id, () => undefined)
+    const started = await this.replaceSession(id, () => undefined)
+    // Only into the session this retry started: one someone else gave the
+    // tab meanwhile was sent its own messages.
     const fresh = this.deps.manager.get(id)
-    if (!fresh) return
+    if (!started || !fresh) return
     for (const sent of unsent) fresh.resend(sent)
   }
 
@@ -275,17 +281,14 @@ export class TabController {
    * hold the others back.
    */
   async afterLogin(): Promise<void> {
-    const waiting = this.tabs
-      .map((tab) => tab.id)
-      .filter((id) => {
-        const session = this.deps.manager.get(id)
-        return (
-          session?.status === 'error' &&
-          session.error !== undefined &&
-          classifyStartFailure(session.error) === 'not-logged-in'
-        )
-      })
-    for (const id of waiting) {
+    const waiting = this.tabs.flatMap((tab) => {
+      const session = this.deps.manager.get(tab.id)
+      return session && this.waitsForLogin(tab.id, session) ? [{ id: tab.id, session }] : []
+    })
+    for (const { id, session } of waiting) {
+      // Asked again just before: while an earlier tab was retried this one
+      // may have been retried by hand, closed, or retried by another login.
+      if (!this.waitsForLogin(id, session)) continue
       try {
         await this.retry(id)
       } catch (err) {
@@ -293,8 +296,20 @@ export class TabController {
         // The tab's ribbon is its session's, or — between sessions — its preview's.
         const builder = this.deps.manager.get(id) ?? this.previews.get(id)?.builder
         if (builder) this.emitRibbon(id, builder.notice(`Сессия не запустилась: ${reason}`, 'error'))
+        else console.warn(`Вкладка ${id} не продолжила после входа: ${reason}`)
       }
     }
+  }
+
+  /** The tab's session is still this one, died for want of a login, and nobody is swapping it. */
+  private waitsForLogin(id: TabId, session: AgentSession): boolean {
+    return (
+      this.deps.manager.get(id) === session &&
+      !this.replacing.has(id) &&
+      session.status === 'error' &&
+      session.error !== undefined &&
+      classifyStartFailure(session.error) === 'not-logged-in'
+    )
   }
 
   /**
@@ -303,11 +318,11 @@ export class TabController {
    * on after it — as on recovery from a dead session. A fresh ribbon here
    * would leave the window holding items main no longer has, and new ones
    * under the same ids. `prepare` runs once the old session is gone and
-   * before the new one starts.
+   * before the new one starts. True when it started the tab's new session.
    */
-  private async replaceSession(id: TabId, prepare: (tab: TabState) => void): Promise<void> {
+  private async replaceSession(id: TabId, prepare: (tab: TabState) => void): Promise<boolean> {
     const tab = this.tabs.find((t) => t.id === id)
-    if (!tab) return
+    if (!tab) return false
     const seed = this.deps.manager.get(id)?.successorSeed()
     // In place before the old session goes: while it closes the tab has no
     // session, and a snapshot taken then must not come back empty.
@@ -319,12 +334,13 @@ export class TabController {
       // Closed while the old session was closing: nothing to start.
       if (!this.tabs.includes(tab)) {
         this.previews.delete(id)
-        return
+        return false
       }
       // Someone else has given the tab a session meanwhile: it stays.
-      if (this.deps.manager.get(id)) return
+      if (this.deps.manager.get(id)) return false
       prepare(tab)
       await this.startSession(id)
+      return true
     } finally {
       this.replacing.delete(id)
     }
@@ -498,10 +514,7 @@ export class TabController {
       // Said once: the dead session's own `fail` has usually said it already,
       // and a «Повторить» that fails the same way, with nothing sent since,
       // does not stack a second copy under the first.
-      const text = LOGIN_NEEDED_TEXT
-      const since = dead.items.slice(dead.items.findLastIndex((i) => i.kind === 'user') + 1)
-      const told = since.some((i) => i.kind === 'notice' && i.action === 'login' && i.text === text)
-      if (!told) this.emitRibbon(id, dead.notice(text, 'error', 'login'))
+      if (!dead.toldToLogIn()) this.emitRibbon(id, dead.notice(LOGIN_NEEDED_TEXT, 'error', 'login'))
       return
     }
 

@@ -350,6 +350,18 @@ export class AgentSession {
     return this.builder.notice(text, tone, action)
   }
 
+  /**
+   * Whether the ribbon already asks to log in, with nothing sent since. The
+   * one test for it: a session that took a dead one's place and died the
+   * same way — «Повторить» before the login was done — and the tab recovering
+   * a dead resume both use it, so the notice is never stacked.
+   */
+  toldToLogIn(): boolean {
+    const items = this.builder.items
+    const since = items.slice(items.findLastIndex((i) => i.kind === 'user') + 1)
+    return since.some((i) => i.kind === 'notice' && i.action === 'login' && i.text === LOGIN_NEEDED_TEXT)
+  }
+
   async start(resumeId?: string): Promise<void> {
     if (this.driver || this.disposed) return
     this.setStatus('starting')
@@ -1012,17 +1024,6 @@ export class AgentSession {
       this.emit(this.builder.notice(LOGIN_NEEDED_TEXT, 'error', 'login'))
     }
     this.setStatus('error')
-  }
-
-  /**
-   * Whether the ribbon already asks to log in, with nothing sent since: a
-   * session that took a dead one's place and died the same way — «Повторить»
-   * before the login was done — does not stack a second copy.
-   */
-  private toldToLogIn(): boolean {
-    const items = this.builder.items
-    const since = items.slice(items.findLastIndex((i) => i.kind === 'user') + 1)
-    return since.some((i) => i.kind === 'notice' && i.action === 'login' && i.text === LOGIN_NEEDED_TEXT)
   }
 
   private emit(changes: RibbonChange[]): void {

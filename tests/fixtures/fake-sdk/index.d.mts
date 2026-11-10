@@ -34,8 +34,10 @@ export type FakeStep =
   | FakeBackgroundAgentStep
   | { kind: 'compact'; preTokens: number; postTokens: number; trigger?: 'auto' | 'manual' }
   /**
-   * Throws mid-stream. `times`: only the first N sessions crash, counted in
-   * fake-sdk-crashes.json in QCLOD_USER_DATA (no such folder — always).
+   * Throws mid-stream. `times`: only the first N sessions (drivers made) play
+   * it, later ones skip it; each session counts once, as it is made, in
+   * fake-sdk-crashes.json in QCLOD_USER_DATA (no such folder — always crashes).
+   * Read from top-level `steps` and `nextTurn`.
    * `beforeInit`: thrown before the turn's system/init and echo.
    */
   | { kind: 'crash'; message: string; times?: number; beforeInit?: boolean }

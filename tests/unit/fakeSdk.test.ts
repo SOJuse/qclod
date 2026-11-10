@@ -135,6 +135,28 @@ describe('createFakeSdk', () => {
     }
   })
 
+  test('crash с times считает сессии: созданная, но не дошедшая до шага, тоже в счёт', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qclod-fake-crash-'))
+    vi.stubEnv('QCLOD_USER_DATA', dir)
+    try {
+      const script = {
+        steps: [],
+        nextTurn: [
+          { kind: 'crash' as const, message: 'агент умер', times: 1 },
+          { kind: 'text' as const, text: 'жив' }
+        ]
+      }
+      createFakeSdk(script)
+      const second = createFakeSdk(script)
+      second.send({ text: 'привет', attachments: [] })
+      const said = await collect(second)
+      expect(said.some((m) => JSON.stringify(m).includes('жив'))).toBe(true)
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   test('crash с times без QCLOD_USER_DATA падает всегда, как раньше', async () => {
     vi.stubEnv('QCLOD_USER_DATA', '')
     try {

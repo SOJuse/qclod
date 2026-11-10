@@ -219,7 +219,7 @@ describe('useAppStore: закрытые вкладки', () => {
 describe('useAppStore: пути', () => {
   test('ответы о путях копятся по вкладке, в том числе «нет такого»', () => {
     const store = useAppStore.getState()
-    const hit = { raw: 'src/a.ts', absPath: 'C:\p\src\a.ts', isDir: false }
+    const hit = { raw: 'src/a.ts', absPath: 'C:\\p\\src\\a.ts', isDir: false }
     store.setPaths('P', [['src/a.ts', hit]])
     store.setPaths('P', [['src/нет.ts', null]])
     const known = useAppStore.getState().pathsByTab['P']!
@@ -231,7 +231,7 @@ describe('useAppStore: пути', () => {
 })
 
 describe('useAppStore: «нет такого файла» не навсегда', () => {
-  const hit = { raw: 'src/a.ts', absPath: 'C:\p\src\a.ts', isDir: false }
+  const hit = { raw: 'src/a.ts', absPath: 'C:\\p\\src\\a.ts', isDir: false }
   const tool = (name: string, state: 'running' | 'done'): RibbonItem =>
     ({ kind: 'tool', id: `t-${name}`, toolUseId: `u-${name}`, name, target: '', summary: '', detail: '', state }) as RibbonItem
 

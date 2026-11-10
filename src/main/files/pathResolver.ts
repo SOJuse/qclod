@@ -12,6 +12,12 @@ interface Entry {
 }
 
 const TTL_MS = 30_000
+/**
+ * How long main itself remembers "no such file": a floor against a window
+ * asking about the same missing path in a loop, short enough that a file
+ * created right after (agents name a file before they write it) is found.
+ */
+const MISSING_TTL_MS = 1000
 /** How long a tab may act on a path after it last found it. */
 const GRANT_TTL_MS = 30 * 60_000
 const MAX_ENTRIES = 5000
@@ -118,19 +124,17 @@ export class PathResolver {
 
   private async lookup(abs: string): Promise<Entry> {
     const now = Date.now()
-    // Only a "yes" is reused. Agents name a file before they create it, and
-    // the window asks again right after a write: a remembered "no" would hide
-    // the new file. Within one call a path is still looked up once.
+    // A "no" is kept only briefly: the window asks again right after a write,
+    // and a long-remembered "no" would hide the new file.
     const cached = this.cache.get(abs)
-    if (cached && cached.exists && now - cached.at <= this.ttlMs) return cached
+    if (cached && now - cached.at <= (cached.exists ? this.ttlMs : MISSING_TTL_MS)) return cached
 
     let entry: Entry
     try {
       const st = await this.stat(abs)
       entry = { exists: true, isDir: st.isDirectory(), at: now }
     } catch {
-      this.cache.delete(abs)
-      return { exists: false, isDir: false, at: now }
+      entry = { exists: false, isDir: false, at: now }
     }
     remember(this.cache, abs, entry, this.maxEntries)
     return entry

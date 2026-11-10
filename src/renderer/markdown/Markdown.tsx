@@ -196,7 +196,8 @@ function renderSpan(span: Span, index: number): JSX.Element {
             void window.qclod.openExternal(span.href)
           }}
         >
-          {span.spans.map(renderSpan)}
+          {/* The label belongs to the address: no file link nested inside it. */}
+          <Paths.Provider value={null}>{span.spans.map(renderSpan)}</Paths.Provider>
         </a>
       )
     default:

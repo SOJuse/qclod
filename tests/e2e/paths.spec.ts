@@ -211,7 +211,7 @@ test('пути в выводе команды и в списке найденн�
 test('путь, названный до создания файла, становится ссылкой после Write', async () => {
   const later = join(project, 'src', 'b.ts')
   const win = await launch([
-    { kind: 'text', text: 'Создам src/b.ts' },
+    { kind: 'text', text: 'Создам src/b.ts рядом с src/a.ts' },
     {
       kind: 'tool',
       name: 'Write',
@@ -222,14 +222,52 @@ test('путь, названный до создания файла, стано�
     { kind: 'text', text: 'Готово: src/b.ts' }
   ])
   const first = win.locator('[data-testid="ribbon-agentText"]').first()
-  await expect(first).toContainText('Создам src/b.ts', { timeout: 15000 })
-  // Main has said "no such file" by now.
-  await win.waitForTimeout(1000)
-  await expect(first.locator('[data-testid="path-link"]')).toHaveCount(0)
+  // Both texts go to main in one call: once src/a.ts is a link, main has
+  // also said "no such file" about src/b.ts.
+  await expect(first.locator('[data-testid="path-link"]')).toHaveText(['src/a.ts'], { timeout: 15000 })
   writeFileSync(later, 'export {}\n', 'utf8')
 
   const second = win.locator('[data-testid="ribbon-agentText"]').nth(1)
   await expect(second.locator('[data-testid="path-link"]')).toHaveText('src/b.ts', { timeout: 15000 })
   // The earlier mention is asked again too.
-  await expect(first.locator('[data-testid="path-link"]')).toHaveText('src/b.ts')
+  await expect(first.locator('[data-testid="path-link"]')).toHaveText(['src/b.ts', 'src/a.ts'])
+})
+
+test('путь в подписи ссылки остаётся частью ссылки на адрес', async () => {
+  const win = await launch(SAY('Правил src/a.ts:3, см. [src/a.ts:3](https://example.com/x)'))
+  await app!.evaluate(({ shell }) => {
+    const g = globalThis as { __opened?: string[] }
+    g.__opened = []
+    shell.openExternal = async (url: string) => {
+      g.__opened!.push(url)
+    }
+  })
+  const answer = win.locator('[data-testid="ribbon-agentText"]').first()
+  await expect(answer.locator('[data-testid="path-link"]')).toHaveCount(1, { timeout: 15000 })
+  const url = answer.locator('a.md-link')
+  // One <a>: no file link nested inside the address link.
+  await expect(url.locator('a')).toHaveCount(0)
+  await url.click()
+  await expect
+    .poll(() => app!.evaluate(() => (globalThis as { __opened?: string[] }).__opened))
+    .toEqual(['https://example.com/x'])
+  expect(await shellLog()).toEqual([])
+})
+
+test('меню не закрывает прокрутка, которую делает сама лента, а колесо — закрывает', async () => {
+  const win = await launch(SAY('Правил src/a.ts:3'))
+  const link = win.locator('[data-testid="path-link"]').first()
+  await expect(link).toBeVisible({ timeout: 15000 })
+  await link.click({ button: 'right' })
+  const menu = win.locator('[data-testid="path-menu"]')
+  await expect(menu).toBeVisible()
+  // The ribbon following a streaming answer scrolls by itself.
+  await link.evaluate((el) => {
+    for (let node = el.parentElement; node; node = node.parentElement) node.dispatchEvent(new Event('scroll'))
+    document.dispatchEvent(new Event('scroll'))
+  })
+  await expect(menu).toBeVisible()
+  await win.mouse.move(40, 400)
+  await win.mouse.wheel(0, 120)
+  await expect(menu).toBeHidden()
 })

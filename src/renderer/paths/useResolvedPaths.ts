@@ -89,8 +89,14 @@ export function useResolvedPaths(tabId: TabId, raws: string[]): ReadonlyMap<stri
  * nothing happens.
  */
 export async function freshTarget(tabId: TabId, target: ResolvedPath): Promise<ResolvedPath | null> {
-  const [answer] = await window.qclod.resolvePaths(tabId, [target.raw]).catch(() => [null])
-  const fresh = answer ?? null
+  let answers: Array<ResolvedPath | null>
+  try {
+    answers = await window.qclod.resolvePaths(tabId, [target.raw])
+  } catch {
+    // No answer is not a "no": the link stays, this one action does nothing.
+    return null
+  }
+  const fresh = answers[0] ?? null
   useAppStore.getState().setPaths(tabId, [[target.raw, fresh]])
   return fresh
 }

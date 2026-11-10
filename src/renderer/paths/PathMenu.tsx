@@ -86,7 +86,9 @@ export function PathMenu({
     rows.current[active]?.focus({ preventScroll: true })
   }, [active])
 
-  // A click elsewhere, the window losing focus or the page moving under it closes it.
+  // A click elsewhere, the window losing focus or the user scrolling the page
+  // under it closes it. A scroll the ribbon makes by itself (following a
+  // streaming answer) does not: the user did nothing.
   useEffect(() => {
     const outside = (e: Event): void => {
       if (!box.current?.contains(e.target as Node)) close.current(false)
@@ -95,12 +97,12 @@ export function PathMenu({
     document.addEventListener('mousedown', outside, true)
     window.addEventListener('blur', away)
     window.addEventListener('resize', away)
-    document.addEventListener('scroll', outside, true)
+    document.addEventListener('wheel', outside, true)
     return () => {
       document.removeEventListener('mousedown', outside, true)
       window.removeEventListener('blur', away)
       window.removeEventListener('resize', away)
-      document.removeEventListener('scroll', outside, true)
+      document.removeEventListener('wheel', outside, true)
     }
   }, [])
 

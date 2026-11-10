@@ -116,7 +116,7 @@
 }
 
 /* The ring itself comes from .ring-host (tokens.css); the field inside is .ring-on-parent. */
-.composer-row:focus-within {
+.composer-row:has(.ring-on-parent:focus-visible) {
   border-color: var(--border-accent);
 }
 

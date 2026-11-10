@@ -68,7 +68,7 @@ test('кольцо фокуса — одно правило в tokens.css, ко�
     ':focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring-color); outline-offset: var(--focus-offset); }'
   )
   expect(tokens).toContain('.ring-on-parent:focus-visible { outline: none }')
-  expect(tokens).toContain('.ring-host:focus-within { box-shadow: var(--focus-ring) }')
+  expect(tokens).toContain('.ring-host:has(.ring-on-parent:focus-visible) { box-shadow: var(--focus-ring) }')
   // Thin 1px look-alikes and private copies of the ring are what made focus hard to see.
   expect(hits(/outline:\s*1px/g)).toEqual([])
   expect(hits(/box-shadow:\s*var\(--focus-ring\)\s*;/g)).toEqual([])

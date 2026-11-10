@@ -75,9 +75,13 @@ const ACCENT_RGB = 'rgb(90, 139, 255)'
 
 /**
  * The focused element shows the ring: either its own outline (not `none`, at
- * least 2px), or — for a field marked `.ring-on-parent` — the box-shadow of the
- * nearest `.ring-host` around it, in the accent. Polls, since the host's shadow
- * eases in.
+ * least 2 screen pixels), or — for a field marked `.ring-on-parent` — the
+ * box-shadow of the nearest `.ring-host` around it, in the accent. Polls, since
+ * the host's shadow eases in.
+ *
+ * The width is counted in screen pixels (CSS px × devicePixelRatio): Chromium
+ * snaps an outline to whole screen pixels and reports it back in CSS px, so at
+ * zoom 120% a 2px ring reads 1.67px while it is 2 pixels on screen.
  */
 export async function expectFocusRing(win: Page): Promise<void> {
   await expect
@@ -87,10 +91,11 @@ export async function expectFocusRing(win: Page): Promise<void> {
           const el = document.activeElement as HTMLElement | null
           if (!el || el === document.body) return 'фокус на body'
           const own = getComputedStyle(el)
-          if (own.outlineStyle !== 'none' && parseFloat(own.outlineWidth) >= 2) return 'ok'
+          const screenPx = parseFloat(own.outlineWidth) * window.devicePixelRatio
+          if (own.outlineStyle !== 'none' && screenPx >= 1.99) return 'ok'
           const host = el.closest('.ring-host')
           if (host && getComputedStyle(host).boxShadow.includes(accent)) return 'ok'
-          return `нет кольца: ${el.outerHTML.slice(0, 80)} outline=${own.outlineStyle} ${own.outlineWidth}`
+          return `нет кольца: ${el.outerHTML.slice(0, 80)} outline=${own.outlineStyle} ${own.outlineWidth} dpr=${window.devicePixelRatio}`
         }, ACCENT_RGB),
       { timeout: 2000 }
     )

@@ -179,6 +179,14 @@
   --palette-width: 520px;
 }
 
+/* Zoomed out (Ctrl+-) on a 100% display, a 2px ring scales below 2 screen pixels
+   and the browser snaps it to one hairline. A step wider keeps it at two. */
+@media (max-resolution: 0.99dppx) {
+  :root {
+    --focus-ring-width: 3px;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -211,12 +219,14 @@ select {
 /* Focus: one ring for every control, the accent outline. A component never puts it
    out; at most it moves it inward (--focus-offset-inset) where a ring outside
    would be clipped. A field whose frame shows focus is `.ring-on-parent`, and the
-   frame is `.ring-host`: the composer row, the Ctrl+K sheet, the path menu. */
+   frame is `.ring-host`: the composer row, the Ctrl+K sheet, the path menu. The
+   frame lights only for that field, so a button beside it (the clip) keeps its
+   own ring alone, never two at once. */
 :focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring-color); outline-offset: var(--focus-offset); }
 
 .ring-on-parent:focus-visible { outline: none }
 
-.ring-host:focus-within { box-shadow: var(--focus-ring) }
+.ring-host:has(.ring-on-parent:focus-visible) { box-shadow: var(--focus-ring) }
 
 /* Monospace is for what is typed or read by a machine: code, output, shortcuts. */
 code,

@@ -165,11 +165,19 @@ const TWO_SESSIONS = {
 }
 const focusEnv = { QCLOD_FAKE_HISTORY: JSON.stringify(TWO_SESSIONS) }
 
-/** What has focus, short enough to tell controls apart. */
+/**
+ * What has focus, as a stable name: its test id and which of the elements with
+ * that id it is. A prefix of outerHTML is not enough — «status-mode» and
+ * «status-model» share one, and the walk then stops on a false repeat.
+ */
 const focused = (win: Page): Promise<string> =>
   win.evaluate(() => {
     const a = document.activeElement as HTMLElement
-    return a === document.body ? 'body' : a.outerHTML.slice(0, 80)
+    if (a === document.body) return 'body'
+    const id = a.getAttribute('data-testid')
+    if (id === null) return a.outerHTML.slice(0, 160)
+    const same = [...document.querySelectorAll(`[data-testid="${id}"]`)]
+    return `${a.tagName.toLowerCase()}[${id}]#${same.indexOf(a)}`
   })
 
 /** How each screen is opened, and how many stops Tab must find there. */
@@ -258,6 +266,25 @@ test('в палитре выбранная строка — заливка на�
   }
 })
 
+test('у скрепки своё кольцо, рамка поля ввода загорается только от самого поля', async () => {
+  const { app, win } = await launchQclod({ env: focusEnv })
+  try {
+    const rowShadow = (): Promise<string> =>
+      win.locator('.composer-row').evaluate((el) => getComputedStyle(el).boxShadow)
+    // The clip comes right after the last recent conversation in Tab order.
+    await win.locator('[data-testid="empty-recent"]').last().focus()
+    await win.keyboard.press('Tab')
+    await expect(win.locator('[data-testid="composer-clip"]')).toBeFocused()
+    await expectFocusRing(win)
+    expect(await rowShadow()).not.toContain('rgb(90, 139, 255)')
+    await win.keyboard.press('Tab')
+    await expect(win.locator('[data-testid="composer-input"]')).toBeFocused()
+    await expect.poll(rowShadow).toContain('rgb(90, 139, 255)')
+  } finally {
+    await app.close()
+  }
+})
+
 test('Esc закрывает настройки и возвращает фокус на кнопку настроек', async () => {
   const { app, win } = await launchQclod()
   try {
@@ -292,24 +319,31 @@ test('Esc закрывает историю и возвращает фокус �
   }
 })
 
-test('при масштабе 80% кольцо фокуса не пропадает', async () => {
-  const { app, win } = await launchQclod()
-  try {
-    await win.keyboard.press('Control+-')
-    await win.keyboard.press('Control+-')
-    await expect
-      .poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.getZoomLevel()))
-      .toBe(-1)
-    // The input's frame...
-    await win.locator('[data-testid="composer-input"]').focus()
-    await win.keyboard.press('Tab')
-    await expectFocusRing(win)
-    // ...and a button's own outline.
-    await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
-    await win.keyboard.press('Tab')
-    await expectFocusRing(win)
-    await shot(win, '06-focus-zoom-80')
-  } finally {
-    await app.close()
-  }
-})
+// Two Ctrl+- give zoom level -1 (83%), two Ctrl+= give +1 (120%): the steps nearest 80% and 125%.
+for (const { name, key, level } of [
+  { name: '80%', key: 'Control+-', level: -1 },
+  { name: '120%', key: 'Control+=', level: 1 }
+]) {
+  test(`при масштабе ${name} кольцо фокуса не пропадает`, async () => {
+    const { app, win } = await launchQclod()
+    try {
+      await win.keyboard.press(key)
+      await win.keyboard.press(key)
+      await expect
+        .poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.getZoomLevel()))
+        .toBe(level)
+      // The input's frame...
+      await win.locator('[data-testid="composer-input"]').focus()
+      await win.keyboard.press('Tab')
+      await expectFocusRing(win)
+      // ...and a button's own outline (the send button comes next after the input).
+      await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+      await win.keyboard.press('Tab')
+      await expect(win.locator('[data-testid="composer-send"]')).toBeFocused()
+      await expectFocusRing(win)
+      await shot(win, `06-focus-zoom-${name.replace('%', '')}`)
+    } finally {
+      await app.close()
+    }
+  })
+}

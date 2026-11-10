@@ -19,15 +19,19 @@ type FocusTarget = Pick<HTMLElement, 'focus'> & { isConnected: boolean }
 
 /**
  * Notes what has focus now; the returned function gives it back. If that
- * element is gone (or focus was nowhere), `fallback` decides where it goes.
+ * element is gone, refuses focus (disabled meanwhile, like the input of a dead
+ * session), or focus was nowhere, `fallback` decides where it goes.
  */
 export function rememberFocus(
   doc: { activeElement: Element | null; body: HTMLElement }
 ): (fallback?: () => void) => void {
   const opener = doc.activeElement === doc.body ? null : (doc.activeElement as FocusTarget | null)
   return (fallback) => {
-    if (opener && opener.isConnected) opener.focus()
-    else fallback?.()
+    if (opener && opener.isConnected) {
+      opener.focus()
+      if (doc.activeElement === (opener as unknown as Element)) return
+    }
+    fallback?.()
   }
 }
 

@@ -23,7 +23,7 @@
 }
 
 /* Focus lives in the field (.ring-on-parent); the sheet is its frame (.ring-host) and keeps its shadow. */
-.action-palette:focus-within {
+.action-palette:has(.ring-on-parent:focus-visible) {
   box-shadow: var(--focus-ring), var(--shadow-modal);
 }
 

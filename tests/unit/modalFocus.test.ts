@@ -32,10 +32,23 @@ describe('rememberFocus: окно закрылось — фокус туда, о
     const d = doc(opener, el('body'))
     const restore = rememberFocus(d)
     d.activeElement = asEl(el('sheet'))
+    opener.focus.mockImplementation(() => (d.activeElement = asEl(opener)))
     const lost = vi.fn()
     restore(lost)
     expect(opener.focus).toHaveBeenCalledTimes(1)
+    expect(d.activeElement).toBe(asEl(opener))
     expect(lost).not.toHaveBeenCalled()
+  })
+
+  test('открывший элемент на месте, но фокус не принял (поле стало disabled) — запасной путь', () => {
+    const opener = el('composer-input')
+    const d = doc(opener, el('body'))
+    const restore = rememberFocus(d)
+    d.activeElement = d.body // the sheet is gone; a disabled field's focus() does nothing
+    const lost = vi.fn()
+    restore(lost)
+    expect(opener.focus).toHaveBeenCalledTimes(1)
+    expect(lost).toHaveBeenCalledTimes(1)
   })
 
   test('открывший элемент исчез из документа — запасной путь', () => {

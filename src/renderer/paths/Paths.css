@@ -64,7 +64,7 @@
 /* Focus moves between the rows, and the chosen row is it: hover fill and the
    ring's colour and width as a stripe on the left (the row is .ring-on-parent).
    The menu is the .ring-host and keeps its own shadow under the ring. */
-.path-menu:focus-within {
+.path-menu:has(.ring-on-parent:focus-visible) {
   box-shadow: var(--focus-ring), var(--shadow-menu);
 }
 

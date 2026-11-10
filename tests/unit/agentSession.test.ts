@@ -1290,6 +1290,100 @@ describe('AgentSession: фоновый подагент переживает х�
   })
 })
 
+describe('AgentSession: фоновые команды', () => {
+  test('список задач идёт в панель, вывод и «Остановить» — только для задач из списка', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      nextTurn: [
+        {
+          kind: 'backgroundBash',
+          command: 'npm run dev',
+          taskId: 'b1',
+          chunks: ['готово 1\n'],
+          pauseMs: 20,
+          finish: null
+        }
+      ]
+    })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'запусти', attachments: [] })
+
+    await vi.waitFor(
+      () =>
+        expect(session.panel.backgroundTasks).toEqual([
+          expect.objectContaining({ taskId: 'b1', command: 'npm run dev', status: 'running' })
+        ]),
+      { timeout: 2000, interval: 5 }
+    )
+    expect(rec.panels.some((p) => p.backgroundTasks !== undefined)).toBe(true)
+
+    await vi.waitFor(
+      async () => expect((await session.taskOutput('b1'))?.output).toBe('готово 1\n'),
+      { timeout: 2000, interval: 10 }
+    )
+    // An id the tab never listed reaches neither the driver nor the agent.
+    const output = vi.spyOn(driver, 'taskOutput')
+    const stop = vi.spyOn(driver, 'stopTask')
+    await expect(session.taskOutput('чужая')).resolves.toBeNull()
+    await session.stopTask('чужая')
+    expect(output).not.toHaveBeenCalled()
+    expect(stop).not.toHaveBeenCalled()
+
+    await session.stopTask('b1')
+    expect(stop).toHaveBeenCalledWith('b1')
+    await vi.waitFor(
+      () => expect(session.panel.backgroundTasks[0]).toMatchObject({ taskId: 'b1', status: 'stopped' }),
+      { timeout: 2000, interval: 5 }
+    )
+    // A finished task is not stopped again.
+    await session.stopTask('b1')
+    expect(stop).toHaveBeenCalledTimes(1)
+    await session.dispose()
+  })
+
+  test('отказ остановить доходит до того, кто просил, задача работает дальше', async () => {
+    const { session } = makeSession({
+      steps: [],
+      stopTaskError: 'задача уже закончилась',
+      nextTurn: [{ kind: 'backgroundBash', command: 'npm run dev', taskId: 'b1', finish: null }]
+    })
+    await session.start()
+    session.send({ text: 'запусти', attachments: [] })
+    await vi.waitFor(() => expect(session.panel.backgroundTasks[0]?.status).toBe('running'), {
+      timeout: 2000,
+      interval: 5
+    })
+    await expect(session.stopTask('b1')).rejects.toThrow('задача уже закончилась')
+    expect(session.panel.backgroundTasks[0]?.status).toBe('running')
+    await session.dispose()
+  })
+
+  test('агент упал — работавшие задачи прерваны, законченные остались как были', async () => {
+    const { session } = makeSession({
+      steps: [],
+      nextTurn: [
+        { kind: 'backgroundBash', command: 'npm run build', taskId: 'b1', finish: null },
+        { kind: 'backgroundBash', command: 'npm run dev', taskId: 'b2', finish: null },
+        { kind: 'crash', message: 'процесс агента завершился' }
+      ]
+    })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'запусти', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('error'), { timeout: 2000, interval: 5 })
+
+    expect(session.panel.backgroundTasks).toEqual([
+      expect.objectContaining({ taskId: 'b2', status: 'interrupted', endedAt: expect.any(Number) }),
+      expect.objectContaining({ taskId: 'b1', status: 'interrupted', endedAt: expect.any(Number) })
+    ])
+    // The window was told, not just the session.
+    const last = rec.panels.filter((p) => p.backgroundTasks !== undefined).at(-1)
+    expect(last?.backgroundTasks?.every((t) => t.status === 'interrupted')).toBe(true)
+    await session.dispose()
+  })
+})
+
 
 describe('AgentSession: панель полна до первого сообщения', () => {
   test('до первого сообщения панель знает контекст, модель, модели и лимиты', async () => {
@@ -1757,5 +1851,275 @@ describe('AgentSession: после dispose молчит', () => {
     expect(rec.changes).toEqual([])
     expect(rec.panels).toEqual([])
     expect(session.status).toBe('stopped')
+  })
+})
+
+describe('AgentSession: очередь сообщений', () => {
+  /** A first turn long enough to type a second message into. */
+  const slowTurn: NonNullable<NonNullable<FakeScript>['nextTurn']> = [
+    { kind: 'textStream', pieces: ['один ', 'два ', 'три ', 'четыре ', 'пять'], pauseMs: 50 }
+  ]
+
+  function lastQueue(rec: Recorder): PanelData['queue'] | undefined {
+    return rec.panels.filter((p) => p.queue !== undefined).at(-1)?.queue
+  }
+
+  test('сообщение во время хода ждёт в очереди и уходит после result', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      turns: [slowTurn, [{ kind: 'text', text: 'второй ответ' }]]
+    })
+    const rec = watch(session)
+    await session.start()
+
+    session.send({ text: 'раз', attachments: [] })
+    session.send({ text: 'два', attachments: [] })
+
+    // Not sent, not in the ribbon — only on the strip above the input.
+    expect(driver.sent).toHaveLength(1)
+    expect(rec.items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text)).toEqual(['раз'])
+    expect(lastQueue(rec)).toEqual([{ id: expect.any(String), text: 'два', attachments: 0 }])
+    expect(session.panel.queue).toHaveLength(1)
+
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('второй ответ'), { timeout: 3000 })
+    expect(driver.sent[1]!.text).toBe('два')
+    expect(rec.items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text)).toEqual([
+      'раз',
+      'два'
+    ])
+    expect(session.panel.queue).toEqual([])
+    await settle(session)
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('отменённое из очереди не уходит', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+
+    session.send({ text: 'раз', attachments: [] })
+    session.send({ text: 'два', attachments: [] })
+    const queued = session.panel.queue[0]!
+
+    expect(session.cancelQueued('нет-такого')).toBe(false)
+    expect(session.cancelQueued(queued.id)).toBe(true)
+    expect(lastQueue(rec)).toEqual([])
+
+    await settle(session)
+    await tick()
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('Стоп возвращает очередь и очищает её', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+
+    session.send({ text: 'раз', attachments: [] })
+    session.send({ text: 'два', attachments: [] })
+
+    expect(await session.interrupt()).toEqual([{ text: 'два', attachments: [] }])
+    expect(session.panel.queue).toEqual([])
+    await settle(session)
+    // The fake plays the stopped turn out to its result (its cost lands on
+    // the panel); that result is where a queued message would have gone.
+    await vi.waitFor(() => expect(rec.panels.some((p) => p.cost)).toBe(true), { timeout: 3000 })
+    await tick()
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('сообщение, отправленное пока Стоп в пути, уходит сразу и не возвращается', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    session.send({ text: 'два', attachments: [] })
+
+    let interrupted!: () => void
+    driver.interrupt = () => new Promise<void>((resolve) => (interrupted = resolve))
+    const stopping = session.interrupt()
+    await vi.waitFor(() => expect(interrupted).toBeDefined())
+
+    // The queue was taken the moment Stop was pressed; this one goes now.
+    session.send({ text: 'три', attachments: [] })
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'три'])
+    expect(session.panel.queue).toEqual([])
+
+    interrupted()
+    expect(await stopping).toEqual([{ text: 'два', attachments: [] }])
+    await session.dispose()
+  })
+
+  test('ответ на вопрос карточкой во время хода тоже встаёт в очередь', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+    // A card from history: nothing waits on it, so its answer goes as a message.
+    session.handle({
+      type: 'assistant',
+      message: {
+        id: 'old',
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'q-old', name: 'AskUserQuestion', input: { questions: [{ question: 'Куда?', options: [] }] } }]
+      }
+    })
+    session.send({ text: 'раз', attachments: [] })
+    session.answerQuestion('q-old', { 'Куда?': 'Справа' })
+
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
+    expect(lastQueue(rec)?.map((q) => q.text)).toEqual(['Справа'])
+    await vi.waitFor(() => expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'Справа']), { timeout: 3000 })
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('упавшая сессия очередь держит и не шлёт', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      turns: [[...slowTurn, { kind: 'crash', message: 'агент умер' }]]
+    })
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    session.send({ text: 'два', attachments: [] })
+
+    await vi.waitFor(() => expect(session.status).toBe('error'), { timeout: 3000 })
+    await tick()
+    expect(session.panel.queue).toHaveLength(1)
+    expect(driver.sent).toHaveLength(1)
+    expect(session.takeQueue()).toEqual([{ text: 'два', attachments: [] }])
+    expect(session.panel.queue).toEqual([])
+  })
+
+  test('requeue в свободную сессию отправляет первое, остальное ждёт', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    await session.start()
+    session.requeue([
+      { text: 'раз', attachments: [] },
+      { text: 'два', attachments: [] }
+    ])
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
+    expect(session.panel.queue.map((q) => q.text)).toEqual(['два'])
+    await vi.waitFor(() => expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два']), { timeout: 3000 })
+    await settle(session)
+    await session.dispose()
+  })
+})
+
+describe('AgentSession: итоговое ревью этапа 2', () => {
+  const slow: NonNullable<NonNullable<FakeScript>['nextTurn']> = [
+    { kind: 'textStream', pieces: ['один ', 'два ', 'три ', 'четыре ', 'пять'], pauseMs: 50 }
+  ]
+
+  test('сообщение во время запуска ждёт в очереди и уходит, когда агент поднялся', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const driver = createFakeSdk({ steps: [] })
+    const slowStart = makeSession(
+      { steps: [] },
+      {
+        createDriver: async () => {
+          await gate
+          return driver as unknown as AgentDriver
+        }
+      }
+    ).session
+    const starting = slowStart.start()
+    await vi.waitFor(() => expect(slowStart.status).toBe('starting'))
+
+    expect(slowStart.send({ text: 'пока запускается', attachments: [] })).toBe(true)
+    expect(driver.sent).toHaveLength(0)
+    expect(slowStart.panel.queue.map((q) => q.text)).toEqual(['пока запускается'])
+
+    release()
+    await starting
+    await vi.waitFor(() => expect(driver.sent.map((s) => s.text)).toEqual(['пока запускается']), {
+      timeout: 2000
+    })
+    expect(slowStart.panel.queue).toEqual([])
+    await slowStart.dispose()
+  })
+
+  test('незапущенная и упавшая сессия не принимают сообщение и говорят об этом', async () => {
+    const fresh = makeSession({ steps: [] }).session
+    expect(fresh.send({ text: 'никуда', attachments: [] })).toBe(false)
+
+    const { session } = makeSession({ steps: [{ kind: 'crash', message: 'агент умер' }] })
+    await session.start()
+    await settle(session)
+    expect(session.status).toBe('error')
+    expect(session.send({ text: 'никуда', attachments: [] })).toBe(false)
+  })
+
+  test('очередь не растёт больше 20 сообщений', async () => {
+    const { session } = makeSession({ steps: [], turns: [slow] })
+    await session.start()
+    expect(session.send({ text: 'первое', attachments: [] })).toBe(true)
+    for (let i = 0; i < 20; i++) expect(session.send({ text: `в очередь ${i}`, attachments: [] })).toBe(true)
+    expect(session.send({ text: 'лишнее', attachments: [] })).toBe(false)
+    expect(session.panel.queue).toHaveLength(20)
+    await session.interrupt()
+    await session.dispose()
+  })
+
+  test('Стоп возвращает картинку с копией на диске без её байт', async () => {
+    const { session } = makeSession({ steps: [], turns: [slow] })
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    session.send({
+      text: 'два',
+      attachments: [
+        { kind: 'image', mediaType: 'image/png', dataBase64: 'QUJD', path: 'C:/ud/pastes/a.png', thumbnail: 'data:x' },
+        { kind: 'image', mediaType: 'image/png', dataBase64: 'REVG' }
+      ]
+    })
+
+    expect(await session.interrupt()).toEqual([
+      {
+        text: 'два',
+        attachments: [
+          { kind: 'image', mediaType: 'image/png', dataBase64: '', path: 'C:/ud/pastes/a.png', thumbnail: 'data:x' },
+          { kind: 'image', mediaType: 'image/png', dataBase64: 'REVG' }
+        ]
+      }
+    ])
+    await session.dispose()
+  })
+
+  test('поток, кончившийся сам, — сессия мертва: драйвер брошен, ход окончен, вопросы закрыты', async () => {
+    let end!: () => void
+    const ended = new Promise<void>((resolve) => (end = resolve))
+    const sent: unknown[] = []
+    const driver = {
+      messages: (async function* () {
+        await ended
+      })(),
+      send: (input: unknown) => sent.push(input),
+      interrupt: async () => undefined,
+      setPermissionMode: async () => undefined,
+      supportedCommands: async () => [],
+      mcpServerStatus: async () => [],
+      getContextUsage: async () => ({ totalTokens: 0, maxTokens: 1, percentage: 0, categories: [] }),
+      supportedModels: async () => [],
+      setModel: async () => undefined,
+      setEffort: async () => undefined,
+      planLimits: async () => null,
+      taskOutput: async () => null,
+      stopTask: async () => undefined,
+      dispose: async () => undefined
+    } as unknown as AgentDriver
+    const { session } = makeSession({}, { createDriver: () => driver })
+    await session.start()
+    expect(session.send({ text: 'раз', attachments: [] })).toBe(true)
+    expect(session.status).toBe('busy')
+
+    end()
+    await vi.waitFor(() => expect(session.status).toBe('error'))
+    expect(session.send({ text: 'два', attachments: [] })).toBe(false)
+    expect(sent).toHaveLength(1)
+    await session.dispose()
   })
 })

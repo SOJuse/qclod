@@ -5,6 +5,7 @@ import { LoginWatch, openLoginWindow, readAuthStatus } from './setup/auth'
 import { detectInstallMethods, installWithFallback, InstallSlot } from './setup/install'
 import { fakeInstaller, type FakeInstallConfig } from './setup/fakeInstall'
 import { CHANNELS } from '../shared/channels'
+import { offScreen } from './window'
 import type { AppSettings, AuthStatus } from '../shared/types'
 
 export interface BaseIpcDeps {
@@ -115,13 +116,16 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
     install.cancel()
   })
 
+  // Off screen (e2e) the window stays where it is: a maximize would put it on
+  // the monitor.
   ipcMain.handle(CHANNELS.windowMinimize, () => {
+    if (offScreen) return
     getWindow()?.minimize()
   })
 
   ipcMain.handle(CHANNELS.windowMaximize, () => {
     const win = getWindow()
-    if (!win) return false
+    if (!win || offScreen) return false
     if (win.isMaximized()) win.unmaximize()
     else win.maximize()
     return win.isMaximized()

@@ -4,6 +4,14 @@ import { isSafeExternalUrl, makeNavigationGuard } from './security'
 
 export const RENDERER_ENTRY = join(__dirname, '../renderer/index.html')
 
+/**
+ * e2e only: the window is real but lives off every screen, out of the taskbar,
+ * and never takes the keyboard, so the suite can run while someone uses the
+ * machine. Playwright drives it over CDP, which needs no OS focus. A release
+ * build has no such branch (buildFlags.d.ts).
+ */
+export const offScreen = __QCLOD_TEST_SEAMS__ && process.env['QCLOD_E2E_INVISIBLE'] === '1'
+
 export function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1180,
@@ -15,17 +23,21 @@ export function createMainWindow(): BrowserWindow {
     backgroundColor: '#00000000',
     backgroundMaterial: 'acrylic',
     title: 'Qclod',
+    // Far past any monitor, and shown without being activated.
+    ...(offScreen ? { x: -20000, y: -20000, skipTaskbar: true } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      // Off screen the page would count as hidden and stall its timers.
+      ...(offScreen ? { backgroundThrottling: false } : {})
     }
   })
 
   // Navigation hardening is registered app-wide via `web-contents-created`,
   // so every webContents gets it, not just this window.
-  win.once('ready-to-show', () => win.show())
+  win.once('ready-to-show', () => (offScreen ? win.showInactive() : win.show()))
 
   return win
 }

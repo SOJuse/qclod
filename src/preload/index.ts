@@ -19,6 +19,7 @@ import type {
   StatusEvent,
   TabId,
   TabState,
+  TaskOutput,
   UpdateState,
   UserInput
 } from '../shared/types'
@@ -51,9 +52,13 @@ const api = {
   restartTab: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.tabsRestart, id),
   retryTab: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.tabsRetry, id),
 
-  send: (id: TabId, input: UserInput): Promise<void> =>
+  /** False when the tab could not take the message: it goes back to the input line. */
+  send: (id: TabId, input: UserInput): Promise<boolean> =>
     ipcRenderer.invoke(CHANNELS.agentSend, id, input),
-  interrupt: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.agentInterrupt, id),
+  /** Stops the turn; resolves with the messages that were waiting to be sent. */
+  interrupt: (id: TabId): Promise<UserInput[]> => ipcRenderer.invoke(CHANNELS.agentInterrupt, id),
+  cancelQueued: (tabId: TabId, id: string): Promise<boolean> =>
+    ipcRenderer.invoke(CHANNELS.agentQueueCancel, tabId, id),
   setPermissionMode: (id: TabId, mode: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.agentPermissionMode, id, mode),
   setModel: (id: TabId, model: string): Promise<void> =>
@@ -67,6 +72,11 @@ const api = {
   ribbon: (id: TabId): Promise<RibbonSnapshot> => ipcRenderer.invoke(CHANNELS.agentRibbon, id),
   /** The tab's whole panel with its revision; live MCP follows as an event. */
   panel: (id: TabId): Promise<PanelSnapshot> => ipcRenderer.invoke(CHANNELS.agentPanel, id),
+  /** The end of a background task's output; null when this Claude Code cannot read it. */
+  taskOutput: (id: TabId, taskId: string): Promise<TaskOutput | null> =>
+    ipcRenderer.invoke(CHANNELS.agentTaskOutput, id, taskId),
+  stopTask: (id: TabId, taskId: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.agentTaskStop, id, taskId),
 
   answerPermission: (requestId: string, answer: PermissionAnswer): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.permissionAnswer, requestId, answer),

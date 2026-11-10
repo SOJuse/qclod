@@ -29,8 +29,10 @@ export interface ComposerContext {
   hasSelection: boolean
   /** A file is attached, so there is something to send even with no text. */
   hasAttachments?: boolean
-  caretAtStart: boolean
-  caretAtEnd: boolean
+  /** No line break before the caret: ↑ has nowhere to go inside the text. */
+  caretOnFirstLine: boolean
+  /** No line break after the caret: ↓ has nowhere to go inside the text. */
+  caretOnLastLine: boolean
   /**
    * The keys of a permission card are being resolved. Set by the card while IT
    * has focus, never by the input line: a reply that starts with «ф» (KeyA on
@@ -140,10 +142,12 @@ const RULES: Rule[] = [
       ? 'caret'
       : undefined,
 
-  // Vertical arrows: history at the edges of the text, caret movement inside.
+  // Vertical arrows: history on the first / last line, caret movement inside.
+  // A selection is the person working on the text, not asking for the past.
   (ev, ctx) => {
     if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return undefined
-    const atEdge = ev.key === 'ArrowUp' ? ctx.caretAtStart : ctx.caretAtEnd
+    if (ctx.hasSelection) return 'caret'
+    const atEdge = ev.key === 'ArrowUp' ? ctx.caretOnFirstLine : ctx.caretOnLastLine
     if (!atEdge) return 'caret'
     return ev.key === 'ArrowUp' ? 'historyPrev' : 'historyNext'
   }

@@ -18,7 +18,7 @@ function Mark({ status }: { status: string }): JSX.Element {
  * The agent's checklist as a thin strip above the input: «Задачи 3/7» and the
  * task under way. A click opens the whole list upward. It is rewritten whole
  * on every update, so it lives here and not in the stream (spec 6.2), and it
- * pins nothing over the conversation.
+ * pins nothing over the conversation. Esc or a click elsewhere closes the list.
  */
 export function TodoStrip({ items, status }: Props): JSX.Element | null {
   const [open, setOpen] = useState(false)
@@ -40,6 +40,21 @@ export function TodoStrip({ items, status }: Props): JSX.Element | null {
     }
     document.addEventListener('mousedown', away)
     return () => document.removeEventListener('mousedown', away)
+  }, [open])
+
+  // Esc closes the open list wherever focus is — the input included — and
+  // goes no further: closing a list must not stop the agent. Caught on the
+  // window before anything else hears it.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== 'Escape' || ev.isComposing) return
+      ev.preventDefault()
+      ev.stopImmediatePropagation()
+      setOpen(false)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [open])
 
   if (!visible) return null

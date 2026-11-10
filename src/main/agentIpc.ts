@@ -11,7 +11,7 @@ import type {
   UserInput
 } from '../shared/types'
 import { buildFileIndex } from './files/fileIndex'
-import type { PathResolver } from './files/pathResolver'
+import { MAX_PER_CALL, type PathResolver } from './files/pathResolver'
 import { openInEditor, openPath, revealPath } from './files/fileActions'
 import { pasteMediaType, pasteRealPath } from './files/imagePaste'
 import { prepareImage } from './files/prepareImage'
@@ -48,6 +48,9 @@ function isString(value: unknown): value is string {
 
 /** No path in a chat is this long; a longer string is not worth a stat. */
 const MAX_RAW_LENGTH = 1024
+
+/** No model name is this long; a longer string is not worth sending to the SDK. */
+const MAX_MODEL_LENGTH = 200
 
 /** Base64 of a picture worth trying to read; a larger paste is not a screenshot. */
 const MAX_PASTE_BASE64 = 80_000_000
@@ -129,16 +132,23 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     await controller.retry(id)
   })
 
-  ipcMain.handle(CHANNELS.agentSend, (_e, id: unknown, input: unknown) => {
-    if (!isString(id)) return
-    const session = manager.get(id)
-    if (!session) return
-    session.send(withPastedBytes(sanitizeInput(input, deps.userData)))
+  // False when the message went nowhere — no live session, and none being
+  // swapped in — so the window gives it back to the input line.
+  ipcMain.handle(CHANNELS.agentSend, (_e, id: unknown, input: unknown): boolean => {
+    if (!isString(id)) return false
+    return controller.send(id, withPastedBytes(sanitizeInput(input, deps.userData)))
   })
 
-  ipcMain.handle(CHANNELS.agentInterrupt, async (_e, id: unknown) => {
-    if (!isString(id)) return
-    await manager.get(id)?.interrupt()
+  // «Стоп» hands back what was waiting to be sent; the window puts it back
+  // in the input field.
+  ipcMain.handle(CHANNELS.agentInterrupt, async (_e, id: unknown): Promise<UserInput[]> => {
+    if (!isString(id)) return []
+    return (await manager.get(id)?.interrupt()) ?? []
+  })
+
+  ipcMain.handle(CHANNELS.agentQueueCancel, (_e, id: unknown, queuedId: unknown): boolean => {
+    if (!isString(id) || !isString(queuedId)) return false
+    return manager.get(id)?.cancelQueued(queuedId) ?? false
   })
 
   // The mode decides whether the agent asks at all, so an unknown string must
@@ -154,15 +164,16 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     await manager.get(id)?.setPermissionMode(mode)
     // What the session actually ended up in — a refused bypass leaves it alone.
     const actual = manager.get(id)?.panel.permissionMode
-    if (actual) {
-      // saveTabs drops a bypass; the default sanitiser turns it into 'default'.
+    // A bypass is for this session only (spec 5.4): remembered, the default
+    // sanitiser would turn it into 'default' and lose the mode saved before.
+    if (actual && actual !== 'bypassPermissions') {
       controller.rememberOverride(id, { permissionMode: actual })
       deps.rememberDefault({ permissionMode: actual })
     }
   })
 
   ipcMain.handle(CHANNELS.agentModel, async (_e, id: unknown, model: unknown) => {
-    if (!isString(id) || !isString(model) || model === '') return
+    if (!isString(id) || !isString(model) || model === '' || model.length > MAX_MODEL_LENGTH) return
     const session = manager.get(id)
     if (!session) return
     await session.setModel(model)
@@ -204,6 +215,18 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!isString(id)) return { rev: 0, data: EMPTY_PANEL }
     void manager.get(id)?.refreshMcp().catch(() => undefined)
     return controller.panelOf(id)
+  })
+
+  // The session answers only for a task it lists itself, so a made-up id
+  // never reaches the agent.
+  ipcMain.handle(CHANNELS.agentTaskOutput, async (_e, id: unknown, taskId: unknown) => {
+    if (!isString(id) || !isString(taskId) || taskId === '') return null
+    return (await manager.get(id)?.taskOutput(taskId)) ?? null
+  })
+
+  ipcMain.handle(CHANNELS.agentTaskStop, async (_e, id: unknown, taskId: unknown) => {
+    if (!isString(id) || !isString(taskId) || taskId === '') return
+    await manager.get(id)?.stopTask(taskId)
   })
 
   ipcMain.handle(CHANNELS.permissionAnswer, (_e, requestId: unknown, answer: unknown) => {
@@ -252,8 +275,10 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
 
   // Which of the paths in a tab's text exist, relative to the tab's folder.
   // Anything that is not a short string answers null in its place.
-  ipcMain.handle(CHANNELS.filesResolve, async (_e, id: unknown, raws: unknown) => {
-    if (!isString(id) || !Array.isArray(raws)) return []
+  ipcMain.handle(CHANNELS.filesResolve, async (_e, id: unknown, given: unknown) => {
+    if (!isString(id) || !Array.isArray(given)) return []
+    // The resolver answers this many per call; the window asks in batches of it.
+    const raws = given.slice(0, MAX_PER_CALL)
     const tab = controller.list().find((t) => t.id === id)
     if (!tab) return raws.map(() => null)
     const valid = raws.map((r) => isString(r) && r !== '' && r.length <= MAX_RAW_LENGTH)

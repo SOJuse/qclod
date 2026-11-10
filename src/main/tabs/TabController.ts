@@ -14,10 +14,11 @@ import type {
   SessionSummary,
   StatusEvent,
   TabId,
-  TabState
+  TabState,
+  UserInput
 } from '../../shared/types'
 import { isDirectory, loadTabs, saveTabs, type LoadedTab } from '../store/tabsStore'
-import { seedFromTranscript, type AgentSession, type SessionSeed } from '../agent/AgentSession'
+import { MAX_QUEUED, seedFromTranscript, type AgentSession, type SessionSeed } from '../agent/AgentSession'
 import { EMPTY_PANEL } from '../agent/panelData'
 import { classifyStartFailure, LOGIN_NEEDED_TEXT } from '../agent/startFailure'
 import type { AgentSessionManager } from '../agent/AgentSessionManager'
@@ -94,6 +95,11 @@ export class TabController {
    * the tab) would open the conversation being left, a second time.
    */
   private readonly replacing = new Set<TabId>()
+  /**
+   * What the user sent while the tab's session was being swapped. The swapper
+   * hands it to the new session after the old one's queue (`handOver`).
+   */
+  private readonly held = new Map<TabId, UserInput[]>()
 
   constructor(private readonly deps: TabControllerDeps) {}
 
@@ -265,12 +271,8 @@ export class TabController {
     // would close its new session mid-turn and send it all again.
     if (this.replacing.has(id)) return
     const unsent = this.deps.manager.get(id)?.sentBeforeInit ?? []
-    const started = await this.replaceSession(id, () => undefined)
-    // Only into the session this retry started: one someone else gave the
-    // tab meanwhile was sent its own messages.
-    const fresh = this.deps.manager.get(id)
-    if (!started || !fresh) return
-    for (const sent of unsent) fresh.resend(sent)
+    // Resent only into the session this retry starts (`replaceSession`).
+    await this.replaceSession(id, () => undefined, unsent)
   }
 
   /**
@@ -318,12 +320,20 @@ export class TabController {
    * on after it — as on recovery from a dead session. A fresh ribbon here
    * would leave the window holding items main no longer has, and new ones
    * under the same ids. `prepare` runs once the old session is gone and
-   * before the new one starts. True when it started the tab's new session.
+   * before the new one starts. `unsent` and the old session's queue go to
+   * the new one (`handOver`). True when it started the tab's new session.
    */
-  private async replaceSession(id: TabId, prepare: (tab: TabState) => void): Promise<boolean> {
+  private async replaceSession(
+    id: TabId,
+    prepare: (tab: TabState) => void,
+    unsent: UserInput[] = []
+  ): Promise<boolean> {
     const tab = this.tabs.find((t) => t.id === id)
     if (!tab) return false
-    const seed = this.deps.manager.get(id)?.successorSeed()
+    const old = this.deps.manager.get(id)
+    const seed = old?.successorSeed()
+    // Taken before the old session goes: closing it would drop the queue.
+    const queued = old?.takeQueue() ?? []
     // In place before the old session goes: while it closes the tab has no
     // session, and a snapshot taken then must not come back empty.
     if (seed) this.previews.set(id, seed)
@@ -336,14 +346,58 @@ export class TabController {
         this.previews.delete(id)
         return false
       }
-      // Someone else has given the tab a session meanwhile: it stays.
-      if (this.deps.manager.get(id)) return false
-      prepare(tab)
-      await this.startSession(id)
-      return true
+      // Someone else has given the tab a session meanwhile: it stays, and
+      // takes over the queue. What never reached an agent is resent only
+      // into a session started here: one someone else gave the tab was sent
+      // its own messages.
+      const started = !this.deps.manager.get(id)
+      if (started) {
+        prepare(tab)
+        await this.startSession(id)
+      }
+      this.handOver(id, this.deps.manager.get(id), started ? unsent : [], queued)
+      return started
     } finally {
       this.replacing.delete(id)
+      this.held.delete(id)
     }
+  }
+
+  /**
+   * What a replaced session still owed the user goes to the one taking its
+   * place: first what it was given and never got to the agent — on screen
+   * already, so sent again without a second bubble — then its queue, which
+   * goes one message per turn as before. A message must not vanish because
+   * the session under it was swapped (ruling C8).
+   */
+  private handOver(
+    id: TabId,
+    fresh: AgentSession | undefined,
+    unsent: UserInput[],
+    queued: UserInput[]
+  ): void {
+    const held = this.held.get(id) ?? []
+    this.held.delete(id)
+    if (!fresh) return
+    for (const sent of unsent) fresh.resend(sent)
+    fresh.requeue([...queued, ...held])
+  }
+
+  /**
+   * A message from the user for this tab. While the session is being swapped
+   * it is held and goes to the one taking its place; otherwise the session
+   * takes it or refuses it. False means it went nowhere, and the window gives
+   * it back to the input line.
+   */
+  send(id: TabId, input: UserInput): boolean {
+    if (this.replacing.has(id)) {
+      const held = this.held.get(id) ?? []
+      if (held.length >= MAX_QUEUED) return false
+      held.push(input)
+      this.held.set(id, held)
+      return true
+    }
+    return this.deps.manager.get(id)?.send(input) ?? false
   }
 
   /** Records a launch option the user changed while the tab was running. */
@@ -525,6 +579,7 @@ export class TabController {
     // What the user said to the dead session never reached an agent; it is
     // on screen already and goes to the new one as it was sent.
     const unsent = dead.sentBeforeInit
+    const queued = dead.takeQueue()
     const seed = dead.successorSeed()
     // Shown while the dead session closes, so a snapshot then is not empty.
     this.previews.set(id, seed)
@@ -537,8 +592,13 @@ export class TabController {
         this.previews.delete(id)
         return
       }
-      // Someone else has given the tab a session meanwhile: it stays.
-      if (this.deps.manager.get(id)) return
+      // Someone else has given the tab a session meanwhile: it stays, and
+      // takes over what was owed.
+      const other = this.deps.manager.get(id)
+      if (other) {
+        this.handOver(id, other, unsent, queued)
+        return
+      }
       const fresh = this.deps.manager.create(id, tab.cwd, launch, seed)
       this.previews.delete(id)
       this.adopt(id, fresh)
@@ -548,10 +608,11 @@ export class TabController {
           : `Сессия не запустилась: ${reason}`
       this.emitRibbon(id, fresh.notice(said))
       await fresh.start()
-      for (const sent of unsent) fresh.resend(sent)
+      this.handOver(id, fresh, unsent, queued)
       this.rememberSession(id, fresh)
     } finally {
       this.replacing.delete(id)
+      this.held.delete(id)
     }
   }
 

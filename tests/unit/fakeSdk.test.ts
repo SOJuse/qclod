@@ -224,6 +224,33 @@ describe('createFakeSdk', () => {
 })
 
 describe('createFakeSdk: следующий ход', () => {
+  test('turns: i-е сообщение играет turns[i], дальше — nextTurn', async () => {
+    const driver = createFakeSdk({
+      steps: [],
+      turns: [[{ kind: 'text', text: 'ответ один' }], [{ kind: 'text', text: 'ответ два' }]],
+      nextTurn: [{ kind: 'text', text: 'ответ потом' }]
+    })
+
+    const said: string[] = []
+    let results = 0
+    const reader = (async () => {
+      for await (const m of driver.messages) {
+        if (m['type'] === 'assistant') {
+          const content = (m['message'] as { content: Array<{ type: string; text?: string }> }).content
+          for (const block of content) if (block.type === 'text' && block.text) said.push(block.text)
+        }
+        if (m['type'] === 'result' && ++results === 3) break
+      }
+    })()
+
+    driver.send({ text: 'раз', attachments: [] })
+    driver.send({ text: 'два', attachments: [] })
+    driver.send({ text: 'три', attachments: [] })
+    await reader
+
+    expect(said).toEqual(['ответ один', 'ответ два', 'ответ потом'])
+  })
+
   test('send проигрывает nextTurn и эхо сообщения пользователя', async () => {
     const driver = createFakeSdk({
       steps: [{ kind: 'text', text: 'первый ход' }],
@@ -781,6 +808,113 @@ describe('createFakeSdk: фоновый подагент', () => {
 
     expect(Date.now() - turnEnded).toBeGreaterThanOrEqual(30)
     expect(reader.out.at(-1)!['status']).toBe('failed')
+    await driver.dispose()
+  })
+})
+
+describe('createFakeSdk: фоновая команда', () => {
+  test('backgroundBash: Bash в фоне, task_started local_bash, вывод копится после result, потом уведомление', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        {
+          kind: 'backgroundBash',
+          command: 'npm run dev',
+          description: 'Сервер',
+          taskId: 'b1',
+          chunks: ['готово 1\n', 'готово 2\n'],
+          pauseMs: 20,
+          finish: 'completed'
+        }
+      ]
+    })
+    const reader = streamReader(driver)
+    await reader.until(isResult)
+    expect(kinds(reader.out)).toEqual([
+      'system/init',
+      'rate_limit_event',
+      'assistant',
+      'user',
+      'system/task_started',
+      'system/background_tasks_changed',
+      'result/success'
+    ])
+    const call = (reader.out[2]!['message'] as { content: Array<Record<string, unknown>> }).content[0]!
+    expect(call).toMatchObject({
+      type: 'tool_use',
+      name: 'Bash',
+      input: { command: 'npm run dev', description: 'Сервер', run_in_background: true }
+    })
+    const result = reader.out[3]!
+    expect((result['message'] as { content: Array<Record<string, unknown>> }).content[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: call['id'],
+      content: 'Command running in background with ID: b1'
+    })
+    expect(result['tool_use_result']).toEqual({
+      stdout: '',
+      stderr: '',
+      interrupted: false,
+      backgroundTaskId: 'b1'
+    })
+    expect(reader.out[4]).toMatchObject({
+      task_id: 'b1',
+      tool_use_id: call['id'],
+      description: 'Сервер',
+      task_type: 'local_bash',
+      is_backgrounded: true
+    })
+    expect(reader.out[5]!['tasks']).toEqual([
+      { task_id: 'b1', task_type: 'local_bash', description: 'Сервер' }
+    ])
+    await expect(driver.taskOutput('b1')).resolves.toEqual({ output: '', totalBytes: 0, truncated: false })
+
+    await reader.until((m) => m['subtype'] === 'task_notification')
+    expect(reader.out.at(-1)).toMatchObject({ task_id: 'b1', tool_use_id: call['id'], status: 'completed' })
+    expect(typeof reader.out.at(-1)!['output_file']).toBe('string')
+    await expect(driver.taskOutput('b1')).resolves.toEqual({
+      output: 'готово 1\nготово 2\n',
+      totalBytes: Buffer.byteLength('готово 1\nготово 2\n'),
+      truncated: false
+    })
+    await reader.until((m) => m['subtype'] === 'background_tasks_changed')
+    expect(reader.out.at(-1)!['tasks']).toEqual([])
+    await driver.dispose()
+  })
+
+  test('taskOutput отдаёт последние 8 КиБ', async () => {
+    const big = 'x'.repeat(10000)
+    const driver = createFakeSdk({
+      steps: [{ kind: 'backgroundBash', command: 'yes', taskId: 'b1', chunks: [big, 'конец'], finish: null }]
+    })
+    const reader = streamReader(driver)
+    await reader.until(isResult)
+    await reader.within(50)
+    const out = await driver.taskOutput('b1')
+    expect(out?.truncated).toBe(true)
+    expect(out?.totalBytes).toBe(10000 + Buffer.byteLength('конец'))
+    expect(Buffer.byteLength(out!.output)).toBeLessThanOrEqual(8192)
+    expect(out!.output.endsWith('конец')).toBe(true)
+    await expect(driver.taskOutput('нет-такой')).resolves.toBeNull()
+    await driver.dispose()
+  })
+
+  test('stopTask: уведомление stopped и пустой список вне хода, вывод больше не растёт', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        { kind: 'backgroundBash', command: 'npm run dev', taskId: 'b1', chunks: ['раз\n', 'два\n'], pauseMs: 300, finish: 'completed' }
+      ]
+    })
+    const reader = streamReader(driver)
+    await reader.until(isResult)
+    await driver.stopTask('b1')
+    await reader.until((m) => m['subtype'] === 'task_notification')
+    expect(reader.out.at(-1)).toMatchObject({ task_id: 'b1', status: 'stopped' })
+    await reader.until((m) => m['subtype'] === 'background_tasks_changed')
+    expect(reader.out.at(-1)!['tasks']).toEqual([])
+    await reader.within(700)
+    // No second notification: the stopped task does not finish again.
+    expect(reader.out.filter((m) => m['subtype'] === 'task_notification')).toHaveLength(1)
+    expect((await driver.taskOutput('b1'))?.output).not.toContain('два')
     await driver.dispose()
   })
 })

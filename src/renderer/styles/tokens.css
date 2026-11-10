@@ -149,6 +149,10 @@
   --status-pad: 2px 6px;
   --dropdown-menu-min-w: 220px;
   --dropdown-menu-max-w: 340px;
+  /* The background commands' list and the output tail an opened row shows. */
+  --bg-list-w: 460px;
+  --bg-list-max-h: 360px;
+  --bg-output-max-h: 180px;
   --critical-fill: color-mix(in srgb, var(--status-critical) 9%, var(--surface-raised));
   --critical-border: color-mix(in srgb, var(--status-critical) 45%, var(--border));
 

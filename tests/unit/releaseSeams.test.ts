@@ -17,6 +17,7 @@ describe('проверка релизной сборки на тестовые �
       'QCLOD_FAKE_INSTALL',
       'QCLOD_FAKE_AUTH',
       'QCLOD_FAKE_UPDATE',
+      'QCLOD_E2E_INVISIBLE',
       '__qclodShellLog',
       '__qclodLoginOpens',
       '__qclodRealAgentStarts',

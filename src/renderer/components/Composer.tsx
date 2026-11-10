@@ -41,6 +41,8 @@ interface Props {
   tabId: string
   status: SessionStatus
   draft: string
+  /** What the person sent in this tab, oldest first: the source of ↑/↓ history. */
+  sentTexts: string[]
   attachments: PendingAttachment[]
   fileIndex: string[]
   /** What the session offers after `/`, as it sent it. */
@@ -138,6 +140,7 @@ export function Composer({
   tabId,
   status,
   draft,
+  sentTexts,
   attachments,
   fileIndex,
   commands,
@@ -180,11 +183,13 @@ export function Composer({
   const history = ((): InputHistory => {
     let existing = histories.current.get(tabId)
     if (!existing) {
-      existing = new InputHistory()
+      existing = new InputHistory(sentTexts)
       histories.current.set(tabId, existing)
     }
     return existing
   })()
+  // The tab's own messages are the source; the list follows them as they come.
+  useEffect(() => history.setEntries(sentTexts), [history, sentTexts])
 
   const available = withLocalCommands(commands)
 
@@ -282,6 +287,10 @@ export function Composer({
     [attachments, onAttachmentsChange, onImagePrepared]
   )
 
+  // A crashed session cannot carry a message: accepting one would show it in
+  // the ribbon, set the tab working, and deliver it nowhere (spec 6.10).
+  const dead = status === 'error'
+
   /** Enter pressed while an image was still being prepared: send once it is. */
   const [sendWhenReady, setSendWhenReady] = useState(false)
 
@@ -311,7 +320,7 @@ export function Composer({
     const ready = materialize(attachments)
     // Nothing left to send: only a failed image, which stays to be seen.
     if (!text && ready.length === 0) return
-    history.push(draft)
+    // Cleared now; a message the tab could not take comes back (onSubmit).
     onDraftChange('')
     onAttachmentsChange([])
     onSubmit(text, ready)
@@ -319,7 +328,7 @@ export function Composer({
 
   // A failed image cancels the waiting send and leaves the text and its error
   // chip in place: only another Enter sends without the image.
-  const queued = queuedSendStep(sendWhenReady, attachments)
+  const queued = queuedSendStep(sendWhenReady, attachments, dead)
   useEffect(() => {
     if (queued === 'send') void submit()
     else if (queued === 'cancel') setSendWhenReady(false)
@@ -335,8 +344,8 @@ export function Composer({
       popupOpen,
       hasSelection: el ? el.selectionStart !== el.selectionEnd : false,
       hasAttachments: attachments.length > 0,
-      caretAtStart: el ? el.selectionStart === 0 : true,
-      caretAtEnd: el ? el.selectionEnd === draft.length : true
+      caretOnFirstLine: el ? !draft.slice(0, el.selectionStart).includes('\n') : true,
+      caretOnLastLine: el ? !draft.slice(el.selectionEnd).includes('\n') : true
     }
   }
 
@@ -354,7 +363,6 @@ export function Composer({
       case 'none':
         return
       case 'send':
-        history.push(outcome.text)
         replaceDraft('')
         onSendCommand(outcome.text)
         return
@@ -462,19 +470,18 @@ export function Composer({
 
       case 'historyPrev':
       case 'historyNext': {
-        const line = action === 'historyPrev' ? history.prev() : history.next()
-        if (line === undefined || line === null) return
+        const line = action === 'historyPrev' ? history.prev(draft) : history.next()
+        if (line === undefined) return
         ev.preventDefault()
-        onDraftChange(line)
+        // Going back lands at the start so ↑ goes on through the past; coming
+        // forward lands at the end so ↓ does.
+        replaceDraft(line, action === 'historyPrev' ? 0 : line.length)
         return
       }
     }
   }
 
   const busy = status === 'busy' || status === 'waiting'
-  // A crashed session cannot carry a message: accepting one would show it in
-  // the ribbon, set the tab working, and deliver it nowhere (spec 6.10).
-  const dead = status === 'error'
 
   return (
     <div
@@ -582,6 +589,7 @@ export function Composer({
           }
           value={draft}
           onChange={(ev) => {
+            history.edit()
             onDraftChange(ev.target.value)
             setCaret(ev.target.selectionStart)
           }}

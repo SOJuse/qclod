@@ -9,6 +9,9 @@ process.env['QCLOD_FAKE_SDK'] = resolve(__dirname, 'tests/fixtures/fake-sdk/inde
 // A throwaway profile per run: tabs and settings never leak between runs or
 // into the developer's real Qclod profile.
 process.env['QCLOD_HEADLESS'] = '1'
+// The window opens off screen and never takes focus, so the machine stays
+// usable while the suite runs (src/main/window.ts).
+process.env['QCLOD_E2E_INVISIBLE'] = '1'
 process.env['QCLOD_USER_DATA'] = mkdtempSync(join(tmpdir(), 'qclod-e2e-'))
 
 // The real `claude auth status` is never asked in e2e: by default the agent

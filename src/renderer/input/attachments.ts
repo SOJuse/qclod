@@ -139,17 +139,69 @@ export function materialize(pending: PendingAttachment[]): Attachment[] {
  * What a send that waited for an image does once something changes: keep
  * waiting while an image is being prepared; send when every image is ready;
  * otherwise cancel — an image failed (the message must not quietly go
- * without it), or the image it waited for was taken away.
+ * without it), the image it waited for was taken away, or the tab's session
+ * died meanwhile (the text stays in the field).
  */
 export function queuedSendStep(
   queued: boolean,
-  attachments: PendingAttachment[]
+  attachments: PendingAttachment[],
+  dead = false
 ): 'none' | 'wait' | 'send' | 'cancel' {
   if (!queued) return 'none'
+  if (dead) return 'cancel'
   if (attachments.some(isPreparing)) return 'wait'
   const images = attachments.filter((a): a is PendingImage => a.kind === 'image')
   if (images.length === 0 || images.some((a) => a.error !== undefined)) return 'cancel'
   return 'send'
+}
+
+/**
+ * A message's attachment back as a chip — what «Стоп» hands back from the
+ * queue. A file goes back as its path; an image as the copy main made of it
+ * (`prepared`), with its bytes as a `File` when they came along. An image
+ * with neither cannot be sent again and says so.
+ */
+export function pendingFromSent(attachment: Attachment): PendingAttachment {
+  if (attachment.kind === 'file') return { kind: 'file', path: attachment.path }
+  const { mediaType, dataBase64, path } = attachment
+  const file = dataBase64 ? fileFromBase64(dataBase64, mediaType) : undefined
+  if (!path) {
+    return file
+      ? { kind: 'image', mediaType, file }
+      : { kind: 'image', mediaType, error: 'Не получилось прочитать картинку' }
+  }
+  return {
+    kind: 'image',
+    mediaType,
+    ...(file ? { file } : {}),
+    prepared: {
+      mediaType,
+      thumbnail: attachment.thumbnail ?? '',
+      path,
+      width: attachment.width ?? 0,
+      height: attachment.height ?? 0
+    }
+  }
+}
+
+function fileFromBase64(dataBase64: string, mediaType: string): File | undefined {
+  try {
+    const binary = atob(dataBase64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    return new File([bytes], 'снимок', { type: mediaType })
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The input field once «Стоп» has handed the queue back: the messages that
+ * were waiting, in order and a blank line apart, before whatever is already
+ * typed.
+ */
+export function draftWithReturned(texts: string[], draft: string): string {
+  return [...texts, draft].filter((text) => text.trim() !== '').join('\n\n')
 }
 
 function readAsBase64(file: File): Promise<string> {

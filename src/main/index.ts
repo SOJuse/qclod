@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu } from 'electron'
 import { homedir } from 'node:os'
+import { APP_ID } from '../shared/appId'
 import { createMainWindow, hardenWebContents, RENDERER_ENTRY } from './window'
 import { registerBaseIpc } from './ipc'
 import { registerAgentIpc } from './agentIpc'
@@ -70,6 +71,9 @@ if (userDataOverride) app.setPath('userData', userDataOverride)
 // The tray keeps the app alive after its window closes, which a headless test
 // run cannot shut down cleanly.
 const headless = process.env['QCLOD_HEADLESS'] === '1'
+
+// Matches the AUMID of the NSIS shortcut, so Windows notifications are tied to it.
+app.setAppUserModelId(APP_ID)
 
 app.on('web-contents-created', (_e, contents) => {
   hardenWebContents(contents)

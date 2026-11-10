@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { bytes, clip, compactNumber, lines, plural, seconds } from '../../src/shared/format'
+import { bytes, clip, compactNumber, lines, plural, seconds, untilReset } from '../../src/shared/format'
 
 describe('format', () => {
   test('plural: один, несколько, много', () => {
@@ -47,4 +47,14 @@ describe('format: границы округления', () => {
   test('1048575 байт переходят в МБ, а не в «1024 КБ»', () => {
     expect(bytes(1048575)).toBe('1,0 МБ')
   })
+})
+
+describe('format: сброс лимита', () => {
+  const now = 1_700_000_000_000
+  test('минуты, часы, дни', () => {
+    expect(untilReset(now / 1000 + 25 * 60, now)).toBe('через 25 мин')
+    expect(untilReset(now / 1000 + 135 * 60, now)).toBe('через 2 ч 15 мин')
+    expect(untilReset(now / 1000 + 3 * 86400, now)).toBe('через 3 дн')
+  })
+  test('прошедший сброс — не отрицательный', () => expect(untilReset(now / 1000 - 600, now)).toBe('через 0 мин'))
 })

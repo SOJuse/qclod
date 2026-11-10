@@ -53,3 +53,12 @@ export function clip(text: string, max = 80): string {
   const line = text.split('\n')[0] ?? ''
   return line.length > max ? `${line.slice(0, max - 1)}…` : line
 }
+
+/** «через 2 ч 15 мин», from a unix timestamp in seconds: when a plan limit resets. */
+export function untilReset(resetsAt: number, nowMs = Date.now()): string {
+  const minutes = Math.max(0, Math.round((resetsAt * 1000 - nowMs) / 60000))
+  if (minutes < 60) return `через ${minutes} мин`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `через ${hours} ч ${minutes % 60} мин`
+  return `через ${Math.round(hours / 24)} дн`
+}

@@ -1,11 +1,13 @@
 import { useEffect, useRef } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
-import { sendCommand } from '../input/slash'
+import { compactNow, sendCommand } from '../input/slash'
 import { Ribbon } from './Ribbon'
 import { Composer } from './Composer'
 import { NowLine } from './NowLine'
 import { TodoStrip } from './TodoStrip'
+import { StatusLine } from './StatusLine'
+import { ContextBanner } from './ContextBanner'
 import './ChatPane.css'
 
 interface Props {
@@ -118,6 +120,14 @@ export function ChatPane({
         </div>
       )}
 
+      {panel.context && (
+        <ContextBanner
+          percent={panel.context.percent}
+          disabled={status === 'busy' || status === 'waiting'}
+          onCompact={() => compactNow(tabId)}
+        />
+      )}
+
       <Composer
         tabId={tabId}
         status={status}
@@ -171,6 +181,8 @@ export function ChatPane({
           })
         }}
       />
+
+      <StatusLine tabId={tabId} data={panel} started={status !== 'stopped'} />
     </section>
   )
 }

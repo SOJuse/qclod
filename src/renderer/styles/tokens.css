@@ -132,6 +132,15 @@
   --now-list-max-h: 240px;
   --now-pulse: 1.8s;
 
+  /* The status line under the input: its meters and the lists its buttons open. */
+  --meter-w: 48px;
+  --meter-h: 6px;
+  --status-pad: 2px 6px;
+  --dropdown-menu-min-w: 220px;
+  --dropdown-menu-max-w: 340px;
+  --critical-fill: color-mix(in srgb, var(--status-critical) 9%, var(--surface-raised));
+  --critical-border: color-mix(in srgb, var(--status-critical) 45%, var(--border));
+
   /* The Ctrl+K window of app actions. */
   --palette-top: 12vh;
   --palette-width: 520px;

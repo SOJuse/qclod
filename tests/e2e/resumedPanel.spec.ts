@@ -13,7 +13,8 @@ async function expectFullPanel(win: Page, panel: Locator): Promise<void> {
   const limits = panel.locator('[data-testid="panel-limits"]')
   await expect(limits).toContainText('13%')
   await expect(limits).toContainText('38%')
-  await expect(panel.locator('[data-testid="panel-model"]')).toHaveValue('claude-opus-5')
+  await expect(panel.locator('[data-testid="panel-model"]')).toContainText('Opus 5')
+  await expect(win.locator('[data-testid="status-model"]').first()).toHaveAttribute('data-value', 'claude-opus-5')
 
   const agents = panel.locator('[data-testid="panel-agents"] li')
   await expect(agents).toHaveCount(4)

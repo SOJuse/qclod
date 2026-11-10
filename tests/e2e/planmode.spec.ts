@@ -1,4 +1,4 @@
-import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test'
+import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,25 +25,31 @@ async function close(app: ElectronApplication, profile: string): Promise<void> {
   rmSync(profile, { recursive: true, force: true })
 }
 
+/** Picks a mode from the status line's list. */
+async function chooseMode(win: Page, mode: string): Promise<void> {
+  await win.locator('[data-testid="status-mode"]').click()
+  await win.locator(`[data-testid="status-mode-option"][data-id="${mode}"]`).click()
+}
+
 const PLAN = 'Разобрать auth.ts на три модуля и перенести тесты'
 
-test('режим переключается из панели и хоткеем по кругу', async () => {
+test('режим переключается из строки статуса и хоткеем по кругу', async () => {
   const { app, profile } = await launch({ steps: [] })
   try {
     const win = await app.firstWindow()
-    const mode = win.locator('[data-testid="panel-mode"]')
-    await expect(mode).toHaveValue('default', { timeout: 15000 })
+    const mode = win.locator('[data-testid="status-mode"]')
+    await expect(mode).toHaveAttribute('data-value', 'default', { timeout: 15000 })
 
-    await mode.selectOption('plan')
-    await expect(mode).toHaveValue('plan', { timeout: 15000 })
+    await chooseMode(win, 'plan')
+    await expect(mode).toHaveAttribute('data-value', 'plan', { timeout: 15000 })
 
     // Shift+Tab walks the everyday modes, as it does in the terminal.
     await win.locator('[data-testid="composer-input"]').click()
     await win.keyboard.press('Shift+Tab')
-    await expect(mode).toHaveValue('default', { timeout: 15000 })
+    await expect(mode).toHaveAttribute('data-value', 'default', { timeout: 15000 })
 
     await win.keyboard.press('Shift+Tab')
-    await expect(mode).toHaveValue('acceptEdits', { timeout: 15000 })
+    await expect(mode).toHaveAttribute('data-value', 'acceptEdits', { timeout: 15000 })
   } finally {
     await close(app, profile)
   }
@@ -53,18 +59,18 @@ test('выбранный режим переживает перезапуск в
   const { app, profile } = await launch({ steps: [] })
   try {
     const win = await app.firstWindow()
-    const mode = win.locator('[data-testid="panel-mode"]')
-    await expect(mode).toHaveValue('default', { timeout: 15000 })
+    const mode = win.locator('[data-testid="status-mode"]')
+    await expect(mode).toHaveAttribute('data-value', 'default', { timeout: 15000 })
 
-    await mode.selectOption('acceptEdits')
-    await expect(mode).toHaveValue('acceptEdits')
+    await chooseMode(win, 'acceptEdits')
+    await expect(mode).toHaveAttribute('data-value', 'acceptEdits')
 
     // A fresh init reports the SDK's own mode; ours must not be overruled.
     await win.locator('[data-testid="composer-input"]').click()
     await win.locator('[data-testid="composer-input"]').fill('работай')
     await win.locator('[data-testid="composer-input"]').press('Enter')
 
-    await expect(mode).toHaveValue('acceptEdits', { timeout: 15000 })
+    await expect(mode).toHaveAttribute('data-value', 'acceptEdits', { timeout: 15000 })
   } finally {
     await close(app, profile)
   }
@@ -108,7 +114,7 @@ test('подтверждение плана переводит в рабочий
     })
 
     // Staying in plan mode would stop the agent doing what was just approved.
-    await expect(win.locator('[data-testid="panel-mode"]')).toHaveValue('acceptEdits', {
+    await expect(win.locator('[data-testid="status-mode"]')).toHaveAttribute('data-value', 'acceptEdits', {
       timeout: 15000
     })
   } finally {
@@ -144,14 +150,14 @@ test('«без проверок» требует подтверждения вн
   const { app, profile } = await launch({ steps: [] }, { QCLOD_CONFIRM_BYPASS: 'deny' })
   try {
     const win = await app.firstWindow()
-    const mode = win.locator('[data-testid="panel-mode"]')
-    await expect(mode).toHaveValue('default', { timeout: 15000 })
+    const mode = win.locator('[data-testid="status-mode"]')
+    await expect(mode).toHaveAttribute('data-value', 'default', { timeout: 15000 })
 
-    await mode.selectOption('bypassPermissions')
+    await chooseMode(win, 'bypassPermissions')
 
-    // The select shows what the panel reports, and the panel reports what the
+    // The button shows what the panel data reports, and that is what the
     // session actually has — which is still «спрашивать».
-    await expect(mode).toHaveValue('default', { timeout: 15000 })
+    await expect(mode).toHaveAttribute('data-value', 'default', { timeout: 15000 })
   } finally {
     await close(app, profile)
   }

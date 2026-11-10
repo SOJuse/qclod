@@ -38,6 +38,14 @@ for await (const message of driver.messages) { /* ... */ }
 задерживает ответ) и `planLimits()` (окна из `script.planLimits`, `null` —
 `null`; по умолчанию те же, что в `rate_limit_event`: 0.13 и 0.38).
 
+Процент контекста — `contextPercent` (по умолчанию 21). Чтобы он менялся
+между ходами, есть `contextPercentByTurn: number[]`: до первого хода
+`getContextUsage()` отвечает `contextPercent`, после i-го хода (по его
+`result`) — i-м числом списка; когда список кончился, держится последнее.
+`totalTokens` считается от процента при `maxTokens` 200 000. Счётчик ходов
+растёт перед `result`, так что запрос контекста сразу после `result` уже
+видит новый процент.
+
 ## Шаги сценария
 
 | Шаг | Что выдаёт |

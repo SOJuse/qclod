@@ -1,4 +1,4 @@
-import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test'
+import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -23,6 +23,12 @@ async function launch(
 async function close(app: ElectronApplication, profile: string): Promise<void> {
   await app.close().catch(() => undefined)
   rmSync(profile, { recursive: true, force: true })
+}
+
+/** Opens one of the status line's lists and picks the row with this id. */
+async function choose(win: Page, testId: string, value: string): Promise<void> {
+  await win.locator(`[data-testid="${testId}"]`).click()
+  await win.locator(`[data-testid="${testId}-option"][data-id="${value}"]`).click()
 }
 
 test('панель показывает контекст, лимиты, модель и MCP', async () => {
@@ -50,9 +56,9 @@ test('панель показывает контекст, лимиты, моде
     await expect(panel.locator('[data-testid="panel-context"]')).toContainText('37%', {
       timeout: 15000
     })
-    // The picker shows what a person reads and carries the id as its value.
-    await expect(panel.locator('[data-testid="panel-model"]')).toHaveValue('claude-opus-5')
+    // The panel names the model as a person reads it; switching is in the status line.
     await expect(panel.locator('[data-testid="panel-model"]')).toContainText('Opus 5')
+    await expect(win.locator('[data-testid="status-model"]')).toHaveAttribute('data-value', 'claude-opus-5')
     await expect(panel.locator('[data-testid="panel-cost"]')).toContainText('$0.1234')
 
     // Both subscription windows — the thing the first spec draft said was
@@ -182,17 +188,15 @@ test('пока модель неизвестна, выбор показывае�
   const { app, profile } = await launch({ steps: [], contextUsageDelayMs: 1500 })
   try {
     const win = await app.firstWindow()
-    // Until the list of models arrives the row is a plain «…» line, not a
-    // select; the list comes long before the delayed context answer.
-    const picker = win.locator('[data-testid="side-panel"] select[data-testid="panel-model"]')
-    await expect(picker).toBeVisible({ timeout: 15000 })
+    // The list of models comes long before the delayed context answer: the
+    // button can open, but which model is on is not known yet.
+    const picker = win.locator('[data-testid="status-model"]')
+    await expect(picker).toBeEnabled({ timeout: 15000 })
+    await expect(picker).toHaveAttribute('data-value', '')
+    await expect(picker).toHaveText('…')
 
-    // The list of models is there; which one is on is not yet.
-    await expect(picker).toHaveValue('')
-    await expect(picker.locator('option:checked')).toHaveText('…')
-
-    await expect(picker).toHaveValue('claude-opus-5', { timeout: 15000 })
-    await expect(picker.locator('option:checked')).toHaveText('Opus 5')
+    await expect(picker).toHaveAttribute('data-value', 'claude-opus-5', { timeout: 15000 })
+    await expect(picker).toHaveText('Opus 5')
 
     // Nothing was sent to get there.
     await expect(win.locator('[data-testid="side-panel"] [data-testid="panel-limits"]')).toContainText(
@@ -213,7 +217,7 @@ test('после перезагрузки окна панель снова по�
     await expect(panel.locator('[data-testid="panel-context"]')).toContainText('21%', {
       timeout: 15000
     })
-    await expect(panel.locator('[data-testid="panel-model"]')).toHaveValue('claude-opus-5', {
+    await expect(panel.locator('[data-testid="panel-model"]')).toContainText('Opus 5', {
       timeout: 15000
     })
 
@@ -224,7 +228,8 @@ test('после перезагрузки окна панель снова по�
     await expect(again.locator('[data-testid="panel-context"]')).toContainText('21%', {
       timeout: 15000
     })
-    await expect(again.locator('[data-testid="panel-model"]')).toHaveValue('claude-opus-5')
+    await expect(again.locator('[data-testid="panel-model"]')).toContainText('Opus 5')
+    await expect(win.locator('[data-testid="status-model"]')).toHaveAttribute('data-value', 'claude-opus-5')
     await expect(again.locator('[data-testid="panel-limits"]')).toContainText('13%')
   } finally {
     await close(app, profile)
@@ -235,15 +240,14 @@ test('модель и усилие вкладки переживают пере�
   const { app, profile } = await launch({ steps: [] })
   try {
     const win = await app.firstWindow()
-    const panel = win.locator('[data-testid="side-panel"]')
-    await expect(panel.locator('select[data-testid="panel-model"]')).toHaveValue('claude-opus-5', {
-      timeout: 15000
-    })
+    const model = win.locator('[data-testid="status-model"]')
+    const effort = win.locator('[data-testid="status-effort"]')
+    await expect(model).toHaveAttribute('data-value', 'claude-opus-5', { timeout: 15000 })
 
-    await panel.locator('select[data-testid="panel-model"]').selectOption('claude-sonnet-5')
-    await expect(panel.locator('select[data-testid="panel-model"]')).toHaveValue('claude-sonnet-5')
-    await panel.locator('select[data-testid="panel-effort"]').selectOption('low')
-    await expect(panel.locator('select[data-testid="panel-effort"]')).toHaveValue('low')
+    await choose(win, 'status-model', 'claude-sonnet-5')
+    await expect(model).toHaveAttribute('data-value', 'claude-sonnet-5')
+    await choose(win, 'status-effort', 'low')
+    await expect(effort).toHaveAttribute('data-value', 'low')
     // Both are written to disk before the app is closed.
     await expect
       .poll(() => readFileSync(join(profile, 'tabs.json'), 'utf8'), { timeout: 10000 })
@@ -260,11 +264,12 @@ test('модель и усилие вкладки переживают пере�
     })
     try {
       const win2 = await again.firstWindow()
-      const panel2 = win2.locator('[data-testid="side-panel"]')
-      await expect(panel2.locator('select[data-testid="panel-model"]')).toHaveValue('claude-sonnet-5', {
-        timeout: 15000
-      })
-      await expect(panel2.locator('select[data-testid="panel-effort"]')).toHaveValue('low')
+      await expect(win2.locator('[data-testid="status-model"]')).toHaveAttribute(
+        'data-value',
+        'claude-sonnet-5',
+        { timeout: 15000 }
+      )
+      await expect(win2.locator('[data-testid="status-effort"]')).toHaveAttribute('data-value', 'low')
     } finally {
       await again.close().catch(() => undefined)
     }

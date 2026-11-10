@@ -70,6 +70,7 @@ export function InlineMenu({
               id={`${id}-${index}`}
               role="option"
               data-testid={itemTestId}
+              data-id={item.id}
               aria-selected={index === selected}
               aria-disabled={disabled || undefined}
               className={`inline-menu-item${index === selected ? ' is-selected' : ''}${

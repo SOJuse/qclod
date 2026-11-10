@@ -1,0 +1,216 @@
+/*
+ * The status line under the input, and the context banner above it.
+ * Quiet by default: dim words, thin meters. Past 80% a meter's fill takes the
+ * status colour and gains an alert icon; words and numbers keep text colours.
+ */
+
+/* The input sits closer to its own status line than to the window edge. */
+.composer:has(+ .status-line) {
+  margin-bottom: var(--space-1);
+}
+
+.status-line {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  width: min(var(--now-max-w), calc(100% - var(--now-gutter) * 2));
+  margin: 0 auto var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.status-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.status-meters {
+  gap: var(--space-3);
+}
+
+/* ---------------------------------------------------------------- dropdown */
+
+.dropdown {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.dropdown-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--status-pad);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.dropdown-button:hover:not(:disabled),
+.dropdown-button.is-open {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.dropdown-button:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: 1px;
+}
+
+.dropdown-button:disabled {
+  cursor: default;
+  color: var(--text-faint);
+}
+
+.dropdown-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-icon,
+.dropdown-chevron {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.dropdown-button:hover:not(:disabled) .status-icon,
+.dropdown-button.is-open .status-icon {
+  color: var(--accent);
+}
+
+/* The list opens up from the button and is as wide as its rows need. */
+.dropdown .inline-menu {
+  right: auto;
+  min-width: var(--dropdown-menu-min-w);
+  max-width: var(--dropdown-menu-max-w);
+}
+
+/* ------------------------------------------------------------------ meters */
+
+.status-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.status-meter-label {
+  color: var(--text-dim);
+}
+
+.status-meter-bar {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--meter-w);
+  height: var(--meter-h);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--meter-track);
+}
+
+.status-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transition: width var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.status-meter-bar[data-level='warn'] .status-meter-fill {
+  background: var(--status-warn);
+}
+
+.status-meter-bar[data-level='critical'] .status-meter-fill {
+  background: var(--status-critical);
+}
+
+.status-meter-value {
+  min-width: 3ch;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.status-meter-alert {
+  flex: 0 0 auto;
+}
+
+.status-meter.is-warn .status-meter-alert {
+  color: var(--status-warn);
+}
+
+.status-meter.is-critical .status-meter-alert {
+  color: var(--status-critical);
+}
+
+/* ----------------------------------------------------------- context banner */
+
+.context-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--strip-gap);
+  width: min(var(--now-max-w), calc(100% - var(--now-gutter) * 2));
+  margin: 0 auto var(--strip-margin);
+  padding: var(--strip-pad);
+  border: 1px solid var(--critical-border);
+  border-radius: var(--strip-radius);
+  background: var(--critical-fill);
+  font-family: var(--font-ui);
+  font-size: var(--strip-font-size);
+  color: var(--text);
+}
+
+.context-banner-icon {
+  flex: 0 0 auto;
+  color: var(--status-critical);
+}
+
+.context-banner-text {
+  margin-right: auto;
+}
+
+.context-banner-action {
+  padding: var(--button-sm-pad);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--button-sm-radius);
+  background: var(--accent-fill);
+  font: inherit;
+  font-size: var(--button-sm-font-size);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.context-banner-action:hover:not(:disabled) {
+  background: var(--accent-fill-strong);
+}
+
+.context-banner-action:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: 1px;
+}
+
+.context-banner-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dropdown-button,
+  .status-meter-fill {
+    transition: none;
+  }
+}

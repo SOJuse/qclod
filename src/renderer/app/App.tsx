@@ -14,6 +14,7 @@ import { SettingsScreen } from '../components/SettingsScreen'
 import { ActionPalette } from '../components/ActionPalette'
 import { compactNow } from '../input/slash'
 import { resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
+import { PANEL_MIN_WIDTH, nextOverride, panelVisible, type PanelOverride } from './panelVisibility'
 import './App.css'
 
 /**
@@ -35,6 +36,24 @@ export function App(): JSX.Element {
   /** Ctrl+W was pressed once on a working tab; a second press within 3 s closes it. */
   const [closeGuardTab, setCloseGuardTab] = useState<string | null>(null)
   const closeGuardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /**
+   * The window's width, and a panel choice made in a narrow window. That
+   * choice lasts until the window crosses the threshold; it is never saved.
+   */
+  const [width, setWidth] = useState(() => window.innerWidth)
+  const widthRef = useRef(width)
+  const [panelOverride, setPanelOverride] = useState<PanelOverride>(null)
+  useEffect(() => {
+    const onResize = (): void => {
+      const before = widthRef.current
+      const after = window.innerWidth
+      widthRef.current = after
+      setPanelOverride((override) => nextOverride(override, before, after))
+      setWidth(after)
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   const recheck = useCallback((): void => {
     void window.qclod.checkEnvironment().then(setEnvironment)
@@ -148,11 +167,28 @@ export function App(): JSX.Element {
     if (splitTabId) loadPanel(splitTabId)
   }, [splitTabId, loadPanel])
 
+  /**
+   * The panel button. In a wide window it flips the saved setting; in a
+   * narrow one, where the panel folds by itself, it opens or closes it for
+   * this window only.
+   */
   const togglePanel = useCallback((): void => {
-    const next = !(useAppStore.getState().settings?.panelOpen ?? true)
-    void window.qclod.setSettings({ panelOpen: next }).then(setSettings)
-    if (next && activeTabId) loadPanel(activeTabId)
-  }, [activeTabId, setSettings, loadPanel])
+    const setting = useAppStore.getState().settings?.panelOpen === true
+    const visible = panelVisible({ setting, width: widthRef.current, override: panelOverride })
+    if (widthRef.current < PANEL_MIN_WIDTH) {
+      setPanelOverride(visible ? 'closed' : 'open')
+    } else {
+      setPanelOverride(null)
+      void window.qclod.setSettings({ panelOpen: !visible }).then(setSettings)
+    }
+    if (!visible && activeTabId) loadPanel(activeTabId)
+  }, [activeTabId, panelOverride, setSettings, loadPanel])
+
+  const showPanel = panelVisible({
+    setting: settings?.panelOpen === true,
+    width,
+    override: panelOverride
+  })
 
   const openHistory = useCallback((): void => {
     if (!activeTabId) return
@@ -390,24 +426,15 @@ export function App(): JSX.Element {
             />
           )}
         </div>
-        {settings?.panelOpen && (
+        {showPanel && (
           <SidePanel
             data={panelByTab[activeTabId] ?? EMPTY_PANEL}
             agents={agentRuns}
             started={(tabs.find((t) => t.id === activeTabId)?.status ?? 'stopped') !== 'stopped'}
-            onSetMode={(mode) => {
-              if (activeTabId) void window.qclod.setPermissionMode(activeTabId, mode)
-            }}
-            onSetModel={(model) => {
-              if (activeTabId) void window.qclod.setModel(activeTabId, model)
-            }}
-            onSetEffort={(level) => {
-              if (activeTabId) void window.qclod.setEffort(activeTabId, level)
-            }}
             onClose={togglePanel}
           />
         )}
-        {!settings?.panelOpen && (
+        {!showPanel && (
           <button
             type="button"
             className="panel-reopen"

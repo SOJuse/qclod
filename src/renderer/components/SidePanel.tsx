@@ -1,26 +1,14 @@
-import {
-  EFFORT_LEVELS,
-  PERMISSION_MODES,
-  type EffortLevel,
-  type LimitWindow,
-  type McpServerInfo,
-  type PanelData,
-  type PermissionMode,
-  type SubagentState
-} from '../../shared/types'
+import type { LimitWindow, McpServerInfo, PanelData, SubagentState } from '../../shared/types'
+import { untilReset } from '../../shared/format'
 import { AGENT_STATE_LABEL } from './agentState'
-import { EFFORT_LABEL, MODE_LABEL } from '../labels'
 import './SidePanel.css'
 
 interface Props {
   data: PanelData
   started: boolean
   onClose: () => void
-  onSetMode: (mode: PermissionMode) => void
   /** Subagents this session has run, newest last. */
   agents: AgentRun[]
-  onSetModel: (model: string) => void
-  onSetEffort: (level: EffortLevel) => void
 }
 
 const MCP_LABEL: Record<McpServerInfo['status'], string> = {
@@ -62,15 +50,6 @@ function money(value: number): string {
   return `$${value.toFixed(value < 1 ? 4 : 2)}`
 }
 
-/** «через 2 ч 15 мин», from a unix timestamp in seconds. */
-function until(resetsAt: number): string {
-  const minutes = Math.max(0, Math.round((resetsAt * 1000 - Date.now()) / 60000))
-  if (minutes < 60) return `через ${minutes} мин`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `через ${hours} ч ${minutes % 60} мин`
-  return `через ${Math.round(hours / 24)} дн`
-}
-
 /**
  * The right-hand panel: what this session costs, how much room is left, and
  * what is plugged into it.
@@ -80,19 +59,10 @@ function until(resetsAt: number): string {
  * between «nothing has happened» and «it is zero» matters to someone deciding
  * whether to keep going.
  */
-export function SidePanel({
-  data,
-  started,
-  agents,
-  onClose,
-  onSetMode,
-  onSetModel,
-  onSetEffort
-}: Props): JSX.Element {
-  // Effort is a property of the chosen model: Opus offers more levels than
-  // Sonnet, so the list follows the model rather than being fixed.
+export function SidePanel({ data, started, agents, onClose }: Props): JSX.Element {
+  // Model, effort and mode are switched in the status line under the input;
+  // the panel names the model and leaves the switching there.
   const chosen = data.models.find((m) => m.value === data.model)
-  const efforts = chosen?.supportedEffortLevels ?? EFFORT_LEVELS
   return (
     <aside className="panel" data-testid="side-panel">
       <header className="panel-head">
@@ -153,32 +123,9 @@ export function SidePanel({
       </Section>
 
       <Section title="Модель">
-        {data.models.length > 0 ? (
-          <select
-            className="panel-mode"
-            data-testid="panel-model"
-            value={data.model ?? ''}
-            onChange={(e) => onSetModel(e.target.value)}
-          >
-            {/* Without it the browser shows the first model as chosen while the
-                session may be on another one. */}
-            {data.model === null && (
-              <option value="" disabled>
-                …
-              </option>
-            )}
-            {data.model && !data.models.some((m) => m.value === data.model) && (
-              <option value={data.model}>{data.model}</option>
-            )}
-            {data.models.map((model) => (
-              <option key={model.value} value={model.value} title={model.description}>
-                {model.displayName}
-              </option>
-            ))}
-          </select>
-        ) : data.model ? (
+        {data.model ? (
           <div className="panel-line" data-testid="panel-model">
-            <span>{data.model}</span>
+            <span>{chosen?.displayName ?? data.model}</span>
           </div>
         ) : started ? (
           // Asked for at start; the answer is a moment away, not a turn away.
@@ -188,41 +135,6 @@ export function SidePanel({
         ) : (
           <Empty started={started} />
         )}
-      </Section>
-
-      <Section title="Усилие">
-        {started ? (
-          <select
-            className="panel-mode"
-            data-testid="panel-effort"
-            value={data.effort ?? ''}
-            onChange={(e) => onSetEffort(e.target.value as EffortLevel)}
-          >
-            {data.effort === null && <option value="">как у модели</option>}
-            {efforts.map((level) => (
-              <option key={level} value={level}>
-                {EFFORT_LABEL[level] ?? level}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <Empty started={started} />
-        )}
-      </Section>
-
-      <Section title="Разрешения">
-        <select
-          className="panel-mode"
-          data-testid="panel-mode"
-          value={data.permissionMode}
-          onChange={(e) => onSetMode(e.target.value as PermissionMode)}
-        >
-          {PERMISSION_MODES.map((mode) => (
-            <option key={mode} value={mode}>
-              {MODE_LABEL[mode] ?? mode}
-            </option>
-          ))}
-        </select>
       </Section>
 
       <Section title="Агенты">
@@ -339,7 +251,7 @@ function Limit({ label, window }: { label: string; window: LimitWindow | null })
       <Bar percent={percent} />
       <div className="panel-line panel-dim">
         <span>сброс</span>
-        <span>{until(window.resetsAt)}</span>
+        <span>{untilReset(window.resetsAt)}</span>
       </div>
     </div>
   )

@@ -100,7 +100,16 @@ export function createFakeSdk(script = {}) {
     effort: null,
     interrupted: false,
     disposed: false,
-    contextPercent: script.contextPercent ?? 21
+    contextPercent: script.contextPercent ?? 21,
+    /** Turns that have ended with a result; contextPercentByTurn is read by it. */
+    turnsDone: 0
+  }
+
+  /** How full the context is now: before any turn, then after each one. */
+  function contextPercentNow() {
+    const byTurn = script.contextPercentByTurn
+    if (!byTurn || byTurn.length === 0 || state.turnsDone === 0) return state.contextPercent
+    return byTurn[Math.min(state.turnsDone, byTurn.length) - 1]
   }
 
   /** Questions put to canUseTool that have not been answered yet. */
@@ -637,6 +646,9 @@ export function createFakeSdk(script = {}) {
   }
 
   async function* finishTurnImpl() {
+    // Counted before the result goes out: the app asks for the context the
+    // moment it sees the result.
+    state.turnsDone += 1
     yield {
       type: 'result',
       subtype: 'success',
@@ -715,9 +727,9 @@ export function createFakeSdk(script = {}) {
       await pause(script.contextUsageDelayMs)
       return {
         model: state.model,
-        totalTokens: Math.round((state.contextPercent / 100) * 200000),
+        totalTokens: Math.round((contextPercentNow() / 100) * 200000),
         maxTokens: 200000,
-        percentage: state.contextPercent,
+        percentage: contextPercentNow(),
         categories: [
           { name: 'messages', tokens: 30000, kind: 'used' },
           { name: 'system_prompt', tokens: 12000, kind: 'used' }

@@ -15,3 +15,12 @@ export const MODE_LABEL: Record<string, string> = {
   dontAsk: 'не спрашивать',
   bypassPermissions: 'без проверок'
 }
+
+/** The same levels in one word, for the status line's button. */
+export const EFFORT_SHORT: Record<string, string> = {
+  low: 'низкое',
+  medium: 'среднее',
+  high: 'высокое',
+  xhigh: 'очень высокое',
+  max: 'максимум'
+}

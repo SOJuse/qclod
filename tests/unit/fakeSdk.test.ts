@@ -501,6 +501,21 @@ describe('createFakeSdk: контекст и лимиты по запросу', 
     expect(usage.percentage).toBe(21)
   })
 
+  test('contextPercentByTurn меняет процент после каждого хода, последний держится', async () => {
+    const driver = createFakeSdk({ steps: [], contextPercent: 10, contextPercentByTurn: [82, 92] })
+    expect((await driver.getContextUsage()).percentage).toBe(10)
+    // One iterator for all three turns: breaking out of for-await would close the stream.
+    const stream = (driver.messages as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]()
+    const percents: number[] = []
+    for (const text of ['один', 'два', 'три']) {
+      driver.send({ text, attachments: [] })
+      for (let next = await stream.next(); next.value?.['type'] !== 'result'; next = await stream.next());
+      percents.push((await driver.getContextUsage()).percentage)
+    }
+    expect(percents).toEqual([82, 92, 92])
+    expect((await driver.getContextUsage()).totalTokens).toBe(184000)
+  })
+
   test('planLimits по умолчанию — те же окна, что в rate_limit_event', async () => {
     const driver = createFakeSdk({ steps: [{ kind: 'text', text: 'ок' }] })
     const event = (await collect(driver)).find((m) => m['type'] === 'rate_limit_event') as {

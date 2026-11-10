@@ -77,6 +77,8 @@ export interface FakeScript {
   sessionId?: string
   costUsd?: number
   contextPercent?: number
+  /** getContextUsage() after the i-th turn answers the i-th entry (1-based); the last one sticks. */
+  contextPercentByTurn?: number[]
   rateLimits?: { fiveHour?: FakeWindow; sevenDay?: FakeWindow }
   /** What planLimits() returns; by default the rate_limit_event windows. */
   planLimits?: FakePlanLimits | null

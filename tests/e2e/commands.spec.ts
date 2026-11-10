@@ -30,6 +30,12 @@ const COMMANDS = [
   { name: 'remote-control', description: 'Удалённое управление', argumentHint: '' }
 ]
 
+/** Opens one of the status line's lists and picks the row with this id. */
+async function choose(win: Page, testId: string, value: string): Promise<void> {
+  await win.locator(`[data-testid="${testId}"]`).click()
+  await win.locator(`[data-testid="${testId}-option"][data-id="${value}"]`).click()
+}
+
 async function ready(win: Page): Promise<ReturnType<Page['locator']>> {
   const input = win.locator('[data-testid="composer-input"]')
   await input.waitFor({ timeout: 15000 })
@@ -163,8 +169,8 @@ test('/model — второй шаг со списком моделей', async 
   try {
     const win = await app.firstWindow()
     const input = await ready(win)
-    const picker = win.locator('[data-testid="panel-model"]')
-    await expect(picker).toHaveValue('claude-opus-5')
+    const picker = win.locator('[data-testid="status-model"]')
+    await expect(picker).toHaveAttribute('data-value', 'claude-opus-5')
 
     await input.pressSequentially('/model')
     await input.press('Enter')
@@ -180,7 +186,7 @@ test('/model — второй шаг со списком моделей', async 
     await input.press('ArrowDown')
     await input.press('Enter')
 
-    await expect(picker).toHaveValue('claude-sonnet-5')
+    await expect(picker).toHaveAttribute('data-value', 'claude-sonnet-5')
     await expect(input).toHaveValue('')
     await expect(win.locator('[data-testid="slash-menu"]')).toHaveCount(0)
     await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
@@ -195,7 +201,8 @@ test('/effort — второй шаг с уровнями выбранной м�
     const win = await app.firstWindow()
     const input = await ready(win)
     // Sonnet offers three levels where Opus offers five.
-    await win.locator('[data-testid="panel-model"]').selectOption('claude-sonnet-5')
+    await choose(win, 'status-model', 'claude-sonnet-5')
+    await expect(win.locator('[data-testid="status-model"]')).toHaveAttribute('data-value', 'claude-sonnet-5')
     await input.click()
 
     await input.pressSequentially('/effort')
@@ -207,7 +214,7 @@ test('/effort — второй шаг с уровнями выбранной м�
     await input.press('ArrowDown')
     await input.press('Enter')
 
-    await expect(win.locator('[data-testid="panel-effort"]')).toHaveValue('high')
+    await expect(win.locator('[data-testid="status-effort"]')).toHaveAttribute('data-value', 'high')
     await expect(input).toHaveValue('')
   } finally {
     await close(app, profile)
@@ -280,20 +287,24 @@ test('слеш посреди текста — не команда', async () =>
   }
 })
 
-test('усилие в панели выбирается из уровней, которые поддерживает модель', async () => {
+test('усилие в строке статуса выбирается из уровней, которые поддерживает модель', async () => {
   const { app, profile } = await launch({ steps: [] })
   try {
     const win = await app.firstWindow()
     await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
 
-    const effort = win.locator('[data-testid="panel-effort"]')
-    await expect(effort).toBeVisible()
-    await effort.selectOption('high')
-    await expect(effort).toHaveValue('high')
+    const effort = win.locator('[data-testid="status-effort"]')
+    await expect(effort).toBeEnabled({ timeout: 15000 })
+    await effort.click()
+    await expect(win.locator('[data-testid="status-effort-option"]')).toHaveCount(5)
+    await win.locator('[data-testid="status-effort-option"][data-id="high"]').click()
+    await expect(effort).toHaveAttribute('data-value', 'high')
 
     // Sonnet offers three levels where Opus offers five.
-    await win.locator('[data-testid="panel-model"]').selectOption('claude-sonnet-5')
-    await expect(effort.locator('option')).toHaveCount(3)
+    await choose(win, 'status-model', 'claude-sonnet-5')
+    await expect(win.locator('[data-testid="status-model"]')).toHaveAttribute('data-value', 'claude-sonnet-5')
+    await effort.click()
+    await expect(win.locator('[data-testid="status-effort-option"]')).toHaveCount(3)
   } finally {
     await close(app, profile)
   }

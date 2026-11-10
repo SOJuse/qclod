@@ -10,6 +10,7 @@ import type {
   PanelSnapshot,
   PermissionAnswer,
   PermissionRequest,
+  RemoteInfo,
   RibbonChange,
   RibbonItem,
   SessionStatus,
@@ -18,6 +19,7 @@ import type {
   TodoItem,
   UserInput
 } from '../../shared/types'
+import { REMOTE_OFF, explainRemoteError, isRemoteLive, remoteFromMessage } from '../../shared/remote'
 import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
 import type { ToolPermissionContext } from './permissionContext'
 import { parseExtraFlags } from './launchFlags'
@@ -60,6 +62,9 @@ export interface AgentSessionOptions {
 
 /** The longest `dispose` waits for the agent process to go away. */
 export const DISPOSE_TIMEOUT_MS = 5000
+
+/** The longest a closing tab waits for the bridge to say «выключено» to the phone. */
+export const REMOTE_OFF_TIMEOUT_MS = 1000
 
 /** A server still `pending` or `connecting` is asked about again after this long… */
 export const MCP_POLL_MS = 2000
@@ -135,6 +140,12 @@ export class AgentSession {
   private readonly statusListeners: StatusListener[] = []
   private readonly commandListeners: Array<(commands: CommandInfo[]) => void> = []
   private readonly sessionListeners: Array<(sessionId: string) => void> = []
+  private readonly remoteListeners: Array<(info: RemoteInfo) => void> = []
+  /** Remote Control of this tab. Live only: a new process starts with it off. */
+  private remoteInfo: RemoteInfo = REMOTE_OFF
+  /** The «включить» on its way to the CLI; a second one joins it, a «выключить» waits for it. */
+  private enabling: Promise<void> | null = null
+  private disabling: Promise<void> | null = null
 
   private driver: AgentDriver | null = null
   private pump: Promise<void> | null = null
@@ -254,6 +265,117 @@ export class AgentSession {
   /** Fires when the conversation's own id becomes known (system/init). */
   onSession(cb: (sessionId: string) => void): void {
     this.sessionListeners.push(cb)
+  }
+
+  get remote(): RemoteInfo {
+    return this.remoteInfo
+  }
+
+  /** Every change of Remote Control. Returns a function that stops the listener. */
+  onRemote(cb: (info: RemoteInfo) => void): () => void {
+    this.remoteListeners.push(cb)
+    return () => {
+      const at = this.remoteListeners.indexOf(cb)
+      if (at !== -1) this.remoteListeners.splice(at, 1)
+    }
+  }
+
+  /**
+   * Turns Remote Control on or off. A second «включить» while the first is
+   * still on its way asks the CLI nothing; a «выключить» meanwhile waits for
+   * the answer and then turns off whatever came of it. Nothing here throws:
+   * a refusal ends up in the state, for the panel to show.
+   */
+  async setRemote(enabled: boolean, name?: string): Promise<void> {
+    if (enabled) await this.enableRemote(name)
+    else await this.disableRemote()
+  }
+
+  private async enableRemote(name?: string): Promise<void> {
+    if (this.enabling) return this.enabling
+    const driver = this.driver
+    if (!driver || this.remoteInfo.blocked || isRemoteLive(this.remoteInfo)) return
+    const enabling = this.runEnable(driver, name)
+    this.enabling = enabling
+    try {
+      await enabling
+    } finally {
+      if (this.enabling === enabling) this.enabling = null
+    }
+  }
+
+  private async runEnable(driver: AgentDriver, name?: string): Promise<void> {
+    this.setRemoteInfo({ state: 'connecting' })
+    let url: string
+    try {
+      url = (await driver.setRemoteControl(true, name))?.sessionUrl ?? ''
+      if (!url) throw new Error('CLI не вернул ссылку на сессию')
+    } catch (err) {
+      if (this.driver !== driver) return
+      const problem = explainRemoteError(err)
+      this.setRemoteInfo({ state: 'off', problem })
+      this.emit(this.builder.notice(problem, 'error'))
+      return
+    }
+    // The process is gone, or the bridge was turned off meanwhile: the
+    // answer must not bring it back.
+    if (this.driver !== driver) return
+    const now = this.remoteInfo
+    if (now.state === 'connecting') this.setRemoteInfo({ state: 'on', url })
+    // The bridge spoke first: its state stands, the link is added to it.
+    else if (isRemoteLive(now)) this.setRemoteInfo({ ...now, url })
+  }
+
+  private async disableRemote(): Promise<void> {
+    if (this.enabling) await this.enabling
+    if (this.disabling) return this.disabling
+    const driver = this.driver
+    if (!driver || this.remoteInfo.state === 'off') return
+    const disabling = this.runDisable(driver)
+    this.disabling = disabling
+    try {
+      await disabling
+    } finally {
+      if (this.disabling === disabling) this.disabling = null
+    }
+  }
+
+  private async runDisable(driver: AgentDriver): Promise<void> {
+    try {
+      await driver.setRemoteControl(false)
+    } catch (err) {
+      if (this.driver !== driver) return
+      const message = err instanceof Error ? err.message : String(err)
+      this.setRemoteInfo({ ...this.remoteInfo, problem: `Не удалось выключить Remote Control: ${message}` })
+      return
+    }
+    if (this.driver === driver) this.setRemoteInfo(REMOTE_OFF)
+  }
+
+  /** Whether this login and CLI can run Remote Control at all; asked once the process is up. */
+  private async checkRemote(): Promise<void> {
+    const driver = this.driver
+    if (!driver) return
+    const availability = await driver.remoteAvailability()
+    if (this.driver !== driver || availability.available || this.remoteInfo.state !== 'off') return
+    this.setRemoteInfo({ state: 'off', blocked: availability.reason })
+  }
+
+  private setRemoteInfo(info: RemoteInfo): void {
+    const was = this.remoteInfo
+    if (
+      was.state === info.state &&
+      was.url === info.url &&
+      was.problem === info.problem &&
+      was.blocked === info.blocked
+    ) {
+      return
+    }
+    this.remoteInfo = info
+    this.builder.setRemote(isRemoteLive(info))
+    // The tab belongs to whichever session replaced this one.
+    if (this.disposed) return
+    for (const listener of [...this.remoteListeners]) listener(info)
   }
 
   /** Resolves when the session is no longer working: idle, stopped or failed. */
@@ -462,6 +584,7 @@ export class AgentSession {
     this.background(this.refreshModels())
     this.background(this.refreshMcp())
     this.background(this.refreshLimits())
+    this.background(this.checkRemote())
   }
 
   /** The level this tab was left at, from tabs.json — the session's, not the user's settings. */
@@ -836,13 +959,30 @@ export class AgentSession {
     const limit = new Promise<void>((resolve) => {
       timer = setTimeout(resolve, this.options.disposeTimeoutMs ?? DISPOSE_TIMEOUT_MS)
     })
+    const bridgeLive = isRemoteLive(this.remoteInfo)
     const closing = (async () => {
+      // The phone is told «выключено» rather than left to time out — briefly:
+      // a bridge that does not answer must not hold the close.
+      if (driver && bridgeLive) await this.remoteOffBeforeClose(driver)
       if (driver) await driver.dispose().catch(() => undefined)
       await pump?.catch(() => undefined)
     })()
     await Promise.race([closing, limit])
     clearTimeout(timer)
+    this.setRemoteInfo(REMOTE_OFF)
     this.setStatus('stopped')
+  }
+
+  private async remoteOffBeforeClose(driver: AgentDriver): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const limit = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, REMOTE_OFF_TIMEOUT_MS)
+    })
+    const off = (async () => {
+      await driver.setRemoteControl(false)
+    })().catch(() => undefined)
+    await Promise.race([off, limit])
+    clearTimeout(timer)
   }
 
   // ------------------------------------------------------------- the pump
@@ -866,6 +1006,7 @@ export class AgentSession {
       // The stream ending by itself means the agent exited.
       if (this.driver === driver) {
         this.cutOffBackground()
+        this.setRemoteInfo(REMOTE_OFF)
         this.setStatus('stopped')
       }
     } catch (err) {
@@ -879,7 +1020,25 @@ export class AgentSession {
   }
 
   private onMessage(message: unknown): void {
-    this.emit(this.builder.apply(message))
+    const changes = this.builder.apply(message)
+    this.emit(changes)
+    // A message typed on the phone starts a turn of its own — unless one is
+    // under way, which it then joins: the bubble shows, nothing is counted twice.
+    if (
+      !this.turnRunning &&
+      changes.some((c) => c.kind === 'append' && c.item.kind === 'user' && c.item.remote)
+    ) {
+      this.turn += 1
+      this.turnRunning = true
+      if (this.waits === 0) this.setStatus('busy')
+    }
+    const remote = remoteFromMessage(message, this.remoteInfo)
+    if (remote) {
+      this.setRemoteInfo(remote)
+      if (remote.state === 'failed' && remote.problem) {
+        this.emit(this.builder.notice(remote.problem, 'error'))
+      }
+    }
     const panel = this.collector.apply(message)
     if (panel) {
       // The collector is the one place that knows the current mode — it also
@@ -987,7 +1146,13 @@ export class AgentSession {
     // The question is cancelled through a controller of the session's own,
     // so «Стоп» reaches it whether or not the SDK ever fires its signal.
     const controller = new AbortController()
-    const cancel = (): void => controller.abort()
+    // Set only when the SDK itself gave up — with the bridge live, that is the
+    // phone having answered. «Стоп» aborts the controller, not this.
+    let sdkAborted = false
+    const cancel = (): void => {
+      sdkAborted = true
+      controller.abort()
+    }
     if (opts.signal?.aborted) return { behavior: 'deny' }
     opts.signal?.addEventListener('abort', cancel, { once: true })
     const wait = { controller, turn: this.turn }
@@ -1013,9 +1178,13 @@ export class AgentSession {
     if (this.openPermissions.get(requestId) === wait) {
       this.openPermissions.delete(requestId)
       this.leaveWait()
-      this.emit(
-        this.builder.resolvePermission(requestId, answer.behavior === 'allow' ? 'allowed' : 'denied')
-      )
+      const state =
+        sdkAborted && isRemoteLive(this.remoteInfo)
+          ? 'elsewhere'
+          : answer.behavior === 'allow'
+            ? 'allowed'
+            : 'denied'
+      this.emit(this.builder.resolvePermission(requestId, state))
     }
     return answer
   }
@@ -1034,12 +1203,15 @@ export class AgentSession {
 
     this.enterWait()
     return new Promise<PermissionAnswer>((resolve) => {
-      // The SDK gave up on the plan: it can no longer be approved.
+      // The SDK gave up on the plan: it can no longer be approved. With the
+      // bridge live, the phone decided it.
       const onAbort = (): void => {
         if (this.pendingPlans.get(requestId)?.resolve !== settle) return
         this.pendingPlans.delete(requestId)
         this.leaveWait()
-        this.emit(this.builder.resolvePlan(requestId, 'rejected'))
+        this.emit(
+          this.builder.resolvePlan(requestId, isRemoteLive(this.remoteInfo) ? 'elsewhere' : 'rejected')
+        )
         resolve({ behavior: 'deny' })
       }
       const settle = (answer: PermissionAnswer): void => {
@@ -1074,6 +1246,8 @@ export class AgentSession {
         if (this.pendingQuestions.get(toolUseId)?.resolve !== settle) return
         this.pendingQuestions.delete(toolUseId)
         this.leaveWait()
+        // Answered on the phone: the card closes rather than waiting for a click.
+        if (isRemoteLive(this.remoteInfo)) this.emit(this.builder.closeQuestionElsewhere(toolUseId))
         resolve({ behavior: 'deny' })
       }
       const settle = (answer: PermissionAnswer): void => {
@@ -1121,6 +1295,8 @@ export class AgentSession {
     this.cancelWaits()
     if (dead) void dead.dispose().catch(() => undefined)
     this.cutOffBackground()
+    // No process, no bridge.
+    this.setRemoteInfo(REMOTE_OFF)
     this.failure = text
     this.emit(this.builder.closeOpen())
     this.emit(this.builder.notice(explain(text), 'error'))

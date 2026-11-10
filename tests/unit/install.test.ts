@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InstallSlot, quoteArg, runInstaller, type InstallHandle } from '@main/setup/install'
+import { cmdShellArgs, InstallSlot, quoteArg, runInstaller, type InstallHandle } from '@main/setup/install'
 
 function alive(pid: number): boolean {
   try {
@@ -208,7 +208,8 @@ describe('runInstaller: аргументы и вывод', () => {
       'C:\\%PATH%\\x y',
       'a\\"b c',
       'sss',
-      'a|b<c>d(e)'
+      'a|b<c>d(e)',
+      'a!PATH!b c'
     ]
     const lines = await runLines('console.log("ARGS" + JSON.stringify(process.argv.slice(2)))', args)
     const got = lines.find((l) => l.startsWith('ARGS'))
@@ -233,5 +234,11 @@ describe('quoteArg', () => {
   test('без особых символов — как есть, хвостовой слеш в кавычках удваивается', () => {
     expect(quoteArg(String.raw`C:\a\b`)).toBe(String.raw`C:\a\b`)
     expect(quoteArg('C:\\a b\\')).toBe('"C:\\a b\\\\"')
+  })
+})
+
+describe('cmdShellArgs', () => {
+  test('cmd без автозапуска, с выключенным отложенным раскрытием, строка в одной паре кавычек', () => {
+    expect(cmdShellArgs('winget install x')).toEqual(['/d', '/v:off', '/s', '/c', '"winget install x"'])
   })
 })

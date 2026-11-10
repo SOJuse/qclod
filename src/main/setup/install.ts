@@ -100,6 +100,16 @@ export function installAgent(
  * are doubled, or the program would read `\"` as a literal quote
  * (`C:\%PATH%` would arrive as `C:"%PATH%`).
  */
+/**
+ * cmd.exe's arguments for one command line built with `quoteArg`. Quoted
+ * whole, as Node does for `shell: true`: with /s cmd strips exactly that
+ * outer pair and runs the line as written. /d skips AutoRun, and /v:off keeps
+ * `!` literal even where the registry turns delayed expansion on.
+ */
+export function cmdShellArgs(line: string): string[] {
+  return ['/d', '/v:off', '/s', '/c', `"${line}"`]
+}
+
 export function quoteArg(arg: string): string {
   if (!/[\s"&|<>^()%!]/.test(arg)) return arg
   const body = arg
@@ -152,7 +162,10 @@ export function runInstaller(
     // The line is built here, so no args array is handed to a shell (DEP0190).
     child =
       process.platform === 'win32'
-        ? spawn([command, ...args.map(quoteArg)].join(' '), { windowsHide: true, shell: true })
+        ? spawn('cmd.exe', cmdShellArgs([command, ...args.map(quoteArg)].join(' ')), {
+            windowsHide: true,
+            windowsVerbatimArguments: true
+          })
         : spawn(command, args, { windowsHide: true })
   } catch (error) {
     onOutput(error instanceof Error ? error.message : String(error))

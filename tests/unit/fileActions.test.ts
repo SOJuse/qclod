@@ -80,7 +80,10 @@ describe('openPath / revealPath', () => {
     expect(shell.showItemInFolder).toHaveBeenCalledWith(p)
   })
 
-  test.each(['x.py', 'run.sh', 'srv.rdp', 'disk.iso', 'q.search-ms', 'macro.docm', 'page.html', 'a.js', 'pic.svg'])(
+  test.each([
+    'x.py', 'run.sh', 'srv.rdp', 'disk.iso', 'q.search-ms', 'macro.docm', 'page.html', 'a.js', 'pic.svg',
+    'r.rtf', 'w.doc', 'w.docx', 't.dotx', 's.xls', 's.xlsx', 's.xlsm', 'p.ppt', 'p.pptx', 'o.odt', 'o.ods', 'o.odp'
+  ])(
     '%s — не в белом списке, показывается в проводнике',
     async (n) => {
       const p = file(n)
@@ -97,11 +100,35 @@ describe('openPath / revealPath', () => {
     expect(shell.showItemInFolder).not.toHaveBeenCalled()
   })
 
-  test('папка открывается в проводнике', async () => {
-    const d = join(DIR, 'folder.exe')
+  // A folder never goes through shell.openPath: swapped for a file between
+  // the check and the call, it would be launched by its association.
+  test('папка открывается явным explorer.exe, а не shell.openPath', async () => {
+    const d = join(DIR, 'src folder')
     mkdirSync(d, { recursive: true })
     expect(await openPath(d)).toBe('opened')
-    expect(shell.openPath).toHaveBeenCalledWith(d)
+    expect(shell.openPath).not.toHaveBeenCalled()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    const [cmd, args, opts] = spawn.mock.calls[0]!
+    expect(cmd).toBe('explorer.exe')
+    expect(args).toEqual([`"${d}"`])
+    expect(opts).toMatchObject({ windowsVerbatimArguments: true, detached: true })
+  })
+
+  test('папка с «исполняемым» именем (folder.exe) только показывается', async () => {
+    const d = join(DIR, 'folder.exe')
+    mkdirSync(d, { recursive: true })
+    expect(await openPath(d)).toBe('revealed')
+    expect(shell.openPath).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(d)
+  })
+
+  test('папка с безопасным расширением (notes.md) тоже открывается через explorer.exe', async () => {
+    const d = join(DIR, 'notes-dir.md')
+    mkdirSync(d, { recursive: true })
+    expect(await openPath(d)).toBe('opened')
+    expect(shell.openPath).not.toHaveBeenCalled()
+    expect(spawn.mock.calls[0]![0]).toBe('explorer.exe')
   })
 
   test('файла нет — длинное имя не узнать, показывается в проводнике', async () => {
@@ -226,6 +253,28 @@ describe('строка редактора через настоящий cmd.exe'
   test('плейсхолдер в кавычках вместе с ключом: «"-x {path}"» — один аргумент, без инъекции', () => {
     const path = 'C:\\a&echo INJECTED2&b.ts'
     expect(run('"-x {path}"', { path })).toBe(JSON.stringify([`-x ${path}`]))
+  })
+
+  // `^"` is a literal quote to cmd, so it flips what looks quoted: with it
+  // `^"x" {path}` put the path's `&` outside quotes and ran `echo INJ`.
+  test.each(['^"x" "{path}"', '^"x" {path}', 'a^&b {path}'])(
+    'шаблон %s с ^ вне кавычек не запускается',
+    (template) => {
+      const path = 'C:\\a&echo INJ&b.ts'
+      expect(() => run(template, { path })).toThrow(/\^/)
+      expect(openInEditor(`${editor} ${template}`, { path })).toMatch(/\^/)
+      expect(spawn).not.toHaveBeenCalled()
+    }
+  )
+
+  test('^ внутри кавычек шаблона — обычный символ', () => {
+    const path = 'C:\\a&echo INJ&b.ts'
+    expect(run('"a^b" {path}', { path })).toBe(JSON.stringify(['a^b', path]))
+  })
+
+  test('скобки в пути внутри --file="{path}" доходят как есть', () => {
+    const path = 'C:\\Program Files (x86)\\Ed\\x.ts'
+    expect(run('--file="{path}"', { path })).toBe(JSON.stringify([`--file=${path}`]))
   })
 
   test('безопасный путь с пробелом внутри --file="{path}"', () => {

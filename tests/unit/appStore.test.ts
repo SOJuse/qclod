@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import { EMPTY_PANEL, useAppStore } from '../../src/renderer/state/useAppStore'
+import type { TabState } from '../../src/shared/types'
 
 // One store per process: every test starts from the state it was created with.
 const initial = useAppStore.getState()
@@ -149,5 +150,50 @@ describe('useAppStore: лента и ревизии', () => {
     expect(useAppStore.getState().todoByTab['a']).toEqual([
       { content: 'разобрать ленту', status: 'in_progress' }
     ])
+  })
+})
+
+describe('useAppStore: закрытые вкладки', () => {
+  const tab = (id: string): TabState => ({
+    id,
+    cwd: 'C:\p',
+    title: id,
+    overrides: {},
+    status: 'idle',
+    badge: false
+  })
+  const fill = (id: string): void => {
+    const store = useAppStore.getState()
+    store.applyRibbon(id, [{ kind: 'append', item: { kind: 'notice', id: 'r1', text: 't', tone: 'info' } }], 1)
+    store.setRibbon(id, { rev: 2, items: [], todo: [{ content: 'x', status: 'pending' }] })
+    store.applyPanel(id, { model: 'm' }, 3)
+    store.setDraft(id, 'черновик')
+    store.setAttachments(id, [])
+    store.setFileIndex(id, ['a'])
+  }
+  const keysOf = (id: string): string[] => {
+    const s = useAppStore.getState()
+    return [s.ribbonByTab, s.ribbonRevByTab, s.todoByTab, s.panelByTab, s.panelRevByTab, s.draftByTab, s.attachmentsByTab, s.fileIndexByTab, s.busySinceByTab]
+      .map((m, i) => (id in m ? String(i) : ''))
+      .filter(Boolean)
+  }
+
+  test('закрытая вкладка не оставляет ленту, панель, черновик и индекс файлов', () => {
+    useAppStore.getState().setTabs([tab('A'), tab('B')])
+    fill('A')
+    fill('B')
+    useAppStore.getState().setTabs([tab('A')])
+
+    expect(keysOf('B')).toEqual([])
+    expect(keysOf('A')).toHaveLength(8)
+  })
+
+  test('лента вкладки, ещё не пришедшей в списке, не стирается', () => {
+    useAppStore.getState().setTabs([tab('A')])
+    fill('C')
+    useAppStore.getState().setTabs([tab('A')])
+
+    expect(useAppStore.getState().ribbonByTab['C']).toBeDefined()
+    expect(keysOf('C')).toHaveLength(8)
   })
 })

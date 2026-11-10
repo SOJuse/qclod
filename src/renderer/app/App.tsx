@@ -217,6 +217,11 @@ export function App(): JSX.Element {
    * shown twice or lost; after it, the events alone keep the tab current.
    */
   const ribbonsAsked = useRef(new Set<string>())
+  // A closed tab is asked again if its id ever comes back.
+  useEffect(() => {
+    const open = new Set(tabs.map((t) => t.id))
+    for (const id of ribbonsAsked.current) if (!open.has(id)) ribbonsAsked.current.delete(id)
+  }, [tabs])
   const loadRibbon = useCallback(
     (id: string): void => {
       if (ribbonsAsked.current.has(id)) return

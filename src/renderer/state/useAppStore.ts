@@ -12,6 +12,28 @@ import type {
   TodoItem
 } from '../../shared/types'
 
+const PER_TAB_KEYS = [
+  'ribbonByTab',
+  'ribbonRevByTab',
+  'todoByTab',
+  'panelByTab',
+  'panelRevByTab',
+  'draftByTab',
+  'attachmentsByTab',
+  'fileIndexByTab'
+] as const
+
+function forgetClosed(state: AppState, tabs: TabState[]): Partial<AppState> {
+  const open = new Set(tabs.map((t) => t.id))
+  const closed = state.tabs.filter((t) => !open.has(t.id)).map((t) => t.id)
+  if (closed.length === 0) return {}
+  const next: Record<string, unknown> = {}
+  for (const key of PER_TAB_KEYS) {
+    next[key] = Object.fromEntries(Object.entries(state[key]).filter(([id]) => !closed.includes(id)))
+  }
+  return next as Partial<AppState>
+}
+
 export const EMPTY_PANEL: PanelData = Object.freeze({
   context: null,
   cost: null,
@@ -126,6 +148,9 @@ export const useAppStore = create<AppState>((set) => ({
   setTabs: (tabs) =>
     set((state) => ({
       tabs,
+      // A closed tab's data goes with it. Only tabs this store has seen in
+      // `tabs` are forgotten: a new tab's ribbon events can precede the list.
+      ...forgetClosed(state, tabs),
       busySinceByTab: tabs.reduce<Record<TabId, number>>((acc, tab) => {
         const working = tab.status === 'busy' || tab.status === 'waiting'
         const previous = state.tabs.find((t) => t.id === tab.id)

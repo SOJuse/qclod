@@ -16,11 +16,6 @@
   text-underline-offset: var(--gap-hair);
 }
 
-.path-link:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}
-
 /* What can be done with it, at the pointer; the same glass as the @ menu. */
 
 .path-menu {
@@ -66,12 +61,17 @@
   color: var(--text-faint);
 }
 
-/* The chosen row: fill and the thin accent rule on its left, like the @ menu. */
+/* Focus moves between the rows, and the chosen row is it: hover fill and the
+   ring's colour and width as a stripe on the left (the row is .ring-on-parent).
+   The menu is the .ring-host and keeps its own shadow under the ring. */
+.path-menu:focus-within {
+  box-shadow: var(--focus-ring), var(--shadow-menu);
+}
+
 .path-menu-item.is-active {
-  background: var(--accent-fill);
-  box-shadow: inset var(--rule-category) 0 0 var(--accent);
+  background: var(--surface-hover);
+  box-shadow: inset var(--focus-ring-width) 0 0 var(--focus-ring-color);
   color: var(--text);
-  outline: none;
 }
 
 .path-menu-item.is-active svg {

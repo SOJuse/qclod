@@ -70,7 +70,7 @@
 }
 
 .empty-tab-session:focus-visible {
-  outline: 1px solid var(--border-accent);
+  outline-offset: var(--focus-offset-inset);
 }
 
 .empty-tab-session svg {

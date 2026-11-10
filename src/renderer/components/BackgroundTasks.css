@@ -36,11 +36,6 @@
   color: var(--text-faint);
 }
 
-.bg-counter:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}
-
 .bg-chevron {
   color: var(--text-faint);
 }
@@ -122,8 +117,7 @@
 }
 
 .bg-task-toggle:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 0;
+  outline-offset: var(--focus-offset-inset);
 }
 
 .bg-task-chevron {
@@ -205,11 +199,6 @@
   flex: 0 0 auto;
 }
 
-.bg-stop:focus-visible {
-  outline: 1px solid var(--critical-border);
-  outline-offset: 1px;
-}
-
 /* ----------------------------------------------------------------- output */
 
 .bg-output-wrap {
@@ -242,7 +231,7 @@
 }
 
 .bg-output:focus-visible {
-  outline: 1px solid var(--border-accent);
+  outline-offset: var(--focus-offset-inset);
 }
 
 /* «Пока ничего не вывела», «Вывод недоступен…»: a note, not output. */

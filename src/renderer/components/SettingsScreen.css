@@ -113,11 +113,10 @@
   cursor: pointer;
 }
 
+/* The ring is the global outline (tokens.css); the border only follows it. */
 .settings-field input:focus-visible,
 .settings-field select:focus-visible {
-  outline: none;
   border-color: var(--border-accent);
-  box-shadow: var(--focus-ring);
 }
 
 .settings-toggle {
@@ -169,11 +168,6 @@
 
 .settings-button:hover {
   background: var(--accent-fill-strong);
-}
-
-.settings-button:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
 }
 
 .settings-rules {
@@ -245,8 +239,4 @@
   font-size: var(--text-xs);
   color: var(--status-ok);
   animation: settings-in var(--dur) var(--ease);
-}
-
-.settings:focus {
-  outline: none;
 }

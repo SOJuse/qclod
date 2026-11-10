@@ -115,9 +115,9 @@
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 
+/* The ring itself comes from .ring-host (tokens.css); the field inside is .ring-on-parent. */
 .composer-row:focus-within {
   border-color: var(--border-accent);
-  box-shadow: var(--focus-ring);
 }
 
 .composer-input {
@@ -126,7 +126,6 @@
   max-height: 260px;
   resize: none;
   border: none;
-  outline: none;
   background: transparent;
   color: var(--text);
   font: inherit;

@@ -42,8 +42,7 @@
 }
 
 .subagent-head:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: -1px;
+  outline-offset: var(--focus-offset-inset);
 }
 
 .subagent-chip {
@@ -157,11 +156,6 @@
 .subagent-more:hover {
   background: var(--hover-fill);
   color: var(--text);
-}
-
-.subagent-more:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
 }
 
 /* What it wrote back: the reason it was started, so it reads at full size. */

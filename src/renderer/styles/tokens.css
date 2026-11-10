@@ -26,6 +26,8 @@
   --focus-ring-color: var(--accent);
   --focus-offset: 2px;
   --focus-ring: 0 0 0 var(--focus-ring-width) var(--focus-ring-color);
+  /* For a control in a strip or a scrolling list that would clip a ring drawn outside it. */
+  --focus-offset-inset: calc(-1 * var(--focus-ring-width));
 
   /* Radii by hierarchy: a path in text, a chip, a control, a sheet. */
   --radius-hair: 3px;
@@ -205,6 +207,16 @@ textarea,
 select {
   font-family: inherit;
 }
+
+/* Focus: one ring for every control, the accent outline. A component never puts it
+   out; at most it moves it inward (--focus-offset-inset) where a ring outside
+   would be clipped. A field whose frame shows focus is `.ring-on-parent`, and the
+   frame is `.ring-host`: the composer row, the Ctrl+K sheet, the path menu. */
+:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring-color); outline-offset: var(--focus-offset); }
+
+.ring-on-parent:focus-visible { outline: none }
+
+.ring-host:focus-within { box-shadow: var(--focus-ring) }
 
 /* Monospace is for what is typed or read by a machine: code, output, shortcuts. */
 code,

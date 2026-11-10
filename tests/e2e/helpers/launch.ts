@@ -1,4 +1,4 @@
-import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { _electron as electron, expect, type ElectronApplication, type Page } from '@playwright/test'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -66,4 +66,31 @@ export async function launchQclod(
     await app.close().catch(() => undefined)
     throw err
   }
+}
+
+/** The accent the focus ring is drawn in (--accent, #5a8bff). */
+const ACCENT_RGB = 'rgb(90, 139, 255)'
+
+/**
+ * The focused element shows the ring: either its own outline (not `none`, at
+ * least 2px), or — for a field marked `.ring-on-parent` — the box-shadow of the
+ * nearest `.ring-host` around it, in the accent. Polls, since the host's shadow
+ * eases in.
+ */
+export async function expectFocusRing(win: Page): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        win.evaluate((accent) => {
+          const el = document.activeElement as HTMLElement | null
+          if (!el || el === document.body) return 'фокус на body'
+          const own = getComputedStyle(el)
+          if (own.outlineStyle !== 'none' && parseFloat(own.outlineWidth) >= 2) return 'ok'
+          const host = el.closest('.ring-host')
+          if (host && getComputedStyle(host).boxShadow.includes(accent)) return 'ok'
+          return `нет кольца: ${el.outerHTML.slice(0, 80)} outline=${own.outlineStyle} ${own.outlineWidth}`
+        }, ACCENT_RGB),
+      { timeout: 2000 }
+    )
+    .toBe('ok')
 }

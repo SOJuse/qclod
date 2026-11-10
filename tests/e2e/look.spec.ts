@@ -1,5 +1,5 @@
-import { test, expect } from '@playwright/test'
-import { launchQclod } from './helpers/launch'
+import { test, expect, type Page } from '@playwright/test'
+import { expectFocusRing, launchQclod } from './helpers/launch'
 import { shot } from './helpers/shot'
 
 test('окно и страница непрозрачные, нигде нет размытия', async () => {
@@ -149,6 +149,166 @@ test('05 лента со всеми категориями и список /', a
     await expect(menu).toBeVisible()
     await expect(menu.locator('[data-testid="slash-item"]').first()).toBeVisible()
     await shot(win, '05-menu')
+  } finally {
+    await app.close()
+  }
+})
+
+// ---------------------------------------------------------------- focus (Task 6)
+
+const DAY = 24 * 60 * 60 * 1000
+const TWO_SESSIONS = {
+  sessions: [
+    { sessionId: 'сессия-1', summary: 'Починка вставки файлов', lastModified: Date.now() - 2 * DAY, firstPrompt: 'вставка файлов не работает' },
+    { sessionId: 'сессия-2', summary: 'Переезд на SDK', lastModified: Date.now() - 5 * DAY, firstPrompt: 'давай перепишем ядро' }
+  ]
+}
+const focusEnv = { QCLOD_FAKE_HISTORY: JSON.stringify(TWO_SESSIONS) }
+
+/** What has focus, short enough to tell controls apart. */
+const focused = (win: Page): Promise<string> =>
+  win.evaluate(() => {
+    const a = document.activeElement as HTMLElement
+    return a === document.body ? 'body' : a.outerHTML.slice(0, 80)
+  })
+
+/** How each screen is opened, and how many stops Tab must find there. */
+const SCREENS: { where: string; open: (win: Page) => Promise<void>; sheet?: string; minStops: number }[] = [
+  {
+    where: 'главный экран',
+    // Start from nothing focused: Tab then walks the title bar first. The input
+    // keeps Tab for itself (it cycles the mode), so the walk ends there.
+    open: async (win) => {
+      await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    },
+    minStops: 4
+  },
+  {
+    where: 'настройки',
+    open: async (win) => {
+      await win.keyboard.press('Control+,')
+      await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+    },
+    sheet: '.settings',
+    minStops: 4
+  },
+  {
+    where: 'история',
+    open: async (win) => {
+      await win.keyboard.press('Control+H')
+      await expect(win.locator('[data-testid="history-item"]')).toHaveCount(2)
+    },
+    sheet: '.history',
+    minStops: 4
+  },
+  {
+    where: 'палитра',
+    // One field; the list follows it by aria-activedescendant. Tab stays put.
+    open: async (win) => {
+      await win.keyboard.press('Control+k')
+      await expect(win.locator('[data-testid="action-palette"]')).toBeVisible()
+    },
+    sheet: '.action-palette',
+    minStops: 1
+  }
+]
+
+for (const { where, open, sheet, minStops } of SCREENS) {
+  test(`Tab по «${where}» — у каждого фокуса видно кольцо`, async () => {
+    const { app, win } = await launchQclod({ env: focusEnv })
+    try {
+      await open(win)
+      const seen = new Set<string>()
+      for (let i = 0; i < 40; i++) {
+        await win.keyboard.press('Tab')
+        const id = await focused(win)
+        expect(id).not.toBe('body')
+        // A modal sheet keeps Tab inside itself.
+        if (sheet) expect(await win.evaluate((s) => !!document.activeElement?.closest(s), sheet)).toBe(true)
+        if (seen.has(id)) break
+        seen.add(id)
+        await expectFocusRing(win)
+      }
+      expect(seen.size).toBeGreaterThanOrEqual(minStops)
+      await shot(win, `06-focus-${where}`)
+    } finally {
+      await app.close()
+    }
+  })
+}
+
+test('в палитре выбранная строка — заливка наведения и полоса акцента слева', async () => {
+  const { app, win } = await launchQclod()
+  try {
+    await win.keyboard.press('Control+k')
+    await win.keyboard.press('ArrowDown')
+    const row = win.locator('.action-palette-item.is-selected')
+    await expect(row).toHaveCount(1)
+    const look = await row.evaluate((el) => {
+      const s = getComputedStyle(el)
+      return { bg: s.backgroundColor, stripe: s.boxShadow }
+    })
+    expect(look.bg).toBe('rgb(38, 38, 45)') // --surface-hover
+    expect(look.stripe).toContain('rgb(90, 139, 255)')
+    expect(look.stripe).toMatch(/inset/)
+    expect(look.stripe).toContain('2px 0px 0px 0px')
+    await expectFocusRing(win)
+  } finally {
+    await app.close()
+  }
+})
+
+test('Esc закрывает настройки и возвращает фокус на кнопку настроек', async () => {
+  const { app, win } = await launchQclod()
+  try {
+    const button = win.locator('[data-testid="open-settings"]')
+    await button.focus()
+    await win.keyboard.press('Enter')
+    await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+    await win.keyboard.press('Escape')
+    await expect(win.locator('[data-testid="settings"]')).toHaveCount(0)
+    await expect(button).toBeFocused()
+    await expectFocusRing(win)
+  } finally {
+    await app.close()
+  }
+})
+
+test('Esc закрывает историю и возвращает фокус на кнопку истории', async () => {
+  const { app, win } = await launchQclod({ env: focusEnv })
+  try {
+    const button = win.locator('[data-testid="open-history"]')
+    await button.focus()
+    await win.keyboard.press('Enter')
+    await expect(win.locator('[data-testid="history-item"]')).toHaveCount(2)
+    // Esc works from a row too, not only from the search field.
+    await win.keyboard.press('Tab')
+    await win.keyboard.press('Escape')
+    await expect(win.locator('[data-testid="history-screen"]')).toHaveCount(0)
+    await expect(button).toBeFocused()
+    await expectFocusRing(win)
+  } finally {
+    await app.close()
+  }
+})
+
+test('при масштабе 80% кольцо фокуса не пропадает', async () => {
+  const { app, win } = await launchQclod()
+  try {
+    await win.keyboard.press('Control+-')
+    await win.keyboard.press('Control+-')
+    await expect
+      .poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.getZoomLevel()))
+      .toBe(-1)
+    // The input's frame...
+    await win.locator('[data-testid="composer-input"]').focus()
+    await win.keyboard.press('Tab')
+    await expectFocusRing(win)
+    // ...and a button's own outline.
+    await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await win.keyboard.press('Tab')
+    await expectFocusRing(win)
+    await shot(win, '06-focus-zoom-80')
   } finally {
     await app.close()
   }

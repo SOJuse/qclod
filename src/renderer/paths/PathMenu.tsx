@@ -133,7 +133,7 @@ export function PathMenu({
   return createPortal(
     <div
       ref={box}
-      className="path-menu"
+      className="path-menu ring-host"
       data-testid="path-menu"
       role="menu"
       aria-label={target.absPath}
@@ -150,7 +150,7 @@ export function PathMenu({
           type="button"
           role="menuitem"
           tabIndex={i === active ? 0 : -1}
-          className={`path-menu-item${i === active ? ' is-active' : ''}`}
+          className={`path-menu-item ring-on-parent${i === active ? ' is-active' : ''}`}
           data-testid="path-menu-item"
           title={item.label}
           onMouseEnter={() => setActive(i)}

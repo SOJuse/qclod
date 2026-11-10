@@ -47,11 +47,12 @@
   background: var(--hover-fill);
 }
 
-/* The chosen row carries a thin accent rule on its left edge, like the
-   category rule on a ribbon card, so it reads without relying on the fill. */
+/* Focus stays in the field or the button (aria-activedescendant), so the chosen
+   row is the list's focus: hover fill and the ring's colour and width as a
+   stripe on its left edge, so it reads without relying on the fill. */
 .inline-menu-item.is-selected {
-  background: var(--accent-fill);
-  box-shadow: inset var(--rule-category) 0 0 var(--accent);
+  background: var(--surface-hover);
+  box-shadow: inset var(--focus-ring-width) 0 0 var(--focus-ring-color);
   color: var(--text);
 }
 

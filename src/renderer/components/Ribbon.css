@@ -98,11 +98,6 @@
   border-color: var(--border-strong);
 }
 
-.row-user-image.is-openable:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
 .row-chip {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -263,10 +258,10 @@
   border-color: var(--status-critical);
 }
 
-.row-permission:focus-visible,
-.row-permission-actions button:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
+/* The card spans the ribbon, which clips sideways: its ring goes inside.
+   Its buttons take the global ring as it is. */
+.row-permission:focus-visible {
+  outline-offset: var(--focus-offset-inset);
 }
 
 .row-permission-done {

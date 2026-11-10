@@ -31,11 +31,6 @@
   background: var(--hover-fill);
 }
 
-.todo-strip:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}
-
 .todo-count {
   flex: 0 0 auto;
   font-weight: var(--weight-strong);

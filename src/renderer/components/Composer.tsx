@@ -559,7 +559,7 @@ export function Composer({
         />
       )}
 
-      <div className="composer-row">
+      <div className="composer-row ring-host">
         <button
           type="button"
           className="composer-clip"
@@ -573,7 +573,7 @@ export function Composer({
 
         <textarea
           ref={field}
-          className="composer-input"
+          className="composer-input ring-on-parent"
           data-testid="composer-input"
           data-composer-input=""
           aria-autocomplete="list"

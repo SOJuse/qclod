@@ -51,3 +51,25 @@ test('ширина колонки чата — один токен (NowLine и �
   expect(now).toContain('var(--content-max-w)')
   expect(now).toContain('var(--content-gutter)')
 })
+
+// Focus: one ring for the whole app (tokens.css). A component may not put it out;
+// a field whose frame draws the ring is marked `.ring-on-parent` instead.
+const OUTLINE_OFF = /outline:\s*(none|0)\b/g
+test('правило про outline ловит none, 0 и запись без пробела, но не var()', () => {
+  const sample = 'outline: none; outline: 0; outline:none; outline: var(--focus-ring-width) solid; outline-offset: 0;'
+  expect([...sample.matchAll(OUTLINE_OFF)].map((m) => m[0])).toEqual(['outline: none', 'outline: 0', 'outline:none'])
+})
+test('outline не гасится в компонентах', () => {
+  expect(hits(OUTLINE_OFF)).toEqual([])
+})
+test('кольцо фокуса — одно правило в tokens.css, компоненты не рисуют его сами', () => {
+  const tokens = stripComments(readFileSync(resolve(root, 'src/renderer/styles/tokens.css'), 'utf8'))
+  expect(tokens).toContain(
+    ':focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring-color); outline-offset: var(--focus-offset); }'
+  )
+  expect(tokens).toContain('.ring-on-parent:focus-visible { outline: none }')
+  expect(tokens).toContain('.ring-host:focus-within { box-shadow: var(--focus-ring) }')
+  // Thin 1px look-alikes and private copies of the ring are what made focus hard to see.
+  expect(hits(/outline:\s*1px/g)).toEqual([])
+  expect(hits(/box-shadow:\s*var\(--focus-ring\)\s*;/g)).toEqual([])
+})

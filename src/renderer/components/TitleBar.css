@@ -140,6 +140,19 @@
     background var(--dur-fast) var(--ease);
 }
 
+/* The strip scrolls and the window buttons touch the top of the screen, so a
+   ring drawn outside would be cut off: here it goes inside the button. */
+.tab-close:focus-visible,
+.tab-new:focus-visible,
+.window-button:focus-visible {
+  outline-offset: var(--focus-offset-inset);
+}
+
+/* A close button reached by Tab shows even on a tab that is not active. */
+.tab-close:focus-visible {
+  opacity: 1;
+}
+
 .tab-close {
   width: 18px;
   height: 18px;

@@ -168,11 +168,6 @@
   background: var(--accent-fill-strong);
 }
 
-.context-banner-action:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}
-
 .context-banner-action:disabled {
   opacity: 0.5;
   cursor: default;

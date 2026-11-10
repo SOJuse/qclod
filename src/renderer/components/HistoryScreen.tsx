@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { SessionSummary } from '../../shared/types'
+import { useModalFocus } from '../ui/modalFocus'
 import './HistoryScreen.css'
 
 interface Props {
@@ -8,6 +9,8 @@ interface Props {
   sessions: SessionSummary[] | null
   onOpen: (session: SessionSummary) => void
   onClose: () => void
+  /** Closing gives focus back to the opener; this runs when the opener is gone. */
+  onFocusLost?: () => void
 }
 
 export function when(timestamp: number): string {
@@ -32,9 +35,21 @@ export function when(timestamp: number): string {
  * own invention (spec 6.9, constraint 5.4). Opening one puts it in a new tab,
  * through the same resume path a restart uses.
  */
-export function HistoryScreen({ cwd, sessions, onOpen, onClose }: Props): JSX.Element {
+export function HistoryScreen({ cwd, sessions, onOpen, onClose, onFocusLost }: Props): JSX.Element {
   const [query, setQuery] = useState('')
   const field = useRef<HTMLInputElement | null>(null)
+  const sheet = useRef<HTMLElement | null>(null)
+  const trap = useModalFocus(sheet, onFocusLost)
+
+  // Esc from anywhere in the sheet, not only the search field.
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      e.stopPropagation()
+      onClose()
+      return
+    }
+    trap(e)
+  }
 
   useEffect(() => field.current?.focus(), [])
 
@@ -48,7 +63,15 @@ export function HistoryScreen({ cwd, sessions, onOpen, onClose }: Props): JSX.El
 
   return (
     <div className="history-backdrop" data-testid="history-screen" onMouseDown={onClose}>
-      <section className="history" onMouseDown={(e) => e.stopPropagation()}>
+      <section
+        ref={sheet}
+        className="history"
+        role="dialog"
+        aria-modal="true"
+        aria-label="История"
+        onKeyDown={onKeyDown}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <header className="history-head">
           <div>
             <h2>История</h2>
@@ -72,9 +95,6 @@ export function HistoryScreen({ cwd, sessions, onOpen, onClose }: Props): JSX.El
           placeholder="Найти в прошлых разговорах…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') onClose()
-          }}
         />
 
         {sessions === null ? (
@@ -88,17 +108,21 @@ export function HistoryScreen({ cwd, sessions, onOpen, onClose }: Props): JSX.El
         ) : (
           <ul className="history-list">
             {shown.map((session) => (
-              <li
-                key={session.id}
-                data-testid="history-item"
-                className="history-item"
-                onClick={() => onOpen(session)}
-              >
-                <div className="history-title">{session.title}</div>
-                {session.firstMessage && (
-                  <div className="history-first">{session.firstMessage}</div>
-                )}
-                <div className="history-when">{when(session.updatedAt)}</div>
+              <li key={session.id}>
+                {/* A button, so Tab reaches it and Enter opens it. */}
+                <button
+                  type="button"
+                  data-testid="history-item"
+                  className="history-item"
+                  title={session.title}
+                  onClick={() => onOpen(session)}
+                >
+                  <span className="history-title">{session.title}</span>
+                  {session.firstMessage && (
+                    <span className="history-first">{session.firstMessage}</span>
+                  )}
+                  <span className="history-when">{when(session.updatedAt)}</span>
+                </button>
               </li>
             ))}
           </ul>

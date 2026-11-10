@@ -46,8 +46,7 @@
 }
 
 .tool-head:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: -1px;
+  outline-offset: var(--focus-offset-inset);
 }
 
 .tool-status {

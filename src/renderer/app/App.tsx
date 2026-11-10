@@ -31,6 +31,8 @@ export function App(): JSX.Element {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
   const [focusToken, setFocusToken] = useState(0)
+  /** Where focus goes when a closed sheet's opener is gone: the active tab's input. */
+  const focusComposer = useCallback(() => setFocusToken((n) => n + 1), [])
   const [environment, setEnvironment] = useState<EnvironmentReport | null>(null)
   const [setupDismissed, setSetupDismissed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -473,10 +475,8 @@ export function App(): JSX.Element {
         <HistoryScreen
           cwd={tabs.find((t) => t.id === activeTabId)?.cwd ?? ''}
           sessions={sessions}
-          onClose={() => {
-            setHistoryOpen(false)
-            setFocusToken((n) => n + 1)
-          }}
+          onClose={() => setHistoryOpen(false)}
+          onFocusLost={focusComposer}
           onOpen={(session) => {
             setHistoryOpen(false)
             openSession(activeTabId, session)
@@ -490,10 +490,8 @@ export function App(): JSX.Element {
             setFocusToken((n) => n + 1)
             runAction(id)
           }}
-          onClose={() => {
-            setPaletteOpen(false)
-            setFocusToken((n) => n + 1)
-          }}
+          onClose={() => setPaletteOpen(false)}
+          onFocusLost={focusComposer}
         />
       )}
       {settingsOpen && settings && (
@@ -507,6 +505,7 @@ export function App(): JSX.Element {
             return next
           }}
           onClose={() => setSettingsOpen(false)}
+          onFocusLost={focusComposer}
         />
       )}
     </div>

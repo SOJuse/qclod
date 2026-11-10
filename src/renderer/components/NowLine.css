@@ -124,11 +124,6 @@
   color: var(--text);
 }
 
-.now-agents:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}
-
 /* Opens upward, over the ribbon: the input is right below. */
 .now-agents-list {
   position: absolute;

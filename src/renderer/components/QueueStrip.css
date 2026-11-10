@@ -61,8 +61,3 @@
   color: var(--text);
   background: var(--hover-fill);
 }
-
-.queue-cancel:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}

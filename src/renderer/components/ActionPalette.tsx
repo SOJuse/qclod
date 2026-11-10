@@ -1,22 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { score } from '../../shared/commandFilter'
 import { APP_ACTIONS, type AppActionId } from '../app/shortcuts'
+import { useModalFocus } from '../ui/modalFocus'
 import './ActionPalette.css'
 
 interface Props {
   onRun: (id: AppActionId) => void
   onClose: () => void
+  /** Closing gives focus back to the opener; this runs when the opener is gone. */
+  onFocusLost?: () => void
 }
 
 /**
  * Ctrl+K: the window's own actions in a small list at the top, found by a few
  * letters of their name. Not the slash list — that one is for the agent.
  */
-export function ActionPalette({ onRun, onClose }: Props): JSX.Element {
+export function ActionPalette({ onRun, onClose, onFocusLost }: Props): JSX.Element {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const field = useRef<HTMLInputElement | null>(null)
   const list = useRef<HTMLUListElement | null>(null)
+  const sheet = useRef<HTMLDivElement | null>(null)
+  const trap = useModalFocus(sheet, onFocusLost)
 
   useEffect(() => field.current?.focus(), [])
 
@@ -45,15 +50,18 @@ export function ActionPalette({ onRun, onClose }: Props): JSX.Element {
   return (
     <div className="action-palette-backdrop" onMouseDown={onClose}>
       <div
-        className="action-palette"
+        ref={sheet}
+        className="action-palette ring-host"
         data-testid="action-palette"
         role="dialog"
+        aria-modal="true"
         aria-label="Палитра действий"
+        onKeyDown={trap}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <input
           ref={field}
-          className="action-palette-query"
+          className="action-palette-query ring-on-parent"
           data-testid="action-query"
           placeholder="Что сделать?"
           value={query}

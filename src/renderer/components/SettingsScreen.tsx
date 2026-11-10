@@ -10,6 +10,7 @@ import {
   type PermissionMode
 } from '../../shared/types'
 import { EFFORT_LABEL, MODE_LABEL } from '../labels'
+import { useModalFocus } from '../ui/modalFocus'
 import './SettingsScreen.css'
 
 interface PermissionRuleView {
@@ -25,14 +26,25 @@ interface Props {
   models: ModelOption[]
   onPatch: (patch: Partial<AppSettings>) => Promise<AppSettings>
   onClose: () => void
+  /** Closing gives focus back to the opener; this runs when the opener is gone. */
+  onFocusLost?: () => void
 }
 
-export function SettingsScreen({ settings, version, models, onPatch: save, onClose }: Props): JSX.Element {
+export function SettingsScreen({
+  settings,
+  version,
+  models,
+  onPatch: save,
+  onClose,
+  onFocusLost
+}: Props): JSX.Element {
   const [hotkeyStatus, setHotkeyStatus] = useState<HotkeyRegistration | null>(null)
   const [rules, setRules] = useState<PermissionRuleView[]>([])
   const [saved, setSaved] = useState(false)
   const savedTimer = useRef<ReturnType<typeof setTimeout>>()
   const sheet = useRef<HTMLElement>(null)
+  const closeButton = useRef<HTMLButtonElement>(null)
+  const trap = useModalFocus(sheet, onFocusLost)
 
   useEffect(() => {
     void window.qclod.hotkeyStatus().then(setHotkeyStatus)
@@ -43,8 +55,9 @@ export function SettingsScreen({ settings, version, models, onPatch: save, onClo
   }, [])
 
   useEffect(() => {
-    // Focus inside the sheet is what lets Esc reach it.
-    sheet.current?.focus()
+    // Focus inside the sheet is what lets Esc reach it. It lands on a control, not
+    // on the sheet itself, so the ring shows where Tab goes from here.
+    closeButton.current?.focus()
     return () => clearTimeout(savedTimer.current)
   }, [])
 
@@ -59,7 +72,7 @@ export function SettingsScreen({ settings, version, models, onPatch: save, onClo
 
   // Blurring first lets a field that is still being edited save before the screen goes.
   const onKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.key !== 'Escape') return
+    if (e.key !== 'Escape') return trap(e)
     e.stopPropagation()
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     onClose()
@@ -74,6 +87,9 @@ export function SettingsScreen({ settings, version, models, onPatch: save, onClo
         className="settings"
         ref={sheet}
         tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Настройки"
         onKeyDown={onKeyDown}
         onMouseDown={(e) => e.stopPropagation()}
       >
@@ -87,6 +103,7 @@ export function SettingsScreen({ settings, version, models, onPatch: save, onClo
               </span>
             )}
             <button
+              ref={closeButton}
               type="button"
               className="settings-close"
               data-testid="close-settings"

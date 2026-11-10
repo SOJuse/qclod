@@ -22,12 +22,16 @@
   box-shadow: var(--shadow-modal);
 }
 
+/* Focus lives in the field (.ring-on-parent); the sheet is its frame (.ring-host) and keeps its shadow. */
+.action-palette:focus-within {
+  box-shadow: var(--focus-ring), var(--shadow-modal);
+}
+
 .action-palette-query {
   margin: 0;
   padding: var(--space-3) var(--space-4);
   border: none;
   border-bottom: 1px solid var(--border);
-  outline: none;
   background: transparent;
   color: var(--text);
   font-size: var(--text-lg);
@@ -60,9 +64,11 @@
   cursor: default;
 }
 
+/* The chosen row is the list's focus (aria-activedescendant): hover fill and the
+   ring's own colour and width as a stripe on its left edge. */
 .action-palette-item.is-selected {
-  background: var(--accent-fill);
-  box-shadow: inset var(--rule-category) 0 0 var(--accent);
+  background: var(--surface-hover);
+  box-shadow: inset var(--focus-ring-width) 0 0 var(--focus-ring-color);
   color: var(--text);
 }
 

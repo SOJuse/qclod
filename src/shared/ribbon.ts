@@ -166,6 +166,24 @@ function subagentStats(result: unknown): {
   }
 }
 
+/** The most a subagent's report keeps: enough to read, not a book. */
+const REPORT_CLIP = 8000
+
+function clipReport(text: string): string {
+  return clipForView(text, REPORT_CLIP) as string
+}
+
+/**
+ * What a finished subagent wrote back, whole: the text blocks of AgentOutput's
+ * content as paragraphs, or the tool_result's text when the output has no
+ * such structure. Line breaks are kept; only the length is bounded.
+ */
+function subagentReport(result: unknown, fallback: string): string {
+  const blocks = isObject(result) ? asArray(result['content']).filter(isObject) : []
+  const texts = blocks.filter((b) => b['type'] === 'text').map((b) => str(b['text'])).filter(Boolean)
+  return clipReport(texts.length > 0 ? texts.join('\n\n') : fallback)
+}
+
 /**
  * Everything the CLI injects into a user message that the user never typed.
  *
@@ -797,6 +815,8 @@ export class RibbonBuilder {
       }
 
       const patch: Partial<Extract<RibbonItem, { kind: 'subagent' }>> = { state: 'done', summary: clip(text, 160) }
+      const report = subagentReport(result, whole)
+      if (report) patch.report = report
       const stats = subagentStats(result)
       Object.assign(patch, stats)
 
@@ -942,6 +962,9 @@ export class RibbonBuilder {
       state: NOTICE_STATE[notice.status] ?? 'done',
       summary: clip(notice.summary, 160),
       lastTool: undefined,
+      // A background agent's only words back are the notice's summary; a
+      // foreground one already has its whole report from the tool's output.
+      ...(notice.summary && (item.background || !item.report) ? { report: clipReport(notice.summary) } : {}),
       ...(notice.usage
         ? {
             tokens: notice.usage.tokens,

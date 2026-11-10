@@ -332,3 +332,164 @@ test('большой дифф показывает 400 строк и «ещё N 
     await close(app, profile)
   }
 })
+
+test('подагент раскрывается в свою ленту шагов и отчёт внизу', async () => {
+  const { app, profile } = await launch({
+    steps: [
+      {
+        kind: 'subagent',
+        name: 'найти вход',
+        agentType: 'Explore',
+        stats: { totalTokens: 4000, totalDurationMs: 12000, totalToolUseCount: 2 },
+        report: 'Нашёл два места:\n- src/a.ts\n- src/b.ts',
+        steps: [STEPS[0], STEPS[1], { kind: 'text', text: 'просмотрел оба файла' }]
+      }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    const card = win.locator('[data-testid="ribbon-subagent"]').first()
+    await expect(card).toBeVisible({ timeout: 15000 })
+
+    const head = card.locator('[data-testid="subagent-head"]')
+    await expect(head).toContainText('Explore')
+    await expect(head).toContainText('найти вход')
+    await expect(head).toContainText('готово')
+    await expect(head).toContainText('12 с')
+    // Tool calls are steps; the subagent's own words are not counted.
+    await expect(card.locator('[data-testid="subagent-step-count"]')).toHaveText('2 шага')
+
+    // Its steps never leak into the main ribbon as rows of their own.
+    await expect(win.locator('[data-testid="ribbon"] > [data-testid="ribbon-tool"]')).toHaveCount(0)
+    await expect(card.locator('[data-testid="subagent-steps"]')).toHaveCount(0)
+
+    await head.click()
+    const steps = card.locator('[data-testid="subagent-steps"]')
+    await expect(steps).toBeVisible()
+    const tools = steps.locator('.tool-card')
+    await expect(tools).toHaveCount(2)
+    await expect(tools.nth(0)).toHaveAttribute('data-category', 'read')
+    await expect(tools.nth(1)).toHaveAttribute('data-category', 'search')
+    await expect(tools.nth(0)).toHaveClass(/is-compact/)
+    await expect(steps).toContainText('просмотрел оба файла')
+
+    // The report sits below the steps, as Markdown: its line breaks survive.
+    const report = card.locator('[data-testid="subagent-report"]')
+    await expect(report).toContainText('Нашёл два места')
+    await expect(report.locator('li')).toHaveCount(2)
+    const order = await card.evaluate((el) => {
+      const s = el.querySelector('[data-testid="subagent-steps"]')!
+      const r = el.querySelector('[data-testid="subagent-report"]')!
+      return s.compareDocumentPosition(r) & Node.DOCUMENT_POSITION_FOLLOWING
+    })
+    expect(order).toBeTruthy()
+
+    // Folding it again takes the steps out of the page.
+    await head.click()
+    await expect(card.locator('[data-testid="subagent-steps"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('вложенный подагент показан внутри родителя', async () => {
+  const { app, profile } = await launch({
+    steps: [
+      {
+        kind: 'subagent',
+        name: 'обзор модуля',
+        agentType: 'Explore',
+        steps: [
+          { kind: 'tool', name: 'Glob', input: { pattern: '*.ts' }, result: 'a.ts' },
+          {
+            kind: 'subagent',
+            name: 'разобрать a.ts',
+            agentType: 'Plan',
+            report: 'внутренний отчёт',
+            steps: [STEPS[0]]
+          }
+        ]
+      }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    const ribbon = win.locator('[data-testid="ribbon"]')
+    const outer = ribbon.locator(':scope > [data-testid="ribbon-subagent"]')
+    await expect(outer).toHaveCount(1, { timeout: 15000 })
+    await expect(outer.locator(':scope > * > [data-testid="subagent-head"]')).toContainText('обзор модуля')
+    await expect(outer.locator(':scope > * > [data-testid="subagent-head"] [data-testid="subagent-step-count"]')).toHaveText(
+      '2 шага'
+    )
+
+    await outer.locator('[data-testid="subagent-head"]').first().click()
+    const outerSteps = outer.locator('[data-testid="subagent-steps"]').first()
+    const inner = outerSteps.locator('[data-testid="ribbon-subagent"]')
+    await expect(inner).toHaveCount(1)
+    await expect(inner).toContainText('Plan')
+    await expect(inner).toContainText('разобрать a.ts')
+    // The inner agent's own call is inside it, not beside it in the parent.
+    await expect(outerSteps.locator(':scope > [data-testid="ribbon-tool"]')).toHaveCount(1)
+    await expect(outerSteps.locator(':scope > [data-testid="ribbon-tool"]')).toContainText('*.ts')
+    await expect(outerSteps).not.toContainText('auth.ts')
+
+    await inner.locator('[data-testid="subagent-head"]').click()
+    await expect(inner.locator('[data-testid="subagent-steps"] .tool-card')).toHaveCount(1)
+    await expect(inner.locator('[data-testid="subagent-steps"]')).toContainText('auth.ts')
+    await expect(inner.locator('[data-testid="subagent-report"]')).toContainText('внутренний отчёт')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('у подагента с десятками шагов видны последние, остальные — по «ещё N шагов»', async () => {
+  const many = Array.from({ length: 60 }, (_, i) => ({
+    kind: 'tool',
+    name: 'Read',
+    input: { file_path: `C:/проект/f${i}.ts` },
+    result: 'ок'
+  }))
+  const { app, profile } = await launch({ steps: [{ kind: 'subagent', name: 'перебор', steps: many }] })
+  try {
+    const win = await app.firstWindow()
+    const card = win.locator('[data-testid="ribbon-subagent"]').first()
+    await expect(card.locator('[data-testid="subagent-step-count"]')).toHaveText('60 шагов', { timeout: 15000 })
+
+    await card.locator('[data-testid="subagent-head"]').click()
+    const steps = card.locator('[data-testid="subagent-steps"]')
+    await expect(steps.locator('.tool-card')).toHaveCount(50)
+    // The newest steps are the ones shown; the earliest wait behind the button.
+    await expect(steps).toContainText('f59.ts')
+    await expect(steps).not.toContainText('f9.ts')
+    const more = steps.locator('[data-testid="subagent-more"]')
+    await expect(more).toHaveText('ещё 10 шагов')
+    await more.click()
+    await expect(steps.locator('.tool-card')).toHaveCount(60)
+    await expect(more).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('работающий подагент показывает в шапке, что делает сейчас', async () => {
+  const { app, profile } = await launch({
+    steps: [
+      {
+        kind: 'backgroundAgent',
+        name: 'прогнать тесты',
+        agentType: 'builder',
+        progress: [{ tokens: 1200, toolUses: 1, durationMs: 15000, lastTool: 'Bash' }],
+        finish: null
+      }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    const head = win.locator('[data-testid="subagent-head"]').first()
+    await expect(head).toContainText('идёт', { timeout: 15000 })
+    await expect(head).toContainText('· Bash')
+    await expect(head.locator('[data-testid="subagent-stats"]')).toContainText('15 с')
+  } finally {
+    await close(app, profile)
+  }
+})

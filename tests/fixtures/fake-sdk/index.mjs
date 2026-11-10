@@ -21,7 +21,7 @@
  * @typedef {{kind:'askPermissions', tools:Array<{name:string, input?:object}>}} AskPermissionsStep
  * @typedef {{kind:'askQuestion', question?:string, header?:string, options?:string[], questions?:Array<{question:string, header?:string, options:string[], multiSelect?:boolean}>, echoAnswers?:boolean}} AskQuestionStep
  * @typedef {{kind:'todo', items:Array<{content:string,status:string}>}} TodoStep
- * @typedef {{kind:'subagent', name:string, agentType?:string, stats?:{totalTokens?:number, totalDurationMs?:number, totalToolUseCount?:number}, steps:Array<object>}} SubagentStep
+ * @typedef {{kind:'subagent', name:string, agentType?:string, stats?:{totalTokens?:number, totalDurationMs?:number, totalToolUseCount?:number}, report?:string, steps:Array<object>}} SubagentStep
  * @typedef {{kind:'backgroundAgent', name:string, agentType?:string, agentId?:string, pauseMs?:number,
  *   progress?:Array<{tokens:number, toolUses:number, durationMs:number, lastTool?:string}>,
  *   finish?:{status:'completed'|'failed'|'stopped', summary:string, tokens:number, toolUses:number, durationMs:number}|null}} BackgroundAgentStep
@@ -369,15 +369,18 @@ export function createFakeSdk(script = {}) {
             }
           ])
           for await (const nested of play(step.steps ?? [])) {
-            yield { ...nested, parent_tool_use_id: id }
+            // A nested subagent has already marked its own steps with its id.
+            yield { ...nested, parent_tool_use_id: nested.parent_tool_use_id || id }
           }
+          // What the agent wrote back: the step's own report, line breaks and all.
+          const report = step.report ?? 'подагент закончил'
           yield {
             type: 'user',
             uuid: randomUUID(),
             session_id: sessionId,
             message: {
               role: 'user',
-              content: [{ type: 'tool_result', tool_use_id: id, content: 'подагент закончил' }]
+              content: [{ type: 'tool_result', tool_use_id: id, content: report }]
             },
             // The Agent tool's structured output, AgentOutput in
             // sdk-tools.d.ts: the run totals a card shows.
@@ -397,7 +400,7 @@ export function createFakeSdk(script = {}) {
                 cache_creation: null
               },
               prompt: step.name,
-              content: [{ type: 'text', text: 'подагент закончил' }]
+              content: [{ type: 'text', text: report }]
             }
           }
           break

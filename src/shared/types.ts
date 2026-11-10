@@ -102,6 +102,12 @@ export type RibbonItem =
       task: string
       state: SubagentState
       summary: string
+      /**
+       * What it wrote back when it finished, whole and with its line breaks
+       * (at most 8000 characters): AgentOutput's text, or a background
+       * agent's notice summary.
+       */
+      report?: string
       /** Launched with run_in_background: the call returns at once, the agent keeps going. */
       background?: boolean
       agentId?: string

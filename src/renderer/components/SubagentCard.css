@@ -1,0 +1,168 @@
+/*
+ * A subagent's card: the same family as a tool card (category rule, tinted
+ * chip, one-line head) so it reads as "a step of the main agent", with one
+ * thing of its own — the thread its steps hang from when the card is open,
+ * which is what tells a nested ribbon apart from the main one.
+ */
+
+.subagent-card {
+  margin: var(--space-1) 0;
+  border: 1px solid var(--border);
+  border-left: var(--rule-category) solid var(--cat-agent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  color: var(--text);
+}
+
+.subagent-card.is-failed {
+  border-left-color: var(--status-critical);
+}
+
+/* ------------------------------------------------------------ the head */
+
+.subagent-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tool-head-h);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  border-radius: var(--radius-sm);
+}
+
+.subagent-head::-webkit-details-marker {
+  display: none;
+}
+
+.subagent-head:hover {
+  background: var(--hover-fill);
+}
+
+.subagent-head:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: -1px;
+}
+
+.subagent-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tool-chip-size);
+  height: var(--tool-chip-size);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--cat-agent) var(--tool-chip-tint), transparent);
+}
+
+.subagent-kind {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.subagent-task {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.subagent-state,
+.subagent-stats,
+.subagent-step-count {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.subagent-state {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+}
+
+.subagent-card.is-running .subagent-state {
+  color: var(--text);
+}
+
+.subagent-card.is-failed .subagent-state svg {
+  color: var(--status-critical);
+}
+
+.subagent-failure {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------------------ opened body */
+
+.subagent-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-3) var(--space-3);
+  border-top: 1px solid var(--border);
+  user-select: text;
+}
+
+/* The thread: the agent's own steps hang from its chip, one level in. */
+.subagent-steps {
+  display: flex;
+  flex-direction: column;
+  margin-left: calc(var(--tool-chip-size) / 2 - var(--space-1));
+  padding-left: var(--space-3);
+  border-left: 1px solid color-mix(in srgb, var(--cat-agent) 40%, var(--border));
+}
+
+.subagent-text {
+  margin: var(--space-1) 0;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.subagent-more {
+  align-self: flex-start;
+  margin: var(--space-1) 0;
+  padding: var(--gap-hair) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.subagent-more:hover {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.subagent-more:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: 1px;
+}
+
+/* What it wrote back: the reason it was started, so it reads at full size. */
+.subagent-report {
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subagent-card .tool-spin {
+    animation: none;
+  }
+}

@@ -1166,3 +1166,74 @@ describe('RibbonBuilder: границы того, что хранит карто
     expect(only(b.items, 'tool')[1]).toMatchObject({ startedAt: 900, durationMs: 600 })
   })
 })
+
+describe('RibbonBuilder: отчёт подагента', () => {
+  function launched(): RibbonBuilder {
+    const b = new RibbonBuilder()
+    b.apply(
+      assistant([{ type: 'tool_use', id: 'ag1', name: 'Agent', input: { description: 'найти', subagent_type: 'Explore' } }])
+    )
+    return b
+  }
+
+  test('отчёт подагента — весь текст из AgentOutput.content, с переводами строк', () => {
+    const b = launched()
+    const report = 'Нашёл три места:\n1. a.ts\n2. b.ts\n3. c.ts'
+    b.apply(
+      userMessage([{ type: 'tool_result', tool_use_id: 'ag1', content: [{ type: 'text', text: report }] }], {
+        tool_use_result: {
+          status: 'completed',
+          agentId: 'a0123456789abcdef',
+          content: [{ type: 'text', text: report }],
+          totalTokens: 10,
+          totalDurationMs: 10,
+          totalToolUseCount: 3
+        }
+      })
+    )
+    const item = only(b.items, 'subagent')[0]!
+    expect(item.report).toBe('Нашёл три места:\n1. a.ts\n2. b.ts\n3. c.ts')
+    // The one-line summary is still short; the report is the whole text.
+    expect(item.summary).not.toContain('\n')
+  })
+
+  test('несколько текстовых блоков — абзацами', () => {
+    const b = launched()
+    b.apply(
+      userMessage([{ type: 'tool_result', tool_use_id: 'ag1', content: 'x' }], {
+        tool_use_result: { content: [{ type: 'text', text: 'первый' }, { type: 'text', text: 'второй' }] }
+      })
+    )
+    expect(only(b.items, 'subagent')[0]!.report).toBe('первый\n\nвторой')
+  })
+
+  test('без структуры отчёт — текст tool_result', () => {
+    const b = launched()
+    b.apply(toolResult('ag1', 'строка 1\nстрока 2'))
+    expect(only(b.items, 'subagent')[0]!.report).toBe('строка 1\nстрока 2')
+  })
+
+  test('длинный отчёт обрезан до 8000 символов с пометкой', () => {
+    const b = launched()
+    const long = 'я'.repeat(9000)
+    b.apply(toolResult('ag1', long))
+    const report = only(b.items, 'subagent')[0]!.report!
+    expect(report.startsWith('я'.repeat(8000))).toBe(true)
+    expect(report).toContain('обрезано: 1000')
+  })
+
+  test('у фонового агента отчёт — summary уведомления', async () => {
+    const b = new RibbonBuilder()
+    const all = await playedToEnd([agentStep({ finish: { ...FINISH, summary: 'итог:\nвсё зелёное' } })])
+    feed(b, all)
+    const card = only(b.items, 'subagent')[0]!
+    expect(card.state).toBe('done')
+    expect(card.report).toBe('итог:\nвсё зелёное')
+  })
+
+  test('фейк отдаёт report шага как content и как текст результата', async () => {
+    const b = new RibbonBuilder()
+    feed(b, await played([{ kind: 'subagent', name: 'обзор', report: 'а\nб', steps: [] }]))
+    expect(only(b.items, 'subagent')[0]!.report).toBe('а\nб')
+  })
+})

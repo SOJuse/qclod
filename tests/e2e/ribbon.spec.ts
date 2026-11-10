@@ -161,11 +161,11 @@ test('подагент сворачивает свои вызовы внутрь
     await expect(card).toBeVisible({ timeout: 15000 })
     await expect(card).toContainText('найти утечку')
 
-    // Collapsed by default: the nested call is inside the card, out of sight,
-    // not loose in the ribbon.
+    // Collapsed by default: the nested call is not loose in the ribbon, and
+    // a closed card does not draw its steps at all.
     const nested = card.locator('[data-testid="ribbon-tool"]')
-    await expect(nested).toHaveCount(1)
-    await expect(nested).toBeHidden()
+    await expect(win.locator('[data-testid="ribbon"] > [data-testid="ribbon-tool"]')).toHaveCount(0)
+    await expect(nested).toHaveCount(0)
 
     await card.locator('[data-testid="subagent-head"]').click()
     await expect(nested).toBeVisible()

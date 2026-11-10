@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { RibbonItem as Item, TodoItem } from '../../shared/types'
+import { childrenByParent } from '../chat/children'
 import { RibbonRow } from './RibbonItem'
 import { TodoPanel } from './TodoPanel'
 import './Ribbon.css'
@@ -51,7 +52,9 @@ export function Ribbon({
   const stickToBottom = useRef(true)
 
   // Only top-level items are rows; a subagent's own calls live inside its card.
-  const rows = items.filter((item) => item.parentId === undefined)
+  // Both come from one pass over the ribbon per change, not one per card.
+  const rows = useMemo(() => items.filter((item) => item.parentId === undefined), [items])
+  const byParent = useMemo(() => childrenByParent(items), [items])
 
   const offsets: number[] = []
   let total = 0
@@ -69,7 +72,8 @@ export function Ribbon({
 
   const visible = rows.slice(first, last)
   const padTop = offsets[first] ?? 0
-  const padBottom = Math.max(0, total - (offsets[last - 1] ?? 0) - (heights.current.get(rows[last - 1]?.id ?? '') ?? 0))
+  // Everything from the first row not drawn to the end; past the last row, nothing.
+  const padBottom = total - (offsets[last] ?? total)
 
   const measure = useCallback((id: string, height: number) => {
     const known = heights.current.get(id)
@@ -121,7 +125,7 @@ export function Ribbon({
           <RibbonRow
             key={item.id}
             item={item}
-            children={items.filter((child) => child.parentId === item.id)}
+            byParent={byParent}
             cwd={cwd}
             tabId={tabId}
             onMeasure={measure}

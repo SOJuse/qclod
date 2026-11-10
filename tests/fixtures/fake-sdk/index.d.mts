@@ -27,6 +27,8 @@ export type FakeStep =
       agentType?: string
       /** Run totals under the names AgentOutput uses (sdk-tools.d.ts). */
       stats?: { totalTokens?: number; totalDurationMs?: number; totalToolUseCount?: number }
+      /** What it writes back: AgentOutput content text and the tool_result text. Default «подагент закончил». */
+      report?: string
       steps: FakeStep[]
     }
   | FakeBackgroundAgentStep

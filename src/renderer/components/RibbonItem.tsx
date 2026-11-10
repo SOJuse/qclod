@@ -1,17 +1,18 @@
 import { useEffect, useRef } from 'react'
 import { Brain } from 'lucide-react'
-import { compactNumber, plural, seconds } from '../../shared/format'
+import { seconds } from '../../shared/format'
 import type { RibbonItem as Item } from '../../shared/types'
-import { AGENT_STATE_LABEL } from './agentState'
 import { PermissionCard } from './PermissionCard'
 import { PlanCard } from './PlanCard'
 import { QuestionCard } from './QuestionCard'
+import { NO_STEPS, SubagentCard } from './SubagentCard'
 import { ToolCard } from './ToolCard'
 import { Markdown } from '../markdown/Markdown'
 
 interface Props {
   item: Item
-  children: Item[]
+  /** Every subagent's own items, by its id (childrenByParent), built once per render. */
+  byParent: ReadonlyMap<string, Item[]>
   /** The tab's folder: where its commands run. */
   cwd: string
   tabId: string
@@ -58,7 +59,7 @@ export function NoticeRow({ item }: { item: Extract<Item, { kind: 'notice' }> })
  */
 export function RibbonRow({
   item,
-  children,
+  byParent,
   cwd,
   tabId,
   onMeasure,
@@ -128,45 +129,13 @@ export function RibbonRow({
 
       case 'subagent':
         return (
-          <details className={`row-subagent is-${item.state}`}>
-            <summary data-testid="subagent-head">
-              <span className="row-subagent-kind">{item.name}</span>
-              <span className="row-subagent-task">{item.task}</span>
-              <span className="row-subagent-stats" data-testid="subagent-stats">
-                {item.state === 'running' ? (
-                  <span className="row-subagent-working">
-                    {AGENT_STATE_LABEL.running}
-                    {item.lastTool ? ` · ${item.lastTool}` : '…'}
-                  </span>
-                ) : item.state === 'failed' || item.state === 'unfinished' || item.state === 'stopped' ? (
-                  <span className="row-subagent-failed">
-                    {AGENT_STATE_LABEL[item.state]}
-                    {item.state === 'failed' && item.summary ? ` · ${item.summary}` : ''}
-                  </span>
-                ) : (
-                  [
-                    item.durationMs ? seconds(item.durationMs) : null,
-                    item.tokens ? `${compactNumber(item.tokens)} токенов` : null,
-                    item.toolCalls ? `${item.toolCalls} ${plural(item.toolCalls, 'вызов', 'вызова', 'вызовов')}` : null,
-                    `${children.length} в ленте`
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')
-                )}
-              </span>
-            </summary>
-            <div className="row-subagent-body">
-              {children.map((child) => (
-                <div key={child.id} data-testid={`ribbon-${child.kind}`}>
-                  {child.kind === 'tool' || child.kind === 'toolError' ? (
-                    <ToolCard item={child} cwd={cwd} tabId={tabId} compact />
-                  ) : child.kind === 'agentText' ? (
-                    <div className="row-agent">{child.text}</div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </details>
+          <SubagentCard
+            item={item}
+            steps={byParent.get(item.id) ?? NO_STEPS}
+            byParent={byParent}
+            cwd={cwd}
+            tabId={tabId}
+          />
         )
 
       case 'plan':

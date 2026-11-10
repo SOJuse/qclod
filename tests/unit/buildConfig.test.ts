@@ -5,7 +5,7 @@ import { APP_ID } from '../../src/shared/appId'
 
 const root = resolve(__dirname, '../..')
 const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
-const yml = readFileSync(resolve(root, 'electron-builder.yml'), 'utf8')
+const yml = readFileSync(resolve(root, 'electron-builder.yml'), 'utf8').replace(/\r\n/g, '\n')
 
 describe('сборка', () => {
   test('автор — SOJuse, почты нет', () => {

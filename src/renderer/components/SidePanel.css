@@ -7,7 +7,7 @@
   overflow-y: auto;
   padding: 0 0 16px;
   border-left: 1px solid var(--border);
-  background: var(--surface-sunken);
+  background: var(--bg);
   font-size: var(--text-sm);
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
@@ -21,7 +21,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 11px 14px;
-  background: var(--surface-sunken);
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
   font-size: var(--text-md);
@@ -128,20 +128,21 @@
 }
 
 .panel-mcp li.is-connected .panel-mcp-dot {
-  background: var(--ok);
+  background: var(--status-ok);
 }
 
 .panel-mcp li.is-connecting .panel-mcp-dot,
 .panel-mcp li.is-pending .panel-mcp-dot {
-  background: var(--warn);
+  background: var(--status-warn);
 }
 
 .panel-mcp li.is-failed .panel-mcp-dot {
-  background: var(--danger);
+  background: var(--status-critical);
 }
 
+/* Waiting for the user to sign in: the accent, the colour of «your turn» (plan, question). */
 .panel-mcp li.is-needs-auth .panel-mcp-dot {
-  background: var(--glow);
+  background: var(--accent);
 }
 
 .panel-note {
@@ -218,9 +219,21 @@
   border-top: 1px solid var(--border);
 }
 
+/* The name is text; the agent category colour sits on the dot beside it. */
 .panel-agent-kind {
   font-weight: var(--weight-strong);
-  color: var(--glow);
+  color: var(--text);
+}
+
+.panel-agent-kind::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: var(--space-2);
+  border-radius: 50%;
+  background: var(--cat-agent);
+  vertical-align: middle;
 }
 
 .panel-agents li.is-running .panel-agent-kind {

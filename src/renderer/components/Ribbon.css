@@ -28,7 +28,7 @@
   margin: 22px 0 10px;
   padding: 10px 14px;
   border-left: 2px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-raised));
   border-radius: 0 8px 8px 0;
 }
 
@@ -65,7 +65,7 @@
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
+  background: var(--bg);
   color: var(--text-faint);
   overflow: hidden;
 }
@@ -100,7 +100,7 @@
 
 .row-user-image.is-openable:focus-visible {
   outline: none;
-  box-shadow: var(--glow-accent);
+  box-shadow: var(--focus-ring);
 }
 
 .row-chip {
@@ -246,7 +246,7 @@
 }
 
 .row-permission-actions .btn-primary kbd {
-  border-color: color-mix(in srgb, var(--on-accent) 45%, transparent);
+  border-color: color-mix(in srgb, var(--on-accent) 45%, var(--accent));
   color: var(--on-accent);
 }
 
@@ -266,7 +266,7 @@
 .row-permission:focus-visible,
 .row-permission-actions button:focus-visible {
   outline: none;
-  box-shadow: var(--glow-accent);
+  box-shadow: var(--focus-ring);
 }
 
 .row-permission-done {
@@ -275,8 +275,8 @@
 }
 
 .row-permission.is-denied {
-  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
-  background: color-mix(in srgb, var(--danger) 7%, var(--surface-raised));
+  border-color: var(--critical-border);
+  background: var(--critical-fill);
 }
 
 /* -------------------------------------------------------------- questions */
@@ -395,8 +395,10 @@
 }
 
 .row-notice.is-error {
-  background: color-mix(in srgb, var(--danger) 10%, var(--surface-raised));
-  color: var(--danger);
+  /* Status colour marks the stripe and the fill; the words stay text-coloured. */
+  border-left: var(--rule-category) solid var(--status-critical);
+  background: var(--critical-fill);
+  color: var(--text);
 }
 
 .row-notice-action {
@@ -426,7 +428,7 @@
   margin: 12px 0;
   border: 1px solid var(--border-accent);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--glow) 7%, var(--surface-raised));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-raised));
   overflow: hidden;
 }
 
@@ -466,7 +468,7 @@
 .row-plan-actions button:first-child {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0c0f1c;
+  color: var(--on-accent);
 }
 
 .row-plan-done {

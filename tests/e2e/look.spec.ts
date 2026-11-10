@@ -107,3 +107,49 @@ test('проза — Inter, код — Geist Mono с кириллицей, шр�
     await app.close()
   }
 })
+
+/** After the user's own message, one card of every category: read, search, edit, command, MCP, plan, other, agent. */
+const ALL_CATEGORIES = [
+  { kind: 'text', text: 'Смотрю, как устроен вход.' },
+  { kind: 'tool', name: 'Read', input: { file_path: 'C:/проект/auth.ts' }, result: 'строка 1\nстрока 2' },
+  { kind: 'tool', name: 'Grep', input: { pattern: 'login', path: 'src' }, result: 'src/a.ts\nsrc/b.ts' },
+  { kind: 'tool', name: 'Edit', input: { file_path: 'C:/проект/a.ts', old_string: 'b', new_string: 'c\nd' }, result: 'The file has been updated.' },
+  { kind: 'tool', name: 'Bash', input: { command: 'npm test', description: 'Run tests' }, result: 'ok' },
+  { kind: 'tool', name: 'mcp__gh__x', input: { title: 'Баг', labels: ['a'] }, result: 'создано' },
+  { kind: 'tool', name: 'EnterPlanMode', input: {}, result: 'ok' },
+  { kind: 'tool', name: 'Skill', input: { skill: 'review' }, result: 'ok' },
+  { kind: 'subagent', name: 'найти утечку', steps: [{ kind: 'tool', name: 'Grep', input: { pattern: 'leak' }, result: 'нашёл' }] },
+  { kind: 'text', text: 'Готово. Правил `src/a.ts:3`.' }
+]
+
+// The colours themselves are held by the unit tests (tokens.test.ts, styleRules.test.ts); these are the owner's pictures.
+test('05 лента со всеми категориями и список /', async () => {
+  const commands = [
+    { name: 'compact', description: 'Сжать контекст', argumentHint: '', builtin: true },
+    { name: 'model', description: 'Сменить модель', argumentHint: '<model>', builtin: true },
+    { name: 'моя-команда', description: 'Команда из этого проекта', argumentHint: '' }
+  ]
+  const { app, win } = await launchQclod({ script: { steps: [], turns: [ALL_CATEGORIES], init: { commands } } })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.waitFor({ timeout: 15000 })
+    await input.fill('Почини вход')
+    await input.press('Enter')
+    await expect(win.locator('.row-user').first()).toContainText('Почини вход', { timeout: 15000 })
+    await expect(win.locator('[data-testid="ribbon-subagent"]').first()).toBeVisible({ timeout: 15000 })
+    for (const c of ['read', 'search', 'edit', 'command', 'mcp', 'plan', 'other']) {
+      await expect(win.locator(`.tool-card[data-category="${c}"]`).first()).toBeVisible()
+    }
+    await expect(win.locator('[data-testid="ribbon-agentText"]').last()).toContainText('Готово', { timeout: 15000 })
+    await shot(win, '05-chat')
+
+    await input.click()
+    await input.press('/')
+    const menu = win.locator('[data-testid="slash-menu"]')
+    await expect(menu).toBeVisible()
+    await expect(menu.locator('[data-testid="slash-item"]').first()).toBeVisible()
+    await shot(win, '05-menu')
+  } finally {
+    await app.close()
+  }
+})

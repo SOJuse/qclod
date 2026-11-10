@@ -211,7 +211,7 @@
   max-height: var(--tool-output-max);
   overflow: auto;
   border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
+  background: var(--bg);
   color: var(--text);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
@@ -319,7 +319,7 @@
   max-height: var(--tool-output-max);
   overflow: auto;
   border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
+  background: var(--bg);
   padding: var(--space-1) 0;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;

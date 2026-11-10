@@ -6,7 +6,7 @@
 .todo-strip-wrap {
   position: relative;
   flex: 0 0 auto;
-  width: min(var(--now-max-w), calc(100% - var(--now-gutter) * 2));
+  width: min(var(--content-max-w), calc(100% - 2 * var(--content-gutter)));
   margin: 0 auto var(--strip-margin);
 }
 

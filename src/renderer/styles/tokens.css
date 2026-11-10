@@ -15,7 +15,7 @@
 
   --text: #ececf1;
   --text-dim: #a1a1ab;
-  --text-faint: #8a8a95;
+  --text-faint: #8e8e99;
 
   --accent: #5a8bff;
   /* Text on a solid accent fill: the primary button. */
@@ -26,16 +26,6 @@
   --focus-ring-color: var(--accent);
   --focus-offset: 2px;
   --focus-ring: 0 0 0 var(--focus-ring-width) var(--focus-ring-color);
-
-  /* removed in Task 5 */
-  --surface-sunken: var(--bg);
-  --glow: var(--accent);
-  --glow-accent: var(--focus-ring);
-  --glow-soft: none;
-  --menu-blur: 0px;
-  --ok: var(--status-ok);
-  --warn: var(--status-warn);
-  --danger: var(--status-critical);
 
   /* Radii by hierarchy: a path in text, a chip, a control, a sheet. */
   --radius-hair: 3px;
@@ -152,10 +142,8 @@
   --hover-fill: var(--surface-hover);
   --accent-fill: color-mix(in srgb, var(--accent) 16%, var(--surface-raised));
   --accent-fill-strong: color-mix(in srgb, var(--accent) 30%, var(--surface-raised));
-  --warn-fill: color-mix(in srgb, var(--status-warn) 8%, var(--surface));
+  --warn-fill: color-mix(in srgb, var(--status-warn) 8%, var(--surface-raised));
   --warn-border: color-mix(in srgb, var(--status-warn) 40%, var(--border));
-  --danger-fill: color-mix(in srgb, var(--status-critical) 10%, var(--bg));
-  --danger-border: color-mix(in srgb, var(--status-critical) 45%, var(--border));
   --critical-fill: color-mix(in srgb, var(--status-critical) 9%, var(--surface-raised));
   --critical-border: color-mix(in srgb, var(--status-critical) 45%, var(--border));
 
@@ -167,9 +155,6 @@
   --path-menu-max-w: 360px;
 
   /* The live «now» line above the input; its list of agents capped. */
-  /* removed in Task 5 */
-  --now-max-w: var(--content-max-w);
-  --now-gutter: var(--content-gutter);
   --now-list-max-w: 520px;
   --now-list-max-h: 240px;
   --now-pulse: 1.8s;

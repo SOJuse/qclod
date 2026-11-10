@@ -17,7 +17,7 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface-raised);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), var(--glow-soft);
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 
@@ -95,7 +95,7 @@
 }
 
 .history-item:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: var(--hover-fill);
 }
 
 .history-title {

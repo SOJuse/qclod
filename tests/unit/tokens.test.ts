@@ -50,7 +50,7 @@ test.each(TEXTISH.flatMap((fg) => SURFACES.map((bg) => [fg, bg])))('%s на %s �
   expect(contrast(resolveColor(t, fg), resolveColor(t, bg))).toBeGreaterThanOrEqual(4.5)
 })
 
-test.each([['--text', '--surface-hover'], ['--text-dim', '--surface-hover'], ['--on-accent', '--accent']])(
+test.each([['--text', '--surface-hover'], ['--text-dim', '--surface-hover'], ['--text-faint', '--surface-hover'], ['--on-accent', '--accent']])(
   '%s на %s — не меньше 4.5:1', (fg, bg) => expect(contrast(resolveColor(t, fg), resolveColor(t, bg))).toBeGreaterThanOrEqual(4.5))
 
 test.each(['--syn-keyword', '--syn-string', '--syn-number', '--syn-type', '--syn-comment', '--syn-punct'])(
@@ -81,6 +81,18 @@ test('шрифты закреплены точными версиями и ле�
   expect(css).not.toMatch(/@font-face/) // шрифты приходят из пакетов
   expect(t.get('--font-ui')).toMatch(/^'Inter Variable'/)
   expect(t.get('--font-mono')).toMatch(/^'Geist Mono Variable'/)
+})
+
+test('старых токенов стекла больше нет', () => {
+  for (const n of ['--glow', '--glow-accent', '--glow-soft', '--menu-blur', '--surface-sunken', '--now-max-w', '--now-gutter', '--ok', '--warn', '--danger']) {
+    expect(t.has(n)).toBe(false)
+  }
+})
+
+test('тонированные заливки — непрозрачная смесь над --surface-raised', () => {
+  const fills = [...t].filter(([k]) => /-fill(-strong)?$/.test(k) && k !== '--hover-fill')
+  expect(fills.map(([k]) => k).sort()).toEqual(['--accent-fill', '--accent-fill-strong', '--critical-fill', '--warn-fill'])
+  for (const [, v] of fills) expect(v).toMatch(/^color-mix\(in srgb, var\(--[\w-]+\) \d+%, var\(--surface-raised\)\)$/)
 })
 
 test('интерфейс по умолчанию — Inter, ступень md, межстрочный интерфейса', () => {

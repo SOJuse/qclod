@@ -102,9 +102,9 @@ li.md-task {
 }
 
 .md-check.is-done {
-  background: var(--ok);
-  border-color: var(--ok);
-  color: #0c0f1c;
+  background: var(--status-ok);
+  border-color: var(--status-ok);
+  color: var(--on-accent);
 }
 
 /* ------------------------------------------------------------- emphasis */
@@ -126,7 +126,7 @@ li.md-task {
 .md-link {
   color: var(--accent);
   text-decoration: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, var(--surface));
   cursor: pointer;
 }
 
@@ -139,10 +139,10 @@ li.md-task {
 .md-code {
   padding: 1px 5px;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--glow) 12%, var(--surface-sunken));
+  background: var(--surface-hover);
   border: 1px solid var(--border);
   font-size: var(--text-md);
-  color: color-mix(in srgb, var(--glow) 30%, var(--text));
+  color: var(--text);
   word-break: break-word;
 }
 
@@ -150,7 +150,7 @@ li.md-task {
   margin: 10px 0;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface-sunken);
+  background: var(--bg);
   overflow: hidden;
 }
 
@@ -160,7 +160,7 @@ li.md-task {
   justify-content: space-between;
   padding: 5px 11px;
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
+  background: color-mix(in srgb, var(--surface-raised) 60%, var(--bg));
 }
 
 .md-codeblock-lang {
@@ -199,28 +199,28 @@ li.md-task {
 }
 
 .tok-keyword {
-  color: #c792ea;
+  color: var(--syn-keyword);
 }
 
 .tok-string {
-  color: #a5e07f;
+  color: var(--syn-string);
 }
 
 .tok-comment {
-  color: var(--text-faint);
+  color: var(--syn-comment);
   font-style: italic;
 }
 
 .tok-number {
-  color: #ffc46b;
+  color: var(--syn-number);
 }
 
 .tok-type {
-  color: #7fd4ff;
+  color: var(--syn-type);
 }
 
 .tok-punct {
-  color: var(--text-dim);
+  color: var(--syn-punct);
 }
 
 /* --------------------------------------------------------------- quotes */
@@ -271,5 +271,5 @@ li.md-task {
 }
 
 .md-table tbody tr:hover {
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  background: var(--hover-fill);
 }

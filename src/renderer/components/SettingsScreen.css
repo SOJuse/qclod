@@ -24,7 +24,7 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface-raised);
-  box-shadow: var(--glow-soft), var(--shadow-modal);
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 
@@ -97,7 +97,7 @@
   padding: 6px 9px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
+  background: var(--bg);
   color: var(--text);
   font: inherit;
   font-size: var(--text-sm);
@@ -113,11 +113,11 @@
   cursor: pointer;
 }
 
-.settings-field input:focus,
-.settings-field select:focus {
+.settings-field input:focus-visible,
+.settings-field select:focus-visible {
   outline: none;
   border-color: var(--border-accent);
-  box-shadow: var(--glow-accent);
+  box-shadow: var(--focus-ring);
 }
 
 .settings-toggle {
@@ -140,7 +140,7 @@
   border-radius: var(--radius-sm);
   background: var(--warn-fill);
   font-size: var(--text-xs);
-  color: var(--warn);
+  color: var(--status-warn);
 }
 
 .settings-version {
@@ -169,7 +169,11 @@
 
 .settings-button:hover {
   background: var(--accent-fill-strong);
-  box-shadow: var(--glow-accent);
+}
+
+.settings-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .settings-rules {
@@ -188,7 +192,7 @@
 }
 
 .settings-rules li:nth-child(odd) {
-  background: var(--surface-sunken);
+  background: var(--bg);
 }
 
 .settings-rule-tool {
@@ -217,7 +221,7 @@
 }
 
 .settings-rules button:hover {
-  color: var(--danger);
+  color: var(--status-critical);
   background: var(--border);
 }
 
@@ -239,7 +243,7 @@
   align-items: center;
   gap: var(--space-1);
   font-size: var(--text-xs);
-  color: var(--ok);
+  color: var(--status-ok);
   animation: settings-in var(--dur) var(--ease);
 }
 

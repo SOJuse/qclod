@@ -34,7 +34,7 @@
   border: 1px solid var(--border-accent);
   border-radius: var(--radius);
   background: var(--surface-raised);
-  box-shadow: var(--glow-accent), var(--shadow-menu);
+  box-shadow: var(--shadow-menu);
   animation: path-menu-in var(--dur-fast) var(--ease);
 }
 
@@ -82,7 +82,7 @@
   margin: var(--space-1) 0 0;
   padding: var(--space-2);
   border-top: 1px solid var(--border);
-  color: var(--warn);
+  color: var(--status-warn);
   font-size: var(--text-xs);
   line-height: var(--leading);
   white-space: normal;

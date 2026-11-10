@@ -1377,6 +1377,62 @@ describe('AgentSession: живой статус MCP', () => {
     expect(secondStatus).toHaveBeenCalledTimes(1)
   })
 
+  test('после исчерпания лимита новый init снова запускает опрос', async () => {
+    const { session, driver } = makeSession({ steps: [] }, { mcpPollMs: 2 })
+    const status = vi.fn().mockResolvedValue([{ name: 'srv', status: 'pending' }])
+    driver.mcpServerStatus = status
+    await session.start()
+    await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(16), { timeout: 2000 })
+    await new Promise((r) => setTimeout(r, 40))
+    expect(status).toHaveBeenCalledTimes(16)
+
+    session.handle({ type: 'system', subtype: 'init', session_id: 's' })
+    await vi.waitFor(() => expect(status.mock.calls.length).toBeGreaterThanOrEqual(18), { timeout: 2000 })
+    await session.dispose()
+  })
+
+  test.each([
+    ['commands_changed', { type: 'system', subtype: 'commands_changed', commands: [] }],
+    ['plugin_install', { type: 'system', subtype: 'plugin_install', status: 'completed' }]
+  ])('%s сбрасывает счётчик опроса', async (_name, message) => {
+    const { session, driver } = makeSession({ steps: [] }, { mcpPollMs: 2 })
+    const status = vi.fn().mockResolvedValue([{ name: 'srv', status: 'pending' }])
+    driver.mcpServerStatus = status
+    await session.start()
+    await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(16), { timeout: 2000 })
+    await new Promise((r) => setTimeout(r, 40))
+    expect(status).toHaveBeenCalledTimes(16)
+
+    session.handle(message)
+    await vi.waitFor(() => expect(status.mock.calls.length).toBeGreaterThanOrEqual(18), { timeout: 2000 })
+    await session.dispose()
+  })
+
+  test('временный отказ mcpServerStatus не останавливает опрос и не стирает список', async () => {
+    const { session, driver } = makeSession({ steps: [] }, { mcpPollMs: 10 })
+    // What the panel showed when each ask was made: the third ask comes
+    // right after the refusal.
+    const seen: unknown[] = []
+    const answers = [
+      () => Promise.resolve([{ name: 'srv', status: 'pending' }]),
+      () => Promise.reject(new Error('control request failed')),
+      () => Promise.resolve([{ name: 'srv', status: 'connected' }])
+    ]
+    const status = vi.fn(() => {
+      seen.push(session.panel.mcp)
+      return (answers[Math.min(seen.length, 3) - 1] as () => Promise<Array<{ name: string; status: string }>>)()
+    })
+    driver.mcpServerStatus = status
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(session.panel.mcp).toEqual([{ name: 'srv', status: 'connected' }]))
+    expect(status).toHaveBeenCalledTimes(3)
+    expect(seen[2]).toEqual([{ name: 'srv', status: 'pending' }])
+    expect(rec.panels.every((p) => p.mcp === undefined || p.mcp.length > 0)).toBe(true)
+    await session.dispose()
+  })
+
   test('патчи панели несут ревизию, снимок — последнюю', async () => {
     const { session } = makeSession({ steps: [] })
     const revs: number[] = []

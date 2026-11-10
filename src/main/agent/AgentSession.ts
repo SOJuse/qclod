@@ -633,17 +633,30 @@ export class AgentSession {
    * still coming up is asked about again until it settles: otherwise
    * «ждёт» stayed on screen until someone happened to reopen the panel.
    */
-  async refreshMcp(): Promise<void> {
+  async refreshMcp(reason: 'poll' | 'trigger' = 'trigger'): Promise<void> {
     const driver = this.driver
     if (!driver) return
-    const mcp = await driver.mcpServerStatus().catch((): McpServerInfo[] => [])
+    // An outside cause (start, init, commands, plugin) earns a fresh allowance
+    // of repeats; the timer's own repeats do not.
+    if (reason === 'trigger') this.mcpPolls = 0
+    let mcp: McpServerInfo[]
+    try {
+      mcp = await driver.mcpServerStatus()
+    } catch {
+      // A failed check says nothing about the servers: keep the list on the
+      // panel and keep waiting, within the same limit.
+      if (this.disposed || this.driver !== driver) return
+      this.pollMcpWhileWaiting(this.collector.data.mcp, { failed: true })
+      return
+    }
     if (this.disposed || this.driver !== driver) return
     if (mcp.length > 0) this.emitPanel(this.collector.setMcp(mcp))
     this.pollMcpWhileWaiting(mcp)
   }
 
-  private pollMcpWhileWaiting(mcp: McpServerInfo[]): void {
-    const waiting = mcp.some((s) => s.status === 'pending' || s.status === 'connecting')
+  private pollMcpWhileWaiting(mcp: McpServerInfo[], opts: { failed?: boolean } = {}): void {
+    const waiting =
+      opts.failed === true || mcp.some((s) => s.status === 'pending' || s.status === 'connecting')
     if (!waiting) {
       this.mcpPolls = 0
       this.stopMcpPolling()
@@ -654,7 +667,7 @@ export class AgentSession {
     this.mcpPolls += 1
     this.mcpTimer = setTimeout(() => {
       this.mcpTimer = null
-      this.background(this.refreshMcp())
+      this.background(this.refreshMcp('poll'))
     }, this.options.mcpPollMs ?? MCP_POLL_MS)
   }
 

@@ -15,6 +15,12 @@ import {
 } from '@main/tabs/sanitize'
 
 describe('sanitizeTabPatch', () => {
+  test('tabs:update не даёт окну подменить remote', () => {
+    expect(sanitizeTabPatch({ remote: { state: 'on', url: 'https://x' }, title: 'a' })).toEqual({
+      title: 'a'
+    })
+  })
+
   test('заголовок проходит', () => {
     expect(sanitizeTabPatch({ title: 'мой проект' })).toEqual({ title: 'мой проект' })
   })

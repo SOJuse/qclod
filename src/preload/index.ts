@@ -64,6 +64,9 @@ const api = {
 
   setEffort: (id: TabId, level: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.agentEffort, id, level),
+  /** Turns Remote Control on or off for a tab. */
+  setRemote: (id: TabId, enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.agentRemote, id, enabled),
 
   commands: (id: TabId): Promise<CommandInfo[]> => ipcRenderer.invoke(CHANNELS.agentCommands, id),
   /** The tab's whole ribbon with its revision — for a window catching up. */

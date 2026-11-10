@@ -195,7 +195,16 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     deps.rememberDefault({ effort: level as EffortLevel })
   })
 
-  ipcMain.handle(CHANNELS.agentCommands, async (_e, id: unknown) => {
+  ipcMain.handle(CHANNELS.agentRemote, async (_e, id: unknown, enabled: unknown) => {
+    if (!isString(id) || typeof enabled !== 'boolean') return
+    const session = manager.get(id)
+    if (!session) return
+    // The session name the phone shows is the tab's title.
+    const title = controller.list().find((tab) => tab.id === id)?.title
+    await session.setRemote(enabled, title)
+  })
+
+  ipcMain.handle(CHANNELS.agentCommands,async (_e, id: unknown) => {
     if (!isString(id)) return []
     return (await manager.get(id)?.commands()) ?? []
   })

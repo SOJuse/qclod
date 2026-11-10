@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu } from 'electron'
 import { homedir } from 'node:os'
-import { createMainWindow, hardenWebContents, RENDERER_ENTRY } from './window'
+import { createMainWindow, hardenWebContents, offScreen, RENDERER_ENTRY } from './window'
 import { registerBaseIpc } from './ipc'
 import { registerAgentIpc } from './agentIpc'
 import { loadSettings, saveSettings } from './store/settingsStore'
@@ -39,6 +39,8 @@ async function confirmBypass(win: BrowserWindow | null): Promise<boolean> {
   // has no such branch and always shows the real dialog (buildFlags.d.ts).
   const stubbed = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_CONFIRM_BYPASS'] : undefined
   if (stubbed !== undefined) return stubbed === 'allow'
+  // An off-screen run must not put a modal dialog in front of anyone.
+  if (offScreen) return false
   if (!win || win.isDestroyed()) return false
 
   const { response } = await dialog.showMessageBox(win, {
@@ -71,6 +73,10 @@ if (userDataOverride) app.setPath('userData', userDataOverride)
 // run cannot shut down cleanly.
 const headless = process.env['QCLOD_HEADLESS'] === '1'
 
+// Windows would report an off-screen window as covered, and Chromium would
+// stop painting it (window.ts).
+if (offScreen) app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+
 app.on('web-contents-created', (_e, contents) => {
   hardenWebContents(contents)
 })
@@ -91,9 +97,10 @@ app.whenReady().then(async () => {
   })
   const send = (channel: string, payload: unknown): void => outbox.send(channel, payload)
 
+  // An off-screen run never raises, flashes or focuses the window (window.ts).
   function showWindow(): void {
     const win = mainWindow
-    if (!win) return
+    if (!win || offScreen) return
     if (win.isMinimized()) win.restore()
     win.show()
     win.focus()
@@ -105,7 +112,7 @@ app.whenReady().then(async () => {
    */
   function showWindowInactive(): void {
     const win = mainWindow
-    if (!win) return
+    if (!win || offScreen) return
     if (win.isMinimized()) {
       win.flashFrame(true)
       return
@@ -206,7 +213,8 @@ app.whenReady().then(async () => {
     onStatus: (event) => {
       send(CHANNELS.statusChanged, event)
       const tab = controller.list().find((t) => t.id === event.tabId)
-      if (!tab) return
+      // Nor does it show toasts.
+      if (!tab || offScreen) return
       if (!event.finished && event.status !== 'waiting' && event.status !== 'error') return
       notifyIfNeeded({
         settings,

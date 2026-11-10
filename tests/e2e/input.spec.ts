@@ -2,6 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pasteImage, screenshotPng } from './helpers/clipboard'
 
 type ShellEntry = { action: string; path: string }
 
@@ -26,21 +27,20 @@ async function close(app: ElectronApplication, profile: string): Promise<void> {
   rmSync(profile, { recursive: true, force: true })
 }
 
-/** A screenshot in the system clipboard, as a screenshot tool leaves it. */
+/**
+ * The screenshot the next paste carries. Kept here rather than in the system
+ * clipboard, which belongs to whoever is using the machine (helpers/clipboard.ts).
+ */
+let copied = ''
+
+/** A screenshot "in the clipboard", as a screenshot tool leaves it. */
 async function copyScreenshot(app: ElectronApplication, width: number, height: number): Promise<void> {
-  await app.evaluate(
-    ({ clipboard, nativeImage }, size) =>
-      clipboard.writeImage(
-        nativeImage.createFromBitmap(Buffer.alloc(size.width * size.height * 4, 200), size)
-      ),
-    { width, height }
-  )
+  copied = await screenshotPng(app, width, height)
 }
 
+/** Ctrl+V of that screenshot into the input line. */
 async function paste(win: Page): Promise<void> {
-  const input = win.locator('[data-testid="composer-input"]')
-  await input.click()
-  await input.press('Control+V')
+  await pasteImage(win, copied)
 }
 
 test('Ctrl+V скриншота — миниатюра в поле, крестик убирает', async () => {

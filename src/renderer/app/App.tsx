@@ -13,7 +13,7 @@ import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { ActionPalette } from '../components/ActionPalette'
 import { compactNow } from '../input/slash'
-import { LAST_TAB_INDEX, resolveAppShortcut, type AppActionId } from './shortcuts'
+import { resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
 import './App.css'
 
 /**
@@ -170,8 +170,6 @@ export function App(): JSX.Element {
     void window.qclod.setPermissionMode(activeTabId, ring[(at + 1) % ring.length]!)
   }, [activeTabId])
 
-
-
   const activate = useCallback(
     (id: string) => {
       setActiveTabId(id)
@@ -244,12 +242,12 @@ export function App(): JSX.Element {
         case 'prevTab':
           return step(-1)
         case 'tabAt': {
-          const target =
-            index === LAST_TAB_INDEX ? state.tabs[state.tabs.length - 1] : state.tabs[index ?? -1]
-          if (target) activate(target.id)
+          const target = tabAtTarget(state.tabs.map((t) => t.id), index)
+          if (target) activate(target)
           return
         }
         case 'actions':
+          if (paletteRef.current) setFocusToken((n) => n + 1)
           return setPaletteOpen((open) => !open)
         case 'settings':
           return setSettingsOpen(true)
@@ -281,9 +279,10 @@ export function App(): JSX.Element {
     const onKey = (ev: KeyboardEvent): void => {
       const hit = resolveAppShortcut(ev)
       if (!hit) return
-      // With the palette open only Ctrl+K (to close it) is ours.
-      if (paletteRef.current && hit.id !== 'actions') return
+      // Always ours, so no default (Close Window, Reload…) sees the key.
       ev.preventDefault()
+      // With the palette open only Ctrl+K (to close it) runs.
+      if (paletteRef.current && hit.id !== 'actions') return
       runRef.current(hit.id, hit.index)
     }
     window.addEventListener('keydown', onKey)
@@ -332,9 +331,6 @@ export function App(): JSX.Element {
     if (splitTabId) loadRibbon(splitTabId)
   }, [splitTabId, loadRibbon])
 
-
-
-
   if (environment && !environment.ready && !setupDismissed) {
     return (
       <SetupScreen
@@ -351,7 +347,10 @@ export function App(): JSX.Element {
         tabs={tabs}
         activeTabId={activeTabId}
         onActivate={activate}
-        onClose={(id) => void window.qclod.closeTab(id)}
+        onClose={(id) => {
+          clearCloseGuard()
+          void window.qclod.closeTab(id)
+        }}
         onCreate={newTab}
         onConfigure={() => setSettingsOpen(true)}
         hotkey={hotkey}

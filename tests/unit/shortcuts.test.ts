@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { APP_ACTIONS, hint, resolveAppShortcut } from '@renderer/app/shortcuts'
+import { APP_ACTIONS, hint, resolveAppShortcut, tabAtTarget } from '@renderer/app/shortcuts'
 import type { KeyLike } from '@renderer/input/keyPrecedence'
 
 function key(partial: Partial<KeyLike>): KeyLike {
@@ -106,4 +106,14 @@ describe('APP_ACTIONS', () => {
     })
     expect(APP_ACTIONS.find((a) => a.id === 'cycleMode')?.keys).toBe('Shift+Tab')
   })
+})
+
+describe('tabAtTarget', () => {
+  const ids = ['a', 'b', 'c']
+  test('Ctrl+9 (индекс 8) — последняя из трёх', () => expect(tabAtTarget(ids, 8)).toBe('c'))
+  test('Ctrl+2 — вторая; Ctrl+5 при трёх — ничего', () => {
+    expect(tabAtTarget(ids, 1)).toBe('b')
+    expect(tabAtTarget(ids, 4)).toBeNull()
+  })
+  test('нет вкладок — ничего', () => expect(tabAtTarget([], 8)).toBeNull())
 })

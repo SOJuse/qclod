@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu } from 'electron'
 import { homedir } from 'node:os'
 import { createMainWindow, hardenWebContents, RENDERER_ENTRY } from './window'
 import { registerBaseIpc } from './ipc'
@@ -74,6 +74,8 @@ app.on('web-contents-created', (_e, contents) => {
 })
 
 app.whenReady().then(async () => {
+  // No default menu: its accelerators (Close Window, Reload) would fight ours.
+  Menu.setApplicationMenu(null)
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
 

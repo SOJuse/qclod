@@ -83,3 +83,10 @@ export function resolveAppShortcut(
       return null
   }
 }
+
+/** The tab Ctrl+1…9 picks: index 8 is the last tab, a missing index picks nothing. */
+export function tabAtTarget(tabIds: string[], index: number | undefined): string | null {
+  if (index === undefined) return null
+  const at = index === LAST_TAB_INDEX ? tabIds.length - 1 : index
+  return tabIds[at] ?? null
+}

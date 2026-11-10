@@ -159,3 +159,55 @@ test('Ctrl+K на русской раскладке (код клавиши, не
     await close(app, profile, folder)
   }
 })
+
+test('Ctrl+W при открытой палитре не закрывает окно', async () => {
+  const { app, profile, folder } = await launch({ steps: [] })
+  try {
+    const win = await app.firstWindow()
+    await ready(win)
+    await win.keyboard.press('Control+k')
+    await expect(win.locator('[data-testid="action-palette"]')).toBeVisible()
+    await win.keyboard.press('Control+w')
+    await win.waitForTimeout(500)
+    expect(win.isClosed()).toBe(false)
+    expect(app.windows().length).toBe(1)
+    await expect(win.locator('[data-testid="action-palette"]')).toBeVisible()
+    await expect(tabs(win)).toHaveCount(1)
+  } finally {
+    await close(app, profile, folder)
+  }
+})
+
+test('Ctrl+K закрывает палитру и возвращает курсор в поле', async () => {
+  const { app, profile, folder } = await launch({ steps: [] })
+  try {
+    const win = await app.firstWindow()
+    await ready(win)
+    await win.keyboard.press('Control+k')
+    await expect(win.locator('[data-testid="action-palette"]')).toBeVisible()
+    await win.keyboard.press('Control+k')
+    await expect(win.locator('[data-testid="action-palette"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="composer-input"]')).toBeFocused()
+  } finally {
+    await close(app, profile, folder)
+  }
+})
+
+test('копирование, вставка и отмена в поле работают', async () => {
+  const { app, profile, folder } = await launch({ steps: [] })
+  try {
+    const win = await app.firstWindow()
+    await ready(win)
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.pressSequentially('привет')
+    await win.keyboard.press('Control+a')
+    await win.keyboard.press('Control+c')
+    await win.keyboard.press('End')
+    await win.keyboard.press('Control+v')
+    await expect(input).toHaveValue('приветпривет')
+    await win.keyboard.press('Control+z')
+    await expect(input).not.toHaveValue('приветпривет')
+  } finally {
+    await close(app, profile, folder)
+  }
+})

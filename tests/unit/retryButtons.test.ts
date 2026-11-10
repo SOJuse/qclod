@@ -66,7 +66,7 @@ describe('полоса мёртвой сессии', () => {
 })
 
 describe('строка-заметка в ленте', () => {
-  const notice = (action?: 'login' | 'retry'): Extract<RibbonItem, { kind: 'notice' }> => ({
+  const notice = (action?: 'login'): Extract<RibbonItem, { kind: 'notice' }> => ({
     kind: 'notice',
     id: 'n1',
     text: 'Claude Code не вошёл в аккаунт. Войдите и нажмите «Повторить».',

@@ -119,14 +119,14 @@
 .composer-dead {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 7px;
-  padding: 7px 11px;
+  gap: var(--strip-gap);
+  margin-bottom: var(--strip-margin);
+  padding: var(--strip-pad);
   border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
-  border-radius: 8px;
+  border-radius: var(--strip-radius);
   background: color-mix(in srgb, var(--danger) 9%, var(--surface-raised));
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--strip-font-size);
 }
 
 /* The buttons sit together at the right end, «Повторить» first. */
@@ -135,13 +135,13 @@
 }
 
 .composer-dead button {
-  padding: 4px 11px;
+  padding: var(--button-sm-pad);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--button-sm-radius);
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--button-sm-font-size);
   cursor: pointer;
 }
 

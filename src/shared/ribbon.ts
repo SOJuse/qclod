@@ -386,7 +386,7 @@ export class RibbonBuilder {
   notice(
     text: string,
     tone: 'info' | 'error' = 'info',
-    action?: 'login' | 'retry'
+    action?: 'login'
   ): RibbonChange[] {
     return [this.append({ kind: 'notice', id: this.nextId(), text, tone, ...(action ? { action } : {}) })]
   }

@@ -255,10 +255,16 @@ export class TabController {
   /**
    * «Повторить»: the session never got to the conversation — no agent, not
    * logged in — so the same conversation is opened again once the cause is
-   * fixed. Unlike `restart`, the stored id is kept and resumed.
+   * fixed. Unlike `restart`, the stored id is kept and resumed — and what
+   * the user said to the session that died never reached an agent, so it
+   * goes to the new one as it was sent, once (it is on screen already).
    */
   async retry(id: TabId): Promise<void> {
+    const unsent = this.deps.manager.get(id)?.sentBeforeInit ?? []
     await this.replaceSession(id, () => undefined)
+    const fresh = this.deps.manager.get(id)
+    if (!fresh) return
+    for (const sent of unsent) fresh.resend(sent)
   }
 
   /**
@@ -459,10 +465,12 @@ export class TabController {
       // A clean session would die the same way. The tab keeps its session,
       // its error and its conversation, and offers the way out.
       this.patch(id, { canRetry: true })
-      this.emitRibbon(
-        id,
-        dead.notice('Claude Code не вошёл в аккаунт. Войдите и нажмите «Повторить».', 'error', 'login')
-      )
+      // Said once: a «Повторить» that fails the same way, with nothing sent
+      // since, does not stack a second copy under the first.
+      const text = 'Claude Code не вошёл в аккаунт. Войдите и нажмите «Повторить».'
+      const since = dead.items.slice(dead.items.findLastIndex((i) => i.kind === 'user') + 1)
+      const told = since.some((i) => i.kind === 'notice' && i.action === 'login' && i.text === text)
+      if (!told) this.emitRibbon(id, dead.notice(text, 'error', 'login'))
       return
     }
 

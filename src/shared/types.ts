@@ -122,7 +122,7 @@ export type RibbonItem =
       text: string
       tone: 'info' | 'error'
       /** A way out the notice offers: «Войти» opens the login terminal. */
-      action?: 'login' | 'retry'
+      action?: 'login'
     })
 
 export interface TodoItem {

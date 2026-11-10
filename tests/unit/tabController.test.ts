@@ -108,6 +108,8 @@ function makeController(
     agentMissing?: boolean
     /** Every driver, fresh or resumed, dies before init with this message. */
     everyStreamFails?: string
+    /** A resumed driver dies on its first message: the agent is not logged in. Read on every start. */
+    notLoggedInOnSend?: boolean
   } = {}
 ): Harness {
   const changed: TabState[][] = []
@@ -133,6 +135,9 @@ function makeController(
     createDriver: (driverOptions) => {
       resumedWith.push(driverOptions.resume)
       if (options.everyStreamFails) return deadResumeFor(options.everyStreamFails, 0)
+      if (options.notLoggedInOnSend && driverOptions.resume) {
+        return deadResumeFor('Not logged in · Please run /login', 'firstSend')
+      }
       if (options.resumeFailsSync && driverOptions.resume) {
         throw new Error(`Сессия ${driverOptions.resume} не открывается`)
       }
@@ -1400,6 +1405,39 @@ describe('TabController: подмена сессии, «Повторить» и 
     expect(harness.resumedWith).toEqual(['живая', 'живая'])
     expect(harness.controller.list()[0]!.status).toBe('error')
     expect(storedTabs()[0]!['lastSessionId']).toBe('живая')
+    // The same notice is not stacked once per failed try.
+    const login = notices(harness.controller, 'a').filter((n) => n.action === 'login')
+    expect(login).toHaveLength(1)
+  })
+
+  test('«Повторить» после входа отправляет сообщение, на котором сессия умерла, один раз', async () => {
+    const options = { notLoggedInOnSend: true }
+    const harness = makeController(options)
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+
+    // The CLI says it is not logged in only once it is spoken to.
+    harness.manager.get('a')!.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(harness.controller.list()[0]!.canRetry).toBe(true))
+    await harness.controller.whenSettled()
+    expect(harness.created).toHaveLength(0)
+
+    // The user logs in and presses «Повторить».
+    options.notLoggedInOnSend = false
+    await harness.controller.retry('a')
+    await vi.waitFor(() => expect(harness.created.at(-1)?.driver.sent ?? []).toHaveLength(1))
+    await harness.controller.whenSettled()
+
+    const fresh = harness.created.at(-1)!
+    expect(harness.created).toHaveLength(1)
+    expect(fresh.resume).toBe('живая')
+    expect(fresh.driver.sent).toEqual(harness.dead[0]!.sent)
+    const bubbles = harness.controller
+      .itemsOf('a')
+      .filter((i) => i.kind === 'user')
+      .map((i) => (i as { text: string }).text)
+    expect(bubbles).toEqual(['привет'])
   })
 
   test('guard: ненайденная переписка — прежнее восстановление и прежний текст', async () => {

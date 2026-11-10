@@ -40,6 +40,14 @@
   --button-sm-radius: 7px;
   --button-sm-font-size: 12px;
   --button-sm-gap: 10px;
+
+  /* A one-line strip above the input: the dead-session strip. */
+  --strip-pad: 7px 11px;
+  --strip-gap: 10px;
+  --strip-margin: 7px;
+  --strip-radius: 8px;
+  --strip-font-size: 12px;
+
   --titlebar-height: 38px;
 
   --font-mono: 'Geist Mono', 'Cascadia Mono', 'Consolas', ui-monospace, monospace;

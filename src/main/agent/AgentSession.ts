@@ -328,7 +328,7 @@ export class AgentSession {
   }
 
   /** Something Qclod itself needs to say — a crash, a session that would not resume. */
-  notice(text: string, tone: 'info' | 'error' = 'info', action?: 'login' | 'retry'): RibbonChange[] {
+  notice(text: string, tone: 'info' | 'error' = 'info', action?: 'login'): RibbonChange[] {
     return this.builder.notice(text, tone, action)
   }
 

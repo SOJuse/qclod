@@ -1802,6 +1802,7 @@ describe('AgentSession: очередь сообщений', () => {
 
   test('Стоп возвращает очередь и очищает её', async () => {
     const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
     await session.start()
 
     session.send({ text: 'раз', attachments: [] })
@@ -1810,8 +1811,12 @@ describe('AgentSession: очередь сообщений', () => {
     expect(await session.interrupt()).toEqual([{ text: 'два', attachments: [] }])
     expect(session.panel.queue).toEqual([])
     await settle(session)
-    await new Promise((r) => setTimeout(r, 300))
+    // The fake plays the stopped turn out to its result (its cost lands on
+    // the panel); that result is where a queued message would have gone.
+    await vi.waitFor(() => expect(rec.panels.some((p) => p.cost)).toBe(true), { timeout: 3000 })
+    await tick()
     expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
+    expect(session.status).toBe('idle')
     await session.dispose()
   })
 

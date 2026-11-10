@@ -49,7 +49,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px;
+  padding: var(--gap-hair);
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;

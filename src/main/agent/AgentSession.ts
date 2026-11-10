@@ -792,6 +792,8 @@ export class AgentSession {
   async dispose(): Promise<void> {
     this.disposed = true
     this.turnRunning = false
+    // The queue is dropped with the session by design: a closed tab's
+    // messages have nowhere to go. A swap takes it first (`takeQueue`).
     this.stopMcpPolling()
     // A question nobody can answer any more must not hold the agent open.
     this.cancelWaits()

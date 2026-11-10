@@ -20,14 +20,23 @@ export function QueueStrip({ queue, onCancel }: Props): JSX.Element | null {
         <li key={item.id} className="queue-item" data-testid="queue-item">
           <Clock size={14} aria-hidden="true" />
           <span className="queue-text">
-            В очереди: «{item.text}»
-            {item.attachments > 0 && <span className="queue-attachments"> + вложений: {item.attachments}</span>}
+            {item.text !== '' ? (
+              <>
+                В очереди: «{item.text}»
+                {item.attachments > 0 && (
+                  <span className="queue-attachments"> + вложений: {item.attachments}</span>
+                )}
+              </>
+            ) : (
+              // Only attachments: no empty quotes to show.
+              <>В очереди — вложений: {item.attachments}</>
+            )}
           </span>
           <button
             type="button"
             className="queue-cancel"
             data-testid="queue-cancel"
-            aria-label="Убрать из очереди"
+            aria-label={`Убрать из очереди: ${item.text !== '' ? item.text : `вложений: ${item.attachments}`}`}
             title="Убрать из очереди"
             onClick={() => onCancel(item.id)}
           >

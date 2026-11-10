@@ -5,6 +5,7 @@ import { sendCommand } from '../input/slash'
 import { Ribbon } from './Ribbon'
 import { Composer } from './Composer'
 import { NowLine } from './NowLine'
+import { TodoStrip } from './TodoStrip'
 import './ChatPane.css'
 
 interface Props {
@@ -90,7 +91,6 @@ export function ChatPane({
       <Ribbon
         key={tabId}
         items={ribbonByTab[tabId] ?? []}
-        todo={todoByTab[tabId] ?? []}
         cwd={tab?.cwd ?? ''}
         tabId={tabId}
         onAnswerPermission={(requestId, behavior, remember) => {
@@ -106,6 +106,8 @@ export function ChatPane({
           void window.qclod.answerPlan(tabId, requestId, approve)
         }
       />
+
+      <TodoStrip items={todoByTab[tabId] ?? []} status={status} />
 
       <NowLine tabId={tabId} status={status} since={busySinceByTab[tabId]} items={ribbonByTab[tabId] ?? []} />
 

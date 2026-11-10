@@ -158,6 +158,8 @@ export type RibbonItem =
 export interface TodoItem {
   content: string
   status: string
+  /** The task in the present tense, shown while it is in progress. */
+  activeForm?: string
 }
 
 export type RibbonChange =

@@ -306,58 +306,6 @@
   border-color: var(--border-accent);
 }
 
-/* ---------------------------------------------------------------- the todo */
-
-.todo-panel {
-  flex: 0 0 auto;
-  margin: 10px auto 0;
-  width: min(920px, calc(100% - 40px));
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface-raised);
-  font-size: 12px;
-}
-
-.todo-panel > summary {
-  padding: 7px 12px;
-  cursor: pointer;
-  list-style: none;
-  color: var(--text-dim);
-}
-
-.todo-panel > summary::-webkit-details-marker {
-  display: none;
-}
-
-.todo-panel ul {
-  margin: 0;
-  padding: 0 12px 10px;
-  list-style: none;
-}
-
-.todo-panel li {
-  display: flex;
-  gap: 9px;
-  padding: 3px 0;
-  line-height: 1.45;
-}
-
-.todo-mark {
-  flex: 0 0 auto;
-  width: 12px;
-  color: var(--text-dim);
-}
-
-.todo-panel li.is-completed {
-  color: var(--text-dim);
-  text-decoration: line-through;
-  text-decoration-color: var(--border);
-}
-
-.todo-panel li.is-in_progress {
-  color: var(--accent);
-}
-
 /* The conversation is text people copy out of; the chrome around it is not. */
 .ribbon {
   user-select: text;

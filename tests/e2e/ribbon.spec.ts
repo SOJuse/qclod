@@ -114,29 +114,45 @@ test('размышления свёрнуты в строку с длитель�
   }
 })
 
-test('список задач закреплён сверху и обновляется целиком', async () => {
+test('план — полоска «Задачи 1/3» над полем, лента не перекрыта', async () => {
   const { app, profile } = await launch({
     steps: [
-      { kind: 'todo', items: [{ content: 'разобрать ленту', status: 'in_progress' }] },
+      { kind: 'text', text: 'начинаю' },
       {
         kind: 'todo',
         items: [
-          { content: 'разобрать ленту', status: 'completed' },
-          { content: 'собрать панель', status: 'in_progress' }
+          { content: 'разобрать ленту', status: 'completed', activeForm: 'разбираю ленту' },
+          { content: 'собрать панель', status: 'in_progress', activeForm: 'собираю панель' },
+          { content: 'проверить', status: 'pending', activeForm: 'проверяю' }
         ]
-      }
+      },
+      { kind: 'text', text: 'готово' }
     ]
   })
   try {
     const win = await app.firstWindow()
-    const todo = win.locator('[data-testid="todo-panel"]')
+    const strip = win.locator('[data-testid="todo-strip"]')
 
-    await expect(todo).toBeVisible({ timeout: 15000 })
-    await expect(todo.locator('[data-testid="todo-item"]')).toHaveCount(2)
-    await expect(todo).toContainText('собрать панель')
+    await expect(strip).toBeVisible({ timeout: 15000 })
+    await expect(strip).toContainText('Задачи 1/3')
+    await expect(strip).toContainText('собираю панель')
+    await expect(win.locator('[data-testid="todo-panel"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="todo-list"]')).toHaveCount(0)
 
     // The list is rewritten whole; it must never pile up in the ribbon.
     await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(0)
+
+    // The strip pins nothing over the conversation: the first row is not under it.
+    const row = await win.locator('[data-testid^="ribbon-"]').first().boundingBox()
+    const bar = await strip.boundingBox()
+    expect(row).not.toBeNull()
+    expect(bar).not.toBeNull()
+    expect(row!.y).toBeLessThan(bar!.y)
+
+    await strip.click()
+    const list = win.locator('[data-testid="todo-list"]')
+    await expect(list).toBeVisible()
+    await expect(list.locator('[data-testid="todo-item"]')).toHaveCount(3)
   } finally {
     await close(app, profile)
   }

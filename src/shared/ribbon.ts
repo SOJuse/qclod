@@ -621,7 +621,14 @@ export class RibbonBuilder {
     if (name === 'TodoWrite') {
       const items = asArray(input['todos'])
         .filter(isObject)
-        .map((todo) => ({ content: str(todo['content']), status: str(todo['status']) }))
+        .map((todo): TodoItem => {
+          const activeForm = str(todo['activeForm'])
+          return {
+            content: str(todo['content']),
+            status: str(todo['status']),
+            ...(activeForm ? { activeForm } : {})
+          }
+        })
       this.todoList = items
       return [{ kind: 'todo', items }]
     }

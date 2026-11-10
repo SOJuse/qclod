@@ -221,14 +221,39 @@ describe('RibbonBuilder', () => {
     )
 
     expect(changes).toEqual([
-      { kind: 'todo', items: [{ content: 'починить вставку', status: 'in_progress' }] }
+      { kind: 'todo', items: [{ content: 'починить вставку', status: 'in_progress', activeForm: 'чиню вставку' }] }
     ])
     expect(b.items).toHaveLength(0)
-    expect(b.todo).toEqual([{ content: 'починить вставку', status: 'in_progress' }])
+    expect(b.todo).toEqual([{ content: 'починить вставку', status: 'in_progress', activeForm: 'чиню вставку' }])
 
     // Its result must not leave an orphan card behind either.
     b.apply(toolResult('t1', 'ok'))
     expect(b.items).toHaveLength(0)
+  })
+
+  test('activeForm задачи доезжает до списка', () => {
+    const b = new RibbonBuilder()
+    b.apply(
+      assistant([
+        {
+          type: 'tool_use',
+          id: 't1',
+          name: 'TodoWrite',
+          input: {
+            todos: [
+              { content: 'раз', status: 'completed', activeForm: 'делаю раз' },
+              { content: 'два', status: 'pending' }
+            ]
+          }
+        }
+      ])
+    )
+
+    expect(b.todo).toEqual([
+      { content: 'раз', status: 'completed', activeForm: 'делаю раз' },
+      { content: 'два', status: 'pending' }
+    ])
+    expect(b.todo![1]).not.toHaveProperty('activeForm')
   })
 
   test('повторный TodoWrite заменяет список целиком, а не дублирует', () => {

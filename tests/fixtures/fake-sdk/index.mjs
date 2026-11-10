@@ -20,7 +20,7 @@
  * @typedef {{kind:'askPermission', name:string, input?:object}} AskPermissionStep
  * @typedef {{kind:'askPermissions', tools:Array<{name:string, input?:object}>}} AskPermissionsStep
  * @typedef {{kind:'askQuestion', question?:string, header?:string, options?:string[], questions?:Array<{question:string, header?:string, options:string[], multiSelect?:boolean}>, echoAnswers?:boolean}} AskQuestionStep
- * @typedef {{kind:'todo', items:Array<{content:string,status:string}>}} TodoStep
+ * @typedef {{kind:'todo', items:Array<{content:string,status:string,activeForm?:string}>}} TodoStep
  * @typedef {{kind:'subagent', name:string, agentType?:string, stats?:{totalTokens?:number, totalDurationMs?:number, totalToolUseCount?:number}, report?:string, steps:Array<object>}} SubagentStep
  * @typedef {{kind:'backgroundAgent', name:string, agentType?:string, agentId?:string, pauseMs?:number,
  *   progress?:Array<{tokens:number, toolUses:number, durationMs:number, lastTool?:string}>,

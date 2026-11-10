@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { RibbonItem as Item, TodoItem } from '../../shared/types'
+import type { RibbonItem as Item } from '../../shared/types'
 import { childrenByParent } from '../chat/children'
 import { RibbonRow } from './RibbonItem'
-import { TodoPanel } from './TodoPanel'
 import './Ribbon.css'
 
 interface Props {
   items: Item[]
-  todo: TodoItem[]
   /** The tab's folder, for the tool cards. */
   cwd: string
   tabId: string
@@ -36,7 +34,6 @@ const ASSUMED_ROW_HEIGHT = 44
  */
 export function Ribbon({
   items,
-  todo,
   cwd,
   tabId,
   onAnswerPermission,
@@ -118,7 +115,6 @@ export function Ribbon({
 
   return (
     <div className="ribbon-wrap">
-      {todo.length > 0 && <TodoPanel items={todo} />}
       <div className="ribbon" data-testid="ribbon" ref={viewport} onScroll={onScroll}>
         <div style={{ height: padTop }} aria-hidden />
         {visible.map((item) => (

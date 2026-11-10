@@ -22,3 +22,18 @@ describe('сборка', () => {
     expect(yml).toMatch(/^publish:\n  provider: github\n  owner: SOJuse\n  repo: qclod\n  releaseType: release$/m)
   })
 })
+
+describe('документы', () => {
+  test('README для друзей: ссылка на релизы, про SmartScreen, без почты', () => {
+    const readme = readFileSync(resolve(root, 'README.md'), 'utf8')
+    expect(readme).toContain('Выполнить в любом случае')
+    expect(readme).toContain('SOJuse/qclod/releases')
+    expect(readme).not.toMatch(/sojuse/i)
+    expect(readme).not.toMatch(/@[a-z0-9-]+\.[a-z]{2,}/i)
+  })
+  test('чек-лист описывает вход через claude auth login', () => {
+    const list = readFileSync(resolve(root, 'docs/superpowers/checklists/release-smoke.md'), 'utf8')
+    expect(list).toContain('claude auth login')
+    expect(list).not.toContain('Открыть терминал')
+  })
+})

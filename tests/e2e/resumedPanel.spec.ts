@@ -1,4 +1,4 @@
-import { test, expect, _electron as electron, type Locator, type Page } from '@playwright/test'
+import { test, expect, _electron as electron, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,14 +32,17 @@ async function expectFullPanel(win: Page, panel: Locator): Promise<void> {
   await expect(ribbon.locator('[data-testid="ribbon-compaction"]')).toHaveCount(1)
   // Notices the CLI wrote for itself are not the person's words.
   const bubbles = await ribbon.locator('[data-testid="ribbon-user"]').allInnerTexts()
-  expect(bubbles.length).toBeGreaterThan(0)
+  // Nothing was sent: only what the history holds. The fixture has three
+  // (the question, the follow-up, the text typed mid-turn); the rewound
+  // branch and the compaction summary are not bubbles.
+  expect(bubbles).toHaveLength(3)
   for (const text of bubbles) {
     expect(text).not.toContain('task-notification')
     expect(text).not.toContain('This session is being conti')
   }
 }
 
-test('восстановленная сессия: панель и подагенты видны до первого сообщения', async () => {
+async function launch(): Promise<{ app: ElectronApplication; cleanup: () => Promise<void> }> {
   const configDir = mkdtempSync(join(tmpdir(), 'qclod-config-'))
   const project = mkdtempSync(join(tmpdir(), 'qclod-project-'))
   const profile = mkdtempSync(join(tmpdir(), 'qclod-resumed-'))
@@ -55,7 +58,6 @@ test('восстановленная сессия: панель и подаге�
     ]),
     'utf8'
   )
-
   const app = await electron.launch({
     args: ['.'],
     env: {
@@ -66,22 +68,59 @@ test('восстановленная сессия: панель и подаге�
       QCLOD_FAKE_SDK_SCRIPT: JSON.stringify({ steps: [] })
     } as Record<string, string>
   })
+  return {
+    app,
+    cleanup: async () => {
+      await app.close().catch(() => undefined)
+      for (const dir of [profile, configDir, project]) rmSync(dir, { recursive: true, force: true })
+    }
+  }
+}
+
+test('восстановленная сессия: панель и подагенты видны до первого сообщения', async () => {
+  const { app, cleanup } = await launch()
   try {
     const win = await app.firstWindow()
     const panel = win.locator('[data-testid="side-panel"]')
     await expect(panel).toBeVisible({ timeout: 15000 })
     await expect(win.locator('[data-testid="tab"]')).toHaveCount(2)
+    await expectFullPanel(win, panel)
+  } finally {
+    await cleanup()
+  }
+})
 
-    // The tab that opens first, with nothing sent.
+test('вторая вкладка до клика уже содержит свою ленту и подагентов', async () => {
+  const { app, cleanup } = await launch()
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+    const second = win.locator('[data-testid="tab"]').nth(1)
+    // No process behind it yet: starting one is what the switch does, so the
+    // proof is the state before the click and an answer within 3 s after it.
+    await expect(second).toHaveAttribute('title', /не запущена/)
+    await second.click()
+    const panel = win.locator('[data-testid="side-panel"]')
+    await expect(panel.locator('[data-testid="panel-agents"] li')).toHaveCount(4, { timeout: 3000 })
+    await expectFullPanel(win, panel)
+  } finally {
+    await cleanup()
+  }
+})
+
+test('после перезагрузки окна всё на месте', async () => {
+  const { app, cleanup } = await launch()
+  try {
+    const win = await app.firstWindow()
+    const panel = win.locator('[data-testid="side-panel"]')
+    await expect(panel).toBeVisible({ timeout: 15000 })
     await expectFullPanel(win, panel)
 
-    // The other restored tab, opened for the first time, still nothing sent.
-    await win.locator('[data-testid="tab"]').nth(1).click()
+    await win.reload()
+
+    await expect(win.locator('[data-testid="side-panel"]')).toBeVisible({ timeout: 15000 })
     await expectFullPanel(win, win.locator('[data-testid="side-panel"]'))
   } finally {
-    await app.close().catch(() => undefined)
-    rmSync(profile, { recursive: true, force: true })
-    rmSync(configDir, { recursive: true, force: true })
-    rmSync(project, { recursive: true, force: true })
+    await cleanup()
   }
 })

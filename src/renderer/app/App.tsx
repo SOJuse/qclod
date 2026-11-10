@@ -209,6 +209,21 @@ export function App(): JSX.Element {
     if (!activeTabId && tabs.length > 0) setActiveTabId(tabs[0]!.id)
   }, [tabs, activeTabId, setActiveTabId])
 
+  // A reloaded window has missed every ribbon event; the tab it lands on needs
+  // its ribbon fetched, or the chat and the panel's agents stay empty. Only
+  // after a reload: on a normal start the events are still on their way, and a
+  // snapshot taken beside them would put the same items in twice. Same guard
+  // as in `activate`: whatever arrived while asking wins.
+  useEffect(() => {
+    if (!activeTabId || useAppStore.getState().ribbonByTab[activeTabId] !== undefined) return
+    const [navigation] = performance.getEntriesByType('navigation') as PerformanceNavigationTiming[]
+    if (navigation?.type !== 'reload') return
+    const id = activeTabId
+    void window.qclod.ribbon(id).then((items) => {
+      if (useAppStore.getState().ribbonByTab[id] === undefined) setRibbon(id, items)
+    })
+  }, [activeTabId, setRibbon])
+
   const activate = useCallback(
     (id: string) => {
       setActiveTabId(id)

@@ -56,6 +56,23 @@
   50% { opacity: 0.45; }
 }
 
+.now-say {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.now-background {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
 .now-what {
   flex: 0 0 auto;
   font-weight: 600;

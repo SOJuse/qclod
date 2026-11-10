@@ -62,6 +62,12 @@ describe('nowActivity', () => {
     })
   })
 
+  test('команда с переводами строк Windows — первая строка без \\r', () => {
+    expect(nowActivity([runningTool('Bash', { command: 'npm test\r\necho done' })], 'busy')).toMatchObject({
+      object: 'npm test'
+    })
+  })
+
   test('Grep — «Ищет» и шаблон в кавычках', () => {
     expect(nowActivity([runningTool('Grep', { pattern: 'toolUseId' })], 'busy')).toMatchObject({
       category: 'search',

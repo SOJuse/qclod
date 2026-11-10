@@ -578,6 +578,7 @@ test('два фоновых подагента — «2 агента», клик 
     await expect(button).toHaveText('2 агента', { timeout: 15000 })
     // The turn is over: the agents keep going, the turn's clock does not.
     await expect(line.locator('[data-testid="now-time"]')).toHaveCount(0)
+    await expect(line.locator('[data-testid="now-background"]')).toHaveText('Работают в фоне')
     await expect(line.locator('[data-testid="now-agents-list"]')).toHaveCount(0)
 
     await button.click()

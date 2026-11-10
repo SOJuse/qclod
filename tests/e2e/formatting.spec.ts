@@ -304,6 +304,7 @@ test('пока агент работает, видно что именно он 
     const line = win.locator('[data-testid="now-line"]')
     await expect(line).toBeVisible({ timeout: 15000 })
     await expect(line).toHaveAttribute('title', /Esc — прервать/)
+    await expect(line.locator('[data-testid="now-what"]')).toHaveText(/Думает|Пишет ответ/)
     await expect(line.locator('[data-testid="now-time"]')).toHaveText(/^\d+:\d\d$/)
 
     // The clock runs.

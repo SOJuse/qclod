@@ -43,7 +43,8 @@ function NowIcon({ category }: { category: NowActivity['category'] }): JSX.Eleme
  * turns, background agents keep the line alone, without a clock.
  */
 export function NowLine({ tabId, status, since, items }: Props): JSX.Element | null {
-  const now = nowActivity(items, status)
+  // The clock re-renders every second; the ribbon is scanned only when it changes.
+  const now = useMemo(() => nowActivity(items, status), [items, status])
   const inTurn = status === 'busy' || status === 'waiting'
   const [, setTick] = useState(0)
   const [listOpen, setListOpen] = useState(false)
@@ -88,27 +89,36 @@ export function NowLine({ tabId, status, since, items }: Props): JSX.Element | n
         <NowIcon category={now.category} />
       </span>
 
-      {now.verb && (
-        <span className="now-what" data-testid="now-what">
-          {now.verb}
-        </span>
-      )}
+      {/* Read out when it changes; the clock stays outside so it is not read every second. */}
+      <span className="now-say" aria-live="polite">
+        {now.verb && (
+          <span className="now-what" data-testid="now-what">
+            {now.verb}
+          </span>
+        )}
 
-      {now.objectKind !== 'none' && (
-        <span
-          className={`now-object${now.objectKind === 'text' ? '' : ' is-mono'}`}
-          data-testid="now-object"
-          title={now.path ?? now.object}
-        >
-          {target ? (
-            <PathLink tabId={tabId} target={target}>
-              {now.object}
-            </PathLink>
-          ) : (
-            now.object
-          )}
-        </span>
-      )}
+        {now.objectKind !== 'none' && (
+          <span
+            className={`now-object${now.objectKind === 'text' ? '' : ' is-mono'}`}
+            data-testid="now-object"
+            title={now.path ?? now.object}
+          >
+            {target ? (
+              <PathLink tabId={tabId} target={target}>
+                {now.object}
+              </PathLink>
+            ) : (
+              now.object
+            )}
+          </span>
+        )}
+
+        {!inTurn && agentCount > 0 && (
+          <span className="now-background" data-testid="now-background">
+            Работают в фоне
+          </span>
+        )}
+      </span>
 
       <span className="now-fill" />
 
@@ -126,9 +136,9 @@ export function NowLine({ tabId, status, since, items }: Props): JSX.Element | n
         </button>
       )}
 
-      {inTurn && (
+      {inTurn && since !== undefined && (
         <span className="now-time" data-testid="now-time">
-          {clock(since ? Date.now() - since : 0)}
+          {clock(Date.now() - since)}
         </span>
       )}
 

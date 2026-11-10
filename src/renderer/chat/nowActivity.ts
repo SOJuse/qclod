@@ -63,11 +63,16 @@ function host(url: string): string {
   }
 }
 
+/** The first line, whichever line breaks the text uses (a Windows command ends lines with \r\n). */
+function firstLine(value: string): string {
+  return clip(value.split(/\r?\n/)[0] ?? '', OBJECT_MAX)
+}
+
 const none = (verb: string): Said => ({ verb, object: '', objectKind: 'none' })
 const text = (verb: string, object: string): Said =>
-  object ? { verb, object: clip(object, OBJECT_MAX), objectKind: 'text' } : none(verb)
+  object ? { verb, object: firstLine(object), objectKind: 'text' } : none(verb)
 const code = (verb: string, object: string): Said =>
-  object ? { verb, object: clip(object, OBJECT_MAX), objectKind: 'code' } : none(verb)
+  object ? { verb, object: firstLine(object), objectKind: 'code' } : none(verb)
 
 /** The verb for a tool and the one thing it is acting on. */
 function sayTool(item: ToolItem): Said {

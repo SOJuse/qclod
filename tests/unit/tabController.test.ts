@@ -39,8 +39,11 @@ interface Harness {
   created: Array<{
     resume: string | undefined
     permissionMode: string | undefined
+    model: string | undefined
     driver: ReturnType<typeof createFakeSdk>
   }>
+  /** Every driver whose resume was made to fail, in order. */
+  dead: Array<{ readonly sent: unknown[] }>
   /**
    * Sends one message on a tab and waits for the answer. The CLI says nothing
    * — not even its session id — until it is spoken to.
@@ -53,7 +56,10 @@ interface Harness {
  * an error out of the stream — at once, some time after start, or only when
  * the first message is sent. Until then it waits, and it ends on dispose.
  */
-function deadResume(message: string, failAfter: number | 'firstSend'): AgentDriver {
+function deadResume(
+  message: string,
+  failAfter: number | 'firstSend'
+): AgentDriver & { readonly sent: unknown[] } {
   const driver = createFakeSdk({ steps: [] })
   let fire!: () => void
   let stop!: () => void
@@ -76,7 +82,7 @@ function deadResume(message: string, failAfter: number | 'firstSend'): AgentDriv
       stop()
       await dispose()
     }
-  }) as unknown as AgentDriver
+  }) as unknown as AgentDriver & { readonly sent: unknown[] }
 }
 
 function makeController(
@@ -90,6 +96,8 @@ function makeController(
     resumeFailsOnSend?: boolean
     /** Reading the past conversation's transcript throws. */
     transcriptFails?: boolean
+    /** How the «без проверок» confirmation answers; unset, it is never confirmed. */
+    confirmBypass?: () => Promise<boolean>
     defaults?: { model?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan' }
     historyMessages?: unknown[]
     onPanel?: (event: PanelEvent) => void
@@ -102,11 +110,18 @@ function makeController(
   const resumedWith: Array<string | undefined> = []
   const created: Harness['created'] = []
   const transcriptReads: Harness['transcriptReads'] = []
+  const dead: Harness['dead'] = []
+  const deadResumeFor = (message: string, failAfter: number | 'firstSend'): AgentDriver => {
+    const driver = deadResume(message, failAfter)
+    dead.push(driver)
+    return driver
+  }
 
   const manager = new AgentSessionManager({
     getAgentPath: () => 'claude',
     resolveAgent: () => 'C:/bin/claude.exe',
     askPermission: async () => ({ behavior: 'deny' as const }),
+    ...(options.confirmBypass ? { confirmBypass: options.confirmBypass } : {}),
     createDriver: (driverOptions) => {
       resumedWith.push(driverOptions.resume)
       if (options.resumeFailsSync && driverOptions.resume) {
@@ -116,19 +131,27 @@ function makeController(
       // and the resume attempted while the stream is read. A failure therefore
       // surfaces asynchronously, which is the shape that must be handled.
       if (options.resumeFails && driverOptions.resume) {
-        return deadResume(`Сессия ${driverOptions.resume} не открывается`, 0)
+        return deadResumeFor(`Сессия ${driverOptions.resume} не открывается`, 0)
       }
       if (options.resumeFailsAfterMs !== undefined && driverOptions.resume) {
-        return deadResume(
+        return deadResumeFor(
           `No conversation found with session ID: ${driverOptions.resume}`,
           options.resumeFailsAfterMs
         )
       }
       if (options.resumeFailsOnSend && driverOptions.resume) {
-        return deadResume(`No conversation found with session ID: ${driverOptions.resume}`, 'firstSend')
+        return deadResumeFor(
+          `No conversation found with session ID: ${driverOptions.resume}`,
+          'firstSend'
+        )
       }
       const driver = createFakeSdk(options.script ?? { steps: [] })
-      created.push({ resume: driverOptions.resume, permissionMode: driverOptions.permissionMode, driver })
+      created.push({
+        resume: driverOptions.resume,
+        permissionMode: driverOptions.permissionMode,
+        model: driverOptions.model,
+        driver
+      })
       return driver as unknown as AgentDriver
     }
   })
@@ -162,7 +185,7 @@ function makeController(
     await controller.whenSettled()
   }
 
-  return { controller, manager, changed, ribbon, resumedWith, transcriptReads, created, speak }
+  return { controller, manager, changed, ribbon, resumedWith, transcriptReads, created, dead, speak }
 }
 
 function writeStoredTabs(tabs: unknown[]): void {
@@ -502,7 +525,95 @@ describe('TabController: мёртвая сессия при resume (B4)', () => 
     await controller.whenSettled()
     expect(controller.list()[0]!.status).not.toBe('error')
     expect(manager.get('a')).not.toBe(dead)
-    expect(storedTabs()[0]!['lastSessionId']).toBeUndefined()
+    // The message went on to the new session, which answered and so is the
+    // one remembered now.
+    expect(storedTabs()[0]!['lastSessionId']).not.toBe('пропавшая')
+    expect(storedTabs()[0]!['lastSessionId']).toBe(controller.sessionIdOf('a'))
+  })
+
+  const userTexts = (controller: TabController, id: string): string[] =>
+    controller
+      .itemsOf(id)
+      .filter((i) => i.kind === 'user')
+      .map((i) => (i as { text: string }).text)
+
+  test('сообщение, на котором умер resume, уходит новой сессии само, один раз', async () => {
+    const { controller, manager, created, dead } = makeController({ resumeFailsOnSend: true })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+    await controller.restore()
+    await controller.whenSettled()
+
+    manager.get('a')!.send({ text: 'привет', attachments: [{ kind: 'file', path: 'C:/проект/a.txt' }] })
+    await vi.waitFor(() => expect(created.at(-1)?.driver.sent ?? []).toHaveLength(1))
+    await vi.waitFor(() => expect(controller.list()[0]!.status).toBe('idle'))
+    await controller.whenSettled()
+
+    const fresh = created.at(-1)!
+    expect(fresh.resume).toBeUndefined()
+    // Exactly what the dead session was given, composed text and attachments.
+    expect(fresh.driver.sent).toEqual(dead[0]!.sent)
+    expect(fresh.driver.sent).toHaveLength(1)
+    // One bubble: the one typed; the new session's echo is not a second.
+    expect(userTexts(controller, 'a')).toEqual(['привет'])
+  })
+
+  test('несколько сообщений до смерти resume уходят новой сессии по порядку', async () => {
+    const { controller, manager, created } = makeController({ resumeFailsOnSend: true })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+    await controller.restore()
+    await controller.whenSettled()
+
+    const session = manager.get('a')!
+    session.send({ text: 'один', attachments: [] })
+    session.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() => expect(created.at(-1)?.driver.sent ?? []).toHaveLength(2))
+    await vi.waitFor(() => expect(controller.list()[0]!.status).toBe('idle'))
+    await controller.whenSettled()
+
+    const sent = created.at(-1)!.driver.sent as Array<{ text: string }>
+    expect(sent.map((m) => m.text)).toEqual(['один', 'два'])
+    expect(userTexts(controller, 'a')).toEqual(['один', 'два'])
+  })
+
+  test('чистая сессия после мёртвого resume запускается с настройками вкладки и умолчаниями', async () => {
+    const { controller, created } = makeController({
+      resumeFailsAfterMs: 30,
+      defaults: { model: 'claude-haiku-4-5', permissionMode: 'plan' }
+    })
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: { effort: 'high' }, lastSessionId: 'пропавшая' }
+    ])
+    await controller.restore()
+    await vi.waitFor(() =>
+      expect(lastNotice(controller, 'a')).toContain('Прошлую переписку открыть не удалось')
+    )
+    await controller.whenSettled()
+
+    const fresh = created.at(-1)!
+    expect(fresh.resume).toBeUndefined()
+    expect(fresh.model).toBe('claude-haiku-4-5')
+    expect(fresh.permissionMode).toBe('plan')
+    await vi.waitFor(() => expect(fresh.driver.effort).toBe('high'))
+  })
+
+  test('режим «без проверок» чистой сессии после мёртвого resume не достаётся', async () => {
+    const { controller, created } = makeController({
+      resumeFailsAfterMs: 30,
+      confirmBypass: async () => true
+    })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+    await controller.restore()
+    await controller.whenSettled()
+    // Switched on in the running tab, and so remembered by it.
+    controller.rememberOverride('a', { permissionMode: 'bypassPermissions' })
+
+    await vi.waitFor(() =>
+      expect(lastNotice(controller, 'a')).toContain('Прошлую переписку открыть не удалось')
+    )
+    await controller.whenSettled()
+
+    expect(created.at(-1)!.resume).toBeUndefined()
+    expect(created.at(-1)!.permissionMode).toBe('default')
   })
 
   test('ошибка после init — не мёртвый resume: вкладку не подменяют', async () => {

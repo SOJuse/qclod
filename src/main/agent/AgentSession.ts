@@ -135,6 +135,8 @@ export class AgentSession {
   private mode: string
   private todoItems: TodoItem[] = []
   private readonly idleWaiters: Array<() => void> = []
+  /** Messages given to the driver before system/init; see `sentBeforeInit`. */
+  private unintroduced: UserInput[] = []
   private disposed = false
   /** Questions the agent asked through canUseTool, waiting on the user. */
   private readonly pendingQuestions = new Map<
@@ -424,8 +426,32 @@ export class AgentSession {
     // back — gets the composed version, which is what the dedup must match.
     const text = composeText(input)
     this.emit(this.builder.addUser(input.text, input.attachments, text))
+    this.deliver({ ...input, text })
+  }
+
+  /**
+   * What was sent here before the CLI introduced itself. A resume that will
+   * not open may only say so once it is spoken to, and takes these down with
+   * it; the session taking its place sends them again (`resend`).
+   */
+  get sentBeforeInit(): UserInput[] {
+    return this.session === null ? [...this.unintroduced] : []
+  }
+
+  /**
+   * Sends again, as it was sent, a message a dead predecessor never got to.
+   * It is in the ribbon already — the ribbon is carried over — so no second
+   * bubble, and the echo it brings back is matched to the first one.
+   */
+  resend(sent: UserInput): void {
+    this.deliver(sent)
+  }
+
+  private deliver(sent: UserInput): void {
+    if (!this.driver) return
+    if (this.session === null) this.unintroduced.push(sent)
     this.setStatus('busy')
-    this.driver.send({ ...input, text })
+    this.driver.send(sent)
   }
 
   /**
@@ -650,6 +676,8 @@ export class AgentSession {
     const id = typeof m['session_id'] === 'string' ? m['session_id'] : null
     if (id && id !== this.session) {
       this.session = id
+      // The CLI is up and has them; nothing is left to resend.
+      this.unintroduced = []
       // The tab remembers the conversation by this id. It used to be picked up
       // from the status change init caused — but a session is already idle by
       // then, and a status that does not change notifies nobody.

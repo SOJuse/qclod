@@ -295,13 +295,10 @@ export class TabController {
     // Closed, or started by another call, while the record was read.
     if (!this.tabs.includes(tab) || this.deps.manager.get(id)) return
 
-    // Defaults first, the tab's own choices on top: a tab stored before a
-    // setting existed still follows it, and a tab that picked its own mode
-    // keeps it.
     const session = this.deps.manager.create(
       id,
       tab.cwd,
-      { ...this.deps.getDefaults(), ...tab.overrides },
+      this.launchOptions(tab),
       seed ?? undefined
     )
     this.previews.delete(id)
@@ -400,18 +397,30 @@ export class TabController {
       this.emit()
     }
 
+    // Launched as the tab would be, minus «без проверок»: the clean session
+    // is a new one, and that mode is never inherited (spec 5.4).
+    const launch = tab ? this.launchOptions(tab) : this.deps.getDefaults()
+    if (launch.permissionMode === 'bypassPermissions') delete launch.permissionMode
+    // What the user said to the dead session never reached an agent; it is
+    // on screen already and goes to the new one as it was sent.
+    const unsent = dead.sentBeforeInit
     const seed = dead.successorSeed()
     await this.deps.manager.close(id)
-    const fresh = this.deps.manager.create(
-      id,
-      tab?.cwd ?? this.deps.defaultCwd,
-      tab?.overrides ?? {},
-      seed
-    )
+    const fresh = this.deps.manager.create(id, tab?.cwd ?? this.deps.defaultCwd, launch, seed)
     this.adopt(id, fresh)
     this.emitRibbon(id, fresh.notice(`Прошлую переписку открыть не удалось: ${reason}`))
     await fresh.start()
+    for (const sent of unsent) fresh.resend(sent)
     this.rememberSession(id, fresh)
+  }
+
+  /**
+   * Defaults first, the tab's own choices on top: a tab stored before a
+   * setting existed still follows it, and a tab that picked its own mode
+   * keeps it.
+   */
+  private launchOptions(tab: TabState): LaunchOverrides {
+    return { ...this.deps.getDefaults(), ...tab.overrides }
   }
 
   /**

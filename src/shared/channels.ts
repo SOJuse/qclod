@@ -59,6 +59,9 @@ export const CHANNELS = Object.freeze({
   setupCancel: 'setup:cancel',
   setupLogin: 'setup:login',
 
+  updateGet: 'update:get',
+  updateRestart: 'update:restart',
+
   // main -> renderer (events)
   ribbonChanged: 'ribbon:changed',
   panelChanged: 'panel:changed',
@@ -68,7 +71,8 @@ export const CHANNELS = Object.freeze({
   settingsChanged: 'settings:changed',
   commandsChanged: 'commands:changed',
   setupOutput: 'setup:output',
-  setupLoginProgress: 'setup:loginProgress'
+  setupLoginProgress: 'setup:loginProgress',
+  updateChanged: 'update:changed'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -117,7 +121,9 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.setupCheck,
   CHANNELS.setupInstall,
   CHANNELS.setupCancel,
-  CHANNELS.setupLogin
+  CHANNELS.setupLogin,
+  CHANNELS.updateGet,
+  CHANNELS.updateRestart
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
@@ -129,5 +135,6 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.settingsChanged,
   CHANNELS.commandsChanged,
   CHANNELS.setupOutput,
-  CHANNELS.setupLoginProgress
+  CHANNELS.setupLoginProgress,
+  CHANNELS.updateChanged
 ])

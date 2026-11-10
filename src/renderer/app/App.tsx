@@ -13,6 +13,7 @@ import { HistoryScreen } from '../components/HistoryScreen'
 import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { ActionPalette } from '../components/ActionPalette'
+import { UpdateBanner } from '../components/UpdateBanner'
 import { compactNow } from '../input/slash'
 import { hint, resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
 import { PANEL_MIN_WIDTH, nextOverride, panelVisible, type PanelOverride } from './panelVisibility'
@@ -445,6 +446,7 @@ export function App(): JSX.Element {
         onToggleSplit={toggleSplit}
         splitOpen={splitTabId !== null}
       />
+      <UpdateBanner />
       <div className={`app-body${splitTabId ? ' app-split' : ''}`}>
         <div className="app-panes">
           <ChatPane

@@ -21,6 +21,7 @@ import { notifyIfNeeded, shouldRaiseWindowForPermission } from './notifications'
 import { RendererOutbox } from './rendererOutbox'
 import { PathResolver } from './files/pathResolver'
 import { cleanupPasteDir } from './files/imagePaste'
+import { createUpdateSource, UpdateFlow } from './update/updater'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -261,6 +262,21 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle(CHANNELS.hotkeyStatus, () => hotkey.status)
 
+  // Updates come from GitHub releases and install on restart or on quit. A
+  // failed check is a console line only (updater.ts). quitAndInstall ends in
+  // app.quit(), so the before-quit below sets `quitting` and the window's
+  // close-to-tray does not catch that exit.
+  const updateSource = createUpdateSource(app.isPackaged)
+  const updates = updateSource
+    ? new UpdateFlow({
+        source: updateSource,
+        onState: (state) => send(CHANNELS.updateChanged, state),
+        log: (message) => console.warn('[update]', message)
+      })
+    : null
+  ipcMain.handle(CHANNELS.updateGet, () => updates?.state ?? { kind: 'idle' })
+  ipcMain.handle(CHANNELS.updateRestart, () => updates?.restart() ?? false)
+
   mainWindow = createMainWindow()
   loadRenderer(mainWindow)
 
@@ -287,6 +303,7 @@ app.whenReady().then(async () => {
   mainWindow.webContents.once('did-finish-load', () => {
     void controller.restore()
     tray?.rebuild()
+    updates?.start(updateSource?.firstCheckMs)
   })
 
   app.on('before-quit', (event) => {

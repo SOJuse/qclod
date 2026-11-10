@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
-import { AgentSession } from '../../src/main/agent/AgentSession'
+import { AgentSession, seedFromTranscript } from '../../src/main/agent/AgentSession'
 import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
 import type { AgentDriver, DriverOptions } from '../../src/main/agent/driver'
 import { toPermissionContext } from '../../src/main/agent/permissionContext'
@@ -867,10 +867,7 @@ describe('AgentSession: панель полна до первого сообще
   })
 
   test('модель из истории видна, пока процесс не назвал свою', async () => {
-    const { session } = makeSession({ steps: [], contextUsageDelayMs: 300 })
-
-    await session.start('old-id')
-    session.replay([
+    const seed = seedFromTranscript([
       {
         type: 'assistant',
         message: {
@@ -881,6 +878,11 @@ describe('AgentSession: панель полна до первого сообще
         }
       }
     ])
+    const { session } = makeSession({ steps: [], contextUsageDelayMs: 300 }, { seed })
+
+    // The session carries on from what the tab already shows.
+    expect(session.items.filter((i) => i.kind === 'agentText')).toMatchObject([{ text: 'было' }])
+    await session.start('old-id')
     expect(session.panel.model).toBe('claude-sonnet-5')
 
     // The process is the truth once it speaks.

@@ -15,6 +15,32 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function tokens(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+/**
+ * The main conversation's last answer in a record: its model and usage.
+ * A subagent's step (it has a parent tool call) is its own window, and
+ * `<synthetic>` is what the CLI writes on messages it made up itself — an
+ * API error, say — not a model anyone could be on.
+ */
+function lastMainAnswer(
+  messages: unknown[]
+): { model: string; usage: Record<string, unknown> | null } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (!isObject(m) || m['type'] !== 'assistant') continue
+    if (typeof m['parent_tool_use_id'] === 'string') continue
+    const inner = m['message']
+    if (!isObject(inner)) continue
+    const model = inner['model']
+    if (typeof model !== 'string' || model === '' || model === '<synthetic>') continue
+    return { model, usage: isObject(inner['usage']) ? inner['usage'] : null }
+  }
+  return null
+}
+
 export const EMPTY_PANEL: PanelData = {
   context: null,
   cost: null,
@@ -60,13 +86,19 @@ export class PanelCollector {
    * live answer, so it must not then roll «подключён» back to «ждёт».
    */
   private mcpIsLive = false
-  private revision = 0
+  /**
+   * Taken at birth, not left at zero: a collector made for a restarted tab
+   * must outrank everything the window holds from the one before it, even
+   * before it has anything to say — otherwise the old session's cost and
+   * limits stay on screen.
+   */
+  private revision = nextPanelRev()
 
   get data(): PanelData {
     return this.panel
   }
 
-  /** The revision of the last patch; 0 before there was any. */
+  /** The revision of the last patch, or of the collector's creation. */
   get rev(): number {
     return this.revision
   }
@@ -138,12 +170,28 @@ export class PanelCollector {
   }
 
   /**
-   * The model the conversation was last answered by, read from its history.
-   * A stand-in until the process says which model it is on — never over it.
+   * What a past conversation's record says about the panel, before any
+   * process is running for it: the model that last answered, and how full
+   * its window was by that answer's usage. Both are stand-ins — the context
+   * is marked estimated — and what the process reports later replaces them;
+   * nothing here overrules what a process already said.
    */
-  seedModel(model: string): Partial<PanelData> {
-    if (this.panel.model !== null) return {}
-    return this.patch({ model })
+  seedFromTranscript(messages: unknown[]): Partial<PanelData> {
+    const last = lastMainAnswer(messages)
+    if (!last) return {}
+    const patch: Partial<PanelData> = {}
+    if (this.panel.model === null) patch.model = last.model
+    if (this.panel.context === null && last.usage) {
+      const u = last.usage
+      const used =
+        tokens(u['input_tokens']) +
+        tokens(u['cache_creation_input_tokens']) +
+        tokens(u['cache_read_input_tokens']) +
+        tokens(u['output_tokens'])
+      const max = last.model.includes('[1m]') ? 1_000_000 : 200_000
+      patch.context = { used, max, percent: Math.round((used / max) * 100), categories: [], estimated: true }
+    }
+    return this.patch(patch)
   }
 
   /** The plan's windows, asked for at start; rate_limit_event updates them after. */

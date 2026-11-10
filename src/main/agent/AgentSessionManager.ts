@@ -1,5 +1,5 @@
 import type { LaunchOverrides, PermissionAnswer, PermissionRequest, TabId } from '../../shared/types'
-import { AgentSession } from './AgentSession'
+import { AgentSession, type SessionSeed } from './AgentSession'
 import type { DriverFactory } from './driver'
 
 export interface AgentSessionManagerOptions {
@@ -23,7 +23,8 @@ export class AgentSessionManager {
 
   constructor(private readonly options: AgentSessionManagerOptions) {}
 
-  create(tabId: TabId, cwd: string, overrides: LaunchOverrides): AgentSession {
+  /** `seed`: what the tab already shows, for the session to carry on from. */
+  create(tabId: TabId, cwd: string, overrides: LaunchOverrides, seed?: SessionSeed): AgentSession {
     const existing = this.sessions.get(tabId)
     if (existing) return existing
 
@@ -35,7 +36,8 @@ export class AgentSessionManager {
       ...(this.options.resolveAgent ? { resolveAgent: this.options.resolveAgent } : {}),
       createDriver: this.options.createDriver,
       askPermission: this.options.askPermission,
-      ...(this.options.confirmBypass ? { confirmBypass: this.options.confirmBypass } : {})
+      ...(this.options.confirmBypass ? { confirmBypass: this.options.confirmBypass } : {}),
+      ...(seed ? { seed } : {})
     })
     this.sessions.set(tabId, session)
     return session

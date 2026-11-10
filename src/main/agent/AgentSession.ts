@@ -48,6 +48,8 @@ export interface AgentSessionOptions {
   confirmBypass?: () => Promise<boolean>
   /** How long to wait before asking again about a server still coming up. */
   mcpPollMs?: number
+  /** A ribbon and panel already on screen, taken over instead of new ones. */
+  seed?: SessionSeed
 }
 
 /** A server still `pending` or `connecting` is asked about again after this long… */
@@ -67,22 +69,28 @@ function explain(message: string): string {
 }
 
 /**
- * The model that last answered in a conversation's history. `<synthetic>` is
- * what the CLI writes on messages it made up itself (an API error, say) — not
- * a model anyone could be on.
+ * What a tab shows of a past conversation before any process runs for it:
+ * the ribbon rebuilt from the record, and the panel the record supports.
+ * The session that later starts for the tab takes both over, so what is
+ * already on screen is neither drawn twice nor renumbered.
  */
-function lastAssistantModel(messages: unknown[]): string | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (typeof m !== 'object' || m === null) continue
-    const record = m as Record<string, unknown>
-    if (record['type'] !== 'assistant') continue
-    const inner = record['message']
-    if (typeof inner !== 'object' || inner === null) continue
-    const model = (inner as Record<string, unknown>)['model']
-    if (typeof model === 'string' && model !== '' && model !== '<synthetic>') return model
-  }
-  return null
+export interface SessionSeed {
+  builder: RibbonBuilder
+  collector: PanelCollector
+}
+
+/**
+ * Builds a seed from a conversation's messages — the one way a past
+ * conversation becomes ribbon and panel. What the old process left running
+ * is closed as unfinished: that process is gone and will never report back.
+ */
+export function seedFromTranscript(messages: unknown[]): SessionSeed {
+  const builder = new RibbonBuilder()
+  for (const message of messages) builder.apply(message)
+  builder.finishReplay()
+  const collector = new PanelCollector()
+  collector.seedFromTranscript(messages)
+  return { builder, collector }
 }
 
 /** The text of an AskUserQuestion's first question — the key its answer goes under. */
@@ -109,8 +117,8 @@ type StatusListener = (status: SessionStatus) => void
  */
 export class AgentSession {
   private readonly options: AgentSessionOptions
-  private readonly builder = new RibbonBuilder()
-  private readonly collector = new PanelCollector()
+  private readonly builder: RibbonBuilder
+  private readonly collector: PanelCollector
   private readonly changeListeners: ChangeListener[] = []
   private readonly panelListeners: PanelListener[] = []
   private readonly statusListeners: StatusListener[] = []
@@ -139,6 +147,9 @@ export class AgentSession {
   constructor(options: AgentSessionOptions) {
     this.options = options
     this.mode = options.overrides.permissionMode ?? 'default'
+    this.builder = options.seed?.builder ?? new RibbonBuilder()
+    this.collector = options.seed?.collector ?? new PanelCollector()
+    this.todoItems = this.builder.todo ?? []
   }
 
   get status(): SessionStatus {
@@ -197,24 +208,12 @@ export class AgentSession {
   }
 
   /**
-   * Rebuilds the ribbon from a past conversation's messages.
-   *
-   * Replay must never be mistaken for live traffic: it adds items and touches
-   * nothing else — no status change, no cost counted twice. The one panel
-   * line it may fill is the model, and only until the process names its own:
-   * a resumed CLI says nothing until it is written to.
-   * What the old process left running is closed as unfinished at the end:
-   * that process is gone and will never report back.
+   * What a session taking this one's place starts from: the same ribbon, so
+   * the history stays on screen and new items keep numbering after it, and a
+   * clean panel — none of this session's numbers belong to the next one.
    */
-  replay(messages: unknown[]): RibbonChange[] {
-    const changes: RibbonChange[] = []
-    for (const message of messages) changes.push(...this.builder.apply(message))
-    changes.push(...this.builder.finishReplay())
-    const todo = this.builder.todo
-    if (todo) this.todoItems = todo
-    const model = lastAssistantModel(messages)
-    if (model) this.emitPanel(this.collector.seedModel(model))
-    return changes
+  successorSeed(): SessionSeed {
+    return { builder: this.builder, collector: new PanelCollector() }
   }
 
   /**

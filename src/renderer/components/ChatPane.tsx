@@ -94,7 +94,14 @@ export function ChatPane({
         }}
         onInterrupt={() => void window.qclod.interrupt(tabId)}
         onCycleMode={onCycleMode}
-        onRestart={() => void window.qclod.restartTab(tabId)}
+        onRestart={() => {
+          // The new session's panel replaces the old one's whole: its cost and
+          // limits are not this session's. The snapshot outranks them.
+          void window.qclod
+            .restartTab(tabId)
+            .then(() => window.qclod.panel(tabId))
+            .then((snapshot) => useAppStore.getState().setPanelSnapshot(tabId, snapshot))
+        }}
         onOpenPalette={onOpenPalette}
         onPickFiles={() => {
           void window.qclod.pickFiles().then((paths) => {

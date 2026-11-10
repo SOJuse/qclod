@@ -136,6 +136,11 @@ export interface ContextInfo {
   max: number
   percent: number
   categories: Array<{ name: string; tokens: number }>
+  /**
+   * Worked out from the conversation's record, not reported by a process —
+   * a tab not yet started. The process's own answer replaces it.
+   */
+  estimated?: boolean
 }
 
 export interface CostInfo {

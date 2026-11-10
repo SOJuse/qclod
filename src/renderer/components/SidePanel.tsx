@@ -123,7 +123,12 @@ export function SidePanel({
           <div data-testid="panel-context">
             <Bar percent={data.context.percent} />
             <div className="panel-line">
-              <span>{data.context.percent}% из {Math.round(data.context.max / 1000)}k</span>
+              {/* Worked out from the record until the tab's agent reports its own. */}
+              <span>
+                {data.context.estimated ? '≈ ' : ''}
+                {data.context.percent}% из {Math.round(data.context.max / 1000)}k
+                {data.context.estimated ? ' · по записи' : ''}
+              </span>
               <span className="panel-dim">{data.context.used.toLocaleString('ru-RU')}</span>
             </div>
             <ul className="panel-breakdown">

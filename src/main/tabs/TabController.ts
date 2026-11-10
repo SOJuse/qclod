@@ -3,8 +3,10 @@ import { basename } from 'node:path'
 import type {
   CommandInfo,
   LaunchOverrides,
+  PanelData,
   PanelEvent,
   PanelSnapshot,
+  RibbonChange,
   RibbonEvent,
   RibbonItem,
   SessionStatus,
@@ -14,7 +16,7 @@ import type {
   TabState
 } from '../../shared/types'
 import { isDirectory, loadTabs, saveTabs, type LoadedTab } from '../store/tabsStore'
-import type { AgentSession } from '../agent/AgentSession'
+import { seedFromTranscript, type AgentSession, type SessionSeed } from '../agent/AgentSession'
 import { EMPTY_PANEL } from '../agent/panelData'
 import type { AgentSessionManager } from '../agent/AgentSessionManager'
 
@@ -53,6 +55,16 @@ export class TabController {
   private activeId: TabId | null = null
   private readonly pending = new Set<Promise<unknown>>()
   private readonly lastStatus = new Map<TabId, SessionStatus>()
+  /**
+   * What a restored tab shows before its agent is started: its conversation
+   * read from the record. Only for tabs with no session — the session that
+   * starts takes the preview over.
+   */
+  private readonly previews = new Map<TabId, SessionSeed>()
+  /** Previews still being read, so a second ask waits for the same read. */
+  private readonly previewing = new Map<TabId, Promise<SessionSeed | null>>()
+  /** The plan's windows as last reported; they are the account's, not a tab's. */
+  private planLimits: PanelData['limits'] | null = null
 
   constructor(private readonly deps: TabControllerDeps) {}
 
@@ -65,15 +77,18 @@ export class TabController {
   }
 
   itemsOf(id: TabId): RibbonItem[] {
-    return this.deps.manager.get(id)?.items ?? []
+    return this.deps.manager.get(id)?.items ?? this.previews.get(id)?.builder.items ?? []
   }
 
   /**
    * The tab's whole panel, for a window that missed the events — reloaded,
-   * or just opened. A tab with no session yet has nothing to report.
+   * or just opened. A tab not started yet reports what its record says.
    */
   panelOf(id: TabId): PanelSnapshot {
-    return this.deps.manager.get(id)?.panelSnapshot() ?? { rev: 0, data: EMPTY_PANEL }
+    return (
+      this.deps.manager.get(id)?.panelSnapshot() ??
+      this.previews.get(id)?.collector.snapshot ?? { rev: 0, data: EMPTY_PANEL }
+    )
   }
 
   sessionIdOf(id: TabId): string | null {
@@ -112,6 +127,10 @@ export class TabController {
 
     this.activeId = this.tabs[0]?.id ?? null
     this.emit()
+    // Every tab shows its conversation straight away, read from the record;
+    // only the active one gets a process (spec 9: an agent starts when its
+    // tab is first visited).
+    for (const tab of this.tabs) this.track(this.preview(tab.id))
     if (this.activeId) this.track(this.ensureSession(this.activeId))
     return this.list()
   }
@@ -168,6 +187,7 @@ export class TabController {
     const index = this.tabs.findIndex((tab) => tab.id === id)
     if (index === -1) return
     this.tabs.splice(index, 1)
+    this.previews.delete(id)
     await this.deps.manager.close(id)
 
     if (this.activeId === id) {
@@ -186,6 +206,7 @@ export class TabController {
     if (!tab) return
     await this.deps.manager.close(id)
     delete tab.lastSessionId
+    this.previews.delete(id)
     await this.ensureSession(id)
   }
 
@@ -224,20 +245,72 @@ export class TabController {
     if (tab.missingCwd) return
     if (this.deps.manager.get(id)) return
 
+    // The conversation is already on screen from the record; the session
+    // carries on from that same ribbon, so nothing is drawn twice and new
+    // items number on after the old ones.
+    const seed = await this.preview(id)
+    // Closed, or started by another call, while the record was read.
+    if (!this.tabs.includes(tab) || this.deps.manager.get(id)) return
+
     // Defaults first, the tab's own choices on top: a tab stored before a
     // setting existed still follows it, and a tab that picked its own mode
     // keeps it.
-    const session = this.deps.manager.create(id, tab.cwd, {
-      ...this.deps.getDefaults(),
-      ...tab.overrides
-    })
-    this.wire(id, session)
+    const session = this.deps.manager.create(
+      id,
+      tab.cwd,
+      { ...this.deps.getDefaults(), ...tab.overrides },
+      seed ?? undefined
+    )
+    this.previews.delete(id)
+    this.adopt(id, session)
 
     const resumeId = tab.lastSessionId
-    if (resumeId) await this.resume(id, session, resumeId, tab.cwd)
+    if (resumeId) await this.resume(id, session, resumeId)
     else await session.start()
 
     this.rememberSession(id, session)
+  }
+
+  /**
+   * Reads a tab's past conversation and shows it — ribbon and panel —
+   * without starting anything. A resumed CLI sends nothing at all, not even
+   * `system/init`, until it is given something to answer, so the record is
+   * the only way a restored tab can show anything before it is used. Asked
+   * twice, it answers with what it already built.
+   */
+  private preview(id: TabId): Promise<SessionSeed | null> {
+    const built = this.previews.get(id)
+    if (built) return Promise.resolve(built)
+    const reading = this.previewing.get(id)
+    if (reading) return reading
+    const work = this.buildPreview(id).finally(() => this.previewing.delete(id))
+    this.previewing.set(id, work)
+    return work
+  }
+
+  private async buildPreview(id: TabId): Promise<SessionSeed | null> {
+    const tab = this.tabs.find((t) => t.id === id)
+    const sessionId = tab?.lastSessionId
+    if (!tab || tab.missingCwd || !sessionId || this.deps.manager.get(id)) return null
+
+    // The file is read whole (before the last compaction too, subagent steps
+    // included) and found by the tab's folder.
+    const messages = await this.deps.history.transcript(sessionId, tab.cwd)
+    // The tab may have moved on while the file was read.
+    if (!this.tabs.includes(tab) || tab.lastSessionId !== sessionId || this.deps.manager.get(id)) {
+      return null
+    }
+
+    const seed = seedFromTranscript(messages)
+    if (this.planLimits) seed.collector.setLimits(this.planLimits)
+    this.previews.set(id, seed)
+
+    const changes: RibbonChange[] = seed.builder.items.map((item) => ({ kind: 'append', item }))
+    const todo = seed.builder.todo
+    if (todo) changes.push({ kind: 'todo', items: todo })
+    this.emitRibbon(id, changes)
+    this.emitWholePanel(id, seed.collector.snapshot)
+    return seed
   }
 
   /**
@@ -245,18 +318,8 @@ export class TabController {
    * moved, written by a newer CLI — must not cost the user their tab: they get
    * a clean one and a line in the ribbon saying what happened.
    */
-  private async resume(id: TabId, session: AgentSession, resumeId: string, cwd: string): Promise<void> {
+  private async resume(id: TabId, session: AgentSession, resumeId: string): Promise<void> {
     await session.start(resumeId)
-
-    // The conversation is read from the CLI's own transcript on disk, so it
-    // can be shown at once. Waiting for the session to settle first — which
-    // is what this did — left the tab blank: a resumed CLI sends nothing at
-    // all, not even `system/init`, until it is given something to answer. The
-    // conversation only appeared after you typed, and whatever you typed was
-    // the thing that unblocked it. The file is read whole (before the last
-    // compaction too, subagent steps included) and found by the tab's folder.
-    const messages = await this.deps.history.transcript(resumeId, cwd)
-    if (messages.length > 0) this.emitRibbon(id, session.replay(messages))
 
     // A resume that will not open fails while the stream runs, long after
     // start() returned, so the recovery waits for that rather than for a
@@ -266,28 +329,48 @@ export class TabController {
     })
   }
 
-  /** The stored conversation would not open: give the tab a clean session. */
+  /**
+   * The stored conversation would not open: give the tab a clean session.
+   * The history stays on screen — the new session continues the dead one's
+   * ribbon — but the panel starts over: it describes the new session.
+   */
   private async recoverFromDeadSession(id: TabId, dead: AgentSession): Promise<void> {
     if (this.deps.manager.get(id) !== dead) return
     const reason = dead.error ?? 'неизвестная причина'
     const tab = this.tabs.find((t) => t.id === id)
     if (tab) delete tab.lastSessionId
 
+    const seed = dead.successorSeed()
     await this.deps.manager.close(id)
     const fresh = this.deps.manager.create(
       id,
       tab?.cwd ?? this.deps.defaultCwd,
-      tab?.overrides ?? {}
+      tab?.overrides ?? {},
+      seed
     )
-    this.wire(id, fresh)
+    this.adopt(id, fresh)
     this.emitRibbon(id, fresh.notice(`Прошлую переписку открыть не удалось: ${reason}`))
     await fresh.start()
     this.rememberSession(id, fresh)
   }
 
+  /**
+   * Connects a session that has just become the tab's, and sends its whole
+   * panel. A patch only names what changed; a session that took another's
+   * place — after a restart or a failed resume — would otherwise leave the
+   * old one's cost and limits on screen. Its revision outranks them.
+   */
+  private adopt(id: TabId, session: AgentSession): void {
+    this.wire(id, session)
+    this.emitWholePanel(id, session.panelSnapshot())
+  }
+
   private wire(id: TabId, session: AgentSession): void {
     session.onChange((changes) => this.deps.onRibbon({ tabId: id, changes }))
-    session.onPanel((patch, rev) => this.deps.onPanel({ tabId: id, patch, rev }))
+    session.onPanel((patch, rev) => {
+      this.deps.onPanel({ tabId: id, patch, rev })
+      if (patch.limits) this.sharePlanLimits(patch.limits)
+    })
     session.onCommands((commands) => this.deps.onCommands({ tabId: id, commands }))
     session.onSession(() => this.rememberSession(id, session))
     session.onStatus((status) => {
@@ -309,6 +392,20 @@ export class TabController {
     })
   }
 
+  /**
+   * The plan's windows belong to the account, so what one tab learns holds
+   * for every tab — including those whose agent has not started and so
+   * cannot ask.
+   */
+  private sharePlanLimits(limits: PanelData['limits']): void {
+    if (!limits.fiveHour && !limits.sevenDay) return
+    this.planLimits = limits
+    for (const [tabId, seed] of this.previews) {
+      const patch = seed.collector.setLimits(limits)
+      this.deps.onPanel({ tabId, patch, rev: seed.collector.rev })
+    }
+  }
+
   private rememberSession(id: TabId, session: AgentSession): void {
     const sessionId = session.sessionId
     if (!sessionId) return
@@ -321,8 +418,12 @@ export class TabController {
 
   // -------------------------------------------------------------- plumbing
 
-  private emitRibbon(id: TabId, changes: ReturnType<AgentSession['notice']>): void {
+  private emitRibbon(id: TabId, changes: RibbonChange[]): void {
     if (changes.length > 0) this.deps.onRibbon({ tabId: id, changes })
+  }
+
+  private emitWholePanel(id: TabId, snapshot: PanelSnapshot): void {
+    this.deps.onPanel({ tabId: id, patch: { ...snapshot.data }, rev: snapshot.rev })
   }
 
   private track(work: Promise<unknown>): void {

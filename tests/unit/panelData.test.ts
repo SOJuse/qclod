@@ -226,10 +226,25 @@ describe('PanelCollector: нулевой расход', () => {
 })
 
 describe('PanelCollector: до первого сообщения', () => {
-  test('seedModel не перезаписывает модель от процесса', () => {
+  test('запись не перезаписывает модель и контекст от процесса', () => {
+    const history = [
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          id: 'm1',
+          role: 'assistant',
+          model: 'claude-sonnet-5',
+          content: [],
+          usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 1 }
+        }
+      }
+    ]
     const fromInit = new PanelCollector()
     fromInit.apply(init({ model: 'claude-opus-5' }))
-    expect(fromInit.seedModel('claude-sonnet-5')).toEqual({})
+    expect(fromInit.seedFromTranscript(history)).toEqual({
+      context: { used: 2, max: 200_000, percent: 0, categories: [], estimated: true }
+    })
     expect(fromInit.data.model).toBe('claude-opus-5')
 
     const fromContext = new PanelCollector()
@@ -240,12 +255,13 @@ describe('PanelCollector: до первого сообщения', () => {
       percentage: 50,
       categories: []
     })
-    fromContext.seedModel('claude-sonnet-5')
+    expect(fromContext.seedFromTranscript(history)).toEqual({})
     expect(fromContext.data.model).toBe('claude-opus-5')
+    expect(fromContext.data.context?.estimated).toBeUndefined()
 
     // Nothing from the process yet: the history's model stands in…
     const early = new PanelCollector()
-    expect(early.seedModel('claude-sonnet-5')).toEqual({ model: 'claude-sonnet-5' })
+    expect(early.seedFromTranscript(history).model).toBe('claude-sonnet-5')
     // …until the process names its own.
     early.apply(init({ model: 'claude-opus-5' }))
     expect(early.data.model).toBe('claude-opus-5')
@@ -311,9 +327,11 @@ describe('PanelCollector: живой MCP и ревизии', () => {
 
   test('ревизия растёт и у новой сессии продолжается, а не начинается с нуля', () => {
     const first = new PanelCollector()
-    expect(first.rev).toBe(0)
+    const born = first.rev
+    expect(born).toBeGreaterThan(0)
     first.setModel('claude-opus-5')
     const a = first.rev
+    expect(a).toBeGreaterThan(born)
     first.setEffort('high')
     const b = first.rev
     expect(a).toBeGreaterThan(0)
@@ -330,7 +348,75 @@ describe('PanelCollector: живой MCP и ревизии', () => {
     const collector = new PanelCollector()
     collector.setModel('claude-opus-5')
     const before = collector.rev
-    expect(collector.seedModel('claude-sonnet-5')).toEqual({})
+    expect(collector.seedFromTranscript([])).toEqual({})
     expect(collector.rev).toBe(before)
+  })
+})
+
+describe('PanelCollector: панель из записи разговора', () => {
+  const assistant = (model: string, usage: Record<string, number>, parent: string | null = null): unknown => ({
+    type: 'assistant',
+    parent_tool_use_id: parent,
+    message: { id: 'm', role: 'assistant', model, content: [{ type: 'text', text: '…' }], usage }
+  })
+  const usage = {
+    input_tokens: 12,
+    cache_creation_input_tokens: 1400,
+    cache_read_input_tokens: 44022,
+    output_tokens: 240
+  }
+
+  test('seedFromTranscript: модель и оценка контекста по последнему ответу', () => {
+    const collector = new PanelCollector()
+    const patch = collector.seedFromTranscript([
+      assistant('claude-sonnet-5', { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 1 }),
+      assistant('claude-opus-5', usage),
+      // A subagent's step is its own window, not the conversation's.
+      assistant('claude-haiku-4-5', { input_tokens: 9, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 9 }, 'toolu_1'),
+      // What the CLI makes up itself is no model anyone is on.
+      assistant('<synthetic>', { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0 })
+    ])
+    const context = { used: 45674, max: 200_000, percent: 23, categories: [], estimated: true }
+    expect(patch).toEqual({ model: 'claude-opus-5', context })
+    expect(collector.data.model).toBe('claude-opus-5')
+    expect(collector.data.context).toEqual(context)
+  })
+
+  test('seedFromTranscript: окно 1M для модели с [1m]', () => {
+    const collector = new PanelCollector()
+    collector.seedFromTranscript([assistant('claude-opus-5[1m]', usage)])
+    expect(collector.data.context).toEqual({
+      used: 45674,
+      max: 1_000_000,
+      percent: 5,
+      categories: [],
+      estimated: true
+    })
+  })
+
+  test('seedFromTranscript: без ответов в записи ничего не выдумывает', () => {
+    const collector = new PanelCollector()
+    const before = collector.rev
+    expect(collector.seedFromTranscript([{ type: 'user', message: { role: 'user', content: 'привет' } }])).toEqual({})
+    expect(collector.data.model).toBeNull()
+    expect(collector.data.context).toBeNull()
+    expect(collector.rev).toBe(before)
+  })
+
+  test('настоящий ответ процесса заменяет оценку', () => {
+    const collector = new PanelCollector()
+    collector.seedFromTranscript([assistant('claude-opus-5', usage)])
+    collector.setContext({ model: 'claude-opus-5', totalTokens: 50_000, maxTokens: 200_000, percentage: 25, categories: [] })
+    expect(collector.data.context).toEqual({ used: 50_000, max: 200_000, percent: 25, categories: [] })
+  })
+
+  test('новый сборщик старше прежних ещё до первого патча', () => {
+    // A restarted tab's panel must replace the old one at once, even while
+    // the new session has said nothing yet.
+    const old = new PanelCollector()
+    old.setModel('claude-opus-5')
+    const fresh = new PanelCollector()
+    expect(fresh.rev).toBeGreaterThan(old.rev)
+    expect(fresh.snapshot.rev).toBe(fresh.rev)
   })
 })

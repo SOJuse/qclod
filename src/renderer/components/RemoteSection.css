@@ -1,0 +1,160 @@
+/*
+ * Remote Control in the side panel. Quiet all round; the one thing that stands
+ * out is the QR on its light sheet, because a phone camera reads dark on light.
+ */
+
+.remote-lead,
+.remote-hint,
+.remote-blocked,
+.remote-problem {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.remote-lead {
+  color: var(--text-dim);
+}
+
+.remote-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--gap-hair) 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+.remote-state + .remote-lead {
+  margin-top: var(--space-1);
+}
+
+/* The colour says the same as the word beside it, never alone. */
+.remote-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.remote-state[data-state='on'] .remote-dot {
+  background: var(--ok);
+}
+
+.remote-state[data-state='connecting'] .remote-dot,
+.remote-state[data-state='reconnecting'] .remote-dot {
+  background: var(--warn);
+}
+
+.remote-state[data-state='failed'] .remote-dot {
+  background: var(--danger);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .remote-state[data-state='connecting'] .remote-dot {
+    animation: remote-pulse var(--now-pulse) var(--ease) infinite;
+  }
+}
+
+@keyframes remote-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* QR left, hint right; in a panel too narrow for both the hint goes under. */
+.remote-scan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.remote-sheet {
+  flex: 0 0 auto;
+  display: flex;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--qr-paper);
+}
+
+.remote-hint {
+  flex: 1 1 120px;
+  color: var(--text-dim);
+}
+
+.remote-link {
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
+}
+
+.remote-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.remote-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--button-sm-pad);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--button-sm-radius);
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: var(--button-sm-font-size);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.remote-button:hover {
+  background: var(--hover-fill);
+}
+
+.remote-button.is-primary {
+  border-color: var(--border-accent);
+  background: var(--accent-fill);
+}
+
+.remote-button.is-primary:hover {
+  background: var(--accent-fill-strong);
+}
+
+.remote-button:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: 1px;
+}
+
+.remote-button > svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.remote-blocked {
+  margin-top: var(--space-2);
+  color: var(--text-dim);
+}
+
+.remote-problem {
+  margin-top: var(--space-2);
+  color: var(--danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remote-button {
+    transition: none;
+  }
+}

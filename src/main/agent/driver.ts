@@ -8,6 +8,7 @@ import type {
   TaskOutput,
   UserInput
 } from '../../shared/types'
+import type { RemoteAvailability } from '../../shared/remote'
 import type { ToolPermissionContext } from './permissionContext'
 
 /**
@@ -44,7 +45,19 @@ export interface AgentDriver {
    */
   taskOutput(taskId: string): Promise<TaskOutput | null>
   stopTask(taskId: string): Promise<void>
+  /** Whether this SDK, CLI and login can run Remote Control, and if not, why. */
+  remoteAvailability(): Promise<RemoteAvailability>
+  /**
+   * Turns Remote Control on (returning the session's link) or off (null).
+   * Rejects when the CLI refuses; the caller explains it.
+   */
+  setRemoteControl(enabled: boolean, name?: string): Promise<RemoteLink | null>
   dispose(): Promise<void>
+}
+
+export interface RemoteLink {
+  sessionUrl: string
+  connectUrl?: string
 }
 
 export interface ContextUsage {

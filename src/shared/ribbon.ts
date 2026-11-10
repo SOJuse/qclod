@@ -308,6 +308,7 @@ export class RibbonBuilder {
   private blockBoundaryAt: number | undefined
   private readonly now: () => number
   private replaying: boolean
+  private remoteLive = false
 
   constructor(options: Clock = {}) {
     this.now = options.now ?? (() => Date.now())
@@ -355,14 +356,14 @@ export class RibbonBuilder {
     return [this.append({ kind: 'plan', id: this.nextId(), requestId, text, state: 'pending' })]
   }
 
-  resolvePlan(requestId: string, state: 'approved' | 'rejected'): RibbonChange[] {
+  resolvePlan(requestId: string, state: 'approved' | 'rejected' | 'elsewhere'): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'plan' && i.requestId === requestId)
     if (!item || item.kind !== 'plan') return []
     item.state = state
     return [this.update(item.id, { state })]
   }
 
-  resolvePermission(requestId: string, state: 'allowed' | 'denied'): RibbonChange[] {
+  resolvePermission(requestId: string, state: 'allowed' | 'denied' | 'elsewhere'): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'permission' && i.requestId === requestId)
     if (!item || item.kind !== 'permission') return []
     item.state = state
@@ -382,6 +383,23 @@ export class RibbonBuilder {
     // taking this ribbon over) is built from the items, not from the events.
     item.answers = answers
     return [this.update(item.id, { answers })]
+  }
+
+  /**
+   * A question answered on another device (Remote Control) closes the card
+   * the way an answer does — `answers` is no longer null — with no answers of ours.
+   */
+  closeQuestionElsewhere(toolUseId: string): RibbonChange[] {
+    const item = this.list.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)
+    if (!item || item.kind !== 'question' || item.answers !== null) return []
+    item.answers = {}
+    item.elsewhere = true
+    return [this.update(item.id, { answers: item.answers, elsewhere: true })]
+  }
+
+  /** Whether the Remote Control bridge is live: a person's message from the stream then came from elsewhere. */
+  setRemote(live: boolean): void {
+    this.remoteLive = live
   }
 
   /**
@@ -1024,7 +1042,8 @@ export class RibbonBuilder {
   }
 
   private appendUser(text: string, attachments: Attachment[] = []): RibbonChange[] {
-    return [this.append({ kind: 'user', id: this.nextId(), text, attachments })]
+    const remote = this.remoteLive && !this.replaying
+    return [this.append({ kind: 'user', id: this.nextId(), text, attachments, ...(remote ? { remote: true as const } : {}) })]
   }
 
   private parentOf(message: Record<string, unknown>): string | undefined {

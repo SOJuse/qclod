@@ -16,6 +16,14 @@ trackHeldKeys()
 
 type Permission = Extract<RibbonItem, { kind: 'permission' }>
 
+/** How a closed card reads; «elsewhere» was answered on the phone or claude.ai. */
+const DONE_LABEL: Record<Permission['state'], string> = {
+  pending: '',
+  allowed: 'разрешено',
+  denied: 'отклонено',
+  elsewhere: 'ответили с телефона или claude.ai'
+}
+
 interface Props {
   item: Permission
   /** The earliest question still waiting: the one that takes focus and the keys. */
@@ -218,7 +226,7 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
         </div>
       ) : (
         <div className="row-permission-done">
-          {item.state === 'allowed' ? 'разрешено' : 'отклонено'}
+          {DONE_LABEL[item.state]}
         </div>
       )}
     </div>

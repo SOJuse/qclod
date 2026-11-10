@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Cpu, Gauge, ShieldCheck } from 'lucide-react'
+import { Cpu, Gauge, ShieldCheck, Smartphone } from 'lucide-react'
 import { LEVEL_LABEL, LevelIcon } from '../ui/icons'
 import {
   EFFORT_LEVELS,
@@ -7,8 +7,10 @@ import {
   type EffortLevel,
   type LimitWindow,
   type PanelData,
-  type PermissionMode
+  type PermissionMode,
+  type RemoteInfo
 } from '../../shared/types'
+import { REMOTE_BLOCK_TEXT, REMOTE_STATE_LABEL, isRemoteLive } from '../../shared/remote'
 import { untilReset } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
 import { EFFORT_LABEL, EFFORT_SHORT, MODE_LABEL } from '../labels'
@@ -22,6 +24,9 @@ interface Props {
   started: boolean
   /** Room for another indicator beside the limits; background tasks have their own place after them. */
   slot?: ReactNode
+  /** Remote Control of this tab, and its switch. */
+  remote: RemoteInfo
+  onToggleRemote: () => void
 }
 
 const MODE_NOTE: Partial<Record<PermissionMode, string>> = {
@@ -43,7 +48,7 @@ const tokens = (n: number): string => n.toLocaleString('ru-RU')
  * which a narrow window hides — and context is the one number worth watching
  * while typing.
  */
-export function StatusLine({ tabId, data, started, slot }: Props): JSX.Element {
+export function StatusLine({ tabId, data, started, slot, remote, onToggleRemote }: Props): JSX.Element {
   // Effort is a property of the chosen model: Opus offers more levels than Sonnet.
   const chosen = data.models.find((m) => m.value === data.model)
   const levels = chosen?.supportedEffortLevels ?? EFFORT_LEVELS
@@ -115,6 +120,7 @@ export function StatusLine({ tabId, data, started, slot }: Props): JSX.Element {
           options={effortOptions}
           onChange={(level) => void window.qclod.setEffort(tabId, level as EffortLevel)}
         />
+        <RemoteToggle remote={remote} onToggle={onToggleRemote} />
       </div>
 
       <div className="status-group status-meters">
@@ -135,6 +141,36 @@ export function StatusLine({ tabId, data, started, slot }: Props): JSX.Element {
         <BackgroundTasks tabId={tabId} tasks={data.backgroundTasks} />
       </div>
     </div>
+  )
+}
+
+/**
+ * The Remote Control switch. Off it is only an icon with its hint; on, the
+ * icon takes the state's colour and the state's word stands beside it.
+ */
+function RemoteToggle({ remote, onToggle }: { remote: RemoteInfo; onToggle: () => void }): JSX.Element {
+  const off = remote.state === 'off'
+  const word = REMOTE_STATE_LABEL[remote.state]
+  const title = remote.blocked
+    ? REMOTE_BLOCK_TEXT[remote.blocked]
+    : off
+      ? 'Remote Control: продолжить эту сессию с телефона или claude.ai'
+      : `Remote Control: ${word}`
+  return (
+    <button
+      type="button"
+      className="status-remote"
+      data-testid="remote-toggle"
+      data-state={remote.state}
+      aria-label={off ? 'Remote Control' : `Remote Control: ${word}`}
+      aria-pressed={isRemoteLive(remote)}
+      title={title}
+      disabled={remote.blocked !== undefined}
+      onClick={onToggle}
+    >
+      <Smartphone size={13} aria-hidden="true" />
+      {!off && <span>{word}</span>}
+    </button>
   )
 }
 

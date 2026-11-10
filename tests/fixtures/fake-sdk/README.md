@@ -65,6 +65,7 @@ for await (const message of driver.messages) { /* ... */ }
 | `subagent` | вызов `Agent`, вложенные шаги помечаются `parent_tool_use_id`; `tool_use_result` — `AgentOutput` (`status: completed`, `agentId`, `totalTokens`, `totalDurationMs`, `totalToolUseCount`, `content`), итоги — из `stats` под теми же именами; `report` — текст отчёта (`content[].text` и текст `tool_result`, по умолчанию «подагент закончил»); `subagent` внутри `steps` — вложенный: его шаги помечены его собственным id |
 | `backgroundAgent` | вызов `Agent` с `run_in_background: true`; `tool_result` «Async agent launched successfully.» с `tool_use_result.status: async_launched`; `system/task_started`. **После `result` этого хода** — по `system/task_progress` на каждый элемент `progress`, затем (если `finish` не `null`) `system/task_notification` и сообщение пользователя с `origin.kind: task-notification` и текстом `<task-notification>…`. `pauseMs` — пауза между событиями; `agentId` по умолчанию — `a` и 16 hex. Порядок «после `result`» — решение C2 (тест видит, что ход кончился, а агент ещё работает); ответного хода главного агента на уведомление фейк не играет |
 | `backgroundBash` | вызов `Bash` с `run_in_background: true`; `tool_result` «Command running in background with ID: <id>» и `tool_use_result {stdout:'', stderr:'', interrupted:false, backgroundTaskId}`; `system/task_started {task_id, tool_use_id, description, task_type:'local_bash', is_backgrounded:true}`; `system/background_tasks_changed` со всеми работающими. **После `result` хода** — по куску из `chunks` каждые `pauseMs` (их копит `taskOutput`), затем, если `finish` не `null`, `task_notification {status, output_file, summary}` и `background_tasks_changed` без этой задачи. `taskId` по умолчанию — `b` и 8 hex, `description` — сама команда. **Формы взяты из `sdk.d.ts` и `sdk-tools.d.ts`, не с живой сессии** |
+| `remoteAnswer` | как `askPermission` (тот же `toolUseID`, свой `signal`), но через `afterMs` (по умолчанию 50) абортит именно этот сигнал — так CLI шлёт `control_cancel_request`, когда ответили на телефоне; дальше по `decision`: `allow` — выполняет инструмент (результат `ok`), `deny` — `permission_denied`. Ответ Qclod после аборта игнорируется |
 | `compact` | `compact_boundary` с токенами до и после |
 | `crash` | бросает ошибку `message` посреди потока. `times: N` — шаг играют только первые N сессий, в следующих он пропускается. Сессия — это созданный драйвер: она засчитывается один раз, при создании, дошла она до шага или нет. Счётчик (по `message`) лежит в `fake-sdk-crashes.json` в папке `process.env.QCLOD_USER_DATA`, так что его видят все сессии одного прогона приложения; без этой переменной шаг падает всегда, как раньше. `times` читается в шагах верхнего уровня `steps` и `nextTurn`. `beforeInit: true` — падает до `system/init` и эха хода, как агент, который не вошёл в аккаунт: сессия так и не представилась, и отправленное в неё остаётся неотправленным |
 | `reportInput` | текст агента «картинок: N; типы: image/png; байт: M» по последнему `send`: сколько вложений-картинок пришло, их `mediaType` через запятую и сумма байт после декодирования base64 — чтобы e2e видел, что картинка дошла настоящим вложением |
@@ -95,6 +96,27 @@ for await (const message of driver.messages) { /* ... */ }
 (`SDKControlGetTaskOutputResponse`, `SDKTaskNotificationMessage`,
 `SDKBackgroundTasksChangedMessage`), не с живой сессии.
 
+**Remote Control.** Фейк отвечает тем же методам драйвера:
+`remoteAvailability()` (`{available:true}` или, со `remoteControl.blocked`,
+`{available:false, reason}`), `setRemoteControl(enabled, name?)` и, только в
+фейке, `typeOnPhone(text, steps?)`. `remoteCalls` хранит вызовы:
+`{enabled, name}` (имя — только если его дали) и `{enabled:false}` при
+выключении. Поле сценария `remoteControl`: `blocked`, `enableError` (включение
+отклоняется с этим текстом), `sessionUrl` (вместо
+`https://claude.ai/code/session_fake0001`), `bridge` (по умолчанию
+`[{state:'connected'}]`) и `phoneTurns`; паузы — `afterMs`. Включение отвечает
+`{sessionUrl, connectUrl}` (`connectUrl` — `https://claude.ai/code?environment=env_fake`)
+и затем само, вне хода, выдаёт
+`{type:'system', subtype:'bridge_state', state, detail, failure_kind?, bridge_epoch:1, uuid, session_id}`
+(`failure_kind` только при `failed`, по умолчанию `terminal`), а потом ходы с
+телефона. Сообщения моста и ходы с телефона из очереди выдаются только между
+ходами (настоящий CLI может вставлять их и посреди хода). Выключение отвечает `null` и выдаёт
+`{type:'system', subtype:'worker_shutting_down', reason:'remote_control_disabled'}`.
+Ход с телефона — `user`-сообщение той же формы, что эхо, шаги
+(`steps ?? nextTurn`) и `result`; в `sent` он не попадает. Формы взяты из
+раздела «Сверка с SDK и CLI» плана
+`docs/superpowers/plans/2026-11-10-qclod-v3-stage5-remote.md`.
+
 ## Транскрипты на диске: `../transcript.mjs`
 
 Для тестов возобновления сессии из её JSONL-файла.
@@ -116,3 +138,6 @@ for await (const message of driver.messages) { /* ... */ }
 `getContextUsage()` отдаёт строки разбивки: `messages` и `system_prompt`
 (`used`), `Autocompact buffer` (`buffer`), `Free space` (`free`) и
 `MCP tools (deferred)` (`deferred`, панель его не рисует).
+Строки следуют за процентом: `used` вместе равны `totalTokens` (делятся
+30:12, как при 21 %), резерв — 9 000, пока есть место, `free` — остаток до
+`maxTokens`. Легенда на снимке с 13 % сходится с числом в полосе.

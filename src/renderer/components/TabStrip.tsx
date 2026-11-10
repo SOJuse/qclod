@@ -1,6 +1,12 @@
-import { Plus, X } from 'lucide-react'
+import { Plus, Smartphone, X } from 'lucide-react'
 import { hint } from '../app/shortcuts'
 import type { SessionStatus, TabId, TabState } from '../../shared/types'
+import { REMOTE_STATE_LABEL } from '../../shared/remote'
+
+/** The tab's Remote Control word, or null while it is off: then the tab says nothing of it. */
+function remoteWord(tab: TabState): string | null {
+  return tab.remote && tab.remote.state !== 'off' ? REMOTE_STATE_LABEL[tab.remote.state] : null
+}
 
 interface Props {
   tabs: TabState[]
@@ -35,7 +41,9 @@ export function TabStrip({
           className={`tab${tab.id === activeTabId ? ' is-active' : ''}${
             tab.badge ? ' has-badge' : ''
           }`}
-          title={`${tab.cwd}\n${STATUS_LABEL[tab.status]}`}
+          title={`${tab.cwd}\n${STATUS_LABEL[tab.status]}${
+            remoteWord(tab) ? `\nRemote Control: ${remoteWord(tab)}` : ''
+          }`}
           onMouseDown={(e) => {
             if (e.button === 1) {
               e.preventDefault()
@@ -50,6 +58,16 @@ export function TabStrip({
             aria-hidden
           />
           <span className="tab-title">{tab.title}</span>
+          {tab.remote && remoteWord(tab) && (
+            // Its own icon, not a second dot: two dots side by side read as one.
+            <Smartphone
+              size={11}
+              className="tab-remote"
+              data-testid="tab-remote"
+              data-state={tab.remote.state}
+              aria-label={`Remote Control: ${remoteWord(tab)}`}
+            />
+          )}
           {tab.badge && <span className="tab-badge" data-testid="tab-badge" aria-hidden />}
           <button
             type="button"

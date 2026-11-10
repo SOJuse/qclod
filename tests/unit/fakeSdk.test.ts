@@ -619,6 +619,21 @@ describe('createFakeSdk: контекст и лимиты по запросу', 
     expect((await driver.getContextUsage()).totalTokens).toBe(184000)
   })
 
+  test('строки разбивки контекста сходятся с процентом: занятое = totalTokens, всё вместе = maxTokens', async () => {
+    for (const [percent, used] of [[13, 26000], [21, 42000], [92, 184000], [99, 198000]] as const) {
+      const usage = await createFakeSdk({ steps: [], contextPercent: percent }).getContextUsage()
+      const sum = (kind: string): number =>
+        usage.categories.filter((c: { kind: string }) => c.kind === kind).reduce((a: number, c: { tokens: number }) => a + c.tokens, 0)
+      expect(usage.totalTokens).toBe(used)
+      expect(sum('used')).toBe(used)
+      expect(sum('used') + sum('buffer') + sum('free')).toBe(usage.maxTokens)
+      expect(usage.categories.every((c: { tokens: number }) => c.tokens >= 0)).toBe(true)
+    }
+    // At 21% the rows are the ones the panel tests and the shots were made with.
+    const base = await createFakeSdk({ steps: [] }).getContextUsage()
+    expect(base.categories.map((c: { tokens: number }) => c.tokens)).toEqual([30000, 12000, 9000, 149000, 700])
+  })
+
   test('planLimits по умолчанию — те же окна, что в rate_limit_event', async () => {
     const driver = createFakeSdk({ steps: [{ kind: 'text', text: 'ок' }] })
     const event = (await collect(driver)).find((m) => m['type'] === 'rate_limit_event') as {
@@ -1062,5 +1077,110 @@ describe('createFakeSdk: reportInput', () => {
       .flatMap((m) => (m['message'] as { content: Array<{ text?: string }> }).content)
       .map((b) => b.text)
     expect(said).toEqual(['картинок: 2; типы: image/png, image/jpeg; байт: 15'])
+  })
+})
+
+async function nextMatching(
+  messages: AsyncIterable<Message>,
+  match: (m: Message) => boolean
+): Promise<Message> {
+  for await (const m of messages) if (match(m)) return m
+  throw new Error('поток кончился раньше')
+}
+
+describe('createFakeSdk: Remote Control', () => {
+  test('включение отвечает ссылкой и шлёт bridge_state connected', async () => {
+    const d = createFakeSdk({})
+    const link = await d.setRemoteControl(true, 'Qclod — проект')
+    expect(link?.sessionUrl).toMatch(/^https:\/\/claude\.ai\//)
+    expect(d.remoteCalls).toEqual([{ enabled: true, name: 'Qclod — проект' }])
+    const m = await nextMatching(d.messages, (x) => x['subtype'] === 'bridge_state')
+    expect(m).toMatchObject({ type: 'system', state: 'connected', bridge_epoch: 1, detail: null })
+  })
+
+  test('выключение шлёт worker_shutting_down remote_control_disabled', async () => {
+    const d = createFakeSdk({})
+    expect(await d.setRemoteControl(false)).toBeNull()
+    expect(d.remoteCalls).toEqual([{ enabled: false }])
+    const m = await nextMatching(d.messages, (x) => x['subtype'] === 'worker_shutting_down')
+    expect(m).toMatchObject({ type: 'system', reason: 'remote_control_disabled' })
+  })
+
+  test('blocked и enableError', async () => {
+    expect(await createFakeSdk({ remoteControl: { blocked: 'api_key' } }).remoteAvailability()).toEqual({
+      available: false,
+      reason: 'api_key'
+    })
+    expect(await createFakeSdk({}).remoteAvailability()).toEqual({ available: true })
+    await expect(
+      createFakeSdk({ remoteControl: { enableError: 'нет подписки' } }).setRemoteControl(true)
+    ).rejects.toThrow('нет подписки')
+  })
+
+  test('sessionUrl и failed получают failure_kind', async () => {
+    const d = createFakeSdk({
+      remoteControl: { sessionUrl: 'https://claude.ai/code/session_x', bridge: [{ state: 'failed' }] }
+    })
+    expect((await d.setRemoteControl(true))?.sessionUrl).toBe('https://claude.ai/code/session_x')
+    const m = await nextMatching(d.messages, (x) => x['subtype'] === 'bridge_state')
+    expect(m).toMatchObject({ state: 'failed', failure_kind: 'terminal' })
+  })
+
+  test('ход с телефона: user-сообщение, шаги, result; в sent не попадает', async () => {
+    const d = createFakeSdk({})
+    d.typeOnPhone('привет с телефона', [{ kind: 'text', text: 'ответ' }])
+    const got = await collect(d)
+    const user = got.find((m) => m['type'] === 'user') as { message: { content: string } }
+    expect(user.message.content).toBe('привет с телефона')
+    expect(kinds(got)).toContain('assistant')
+    expect(d.sent).toHaveLength(0)
+  })
+
+  test('phoneTurns играются после включения', async () => {
+    const d = createFakeSdk({
+      remoteControl: { phoneTurns: [{ text: 'с телефона', steps: [{ kind: 'text', text: 'ок' }] }] }
+    })
+    await d.setRemoteControl(true)
+    const got = await collect(d)
+    expect(kinds(got)).toContain('system/bridge_state')
+    expect(got.some((m) => m['type'] === 'user')).toBe(true)
+  })
+
+  test('remoteAnswer: сигнал абортится, инструмент выполняется по decision', async () => {
+    const seen: AbortSignal[] = []
+    const d = createFakeSdk({
+      steps: [{ kind: 'remoteAnswer', name: 'Bash', input: { command: 'ls' }, decision: 'allow' }],
+      canUseTool: (_n, _i, o) => {
+        seen.push(o.signal)
+        return new Promise(() => {})
+      }
+    })
+    await collect(d)
+    expect(seen[0]!.aborted).toBe(true)
+    expect(d.executedTools).toContain('Bash')
+  })
+
+  test('remoteAnswer: ответ Qclod до afterMs игнорируется, сигнал всё равно абортится', async () => {
+    const seen: AbortSignal[] = []
+    const d = createFakeSdk({
+      steps: [{ kind: 'remoteAnswer', name: 'Bash', decision: 'allow' }],
+      canUseTool: async (_n, _i, o) => {
+        seen.push(o.signal)
+        return { behavior: 'deny' }
+      }
+    })
+    const got = await collect(d)
+    expect(seen[0]!.aborted).toBe(true)
+    expect(d.executedTools).toContain('Bash')
+    expect(kinds(got)).not.toContain('permission_denied')
+  })
+
+  test('remoteAnswer deny: permission_denied, инструмент не выполняется', async () => {
+    const d = createFakeSdk({
+      steps: [{ kind: 'remoteAnswer', name: 'Bash', decision: 'deny' }],
+      canUseTool: () => new Promise(() => {})
+    })
+    expect(kinds(await collect(d))).toContain('permission_denied')
+    expect(d.executedTools).not.toContain('Bash')
   })
 })

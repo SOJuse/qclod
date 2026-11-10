@@ -5,11 +5,12 @@ import {
   completeCommand,
   effortItems,
   bareLocalStep,
+  bareRemoteToggle,
   findSlashQuery,
   modelItems,
   stepItems
 } from '@renderer/input/slash'
-import { markUnavailable, withLocalCommands } from '../../src/shared/commandFilter'
+import { markRemote, withLocalCommands } from '../../src/shared/commandFilter'
 import type { CommandInfo, ModelOption } from '../../src/shared/types'
 
 function cmd(name: string, extra: Partial<CommandInfo> = {}): CommandInfo {
@@ -70,9 +71,14 @@ describe('acceptCommand: что делает Enter', () => {
   })
 
   test('недоступная команда ничего не делает', () => {
-    const [rc] = markUnavailable([cmd('remote-control')])
+    const rc = markRemote(withLocalCommands([]), 'нет подписки').find((c) => c.name === 'remote-control')
     expect(acceptCommand(rc!)).toEqual({ kind: 'none' })
     expect(completeCommand(rc!)).toEqual({ kind: 'none' })
+  })
+
+  test('remote-control и rc переключают Remote Control', () => {
+    expect(acceptCommand(cmd('remote-control'))).toEqual({ kind: 'remote' })
+    expect(acceptCommand(cmd('rc', { argumentHint: '[name]' }))).toEqual({ kind: 'remote' })
   })
 
   test('Tab дописывает команду, ничего не запуская', () => {
@@ -97,7 +103,7 @@ describe('строки списка', () => {
       hint: '<название>',
       secondary: 'Переименовать'
     })
-    expect(items.find((i) => i.id === 'remote-control')?.disabledReason).toContain('терминале')
+    expect(items.find((i) => i.id === 'remote-control')?.disabledReason).toBeUndefined()
   })
 
   test('второй шаг /model — модели сессии, имя и описание', () => {
@@ -143,5 +149,18 @@ describe('строки списка', () => {
     expect(effortItems(MODELS, 'claude-opus-5', '')).toHaveLength(5)
     // A model the session did not describe offers every level.
     expect(effortItems([], null, '')).toHaveLength(5)
+  })
+})
+
+describe('bareRemoteToggle', () => {
+  test('/remote-control и /rc, с пробелами и с аргументом', () => {
+    expect(bareRemoteToggle('/rc ')).toBe(true)
+    expect(bareRemoteToggle('  /remote-control')).toBe(true)
+    expect(bareRemoteToggle('/remote-control мой')).toBe(true)
+  })
+  test('чужие имена и обычный текст — нет', () => {
+    expect(bareRemoteToggle('/rcx')).toBe(false)
+    expect(bareRemoteToggle('/remote-controlx')).toBe(false)
+    expect(bareRemoteToggle('привет /rc')).toBe(false)
   })
 })

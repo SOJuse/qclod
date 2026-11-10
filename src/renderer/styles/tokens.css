@@ -29,6 +29,10 @@
   /* For a control in a strip or a scrolling list that would clip a ring drawn outside it. */
   --focus-offset-inset: calc(-1 * var(--focus-ring-width));
 
+  /* QR code: a scanner needs dark modules on a light field, so the sheet stays light in the dark UI. */
+  --qr-paper: #f4f5fa;
+  --qr-ink: #0b0e1f;
+
   /* Radii by hierarchy: a path in text, a chip, a control, a sheet. */
   --radius-hair: 3px;
   --radius-sm: 4px;

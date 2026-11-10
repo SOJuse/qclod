@@ -25,6 +25,7 @@ const sent: UserInput[] = []
 const overrides: LaunchOverrides[] = []
 const defaults: LaunchOverrides[] = []
 const models: string[] = []
+const remoteCalls: Array<[boolean, string | undefined]> = []
 const resolved: string[][] = []
 
 function call(channel: string, ...args: unknown[]): unknown {
@@ -35,7 +36,7 @@ beforeEach(() => {
   handlers.clear()
   mode = 'default'
   sendAnswer = true
-  for (const list of [sent, overrides, defaults, models, resolved]) list.length = 0
+  for (const list of [sent, overrides, defaults, models, resolved, remoteCalls]) list.length = 0
   const session = {
     get panel() {
       return { permissionMode: mode }
@@ -45,12 +46,15 @@ beforeEach(() => {
     },
     setModel: async (model: string) => {
       models.push(model)
+    },
+    setRemote: async (enabled: boolean, name?: string) => {
+      remoteCalls.push([enabled, name])
     }
   }
   registerAgentIpc({
     getWindow: () => null,
     controller: {
-      list: () => [{ id: 't1', cwd: USER_DATA }],
+      list: () => [{ id: 't1', cwd: USER_DATA, title: 'проект' }],
       send: (_id: string, input: UserInput) => {
         sent.push(input)
         return sendAnswer
@@ -99,6 +103,15 @@ describe('agent:* каналы', () => {
     expect(models).toEqual([])
     await call(CHANNELS.agentModel, 't1', 'claude-opus-5')
     expect(models).toEqual(['claude-opus-5'])
+  })
+
+  test('agent:remote принимает только id-строку и boolean', async () => {
+    await call(CHANNELS.agentRemote, 't1', 'yes')
+    await call(CHANNELS.agentRemote, 1, true)
+    await call(CHANNELS.agentRemote, 'нет-такой', true)
+    expect(remoteCalls).toEqual([])
+    await call(CHANNELS.agentRemote, 't1', true)
+    expect(remoteCalls).toEqual([[true, 'проект']])
   })
 
   test('огромный список путей обрезается до разбора', async () => {

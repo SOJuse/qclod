@@ -116,6 +116,25 @@
   }
 }
 
+/* Remote Control: a small phone after the title, in the bridge's colour. */
+.tab-remote {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.tab-remote[data-state='on'] {
+  color: var(--ok);
+}
+
+.tab-remote[data-state='connecting'],
+.tab-remote[data-state='reconnecting'] {
+  color: var(--warn);
+}
+
+.tab-remote[data-state='failed'] {
+  color: var(--danger);
+}
+
 .tab-badge {
   width: 5px;
   height: 5px;

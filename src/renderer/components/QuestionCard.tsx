@@ -104,6 +104,7 @@ export function QuestionCard({ item, onAnswer }: Props): JSX.Element {
           Ответить
         </button>
       )}
+      {item.elsewhere && <div className="row-question-done">ответили с телефона или claude.ai</div>}
     </div>
   )
 }

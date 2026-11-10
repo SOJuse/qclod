@@ -42,6 +42,18 @@
   line-height: var(--leading-prose);
 }
 
+/* A message typed on the phone or claude.ai: the same bubble, one quiet line above. */
+.row-user-from {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  cursor: default;
+}
+
 .row-user-files {
   margin-top: 8px;
   display: flex;
@@ -342,6 +354,12 @@
   cursor: pointer;
 }
 
+.row-question-done {
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
 .row-question-submit:disabled {
   border-color: var(--border);
   color: var(--text-dim);
@@ -419,6 +437,11 @@
 
 .row-notice-action:hover {
   border-color: var(--border-accent);
+}
+
+.row-notice-error {
+  margin-top: var(--space-2);
+  color: var(--danger);
 }
 
 /* The conversation is text people copy out of; the chrome around it is not. */

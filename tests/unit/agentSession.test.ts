@@ -9,10 +9,12 @@ import { PermissionBroker } from '../../src/main/agent/permissions'
 import type {
   PanelData,
   PermissionRequest,
+  RemoteInfo,
   RibbonChange,
   RibbonItem,
   SessionStatus
 } from '../../src/shared/types'
+import { REMOTE_BLOCK_TEXT } from '../../src/shared/remote'
 
 type FakeScript = Parameters<typeof createFakeSdk>[0]
 
@@ -1414,6 +1416,33 @@ describe('AgentSession: панель полна до первого сообще
     await session.dispose()
   })
 
+  test('сохранённое усилие уходит раньше первого сообщения из очереди', async () => {
+    const { session, driver } = makeSession({ steps: [] }, { overrides: { effort: 'high' } })
+    const order: string[] = []
+    const d = driver as unknown as {
+      setEffort: (e: string) => Promise<void>
+      send: (...args: unknown[]) => unknown
+    }
+    const setEffort = d.setEffort.bind(driver)
+    const send = d.send.bind(driver)
+    d.setEffort = (e) => {
+      order.push(`effort:${e}`)
+      return setEffort(e)
+    }
+    d.send = (...args) => {
+      order.push('send')
+      return send(...args)
+    }
+
+    const started = session.start()
+    expect(session.send({ text: 'привет', attachments: [] })).toBe(true)
+    await started
+
+    await vi.waitFor(() => expect(order).toContain('send'))
+    expect(order.slice(0, 2)).toEqual(['effort:high', 'send'])
+    await session.dispose()
+  })
+
   test('отказ драйвера применить сохранённое усилие не попадает в панель и виден заметкой', async () => {
     const { session, driver } = makeSession({ steps: [] }, { overrides: { effort: 'high' } })
     const rec = watch(session)
@@ -2006,6 +2035,471 @@ describe('AgentSession: очередь сообщений', () => {
     await vi.waitFor(() => expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два']), { timeout: 3000 })
     await settle(session)
     await session.dispose()
+  })
+})
+
+/** Lets queued background work (availability, bridge messages) land. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+async function until(check: () => boolean, timeout = 3000): Promise<void> {
+  await vi.waitFor(() => expect(check()).toBe(true), { timeout })
+}
+
+/** A message typed on the phone, the way the CLI echoes it into the stream. */
+function phoneEcho(text: string): unknown {
+  return {
+    type: 'user',
+    uuid: `phone-${text}`,
+    session_id: 'fake',
+    parent_tool_use_id: null,
+    message: { role: 'user', content: text }
+  }
+}
+
+describe('AgentSession: Remote Control', () => {
+  test('включение: подключается → на связи со ссылкой, имя уходит в CLI', async () => {
+    const { session, driver } = makeSession()
+    const seen: RemoteInfo[] = []
+    session.onRemote((i) => seen.push(i))
+    await session.start()
+    await session.setRemote(true, 'Qclod — проект')
+    expect(seen.map((i) => i.state)).toEqual(['connecting', 'on'])
+    expect(session.remote.url).toBe('https://claude.ai/code/session_fake0001')
+    expect(driver.remoteCalls).toEqual([{ enabled: true, name: 'Qclod — проект' }])
+    // The bridge's own «connected» right after changes nothing.
+    await flush()
+    expect(seen.map((i) => i.state)).toEqual(['connecting', 'on'])
+    await session.dispose()
+  })
+
+  test('onRemote возвращает отписку', async () => {
+    const { session } = makeSession()
+    const seen: RemoteInfo[] = []
+    const stop = session.onRemote((i) => seen.push(i))
+    stop()
+    await session.start()
+    await session.setRemote(true)
+    expect(seen).toEqual([])
+    await session.dispose()
+  })
+
+  test('повторное включение во время подключения не шлёт второй запрос', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    await Promise.all([session.setRemote(true), session.setRemote(true)])
+    expect(driver.remoteCalls).toHaveLength(1)
+    expect(session.remote.state).toBe('on')
+    // Already live: a third click asks nothing either.
+    await session.setRemote(true)
+    expect(driver.remoteCalls).toHaveLength(1)
+    await session.dispose()
+  })
+
+  test('выключение и тут же включение из «нет связи» оставляют мост включённым', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    await session.setRemote(true)
+    session.handle({
+      type: 'system',
+      subtype: 'bridge_state',
+      state: 'failed',
+      detail: null,
+      failure_kind: 'terminal',
+      bridge_epoch: 1,
+      uuid: 'u',
+      session_id: 's'
+    } as never)
+    expect(session.remote.state).toBe('failed')
+    await Promise.all([session.setRemote(false), session.setRemote(true)])
+    expect(driver.remoteCalls.map((c) => c.enabled)).toEqual([true, false, true])
+    expect(session.remote.state).toBe('on')
+    expect(session.remote.url).toBeTruthy()
+    await session.dispose()
+  })
+
+  test('выключение и тут же включение из «на связи» заканчиваются включённым мостом', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    await session.setRemote(true)
+    await Promise.all([session.setRemote(false), session.setRemote(true)])
+    expect(driver.remoteCalls.map((c) => c.enabled)).toEqual([true, false, true])
+    expect(session.remote.state).toBe('on')
+    expect(session.remote.url).toBeTruthy()
+    await session.dispose()
+  })
+
+  test('два включения за одним выключением шлют один запрос', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    await session.setRemote(true)
+    await Promise.all([session.setRemote(false), session.setRemote(true), session.setRemote(true)])
+    expect(driver.remoteCalls.map((c) => c.enabled)).toEqual([true, false, true])
+    expect(session.remote.state).toBe('on')
+    await session.dispose()
+  })
+
+  test('мост, ответивший раньше включения, не теряет ссылку', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    const real = driver.setRemoteControl.bind(driver)
+    driver.setRemoteControl = async (enabled: boolean, name?: string) => {
+      const link = await real(enabled, name)
+      session.handle({ type: 'system', subtype: 'bridge_state', state: 'connected' })
+      return link
+    }
+    await session.setRemote(true)
+    expect(session.remote).toEqual({ state: 'on', url: 'https://claude.ai/code/session_fake0001' })
+    await session.dispose()
+  })
+
+  test('выключение во время подключения выполняется после ответа на включение', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    const enabling = session.setRemote(true)
+    expect(session.remote.state).toBe('connecting')
+    await session.setRemote(false)
+    await enabling
+    expect(driver.remoteCalls).toEqual([{ enabled: true }, { enabled: false }])
+    expect(session.remote).toEqual({ state: 'off' })
+    await flush()
+    expect(session.remote).toEqual({ state: 'off' })
+    await session.dispose()
+  })
+
+  test('выключение во время неудачного подключения ничего не выключает', async () => {
+    const { session, driver } = makeSession({ remoteControl: { enableError: 'boom' } })
+    await session.start()
+    const enabling = session.setRemote(true)
+    await session.setRemote(false)
+    await enabling
+    expect(driver.remoteCalls).toEqual([{ enabled: true }])
+    expect(session.remote.state).toBe('off')
+    await session.dispose()
+  })
+
+  test('выключение: off и worker_shutting_down не включает обратно', async () => {
+    const { session, driver } = makeSession()
+    const seen: RemoteInfo[] = []
+    session.onRemote((i) => seen.push(i))
+    await session.start()
+    await session.setRemote(true)
+    await session.setRemote(false)
+    expect(session.remote).toEqual({ state: 'off' })
+    expect(driver.remoteCalls[1]).toEqual({ enabled: false })
+    await flush()
+    expect(session.remote).toEqual({ state: 'off' })
+    expect(seen.map((i) => i.state)).toEqual(['connecting', 'on', 'off'])
+    // Off stays off: a second «выключить» asks the CLI nothing.
+    await session.setRemote(false)
+    expect(driver.remoteCalls).toHaveLength(2)
+    await session.dispose()
+  })
+
+  test('ошибка выключения — состояние прежнее, причина в problem', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    await session.setRemote(true)
+    // The bridge's «connected» lands first; a later bridge state would clear the problem.
+    await flush()
+    const real = driver.setRemoteControl.bind(driver)
+    driver.setRemoteControl = async (enabled: boolean, name?: string) => {
+      if (!enabled) throw new Error('нет ответа')
+      return real(enabled, name)
+    }
+    await session.setRemote(false)
+    expect(session.remote).toEqual({
+      state: 'on',
+      url: 'https://claude.ai/code/session_fake0001',
+      problem: 'Не удалось выключить Remote Control: нет ответа'
+    })
+    driver.setRemoteControl = real
+    await session.dispose()
+  })
+
+  test('API-ключ: кнопка заблокирована, CLI не зовётся', async () => {
+    const { session, driver } = makeSession({ remoteControl: { blocked: 'api_key' } })
+    await session.start()
+    await flush()
+    expect(session.remote).toEqual({ state: 'off', blocked: 'api_key' })
+    await session.setRemote(true)
+    expect(driver.remoteCalls).toEqual([])
+    await session.dispose()
+  })
+
+  test('проверка доступности, которая падает, не роняет сессию', async () => {
+    const { session, driver } = makeSession()
+    driver.remoteAvailability = async () => {
+      throw new Error('нет')
+    }
+    await session.start()
+    await flush()
+    expect(session.remote).toEqual({ state: 'off' })
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('без драйвера включение ничего не делает', async () => {
+    const { session, driver } = makeSession()
+    await session.setRemote(true)
+    expect(driver.remoteCalls).toEqual([])
+    expect(session.remote).toEqual({ state: 'off' })
+  })
+
+  test('ошибка включения — причина в состоянии и заметка в ленте', async () => {
+    const { session } = makeSession({
+      remoteControl: { enableError: 'Remote Control requires a claude.ai subscription' }
+    })
+    const rec = watch(session)
+    await session.start()
+    await session.setRemote(true)
+    expect(session.remote).toMatchObject({ state: 'off', problem: REMOTE_BLOCK_TEXT.api_key })
+    expect(rec.items.some((i) => i.kind === 'notice' && i.text === REMOTE_BLOCK_TEXT.api_key)).toBe(true)
+    await session.dispose()
+  })
+
+  test('мост упал — нет связи и заметка', async () => {
+    const { session } = makeSession({
+      remoteControl: { bridge: [{ state: 'connected' }, { state: 'failed', detail: 'таймаут', afterMs: 10 }] }
+    })
+    const rec = watch(session)
+    await session.start()
+    await session.setRemote(true)
+    await until(() => session.remote.state === 'failed')
+    expect(session.remote.problem).toBe('Связь с claude.ai потеряна. таймаут')
+    expect(
+      rec.items.some((i) => i.kind === 'notice' && i.text === 'Связь с claude.ai потеряна. таймаут')
+    ).toBe(true)
+    // The button can turn it on again.
+    await session.setRemote(true)
+    expect(session.remote.state).toBe('on')
+    await session.dispose()
+  })
+
+  test('сообщение с телефона — пузырь с пометкой, вкладка работает, затем простаивает', async () => {
+    const { session, driver } = makeSession()
+    const rec = watch(session)
+    await session.start()
+    await session.setRemote(true)
+    driver.typeOnPhone('с телефона', [{ kind: 'text', text: 'ответ' }])
+    await until(() => rec.statuses.includes('busy') && session.status === 'idle')
+    expect(rec.items.find((i) => i.kind === 'user')).toMatchObject({ text: 'с телефона', remote: true })
+    expect(texts(rec.items)).toContain('ответ')
+    await session.dispose()
+  })
+
+  test('сообщение с телефона во время хода не открывает второй ход', async () => {
+    const { session } = makeSession({
+      nextTurn: [
+        { kind: 'thinking', text: 'думаю', ms: 200 },
+        { kind: 'text', text: 'готово' }
+      ]
+    })
+    const rec = watch(session)
+    await session.start()
+    await session.setRemote(true)
+    session.send({ text: 'из Qclod', attachments: [] })
+    // The fake plays a phone turn only between turns, so the CLI's echo of
+    // one typed mid-turn is fed in directly.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(session.status).toBe('busy')
+    session.handle(phoneEcho('с телефона'))
+    expect(rec.items.find((i) => i.kind === 'user' && i.text === 'с телефона')).toMatchObject({ remote: true })
+    expect(session.status).toBe('busy')
+    await until(() => session.status === 'idle')
+    // One «работает» from the first send to the very end, never twice.
+    expect(rec.statuses.filter((s) => s === 'busy')).toHaveLength(1)
+    await session.dispose()
+  })
+
+  test('сообщение с телефона во время хода не мешает «Стоп» отменить вопрос', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker } = makeBrokerFor(sessions)
+    const { session } = brokeredSession(broker, sessions, {
+      nextTurn: [{ kind: 'askPermission', name: 'Bash', input: { command: 'ls' } }]
+    })
+    const rec = watch(session)
+    await session.start()
+    await session.setRemote(true)
+    session.send({ text: 'запусти', attachments: [] })
+    await until(() => session.status === 'waiting')
+    session.handle(phoneEcho('с телефона'))
+    expect(session.status).toBe('waiting')
+    await session.interrupt()
+    expect(session.status).toBe('idle')
+    expect(rec.items.find((i) => i.kind === 'permission')).toMatchObject({ state: 'denied' })
+    await session.dispose()
+  })
+
+  test('разрешение, отвеченное с телефона, закрывается как elsewhere', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker } = makeBrokerFor(sessions)
+    const { session } = brokeredSession(broker, sessions, {
+      nextTurn: [{ kind: 'remoteAnswer', name: 'Bash', input: { command: 'ls' }, decision: 'allow' }]
+    })
+    const rec = watch(session)
+    await session.start()
+    await session.setRemote(true)
+    session.send({ text: 'запусти', attachments: [] })
+    await settle(session)
+    expect(rec.items.find((i) => i.kind === 'permission')).toMatchObject({ state: 'elsewhere' })
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('поздний ответ из Qclod после ответа с телефона игнорируется', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const saveRules = vi.fn()
+    const asked: PermissionRequest[] = []
+    const broker = new PermissionBroker({
+      loadRules: () => [],
+      saveRules,
+      ask: (request) => {
+        asked.push(request)
+        sessions.get(request.tabId)?.showPermissionCard(request.requestId, request.toolName, request.target)
+      }
+    })
+    const { session, driver } = brokeredSession(broker, sessions, {
+      nextTurn: [{ kind: 'remoteAnswer', name: 'Bash', input: { command: 'rm -rf x' }, decision: 'deny' }]
+    })
+    const rec = watch(session)
+    await session.start()
+    await session.setRemote(true)
+    session.send({ text: 'запусти', attachments: [] })
+    await settle(session)
+
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', remember: true })
+    await tick()
+
+    expect(saveRules).not.toHaveBeenCalled()
+    expect(driver.executedTools).not.toContain('Bash')
+    expect(rec.items.find((i) => i.kind === 'permission')).toMatchObject({ state: 'elsewhere' })
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('ответ из Qclod, пришедший после аборта, не меняет карточку elsewhere', async () => {
+    const holder: { session?: AgentSession } = {}
+    const { session } = makeSession(
+      { nextTurn: [{ kind: 'remoteAnswer', name: 'Bash', input: { command: 'ls' }, decision: 'allow' }] },
+      {
+        askPermission: (r, signal) => {
+          holder.session?.showPermissionCard(r.requestId, r.toolName, r.target)
+          return new Promise((resolve) =>
+            signal.addEventListener('abort', () => setTimeout(() => resolve({ behavior: 'allow' }), 100))
+          )
+        }
+      }
+    )
+    holder.session = session
+    const rec = watch(session)
+    await session.start()
+    await session.setRemote(true)
+    session.send({ text: 'запусти', attachments: [] })
+    await until(() => rec.items.find((i) => i.kind === 'permission')?.state === 'elsewhere')
+    await settle(session)
+    expect(rec.items.find((i) => i.kind === 'permission')).toMatchObject({ state: 'elsewhere' })
+    await session.dispose()
+  })
+
+  test('без моста аборт SDK — по-прежнему denied', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker } = makeBrokerFor(sessions)
+    const { session } = brokeredSession(broker, sessions, {
+      nextTurn: [{ kind: 'remoteAnswer', name: 'Bash', input: { command: 'ls' }, decision: 'deny' }]
+    })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'запусти', attachments: [] })
+    await settle(session)
+    expect(rec.items.find((i) => i.kind === 'permission')).toMatchObject({ state: 'denied' })
+    await session.dispose()
+  })
+
+  test('план, решённый с телефона, закрывается как elsewhere', async () => {
+    const { session } = makeSession(
+      {
+        init: { permissionMode: 'plan' },
+        nextTurn: [
+          { kind: 'remoteAnswer', name: 'ExitPlanMode', input: { plan: 'сделать всё' }, decision: 'deny' }
+        ]
+      },
+      { overrides: { permissionMode: 'plan' } }
+    )
+    const rec = watch(session)
+    await session.start()
+    await session.setRemote(true)
+    session.send({ text: 'спланируй', attachments: [] })
+    await settle(session)
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({ state: 'elsewhere' })
+    await session.dispose()
+  })
+
+  test('вопрос, отвеченный с телефона, закрывается как elsewhere', async () => {
+    const { session } = makeSession({
+      nextTurn: [
+        {
+          kind: 'remoteAnswer',
+          name: 'AskUserQuestion',
+          input: { questions: [{ question: 'Куда?', options: [{ label: 'туда' }] }] },
+          decision: 'deny'
+        }
+      ]
+    })
+    const rec = watch(session)
+    await session.start()
+    await session.setRemote(true)
+    session.send({ text: 'спроси', attachments: [] })
+    await settle(session)
+    expect(rec.items.find((i) => i.kind === 'question')).toMatchObject({ answers: {}, elsewhere: true })
+    await session.dispose()
+  })
+
+  test('падение агента гасит мост', async () => {
+    const { session } = makeSession({ nextTurn: [{ kind: 'crash', message: 'агент умер' }] })
+    const seen: RemoteInfo[] = []
+    session.onRemote((i) => seen.push(i))
+    await session.start()
+    await session.setRemote(true)
+    session.send({ text: 'раз', attachments: [] })
+    await until(() => session.status === 'error')
+    expect(session.remote).toEqual({ state: 'off' })
+    expect(seen.at(-1)).toEqual({ state: 'off' })
+  })
+
+  test('закрытие вкладки с живым мостом сначала выключает его', async () => {
+    const { session, driver } = makeSession()
+    const order: number[] = []
+    const realDispose = driver.dispose.bind(driver)
+    driver.dispose = async () => {
+      order.push(driver.remoteCalls.length)
+      return realDispose()
+    }
+    await session.start()
+    await session.setRemote(true)
+    await session.dispose()
+    expect(driver.remoteCalls.at(-1)).toEqual({ enabled: false })
+    // The bridge was off before the driver was closed.
+    expect(order).toEqual([2])
+  })
+
+  test('выключение моста, которое не отвечает, не держит закрытие дольше секунды', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    await session.setRemote(true)
+    driver.setRemoteControl = () => new Promise(() => undefined)
+    const started = Date.now()
+    await session.dispose()
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(session.status).toBe('stopped')
+  })
+
+  test('закрытие вкладки без моста ничего не выключает', async () => {
+    const { session, driver } = makeSession()
+    await session.start()
+    await session.dispose()
+    expect(driver.remoteCalls).toEqual([])
   })
 })
 

@@ -22,6 +22,11 @@ describe('ipc channel contract', () => {
     for (const name of INVOKE_CHANNELS) expect(events.has(name)).toBe(false)
   })
 
+  test('Remote Control — invoke-канал agent:remote', () => {
+    expect(CHANNELS.agentRemote).toBe('agent:remote')
+    expect(INVOKE_CHANNELS).toContain('agent:remote')
+  })
+
   test('«Повторить» вкладки — invoke-канал tabs:retry', () => {
     expect(CHANNELS.tabsRetry).toBe('tabs:retry')
     expect(INVOKE_CHANNELS).toContain('tabs:retry')

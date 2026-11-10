@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { checkEnvironment } from './setup/environment'
-import { detectInstallMethod, installAgent, type InstallHandle } from './setup/install'
+import { detectInstallMethod, installAgent, InstallSlot } from './setup/install'
 import { CHANNELS } from '../shared/channels'
 import type { AppSettings } from '../shared/types'
 
@@ -18,7 +18,7 @@ export interface BaseIpcDeps {
 export function registerBaseIpc(deps: BaseIpcDeps): void {
   const { getWindow } = deps
   /** The install running right now, if any — only one at a time. */
-  let install: InstallHandle | null = null
+  const install = new InstallSlot()
 
   ipcMain.handle(CHANNELS.appVersion, () => app.getVersion())
   ipcMain.handle(CHANNELS.settingsGet, () => deps.getSettings())
@@ -35,32 +35,29 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
 
   ipcMain.handle(CHANNELS.setupInstall, async () => {
     const win = getWindow()
-    const method = await detectInstallMethod()
-    if (!method) {
-      win?.webContents.send(
-        CHANNELS.setupOutput,
-        'Не нашёл, чем установить: нужен либо winget (есть в Windows 10 и 11), либо Node.js.'
-      )
-      return false
+    const say = (line: string): void => {
+      if (win && !win.isDestroyed()) win.webContents.send(CHANNELS.setupOutput, line)
     }
 
-    return new Promise<boolean>((resolve) => {
-      install = installAgent(
-        method,
-        (line) => {
-          if (win && !win.isDestroyed()) win.webContents.send(CHANNELS.setupOutput, line)
-        },
-        (ok) => {
-          install = null
-          resolve(ok)
-        }
-      )
+    const running = install.start(async (done) => {
+      // Inside begin, so two quick clicks cannot both get past the detection.
+      const method = await detectInstallMethod()
+      if (!method) {
+        say('Не нашёл, чем установить: нужен либо winget (есть в Windows 10 и 11), либо Node.js.')
+        done(false)
+        return { cancel: () => undefined }
+      }
+      return installAgent(method, say, done)
     })
+    if (!running) {
+      say('Установка уже идёт.')
+      return false
+    }
+    return running
   })
 
   ipcMain.handle(CHANNELS.setupCancel, () => {
-    install?.cancel()
-    install = null
+    install.cancel()
   })
 
   // Logging in happens in a terminal, so Qclod opens one rather than leaving

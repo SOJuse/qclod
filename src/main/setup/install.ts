@@ -1,7 +1,8 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { exec, execFile, spawn, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
+const runShell = promisify(exec)
 
 /** The official Windows package. Verified against the live winget source. */
 export const WINGET_ID = 'Anthropic.ClaudeCode'
@@ -26,11 +27,11 @@ export interface InstallHandle {
  */
 async function canRun(command: string): Promise<boolean> {
   try {
-    await run(command, ['--version'], {
-      timeout: 20000,
-      windowsHide: true,
-      shell: process.platform === 'win32'
-    })
+    const options = { timeout: 20000, windowsHide: true }
+    // The shell is needed on Windows only; building the line ourselves (the
+    // command is a constant of ours) avoids passing args to a shell.
+    if (process.platform === 'win32') await runShell(`${command} --version`, options)
+    else await run(command, ['--version'], options)
     return true
   } catch {
     return false
@@ -88,17 +89,60 @@ export function installAgent(
 ): InstallHandle {
   const plan = commandFor(method)
   onOutput(plan.label)
+  return runInstaller(plan.command, plan.args, onOutput, onDone)
+}
+
+function quoteArg(arg: string): string {
+  return /[s"&|<>^()]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg
+}
+
+/**
+ * With `shell: true` the child is cmd.exe; `child.kill()` ends only it while
+ * winget/npm keep running. taskkill /T takes the whole tree.
+ */
+function killTree(child: ChildProcess): void {
+  if (process.platform === 'win32' && child.pid !== undefined) {
+    try {
+      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }).on(
+        'error',
+        () => child.kill()
+      )
+      return
+    } catch {
+      /* fall through to a plain kill */
+    }
+  }
+  child.kill()
+}
+
+/**
+ * Runs an installer command and streams its output. `onDone` fires exactly
+ * once — a failed spawn can raise both `error` and `close`.
+ */
+export function runInstaller(
+  command: string,
+  args: string[],
+  onOutput: (line: string) => void,
+  onDone: (ok: boolean) => void
+): InstallHandle {
+  let finished = false
+  const finish = (ok: boolean): void => {
+    if (finished) return
+    finished = true
+    onDone(ok)
+  }
 
   let child: ChildProcess
   try {
-    child = spawn(plan.command, plan.args, {
-      windowsHide: true,
-      // Both winget (a Store alias) and npm (a .cmd) need the shell to resolve.
-      shell: process.platform === 'win32'
-    })
+    // Both winget (a Store alias) and npm (a .cmd) need the shell to resolve.
+    // The line is built here, so no args array is handed to a shell (DEP0190).
+    child =
+      process.platform === 'win32'
+        ? spawn([command, ...args.map(quoteArg)].join(' '), { windowsHide: true, shell: true })
+        : spawn(command, args, { windowsHide: true })
   } catch (error) {
     onOutput(error instanceof Error ? error.message : String(error))
-    onDone(false)
+    finish(false)
     return { cancel: () => undefined }
   }
 
@@ -107,7 +151,7 @@ export function installAgent(
     // bury the few lines that mean something.
     for (const line of chunk.toString('utf8').split(/\r?\n|\r/)) {
       const text = line.trim()
-      if (text !== '' && !/^[\s▒█▓░■\-\\|/]+$/.test(text)) onOutput(text)
+      if (text !== '' && !/^[\s▒█▓░■\-\|/]+$/.test(text)) onOutput(text)
     }
   }
 
@@ -116,17 +160,68 @@ export function installAgent(
 
   child.on('error', (error) => {
     onOutput(error.message)
-    onDone(false)
+    finish(false)
   })
 
   child.on('close', (code) => {
     onOutput(code === 0 ? 'Готово.' : `Установщик вышел с кодом ${code}.`)
-    onDone(code === 0)
+    finish(code === 0)
   })
 
   return {
     cancel: () => {
-      child.kill()
+      if (finished) return
+      onOutput('Отменено.')
+      killTree(child)
     }
+  }
+}
+
+export class InstallSlot {
+  private running = false
+  private handle: InstallHandle | null = null
+  private cancelRequested = false
+
+  get busy(): boolean {
+    return this.running
+  }
+
+  /**
+   * Takes the slot synchronously; null if an install is already running. The
+   * slot frees only when `done` is called — i.e. when the process is really
+   * gone — never on cancel.
+   */
+  start(
+    begin: (done: (ok: boolean) => void) => InstallHandle | Promise<InstallHandle>
+  ): Promise<boolean> | null {
+    if (this.running) return null
+    this.running = true
+    this.cancelRequested = false
+    return new Promise<boolean>((resolve) => {
+      let finished = false
+      const done = (ok: boolean): void => {
+        if (finished) return
+        finished = true
+        this.handle = null
+        this.running = false
+        resolve(ok)
+      }
+      const attach = (handle: InstallHandle): void => {
+        if (finished) return
+        this.handle = handle
+        if (this.cancelRequested) handle.cancel()
+      }
+      try {
+        Promise.resolve(begin(done)).then(attach, () => done(false))
+      } catch {
+        done(false)
+      }
+    })
+  }
+
+  cancel(): void {
+    if (!this.running) return
+    this.cancelRequested = true
+    this.handle?.cancel()
   }
 }

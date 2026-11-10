@@ -8,3 +8,4 @@ playwright-report/
 test-results/
 dist/
 build/icon.png
+dist-e2e/

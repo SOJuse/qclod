@@ -2,6 +2,8 @@ import { defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
 
 export default defineConfig({
+  // Unit tests exercise the seams, as the e2e build does (src/main/buildFlags.d.ts).
+  define: { __QCLOD_TEST_SEAMS__: 'true' },
   test: {
     globals: true,
     environment: 'node',

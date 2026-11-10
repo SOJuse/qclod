@@ -10,7 +10,10 @@ const exe = process.env['QCLOD_PACKAGED_EXE']
  * to catch problems that exist only after packaging: files missing from the
  * asar, and the SDK's own files being unreachable inside it.
  *
- * Enable with: QCLOD_PACKAGED_EXE=dist/win-unpacked/Qclod.exe
+ * It needs the fake SDK, so it runs against the e2e package, not the release
+ * one (a release build has no test seams):
+ *   npm run dist:e2e
+ *   QCLOD_PACKAGED_EXE=dist-e2e/win-unpacked/Qclod.exe npx playwright test packaged
  *
  * Task 16 extends this to a full round trip (send a message, read the ribbon)
  * once packaging is settled for the SDK.

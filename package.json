@@ -8,10 +8,13 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "build:e2e": "electron-vite build --mode e2e",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:unit": "vitest run",
-    "test:e2e": "npm run build && playwright test",
-    "dist": "npm run icon && npm run build && electron-builder --win --x64",
+    "test:e2e": "npm run build:e2e && playwright test",
+    "check:seams": "node scripts/check-release-seams.mjs",
+    "dist": "npm run icon && npm run build && npm run check:seams && electron-builder --win --x64",
+    "dist:e2e": "npm run icon && npm run build:e2e && electron-builder --win dir --x64 -c.directories.output=dist-e2e",
     "icon": "node scripts/make-icon.mjs"
   },
   "dependencies": {

@@ -172,9 +172,6 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     return controller.openHistory(tab.cwd, sessionId, isString(title) ? title : undefined)
   })
 
-  // A native file dialog cannot be driven from a test, so an e2e run answers
-  // it from the environment — the same kind of seam as QCLOD_FAKE_SDK, and
-  // never set in a real install.
   ipcMain.handle(CHANNELS.filesIndex, async (_e, id: unknown) => {
     if (!isString(id)) return []
     const tab = controller.list().find((t) => t.id === id)
@@ -182,8 +179,11 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     return buildFileIndex(tab.cwd)
   })
 
+  // A native file dialog cannot be driven from a test, so the e2e build
+  // answers it from the environment. A release build has no such branch
+  // (buildFlags.d.ts).
   ipcMain.handle(CHANNELS.dialogPickFolder, async () => {
-    const stubbed = process.env['QCLOD_PICK_FOLDER']
+    const stubbed = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_PICK_FOLDER'] : undefined
     if (stubbed) return stubbed
 
     const win = deps.getWindow()
@@ -193,7 +193,7 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   })
 
   ipcMain.handle(CHANNELS.dialogPickFiles, async () => {
-    const stubbed = process.env['QCLOD_PICK_FILES']
+    const stubbed = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_PICK_FILES'] : undefined
     if (stubbed) return stubbed.split(';').filter(Boolean)
 
     const win = deps.getWindow()

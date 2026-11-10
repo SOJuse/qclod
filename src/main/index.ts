@@ -32,10 +32,10 @@ let mainWindow: BrowserWindow | null = null
  */
 async function confirmBypass(win: BrowserWindow | null): Promise<boolean> {
   // An e2e run cannot click a native dialog, and a modal one would hang the
-  // run rather than fail it. Honoured only in a development build: a packaged
-  // install always shows the real dialog.
-  const stubbed = process.env['QCLOD_CONFIRM_BYPASS']
-  if (stubbed !== undefined && !app.isPackaged) return stubbed === 'allow'
+  // run rather than fail it. Honoured only in the e2e build: a release build
+  // has no such branch and always shows the real dialog (buildFlags.d.ts).
+  const stubbed = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_CONFIRM_BYPASS'] : undefined
+  if (stubbed !== undefined) return stubbed === 'allow'
   if (!win || win.isDestroyed()) return false
 
   const { response } = await dialog.showMessageBox(win, {
@@ -137,8 +137,10 @@ app.whenReady().then(async () => {
   // so a history test never touches anyone's real session files: a session
   // without scripted messages is read from a transcript only when the test
   // points CLAUDE_CONFIG_DIR at a folder of its own, never from ~/.claude.
-  const fakeHistory = process.env['QCLOD_FAKE_HISTORY']
-  const fake = process.env['QCLOD_FAKE_SDK']
+  // Only the e2e build has any of this (buildFlags.d.ts); the flag is repeated
+  // at each use so the release bundle drops every branch, not just the first.
+  const fakeHistory = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_HISTORY'] : undefined
+  const fake = (__QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_SDK'] : undefined)
     ? fakeHistory
       ? (JSON.parse(fakeHistory) as {
           sessions?: Array<Record<string, unknown>>
@@ -146,11 +148,12 @@ app.whenReady().then(async () => {
         })
       : {}
     : null
-  const history = fake
-    ? new SessionHistory({ listSessions: async () => (fake.sessions ?? []) as never })
-    : await import('./agent/sessionHistory').then((m) => m.createSessionHistory())
+  const history =
+    __QCLOD_TEST_SEAMS__ && fake
+      ? new SessionHistory({ listSessions: async () => (fake.sessions ?? []) as never })
+      : await import('./agent/sessionHistory').then((m) => m.createSessionHistory())
   const transcript = async (sessionId: string, cwd: string): Promise<unknown[]> => {
-    if (!fake) return loadTranscript(sessionId, cwd)
+    if (!__QCLOD_TEST_SEAMS__ || !fake) return loadTranscript(sessionId, cwd)
     const scripted = fake.messages?.[sessionId]
     if (scripted) return scripted
     return process.env['CLAUDE_CONFIG_DIR'] ? loadTranscript(sessionId, cwd) : []

@@ -40,6 +40,8 @@ export async function launchQclod(
   if (opts.script !== undefined) env['QCLOD_FAKE_SDK_SCRIPT'] = JSON.stringify(opts.script)
   env['QCLOD_FAKE_SDK'] = FAKE_SDK
   env['QCLOD_HEADLESS'] = '1'
+  // Off screen and never focused, so the machine stays usable during a run.
+  env['QCLOD_E2E_INVISIBLE'] = '1'
   env['QCLOD_USER_DATA'] = profile
 
   const app = await electron.launch({ args: [REPO_ROOT], env })

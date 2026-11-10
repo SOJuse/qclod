@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, Paperclip, Square, X } from 'lucide-react'
+import { ArrowUp, ImageOff, Paperclip, Square, X } from 'lucide-react'
 import type {
   Attachment,
   CommandInfo,
@@ -13,8 +13,11 @@ import {
   attachmentLabel,
   attachmentsFromClipboard,
   attachmentsFromDrop,
+  isPreparing,
   materialize,
-  type PendingAttachment
+  prepareAttachment,
+  type PendingAttachment,
+  type PendingImage
 } from '../input/attachments'
 import { applyMention, findMentionQuery } from '../input/mentions'
 import { InputHistory } from '../input/history'
@@ -68,9 +71,17 @@ interface Props {
   canRetry?: boolean
   onRetry: () => void
   onPickFiles: () => void
+  /** main has answered for a pasted image: its bounded copy, or an error. */
+  onImagePrepared: (file: File, patch: Pick<PendingImage, 'prepared' | 'error'>) => void
 }
 
 const MAX_MATCHES = 8
+
+/** A pasted image's chip carries its thumbnail; a failed one says so in colour and words. */
+function chipClass(item: PendingAttachment): string {
+  if (item.kind !== 'image') return 'composer-chip'
+  return `composer-chip is-image${item.error ? ' is-error' : ''}`
+}
 
 const COMMANDS_STEP: SlashStep = { kind: 'commands' }
 
@@ -149,7 +160,8 @@ export function Composer({
   onRestart,
   canRetry = false,
   onRetry,
-  onPickFiles
+  onPickFiles,
+  onImagePrepared
 }: Props): JSX.Element {
   const field = useRef<HTMLTextAreaElement | null>(null)
   const histories = useRef(new Map<string, InputHistory>())
@@ -258,9 +270,20 @@ export function Composer({
     (items: PendingAttachment[]) => {
       if (items.length === 0) return
       onAttachmentsChange([...attachments, ...items])
+      // An image is shown at once as «Готовлю снимок…»; main then scales it
+      // to what the API takes and the chip becomes its thumbnail.
+      for (const item of items) {
+        if (item.kind !== 'image' || !item.file || !isPreparing(item)) continue
+        const file = item.file
+        void prepareAttachment(item, window.qclod.prepareImage).then((patch) => onImagePrepared(file, patch))
+      }
     },
-    [attachments, onAttachmentsChange]
+    [attachments, onAttachmentsChange, onImagePrepared]
   )
+
+  /** Enter pressed while an image was still being prepared: send once it is. */
+  const [sendWhenReady, setSendWhenReady] = useState(false)
+  const preparing = attachments.some(isPreparing)
 
   const submit = useCallback(async (): Promise<void> => {
     // A bare «/model» is ours: it opens the list again rather than going to
@@ -278,12 +301,26 @@ export function Composer({
     }
     const text = draft.trim()
     if (!text && attachments.length === 0) return
-    const ready = await materialize(attachments)
+    if (attachments.some(isPreparing)) {
+      setSendWhenReady(true)
+      return
+    }
+    setSendWhenReady(false)
+    const ready = materialize(attachments)
+    // Nothing left to send: only a failed image, which stays to be seen.
+    if (!text && ready.length === 0) return
     history.push(draft)
     onDraftChange('')
     onAttachmentsChange([])
     onSubmit(text, ready)
   }, [draft, attachments, history, onDraftChange, onAttachmentsChange, onSubmit])
+
+  useEffect(() => {
+    if (sendWhenReady && !preparing) void submit()
+  }, [sendWhenReady, preparing, submit])
+
+  // A different tab's field does not inherit a send that was waiting here.
+  useEffect(() => setSendWhenReady(false), [tabId])
 
   function context(): ComposerContext {
     const el = field.current
@@ -450,13 +487,31 @@ export function Composer({
       {attachments.length > 0 && (
         <div className="composer-chips" data-testid="composer-chips">
           {attachments.map((item, index) => (
-            <span key={`${index}-${attachmentLabel(item)}`} className="composer-chip" data-testid="composer-chip">
-              {attachmentLabel(item)}
+            <span
+              key={`${index}-${item.kind === 'file' ? item.path : 'image'}`}
+              className={chipClass(item)}
+              data-testid="composer-chip"
+              title={attachmentLabel(item)}
+            >
+              {item.kind === 'image' && item.prepared ? (
+                <img
+                  className="composer-chip-thumb"
+                  data-testid="composer-chip-thumb"
+                  src={item.prepared.thumbnail}
+                  alt=""
+                />
+              ) : item.kind === 'image' && !item.error ? (
+                <span className="composer-chip-wait" aria-hidden="true" />
+              ) : null}
+              {item.kind === 'image' && item.error ? (
+                <ImageOff size={14} aria-hidden="true" />
+              ) : null}
+              <span className="composer-chip-label">{attachmentLabel(item)}</span>
               <button
                 type="button"
                 data-testid="composer-chip-remove"
-                aria-label={`Убрать ${attachmentLabel(item)}`}
-                title={`Убрать ${attachmentLabel(item)}`}
+                aria-label={item.kind === 'image' ? 'Убрать снимок' : `Убрать ${attachmentLabel(item)}`}
+                title={item.kind === 'image' ? 'Убрать снимок' : `Убрать ${attachmentLabel(item)}`}
                 onClick={() => onAttachmentsChange(attachments.filter((_, i) => i !== index))}
               >
                 <X size={12} aria-hidden="true" />

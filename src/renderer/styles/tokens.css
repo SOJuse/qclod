@@ -109,6 +109,11 @@
   --tool-chip-tint: 18%;
   --gap-hair: 2px;
   --radius-pill: 999px;
+  /* A pasted image: its thumbnail in the composer chip, and in the user's bubble. */
+  --thumb-chip-h: 36px;
+  --thumb-row-h: 96px;
+  --danger-fill: rgba(255, 122, 122, 0.1);
+  --danger-border: rgba(255, 122, 122, 0.45);
 
   --backdrop: rgba(6, 7, 14, 0.5);
   --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.55);

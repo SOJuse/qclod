@@ -19,6 +19,7 @@ import { mergeDefaults } from './tabs/sanitize'
 import { notifyIfNeeded, shouldRaiseWindowForPermission } from './notifications'
 import { RendererOutbox } from './rendererOutbox'
 import { PathResolver } from './files/pathResolver'
+import { cleanupPasteDir } from './files/imagePaste'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -79,6 +80,8 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
+  // Old screenshots go before new ones are added.
+  cleanupPasteDir(userData)
 
   const outbox = new RendererOutbox((channel, payload) => {
     const win = mainWindow
@@ -241,6 +244,7 @@ app.whenReady().then(async () => {
     broker,
     resolver: new PathResolver(),
     getEditorCommand: () => settings.editorCommand,
+    userData,
     rememberDefault: (patch) => {
       settings = mergeDefaults(settings, { defaults: patch })
       saveSettings(userData, settings)

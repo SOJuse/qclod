@@ -10,6 +10,7 @@ import type {
   PanelSnapshot,
   PermissionAnswer,
   PersistedTab,
+  PreparedImage,
   ResolvedPath,
   RibbonEvent,
   RibbonSnapshot,
@@ -94,6 +95,9 @@ const api = {
     ipcRenderer.invoke(CHANNELS.filesOpen, tabId, absPath),
   revealPath: (tabId: TabId, absPath: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.filesReveal, tabId, absPath),
+  /** A pasted image made fit to send: bounded, with a thumbnail and a copy on disk. */
+  prepareImage: (dataBase64: string, mediaType: string): Promise<PreparedImage | { error: string }> =>
+    ipcRenderer.invoke(CHANNELS.filesPrepareImage, dataBase64, mediaType),
   /** null when the editor started; otherwise a message to show (the template needs fixing). */
   openInEditor: (
     tabId: TabId,

@@ -27,6 +27,7 @@
  *   finish?:{status:'completed'|'failed'|'stopped', summary:string, tokens:number, toolUses:number, durationMs:number}|null}} BackgroundAgentStep
  * @typedef {{kind:'compact', preTokens:number, postTokens:number, trigger?:'auto'|'manual'}} CompactStep
  * @typedef {{kind:'crash', message:string}} CrashStep
+ * @typedef {{kind:'reportInput'}} ReportInputStep
  */
 
 import { randomUUID } from 'node:crypto'
@@ -565,6 +566,19 @@ export function createFakeSdk(script = {}) {
 
         case 'crash':
           throw new Error(step.message)
+
+        // What the last send carried, as the agent would count it: the
+        // images that arrived as content, their types and decoded size.
+        case 'reportInput': {
+          const last = state.sent[state.sent.length - 1]
+          const images = (last?.attachments ?? []).filter((a) => a.kind === 'image')
+          const types = [...new Set(images.map((a) => a.mediaType))].join(', ')
+          const bytes = images.reduce((sum, a) => sum + Buffer.from(a.dataBase64, 'base64').length, 0)
+          yield assistant([
+            { type: 'text', text: `картинок: ${images.length}; типы: ${types}; байт: ${bytes}` }
+          ])
+          break
+        }
 
         default:
           throw new Error(`unknown step kind: ${step.kind}`)

@@ -9,8 +9,13 @@ import {
   utimesSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { cleanupPasteDir, PASTE_DIR_NAME, saveImageBuffer } from '@main/files/imagePaste'
+import { basename, join } from 'node:path'
+import {
+  cleanupPasteDir,
+  isInsidePasteDir,
+  PASTE_DIR_NAME,
+  saveImageBuffer
+} from '@main/files/imagePaste'
 
 let userData: string
 
@@ -48,6 +53,12 @@ describe('saveImageBuffer', () => {
     const second = saveImageBuffer(userData, Buffer.from([2]))
     expect(first).not.toBe(second)
     expect(readdirSync(pasteDir())).toHaveLength(2)
+  })
+
+  test('JPEG сохраняется с расширением .jpg', () => {
+    const path = saveImageBuffer(userData, Buffer.from([0xff, 0xd8]), 'jpg')
+    expect(path?.endsWith('.jpg')).toBe(true)
+    expect(existsSync(path as string)).toBe(true)
   })
 
   test('пустой буфер не сохраняется', () => {
@@ -89,5 +100,33 @@ describe('cleanupPasteDir', () => {
     const kept = agedFile('keep.png', 1, 100)
     cleanupPasteDir(userData, { maxAgeDays: 7, maxBytes: 1_000_000 })
     expect(existsSync(kept)).toBe(true)
+  })
+})
+
+describe('isInsidePasteDir', () => {
+  test('isInsidePasteDir: внутри — да, соседняя папка с похожим именем — нет', () => {
+    const saved = saveImageBuffer(userData, Buffer.from([1])) as string
+    expect(isInsidePasteDir(userData, saved)).toBe(true)
+    // The same name in a folder whose name only starts like ours.
+    const twin = join(userData, `${PASTE_DIR_NAME}-evil`)
+    mkdirSync(twin, { recursive: true })
+    const lookalike = join(twin, basename(saved))
+    writeFileSync(lookalike, Buffer.from([1]))
+    expect(isInsidePasteDir(userData, lookalike)).toBe(false)
+  })
+
+  test('путь с .. наружу, чужой файл и папка не проходят', () => {
+    const saved = saveImageBuffer(userData, Buffer.from([1])) as string
+    writeFileSync(join(userData, 'paste-1-deadbeef.png'), Buffer.from([1]))
+    expect(isInsidePasteDir(userData, join(pasteDir(), '..', 'paste-1-deadbeef.png'))).toBe(false)
+    // Something else put in the folder is not ours to open.
+    writeFileSync(join(pasteDir(), 'run.exe'), Buffer.from([1]))
+    expect(isInsidePasteDir(userData, join(pasteDir(), 'run.exe'))).toBe(false)
+    // Neither is the folder itself, a name that is not there, or a relative path.
+    expect(isInsidePasteDir(userData, pasteDir())).toBe(false)
+    expect(isInsidePasteDir(userData, join(pasteDir(), 'paste-1-deadbeef.png'))).toBe(false)
+    expect(isInsidePasteDir(userData, basename(saved))).toBe(false)
+    // Windows paths are case-insensitive: the same file in other case is still ours.
+    expect(isInsidePasteDir(userData, saved.toUpperCase().replace(/\.PNG$/, '.png'))).toBe(true)
   })
 })

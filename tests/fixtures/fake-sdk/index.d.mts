@@ -34,6 +34,8 @@ export type FakeStep =
   | FakeBackgroundAgentStep
   | { kind: 'compact'; preTokens: number; postTokens: number; trigger?: 'auto' | 'manual' }
   | { kind: 'crash'; message: string }
+  /** Says «картинок: N; типы: …; байт: M» about the images of the last send. */
+  | { kind: 'reportInput' }
 
 /** An Agent call with run_in_background; its progress and notification come after the turn. */
 export interface FakeBackgroundAgentStep {

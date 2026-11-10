@@ -1,4 +1,4 @@
-import type { PendingAttachment } from '../input/attachments'
+import type { PendingAttachment, PendingImage } from '../input/attachments'
 
 /**
  * What a reloaded window gets back (Ctrl+R): drafts, attachments by path, the
@@ -6,8 +6,10 @@ import type { PendingAttachment } from '../input/attachments'
  * reload and goes with the window, and a closed tab's entry is dropped when
  * the store forgets the tab.
  *
- * Only paths and text are kept. A pasted image has no file on disk and its
- * bytes are not written anywhere, so it does not come back.
+ * Only paths and text are kept. A pasted image comes back by its copy in
+ * userData/pastes: its thumbnail and path, without the bytes, which main reads
+ * from that file when the message goes. One still being prepared, or one that
+ * failed, does not come back.
  */
 export const UI_KEY = 'qclod.ui'
 
@@ -25,8 +27,12 @@ export function serializeUi(state: PersistedUi): string {
   for (const [id, text] of Object.entries(state.draftByTab)) if (text !== '') draftByTab[id] = text
   const attachmentsByTab: Record<string, PendingAttachment[]> = {}
   for (const [id, items] of Object.entries(state.attachmentsByTab)) {
-    const files = items.filter((item) => item.kind === 'file')
-    if (files.length > 0) attachmentsByTab[id] = files
+    const kept: PendingAttachment[] = []
+    for (const item of items) {
+      if (item.kind === 'file') kept.push(item)
+      else if (item.prepared) kept.push(restorable(item.prepared))
+    }
+    if (kept.length > 0) attachmentsByTab[id] = kept
   }
   return JSON.stringify({
     draftByTab,
@@ -38,6 +44,29 @@ export function serializeUi(state: PersistedUi): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** A prepared image as it is kept: everything but the bytes. */
+function restorable(prepared: NonNullable<PendingImage['prepared']>): PendingImage {
+  return {
+    kind: 'image',
+    mediaType: prepared.mediaType,
+    prepared: { ...prepared, dataBase64: '' }
+  }
+}
+
+function isSide(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+}
+
+function restoredImage(item: Record<string, unknown>): PendingImage | null {
+  const p = item['prepared']
+  if (!isRecord(p)) return null
+  const { mediaType, path, thumbnail, width, height } = p
+  if (typeof mediaType !== 'string' || typeof path !== 'string' || path === '') return null
+  if (typeof thumbnail !== 'string' || !thumbnail.startsWith('data:image/')) return null
+  if (!isSide(width) || !isSide(height)) return null
+  return restorable({ mediaType, path, thumbnail, width, height, dataBase64: '' })
 }
 
 export function loadUi(storage: Pick<Storage, 'getItem'> | null): PersistedUi {
@@ -55,11 +84,17 @@ export function loadUi(storage: Pick<Storage, 'getItem'> | null): PersistedUi {
     if (isRecord(parsed['attachmentsByTab'])) {
       for (const [id, items] of Object.entries(parsed['attachmentsByTab'])) {
         if (!Array.isArray(items)) continue
-        const files = items.filter(
-          (item): item is { kind: 'file'; path: string } =>
-            isRecord(item) && item['kind'] === 'file' && typeof item['path'] === 'string'
-        )
-        if (files.length > 0) out.attachmentsByTab[id] = files.map((f) => ({ kind: 'file', path: f.path }))
+        const kept: PendingAttachment[] = []
+        for (const item of items) {
+          if (!isRecord(item)) continue
+          if (item['kind'] === 'file' && typeof item['path'] === 'string') {
+            kept.push({ kind: 'file', path: item['path'] })
+          } else if (item['kind'] === 'image') {
+            const image = restoredImage(item)
+            if (image) kept.push(image)
+          }
+        }
+        if (kept.length > 0) out.attachmentsByTab[id] = kept
       }
     }
     if (typeof parsed['splitTabId'] === 'string') out.splitTabId = parsed['splitTabId']

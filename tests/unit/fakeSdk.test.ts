@@ -835,3 +835,22 @@ describe('createFakeSdk: структурный выход инструмент�
     expect(wholeId).toBe(startId)
   })
 })
+
+describe('createFakeSdk: reportInput', () => {
+  test('говорит, сколько картинок, каких типов и байт пришло в последнем send', async () => {
+    const driver = createFakeSdk({ steps: [], nextTurn: [{ kind: 'reportInput' }] })
+    driver.send({
+      text: 'смотри',
+      attachments: [
+        { kind: 'image', mediaType: 'image/png', dataBase64: Buffer.alloc(10).toString('base64') },
+        { kind: 'file', path: 'C:/a.ts' },
+        { kind: 'image', mediaType: 'image/jpeg', dataBase64: Buffer.alloc(5).toString('base64') }
+      ]
+    })
+    const said = (await collect(driver))
+      .filter((m) => m['type'] === 'assistant')
+      .flatMap((m) => (m['message'] as { content: Array<{ text?: string }> }).content)
+      .map((b) => b.text)
+    expect(said).toEqual(['картинок: 2; типы: image/png, image/jpeg; байт: 15'])
+  })
+})

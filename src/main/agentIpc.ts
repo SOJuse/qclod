@@ -1,4 +1,5 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { readFileSync } from 'node:fs'
 import { CHANNELS } from '../shared/channels'
 import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
 import type {
@@ -6,11 +7,14 @@ import type {
   LaunchOverrides,
   PanelSnapshot,
   RibbonSnapshot,
-  TabId
+  TabId,
+  UserInput
 } from '../shared/types'
 import { buildFileIndex } from './files/fileIndex'
 import type { PathResolver } from './files/pathResolver'
 import { openInEditor, openPath, revealPath } from './files/fileActions'
+import { isInsidePasteDir } from './files/imagePaste'
+import { prepareImage } from './files/prepareImage'
 import type { TabController } from './tabs/TabController'
 import { EMPTY_PANEL } from './agent/panelData'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
@@ -34,6 +38,8 @@ export interface AgentIpcDeps {
   resolver: PathResolver
   /** The user's editor template; empty means no editor. */
   getEditorCommand: () => string
+  /** The app's own folder: pasted images are kept in its pastes. */
+  userData: string
 }
 
 function isString(value: unknown): value is string {
@@ -42,6 +48,33 @@ function isString(value: unknown): value is string {
 
 /** No path in a chat is this long; a longer string is not worth a stat. */
 const MAX_RAW_LENGTH = 1024
+
+/** Base64 of a picture worth trying to read; a larger paste is not a screenshot. */
+const MAX_PASTE_BASE64 = 80_000_000
+
+/**
+ * A restored draft's image carries only the path of its pasted copy; the bytes
+ * are read here, from a path sanitizeInput has already checked is ours. One
+ * that cannot be read is dropped rather than sent empty.
+ */
+function withPastedBytes(input: UserInput): UserInput {
+  const attachments: UserInput['attachments'] = []
+  for (const a of input.attachments) {
+    if (a.kind !== 'image' || a.dataBase64 !== '') {
+      attachments.push(a)
+      continue
+    }
+    if (!a.path) continue
+    try {
+      const dataBase64 = readFileSync(a.path).toString('base64')
+      const mediaType = a.path.toLowerCase().endsWith('.jpg') ? 'image/jpeg' : 'image/png'
+      if (dataBase64 !== '') attachments.push({ ...a, mediaType, dataBase64 })
+    } catch {
+      /* cleaned up meanwhile */
+    }
+  }
+  return { ...input, attachments }
+}
 
 function lineNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 10_000_000
@@ -99,7 +132,7 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!isString(id)) return
     const session = manager.get(id)
     if (!session) return
-    session.send(sanitizeInput(input))
+    session.send(withPastedBytes(sanitizeInput(input, deps.userData)))
   })
 
   ipcMain.handle(CHANNELS.agentInterrupt, async (_e, id: unknown) => {
@@ -240,14 +273,38 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     controller.list().some((t) => t.id === id) &&
     deps.resolver.knows(absPath, id)
 
+  // Open and show also take one of the app's own pasted images (a thumbnail
+  // in the chat): never found in any tab's text, but written by main itself.
+  // Only a file directly in userData/pastes under our own name passes (C10).
+  const mayShow = (id: unknown, absPath: unknown): absPath is string =>
+    mayAct(id, absPath) ||
+    (isString(id) &&
+      isString(absPath) &&
+      controller.list().some((t) => t.id === id) &&
+      isInsidePasteDir(deps.userData, absPath))
+
   ipcMain.handle(CHANNELS.filesOpen, async (_e, id: unknown, absPath: unknown) => {
-    if (!mayAct(id, absPath)) return null
+    if (!mayShow(id, absPath)) return null
     return openPath(absPath)
   })
 
   ipcMain.handle(CHANNELS.filesReveal, (_e, id: unknown, absPath: unknown) => {
-    if (!mayAct(id, absPath)) return
+    if (!mayShow(id, absPath)) return
     revealPath(absPath)
+  })
+
+  // A pasted image, bounded to what the API takes, with a thumbnail and a copy
+  // in userData/pastes.
+  ipcMain.handle(CHANNELS.filesPrepareImage, (_e, dataBase64: unknown, mediaType: unknown) => {
+    if (!isString(dataBase64) || !isString(mediaType) || dataBase64 === '') {
+      return { error: 'Не похоже на картинку' }
+    }
+    if (dataBase64.length > MAX_PASTE_BASE64) return { error: 'Картинка слишком большая' }
+    try {
+      return prepareImage(deps.userData, dataBase64, mediaType)
+    } catch {
+      return { error: 'Не получилось прочитать картинку' }
+    }
   })
 
   ipcMain.handle(

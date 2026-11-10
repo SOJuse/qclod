@@ -22,8 +22,30 @@ export type PermissionMode =
 
 /** What the user attached to a message. */
 export type Attachment =
-  | { kind: 'image'; mediaType: string; dataBase64: string }
+  | {
+      kind: 'image'
+      mediaType: string
+      /** Empty when `path` stands for it: main reads the bytes from the pasted file. */
+      dataBase64: string
+      /** The copy kept in userData/pastes; a click on the thumbnail opens it. */
+      path?: string
+      /** A small `data:image/…` picture for the chip and the bubble. */
+      thumbnail?: string
+      width?: number
+      height?: number
+    }
   | { kind: 'file'; path: string }
+
+/** A pasted image after main has read, bounded and saved it. */
+export interface PreparedImage {
+  mediaType: string
+  dataBase64: string
+  thumbnail: string
+  /** In userData/pastes. */
+  path: string
+  width: number
+  height: number
+}
 
 export interface UserInput {
   text: string

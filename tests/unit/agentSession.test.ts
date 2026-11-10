@@ -716,6 +716,27 @@ describe('AgentSession: сообщение с вложением', () => {
     expect(users[0]!.attachments).toHaveLength(1)
   })
 
+  test('картинка с миниатюрой: агенту — байты, в ленте — только миниатюра', async () => {
+    const { session, driver } = makeSession({ steps: [], nextTurn: [] })
+    const rec = watch(session)
+    await session.start()
+    await settle(session)
+
+    const image = {
+      kind: 'image' as const,
+      mediaType: 'image/png',
+      dataBase64: 'БАЙТЫ',
+      thumbnail: 'data:image/png;base64,AA',
+      path: 'C:/ud/pastes/paste-1-abcdef01.png'
+    }
+    session.send({ text: 'смотри', attachments: [image] })
+    await settle(session)
+
+    expect(driver.sent[0]!.attachments).toEqual([image])
+    const user = rec.items.find((i) => i.kind === 'user') as { attachments: unknown[] }
+    expect(user.attachments).toEqual([{ ...image, dataBase64: '' }])
+  })
+
   test('эхо составленного сообщения не показывается вторым разом', async () => {
     const { session } = makeSession({ steps: [], nextTurn: [] })
     const rec = watch(session)

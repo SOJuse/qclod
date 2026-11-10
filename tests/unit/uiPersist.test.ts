@@ -38,6 +38,26 @@ describe('uiPersist', () => {
     expect(text).not.toContain('image/png')
   })
 
+  test('подготовленная картинка возвращается по копии в pastes, без самих байт', () => {
+    const prepared = {
+      mediaType: 'image/jpeg',
+      dataBase64: 'ОЧЕНЬ-ДЛИННЫЕ-БАЙТЫ',
+      thumbnail: 'data:image/png;base64,AA',
+      path: 'C:/ud/pastes/paste-1-abcdef01.jpg',
+      width: 2000,
+      height: 1333
+    }
+    const image = { kind: 'image' as const, mediaType: 'image/png', file: new Blob(['x']) as File, prepared }
+    const text = serializeUi({ draftByTab: {}, attachmentsByTab: { a: [image] }, splitTabId: null, activeTabId: '' })
+    expect(text).not.toContain('ОЧЕНЬ-ДЛИННЫЕ-БАЙТЫ')
+    expect(loadUi(memory({ 'qclod.ui': text })).attachmentsByTab).toEqual({
+      a: [{ kind: 'image', mediaType: 'image/jpeg', prepared: { ...prepared, dataBase64: '' } }]
+    })
+    // A stored thumbnail that is not an inline picture is not shown.
+    const forged = text.replace('data:image/png;base64,AA', 'https://evil/x.png')
+    expect(loadUi(memory({ 'qclod.ui': forged })).attachmentsByTab).toEqual({})
+  })
+
   test('пустое или битое хранилище — чистое состояние', () => {
     for (const raw of [undefined, '', '{', '[1]', '{"draftByTab":5}']) {
       const back = loadUi(memory(raw === undefined ? {} : { 'qclod.ui': raw }))

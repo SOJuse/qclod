@@ -41,6 +41,64 @@
   background: var(--border);
 }
 
+.composer-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A pasted image: the picture leads, its size is the caption. A rounded
+   rectangle rather than a pill, since it holds a picture. */
+.composer-chip.is-image {
+  padding: var(--gap-hair) var(--space-1) var(--gap-hair) var(--gap-hair);
+  border-radius: var(--radius-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-chip-thumb,
+.composer-chip-wait {
+  display: block;
+  height: var(--thumb-chip-h);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.composer-chip-thumb {
+  width: auto;
+  max-width: calc(var(--thumb-chip-h) * 2);
+  object-fit: cover;
+  background: var(--surface-sunken);
+}
+
+.composer-chip-wait {
+  width: var(--thumb-chip-h);
+  background: var(--surface-sunken);
+  animation: composer-chip-wait 1.2s var(--ease) infinite alternate;
+}
+
+@keyframes composer-chip-wait {
+  from { opacity: 0.4; }
+  to { opacity: 1; }
+}
+
+.composer-chip.is-error {
+  padding-left: var(--space-2);
+  border-color: var(--danger-border);
+  background: var(--danger-fill);
+  color: var(--text);
+}
+
+.composer-chip.is-error > svg {
+  color: var(--danger);
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-chip-wait {
+    animation: none;
+  }
+}
+
 .composer-row {
   display: flex;
   align-items: flex-end;

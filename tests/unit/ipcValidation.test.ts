@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { saveImageBuffer } from '@main/files/imagePaste'
 import type { AppSettings } from '@shared/types'
 import {
   mergeDefaults,
@@ -230,5 +234,39 @@ describe('mergeDefaults', () => {
 
   test('патч без defaults оставляет умолчания как были', () => {
     expect(mergeDefaults(base, { soundEnabled: false }).defaults).toEqual(base.defaults)
+  })
+})
+
+describe('sanitizeInput: вставленные картинки', () => {
+  test('миниатюра только data:image и не длиннее предела; path только из pastes', () => {
+    const userData = mkdtempSync(join(tmpdir(), 'qclod-sanitize-'))
+    try {
+      const saved = saveImageBuffer(userData, Buffer.from([1])) as string
+      const image = { kind: 'image', mediaType: 'image/png', dataBase64: 'AAAA' }
+      const out = sanitizeInput(
+        {
+          text: '',
+          attachments: [
+            { ...image, path: saved, thumbnail: 'data:image/png;base64,AA', width: 2000, height: 1333 },
+            { ...image, path: 'C:/Windows/notepad.exe', thumbnail: 'javascript:alert(1)' },
+            { ...image, thumbnail: `data:image/png;base64,${'A'.repeat(200_001)}` },
+            { ...image, path: join(userData, 'pastes', '..', 'x.png'), width: -1, height: 1.5 }
+          ]
+        },
+        userData
+      )
+      expect(out.attachments).toEqual([
+        { ...image, path: saved, thumbnail: 'data:image/png;base64,AA', width: 2000, height: 1333 },
+        image,
+        image,
+        image
+      ])
+      // Without the app's folder no path can be checked, so none passes.
+      expect(sanitizeInput({ text: '', attachments: [{ ...image, path: saved }] }).attachments).toEqual([
+        image
+      ])
+    } finally {
+      rmSync(userData, { recursive: true, force: true })
+    }
   })
 })

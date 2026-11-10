@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { Brain } from 'lucide-react'
+import { Brain, Image as ImageIcon } from 'lucide-react'
 import { seconds } from '../../shared/format'
-import type { RibbonItem as Item } from '../../shared/types'
+import type { Attachment, RibbonItem as Item } from '../../shared/types'
 import { PermissionCard } from './PermissionCard'
 import { PlanCard } from './PlanCard'
 import { QuestionCard } from './QuestionCard'
@@ -53,6 +53,38 @@ export function NoticeRow({ item }: { item: Extract<Item, { kind: 'notice' }> })
   )
 }
 
+type ImageAttachment = Extract<Attachment, { kind: 'image' }>
+
+/**
+ * A picture the user sent, as a thumbnail. One with a copy in userData/pastes
+ * opens in the default viewer on click; one from an older session has only
+ * its bytes and is just shown.
+ */
+function UserImage({ image, tabId }: { image: ImageAttachment; tabId: string }): JSX.Element {
+  const src = image.thumbnail ?? (image.dataBase64 ? `data:${image.mediaType};base64,${image.dataBase64}` : '')
+  const size = image.width && image.height ? ` ${image.width}×${image.height}` : ''
+  const picture = src ? <img src={src} alt={`Снимок${size}`} /> : <ImageIcon size={20} aria-hidden="true" />
+  const path = image.path
+  if (!path) {
+    return (
+      <span className="row-user-image" data-testid="row-user-image" title={`Снимок${size}`}>
+        {picture}
+      </span>
+    )
+  }
+  return (
+    <button
+      type="button"
+      className="row-user-image is-openable"
+      data-testid="row-user-image"
+      title={`Открыть снимок${size}`}
+      onClick={() => void window.qclod.openPath(tabId, path)}
+    >
+      {picture}
+    </button>
+  )
+}
+
 /**
  * One row of the conversation.
  *
@@ -95,13 +127,22 @@ export function RibbonRow({
         return (
           <div className="row-user">
             <div className="row-user-text">{item.text}</div>
-            {item.attachments.length > 0 && (
+            {item.attachments.some((a) => a.kind === 'image') && (
+              <div className="row-user-images">
+                {item.attachments.map((a, i) =>
+                  a.kind === 'image' ? <UserImage key={i} image={a} tabId={tabId} /> : null
+                )}
+              </div>
+            )}
+            {item.attachments.some((a) => a.kind === 'file') && (
               <div className="row-user-files">
-                {item.attachments.map((a, i) => (
-                  <span key={i} className="row-chip">
-                    {a.kind === 'file' ? a.path.split(/[\\/]/).pop() : 'изображение'}
-                  </span>
-                ))}
+                {item.attachments.map((a, i) =>
+                  a.kind === 'file' ? (
+                    <span key={i} className="row-chip">
+                      {a.path.split(/[\\/]/).pop()}
+                    </span>
+                  ) : null
+                )}
               </div>
             )}
           </div>

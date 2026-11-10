@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'vitest'
-import { attachmentsFromClipboard, attachmentsFromDrop } from '../../src/renderer/input/attachments'
+import {
+  attachmentLabel,
+  attachmentsFromClipboard,
+  attachmentsFromDrop,
+  isPreparing,
+  materialize,
+  prepareAttachment,
+  type PendingAttachment
+} from '../../src/renderer/input/attachments'
 
 /** Stands in for a File without needing a DOM one. */
 function file(name: string, type = ''): File {
@@ -118,5 +126,48 @@ describe('attachmentsFromDrop', () => {
 
   test('пустой список даёт пустой результат', () => {
     expect(attachmentsFromDrop([], () => null)).toEqual([])
+  })
+})
+
+describe('вставленная картинка до отправки', () => {
+  const prepared = {
+    mediaType: 'image/jpeg',
+    dataBase64: 'AAAA',
+    thumbnail: 'data:image/png;base64,AA',
+    path: 'C:/ud/pastes/paste-1-abcdef01.jpg',
+    width: 2000,
+    height: 1333
+  }
+
+  test('уходит такой, какой её подготовил main; с ошибкой или неготовая — не уходит', () => {
+    const pending: PendingAttachment[] = [
+      { kind: 'image', mediaType: 'image/png', prepared },
+      { kind: 'image', mediaType: 'image/png', error: 'Не похоже на картинку' },
+      { kind: 'image', mediaType: 'image/png' },
+      { kind: 'file', path: 'C:/p/a.ts' }
+    ]
+    expect(materialize(pending)).toEqual([
+      { kind: 'image', ...prepared },
+      { kind: 'file', path: 'C:/p/a.ts' }
+    ])
+    expect(pending.map(isPreparing)).toEqual([false, false, true, false])
+  })
+
+  test('плашка называет размер снимка, ошибку или ожидание', () => {
+    expect(attachmentLabel({ kind: 'image', mediaType: 'image/png', prepared })).toBe('Снимок 2000×1333')
+    expect(attachmentLabel({ kind: 'image', mediaType: 'image/png', error: 'Картинка слишком большая' })).toBe(
+      'Картинка слишком большая'
+    )
+    expect(attachmentLabel({ kind: 'image', mediaType: 'image/png' })).toBe('Готовлю снимок…')
+  })
+
+  test('картинка без файла не готовится: ошибка, main не спрашивается', async () => {
+    let asked = false
+    const out = await prepareAttachment({ kind: 'image', mediaType: 'image/png' }, async () => {
+      asked = true
+      return prepared
+    })
+    expect(out).toEqual({ error: 'Не получилось прочитать картинку' })
+    expect(asked).toBe(false)
   })
 })

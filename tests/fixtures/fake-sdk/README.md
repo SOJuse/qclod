@@ -62,6 +62,7 @@ for await (const message of driver.messages) { /* ... */ }
 | `backgroundAgent` | вызов `Agent` с `run_in_background: true`; `tool_result` «Async agent launched successfully.» с `tool_use_result.status: async_launched`; `system/task_started`. **После `result` этого хода** — по `system/task_progress` на каждый элемент `progress`, затем (если `finish` не `null`) `system/task_notification` и сообщение пользователя с `origin.kind: task-notification` и текстом `<task-notification>…`. `pauseMs` — пауза между событиями; `agentId` по умолчанию — `a` и 16 hex. Порядок «после `result`» — решение C2 (тест видит, что ход кончился, а агент ещё работает); ответного хода главного агента на уведомление фейк не играет |
 | `compact` | `compact_boundary` с токенами до и после |
 | `crash` | бросает ошибку посреди потока |
+| `reportInput` | текст агента «картинок: N; типы: image/png; байт: M» по последнему `send`: сколько вложений-картинок пришло, их `mediaType` через запятую и сумма байт после декодирования base64 — чтобы e2e видел, что картинка дошла настоящим вложением |
 
 ## Что можно проверить после прогона
 

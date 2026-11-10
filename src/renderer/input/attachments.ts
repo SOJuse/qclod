@@ -1,12 +1,23 @@
-import type { Attachment } from '../../shared/types'
+import type { Attachment, PreparedImage } from '../../shared/types'
 
 /**
- * An attachment before it is read: either a path on disk, or a file whose
- * bytes still have to be loaded.
+ * An image before it is sent. It comes as a `file` from the clipboard; main
+ * then bounds it and saves a copy (`prepared`), or says why it cannot
+ * (`error`). A restored draft has only `prepared`, without the bytes.
  */
-export type PendingAttachment =
-  | { kind: 'file'; path: string }
-  | { kind: 'image'; mediaType: string; file: File }
+export interface PendingImage {
+  kind: 'image'
+  mediaType: string
+  file?: File
+  prepared?: PreparedImage
+  error?: string
+}
+
+/** An attachment before it is sent: a path on disk, or an image. */
+export type PendingAttachment = { kind: 'file'; path: string } | PendingImage
+
+/** main's answer for an image: the bounded copy, or why there is none. */
+export type PrepareImage = (dataBase64: string, mediaType: string) => Promise<PreparedImage | { error: string }>
 
 /** Electron's webUtils, as the preload bridge exposes it. */
 export type ResolvePath = (file: File) => string | null
@@ -72,16 +83,54 @@ export function attachmentsFromDrop(
   return out
 }
 
-/** Reads the bytes of anything that has to travel as content. */
-export async function materialize(pending: PendingAttachment[]): Promise<Attachment[]> {
+/** An image main has not answered for yet: the message waits for it. */
+export function isPreparing(item: PendingAttachment): boolean {
+  return item.kind === 'image' && item.prepared === undefined && item.error === undefined
+}
+
+/**
+ * Hands a pasted image to main, which scales a large screenshot down to what
+ * the API accepts, makes the thumbnail and keeps a copy in userData/pastes.
+ */
+export async function prepareAttachment(
+  item: PendingImage,
+  prepare: PrepareImage
+): Promise<Pick<PendingImage, 'prepared' | 'error'>> {
+  const unreadable = { error: 'Не получилось прочитать картинку' }
+  if (!item.file) return unreadable
+  const dataBase64 = await readAsBase64(item.file)
+  if (!dataBase64) return unreadable
+  try {
+    const out = await prepare(dataBase64, item.mediaType)
+    return 'error' in out ? { error: out.error } : { prepared: out }
+  } catch {
+    return unreadable
+  }
+}
+
+/**
+ * What goes to main. An image goes as main prepared it; one with an error, or
+ * still being prepared, does not go at all. A restored image has no bytes in
+ * the window: its path stands for them and main reads the file.
+ */
+export function materialize(pending: PendingAttachment[]): Attachment[] {
   const out: Attachment[] = []
   for (const item of pending) {
     if (item.kind === 'file') {
       out.push({ kind: 'file', path: item.path })
       continue
     }
-    const dataBase64 = await readAsBase64(item.file)
-    if (dataBase64) out.push({ kind: 'image', mediaType: item.mediaType, dataBase64 })
+    const prepared = item.prepared
+    if (!prepared) continue
+    out.push({
+      kind: 'image',
+      mediaType: prepared.mediaType,
+      dataBase64: prepared.dataBase64,
+      path: prepared.path,
+      thumbnail: prepared.thumbnail,
+      width: prepared.width,
+      height: prepared.height
+    })
   }
   return out
 }
@@ -100,6 +149,9 @@ function readAsBase64(file: File): Promise<string> {
 
 /** What the chip in the composer says. */
 export function attachmentLabel(item: PendingAttachment): string {
-  if (item.kind === 'image') return item.file.name || 'изображение'
+  if (item.kind === 'image') {
+    if (item.prepared) return `Снимок ${item.prepared.width}×${item.prepared.height}`
+    return item.error ?? 'Готовлю снимок…'
+  }
   return item.path.split(/[\\/]/).pop() ?? item.path
 }

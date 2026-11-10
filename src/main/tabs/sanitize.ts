@@ -2,6 +2,7 @@ import {
   EFFORT_LEVELS,
   PERMISSION_MODES,
   type AppSettings,
+  type Attachment,
   type EffortLevel,
   type LaunchOverrides,
   type PermissionAnswer,
@@ -9,6 +10,7 @@ import {
   type TabState,
   type UserInput
 } from '../../shared/types'
+import { isInsidePasteDir } from '../files/imagePaste'
 
 const MAX_TITLE = 200
 const OVERRIDE_KEYS = ['model', 'permissionMode', 'extraFlags', 'effort'] as const
@@ -114,8 +116,21 @@ export function sanitizeTabPatch(value: unknown): Partial<TabState> {
   return patch
 }
 
-/** A message from the renderer is text plus attachments, and nothing else. */
-export function sanitizeInput(value: unknown): UserInput {
+/** A thumbnail is a small picture, inline; anything longer is not one. */
+const MAX_THUMBNAIL = 200_000
+
+function isSide(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 100_000
+}
+
+/**
+ * A message from the renderer is text plus attachments, and nothing else.
+ *
+ * An image may carry a thumbnail (only an inline `data:image/` picture) and
+ * the path of its copy, kept only when it is one of the app's own pasted files
+ * in `userData`: that path is opened later from the chat.
+ */
+export function sanitizeInput(value: unknown, userData?: string): UserInput {
   if (typeof value !== 'object' || value === null) return { text: '', attachments: [] }
   const input = value as Record<string, unknown>
   const text = isString(input['text']) ? input['text'] : ''
@@ -131,11 +146,23 @@ export function sanitizeInput(value: unknown): UserInput {
       isString(attachment['mediaType']) &&
       isString(attachment['dataBase64'])
     ) {
-      attachments.push({
+      const image: Extract<Attachment, { kind: 'image' }> = {
         kind: 'image',
         mediaType: attachment['mediaType'],
         dataBase64: attachment['dataBase64']
-      })
+      }
+      const { path, thumbnail, width, height } = attachment
+      if (isString(path) && userData !== undefined && isInsidePasteDir(userData, path)) {
+        image.path = path
+      }
+      if (isString(thumbnail) && thumbnail.startsWith('data:image/') && thumbnail.length <= MAX_THUMBNAIL) {
+        image.thumbnail = thumbnail
+      }
+      if (isSide(width) && isSide(height)) {
+        image.width = width
+        image.height = height
+      }
+      attachments.push(image)
     }
   }
   return { text, attachments }

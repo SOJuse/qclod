@@ -45,6 +45,7 @@ export const CHANNELS = Object.freeze({
   filesOpen: 'files:open',
   filesReveal: 'files:reveal',
   filesOpenInEditor: 'files:openInEditor',
+  filesPrepareImage: 'files:prepareImage',
 
   windowMinimize: 'window:minimize',
   windowMaximize: 'window:maximize',
@@ -105,6 +106,7 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.filesOpen,
   CHANNELS.filesReveal,
   CHANNELS.filesOpenInEditor,
+  CHANNELS.filesPrepareImage,
   CHANNELS.windowMinimize,
   CHANNELS.windowMaximize,
   CHANNELS.windowClose,

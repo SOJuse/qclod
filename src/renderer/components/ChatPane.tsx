@@ -183,6 +183,14 @@ export function ChatPane({
             .then(() => window.qclod.panel(tabId))
             .then((snapshot) => useAppStore.getState().setPanelSnapshot(tabId, snapshot))
         }}
+        onImagePrepared={(file, patch) =>
+          setAttachments(
+            tabId,
+            (useAppStore.getState().attachmentsByTab[tabId] ?? []).map((item) =>
+              item.kind === 'image' && item.file === file ? { ...item, ...patch } : item
+            )
+          )
+        }
         onPickFiles={() => {
           void window.qclod.pickFiles().then((paths) => {
             if (paths.length === 0) return

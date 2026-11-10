@@ -15,6 +15,7 @@ vi.mock('electron', () => ({
 import { registerAgentIpc, type AgentIpcDeps } from '@main/agentIpc'
 import { PathResolver } from '@main/files/pathResolver'
 import { CHANNELS } from '@shared/channels'
+import { saveImageBuffer } from '@main/files/imagePaste'
 
 type Log = Array<{ action: string; path: string; line?: number }>
 const g = globalThis as { __qclodShellLog?: Log }
@@ -23,6 +24,8 @@ const CWD = realpathSync.native(mkdtempSync(join(tmpdir(), 'qclod-ipc-')))
 mkdirSync(join(CWD, 'src'))
 const A = join(CWD, 'src', 'a.ts')
 writeFileSync(A, '')
+/** The app's own folder; pasted images live in its pastes. */
+const USER_DATA = realpathSync.native(mkdtempSync(join(tmpdir(), 'qclod-ud-')))
 let editorCommand = ''
 
 function setup(): void {
@@ -40,7 +43,8 @@ function setup(): void {
     broker: { cancelTab: () => undefined },
     rememberDefault: () => undefined,
     resolver: new PathResolver(),
-    getEditorCommand: () => editorCommand
+    getEditorCommand: () => editorCommand,
+    userData: USER_DATA
   } as unknown as AgentIpcDeps)
 }
 
@@ -118,5 +122,70 @@ describe('files:* каналы', () => {
     await call(CHANNELS.filesResolve, 't1', ['src/a.ts'])
     await call(CHANNELS.tabsClose, 't1')
     expect(await call(CHANNELS.filesOpen, 't1', A)).toBeNull()
+  })
+
+  test('вставленную картинку из pastes можно открыть и показать без resolve, а редактор — нет', async () => {
+    const pasted = saveImageBuffer(USER_DATA, Buffer.from([1])) as string
+    expect(await call(CHANNELS.filesOpen, 't1', pasted)).toBe('opened')
+    await call(CHANNELS.filesReveal, 't1', pasted)
+    editorCommand = 'code -g {path}'
+    expect(await call(CHANNELS.filesOpenInEditor, 't1', pasted)).toBeNull()
+    expect(g.__qclodShellLog).toEqual([
+      { action: 'open', path: pasted },
+      { action: 'reveal', path: pasted }
+    ])
+  })
+
+  test('исключение pastes не пускает ни соседей, ни выход через ..', async () => {
+    mkdirSync(join(USER_DATA, 'pastes-x'), { recursive: true })
+    const twin = join(USER_DATA, 'pastes-x', 'paste-1-deadbeef.png')
+    writeFileSync(twin, '')
+    expect(await call(CHANNELS.filesOpen, 't1', twin)).toBeNull()
+    expect(await call(CHANNELS.filesOpen, 't1', join(USER_DATA, 'pastes', '..', 'pastes-x', 'paste-1-deadbeef.png'))).toBeNull()
+    // Nor a tab that does not exist.
+    const pasted = saveImageBuffer(USER_DATA, Buffer.from([1])) as string
+    expect(await call(CHANNELS.filesOpen, 'чужая', pasted)).toBeNull()
+    expect(g.__qclodShellLog).toEqual([])
+  })
+})
+
+describe('agent:send и files:prepareImage', () => {
+  test('восстановленная картинка без байт уходит с байтами своей копии; чужой путь — не уходит', async () => {
+    const sent: unknown[] = []
+    handlers.clear()
+    registerAgentIpc({
+      getWindow: () => null,
+      controller: { list: () => [{ id: 't1', cwd: CWD }] },
+      manager: { get: () => ({ send: (input: unknown) => sent.push(input) }) },
+      broker: {},
+      rememberDefault: () => undefined,
+      resolver: new PathResolver(),
+      getEditorCommand: () => '',
+      userData: USER_DATA
+    } as unknown as AgentIpcDeps)
+
+    const pasted = saveImageBuffer(USER_DATA, Buffer.from([1, 2, 3]), 'jpg') as string
+    await call(CHANNELS.agentSend, 't1', {
+      text: 'вот',
+      attachments: [
+        { kind: 'image', mediaType: 'image/png', dataBase64: '', path: pasted },
+        { kind: 'image', mediaType: 'image/png', dataBase64: '', path: A }
+      ]
+    })
+    expect(sent).toEqual([
+      {
+        text: 'вот',
+        attachments: [{ kind: 'image', mediaType: 'image/jpeg', dataBase64: 'AQID', path: pasted }]
+      }
+    ])
+  })
+
+  test('prepareImage: не строка и не картинка — понятная ошибка, а не исключение', async () => {
+    expect(await call(CHANNELS.filesPrepareImage, 42, 'image/png')).toEqual({ error: 'Не похоже на картинку' })
+    expect(await call(CHANNELS.filesPrepareImage, '', 'image/png')).toEqual({ error: 'Не похоже на картинку' })
+    // The electron mock has no nativeImage: a failure inside is answered, not thrown.
+    expect(await call(CHANNELS.filesPrepareImage, 'AAAA', 'image/png')).toEqual({
+      error: 'Не получилось прочитать картинку'
+    })
   })
 })

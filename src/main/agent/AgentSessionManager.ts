@@ -7,7 +7,7 @@ export interface AgentSessionManagerOptions {
   getAgentPath: () => string
   resolveAgent?: (requested: string) => string
   createDriver: DriverFactory
-  askPermission: (request: PermissionRequest) => Promise<PermissionAnswer>
+  askPermission: (request: PermissionRequest, signal: AbortSignal) => Promise<PermissionAnswer>
   confirmBypass?: () => Promise<boolean>
 }
 

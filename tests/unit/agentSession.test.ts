@@ -4,7 +4,14 @@ import { AgentSession, seedFromTranscript } from '../../src/main/agent/AgentSess
 import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
 import type { AgentDriver, DriverOptions } from '../../src/main/agent/driver'
 import { toPermissionContext } from '../../src/main/agent/permissionContext'
-import type { PanelData, RibbonChange, RibbonItem, SessionStatus } from '../../src/shared/types'
+import { PermissionBroker } from '../../src/main/agent/permissions'
+import type {
+  PanelData,
+  PermissionRequest,
+  RibbonChange,
+  RibbonItem,
+  SessionStatus
+} from '../../src/shared/types'
 
 type FakeScript = Parameters<typeof createFakeSdk>[0]
 
@@ -773,6 +780,228 @@ describe('AgentSession: id запросов', () => {
 
     expect(requestIds).toHaveLength(2)
     expect(requestIds[0]).not.toBe(requestIds[1])
+    await session.dispose()
+  })
+})
+
+/**
+ * A session whose permission questions go through a real broker, the way the
+ * app wires it: the broker shows the card, the test answers through the broker.
+ */
+function brokeredSession(
+  broker: PermissionBroker,
+  sessions: Map<string, AgentSession>,
+  script: FakeScript,
+  overrides: Partial<ConstructorParameters<typeof AgentSession>[0]> = {}
+): ReturnType<typeof makeSession> {
+  const made = makeSession(script, {
+    askPermission: (r, signal) => broker.request(r.tabId, r.toolName, r.input, r.requestId, signal),
+    ...overrides
+  })
+  sessions.set(overrides.tabId ?? 't1', made.session)
+  return made
+}
+
+function makeBrokerFor(sessions: Map<string, AgentSession>): {
+  broker: PermissionBroker
+  asked: PermissionRequest[]
+} {
+  const asked: PermissionRequest[] = []
+  const broker = new PermissionBroker({
+    loadRules: () => [],
+    saveRules: () => undefined,
+    ask: (request) => {
+      asked.push(request)
+      sessions.get(request.tabId)?.showPermissionCard(request.requestId, request.toolName, request.target)
+    }
+  })
+  return { broker, asked }
+}
+
+/** Lets any late answer finish what it would do. */
+async function tick(): Promise<void> {
+  await new Promise(setImmediate)
+  await new Promise(setImmediate)
+}
+
+describe('AgentSession: стоп во время вопроса', () => {
+  test('стоп отменяет ожидающее разрешение, поздний клик не возвращает «работает»', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session, driver } = brokeredSession(broker, sessions, {
+      nextTurn: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    session.send({ text: 'прогони тесты', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+
+    await session.interrupt()
+
+    expect(session.status).toBe('idle')
+    expect(rec.items.filter((i) => i.kind === 'permission')[0]).toMatchObject({ state: 'denied' })
+
+    broker.answer(asked[0]!.requestId, { behavior: 'allow' })
+    await tick()
+
+    expect(session.status).toBe('idle')
+    expect(driver.executedTools).not.toContain('Bash')
+    expect(rec.items.filter((i) => i.kind === 'permission')[0]).toMatchObject({ state: 'denied' })
+    await session.dispose()
+  })
+
+  test('стоп отменяет ожидающий план', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker } = makeBrokerFor(sessions)
+    const { session, driver } = brokeredSession(
+      broker,
+      sessions,
+      {
+        init: { permissionMode: 'plan' },
+        nextTurn: [{ kind: 'askPermission', name: 'ExitPlanMode', input: { plan: 'сделать всё' } }]
+      },
+      { overrides: { permissionMode: 'plan' } }
+    )
+    const rec = watch(session)
+
+    await session.start()
+    session.send({ text: 'составь план', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+
+    await session.interrupt()
+
+    expect(session.status).toBe('idle')
+    const plan = rec.items.find((i) => i.kind === 'plan') as { requestId: string; state: string }
+    expect(plan.state).toBe('rejected')
+
+    // Approving a plan the agent no longer waits on changes nothing.
+    await session.answerPlan(plan.requestId, true)
+    await tick()
+
+    expect(session.status).toBe('idle')
+    expect(session.panel.permissionMode).toBe('plan')
+    expect(driver.permissionMode).toBe('plan')
+    expect(driver.executedTools).not.toContain('ExitPlanMode')
+    await session.dispose()
+  })
+
+  test('клик по варианту вопроса после стопа уходит сообщением и ход кончается idle', async () => {
+    const { session, driver } = makeSession({
+      steps: [{ kind: 'askQuestion', question: 'Какой?', options: ['Справа', 'Снизу'] }],
+      nextTurn: [{ kind: 'text', text: 'ок' }]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+
+    await session.interrupt()
+    expect(session.status).toBe('idle')
+
+    const card = rec.items.find((i) => i.kind === 'question') as { toolUseId: string }
+    session.answerQuestion(card.toolUseId, 'Справа')
+
+    expect(driver.sent.at(-1)?.text).toBe('Справа')
+    await vi.waitFor(
+      () => {
+        expect(texts(rec.items)).toContain('ок')
+        expect(session.status).toBe('idle')
+      },
+      { timeout: 2000 }
+    )
+    // The cancelled question was never answered in place.
+    expect(driver.questionAnswers).toEqual([])
+    await session.dispose()
+  })
+
+  test('стоп в одной вкладке не трогает ожидающий запрос другой', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const script: FakeScript = {
+      nextTurn: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
+    }
+    const one = brokeredSession(broker, sessions, script, { tabId: 't1' })
+    const two = brokeredSession(broker, sessions, script, { tabId: 't2' })
+
+    await one.session.start()
+    await two.session.start()
+    one.session.send({ text: 'раз', attachments: [] })
+    two.session.send({ text: 'два', attachments: [] })
+    await vi.waitFor(
+      () => {
+        expect(one.session.status).toBe('waiting')
+        expect(two.session.status).toBe('waiting')
+      },
+      { timeout: 2000 }
+    )
+
+    await one.session.interrupt()
+
+    expect(two.session.status).toBe('waiting')
+    const theirs = asked.find((r) => r.tabId === 't2')!
+    broker.answer(theirs.requestId, { behavior: 'allow' })
+
+    await vi.waitFor(() => expect(two.driver.executedTools).toEqual(['Bash']), { timeout: 2000 })
+    await vi.waitFor(() => expect(two.session.status).toBe('idle'), { timeout: 2000 })
+    expect(one.driver.executedTools).toEqual([])
+    await one.session.dispose()
+    await two.session.dispose()
+  })
+
+  test('закрытие вкладки с ожидающим вопросом помечает карточку и не оставляет ожидания', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session, driver } = brokeredSession(broker, sessions, {
+      nextTurn: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    session.send({ text: 'прогони тесты', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+
+    await session.dispose()
+
+    expect(session.status).toBe('stopped')
+    expect(rec.items.filter((i) => i.kind === 'permission')[0]).toMatchObject({ state: 'denied' })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow' })
+    await tick()
+    expect(session.status).toBe('stopped')
+    expect(driver.executedTools).toEqual([])
+  })
+})
+
+describe('AgentSession: два разрешения сразу', () => {
+  test('ответ на одно оставляет «ждёт», пока ждёт второе', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session, driver } = brokeredSession(broker, sessions, {
+      nextTurn: [
+        {
+          kind: 'askPermissions',
+          tools: [
+            { name: 'Bash', input: { command: 'npm test' } },
+            { name: 'Edit', input: { file_path: 'a.ts' } }
+          ]
+        }
+      ]
+    })
+
+    await session.start()
+    session.send({ text: 'делай', attachments: [] })
+    await vi.waitFor(() => expect(asked).toHaveLength(2), { timeout: 2000 })
+    expect(session.status).toBe('waiting')
+
+    broker.answer(asked[0]!.requestId, { behavior: 'allow' })
+    await tick()
+    expect(session.status).toBe('waiting')
+
+    broker.answer(asked[1]!.requestId, { behavior: 'allow' })
+    await vi.waitFor(() => expect(driver.executedTools).toEqual(['Bash', 'Edit']), {
+      timeout: 2000
+    })
+    await vi.waitFor(() => expect(session.status).toBe('idle'), { timeout: 2000 })
     await session.dispose()
   })
 })

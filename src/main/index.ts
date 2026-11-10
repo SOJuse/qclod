@@ -126,8 +126,8 @@ app.whenReady().then(async () => {
   const manager = new AgentSessionManager({
     getAgentPath: () => settings.agentPath,
     createDriver: createDriverFactory(),
-    askPermission: (request) =>
-      broker.request(request.tabId, request.toolName, request.input, request.requestId),
+    askPermission: (request, signal) =>
+      broker.request(request.tabId, request.toolName, request.input, request.requestId, signal),
     confirmBypass: () => confirmBypass(mainWindow)
   })
 

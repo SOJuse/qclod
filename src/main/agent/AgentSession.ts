@@ -38,8 +38,10 @@ export interface AgentSessionOptions {
    * Asks the user about a tool. Required, not optional: a session built
    * without a gate would answer every `canUseTool` with «allow», and a single
    * missed wire-up would silently disable every permission prompt in the app.
+   * `signal` fires when the session stops waiting for this answer («Стоп»,
+   * a closed tab, or the SDK giving up on it).
    */
-  askPermission: (request: PermissionRequest) => Promise<PermissionAnswer>
+  askPermission: (request: PermissionRequest, signal: AbortSignal) => Promise<PermissionAnswer>
   /**
    * Asks the person, outside the window, whether they really mean to turn the
    * permission gate off. Required: a session built without it refuses
@@ -140,6 +142,13 @@ export class AgentSession {
     { input: Record<string, unknown>; resolve: (answer: PermissionAnswer) => void }
   >()
   private readonly pendingPlans = new Map<string, (answer: PermissionAnswer) => void>()
+  /** Permission questions still waiting on the user; aborting one refuses it. */
+  private readonly openPermissions = new Map<string, AbortController>()
+  /**
+   * How many questions, permissions and plans are open at once. The tab
+   * shows «ждёт» while any is, so answering one of two keeps it waiting.
+   */
+  private waits = 0
   private mcpTimer: ReturnType<typeof setTimeout> | null = null
   /** Repeats asked since the servers were last all settled. */
   private mcpPolls = 0
@@ -224,7 +233,8 @@ export class AgentSession {
    * AskUserQuestionInput in sdk-tools.d.ts), and the agent carries on with
    * the same turn. Only when nothing is waiting — a card from history, a
    * question left over after «Стоп» — does the choice go as a message, which
-   * is what the user would have typed anyway.
+   * is what the user would have typed anyway. A stopped question is dropped
+   * from `pendingQuestions` the moment it is stopped, so its card lands here.
    */
   answerQuestion(toolUseId: string, choice: string): void {
     this.emit(this.builder.answerQuestion(toolUseId, choice))
@@ -235,6 +245,7 @@ export class AgentSession {
       return
     }
     this.pendingQuestions.delete(toolUseId)
+    this.leaveWait()
     waiting.resolve({
       behavior: 'allow',
       updatedInput: { ...waiting.input, answers: { [firstQuestion(waiting.input)]: choice } }
@@ -264,6 +275,7 @@ export class AgentSession {
     const waiting = this.pendingPlans.get(requestId)
     if (!waiting) return
     this.pendingPlans.delete(requestId)
+    this.leaveWait()
 
     this.emit(this.builder.resolvePlan(requestId, approve ? 'approved' : 'rejected'))
     if (!approve) {
@@ -411,10 +423,55 @@ export class AgentSession {
     this.driver.send({ ...input, text })
   }
 
+  /**
+   * «Стоп». Every open question is refused here and now rather than left to
+   * the SDK: the real one abandons a pending `canUseTool` without saying so,
+   * and a card answered after that would set the tab working on a turn that
+   * is already over.
+   */
   async interrupt(): Promise<void> {
     if (!this.driver) return
+    this.cancelWaits()
     await this.driver.interrupt().catch(() => undefined)
     this.setStatus('idle')
+  }
+
+  /**
+   * Refuses everything still waiting on the user. Permission and plan cards
+   * show as denied and rejected; a question card stays as it is, and a click
+   * on it later goes as a message (see `answerQuestion`).
+   */
+  private cancelWaits(): void {
+    this.waits = 0
+
+    const permissions = [...this.openPermissions]
+    this.openPermissions.clear()
+    for (const [requestId, controller] of permissions) {
+      this.emit(this.builder.resolvePermission(requestId, 'denied'))
+      controller.abort()
+    }
+
+    const questions = [...this.pendingQuestions.values()]
+    this.pendingQuestions.clear()
+    for (const waiting of questions) waiting.resolve({ behavior: 'deny' })
+
+    const plans = [...this.pendingPlans]
+    this.pendingPlans.clear()
+    for (const [requestId, resolve] of plans) {
+      this.emit(this.builder.resolvePlan(requestId, 'rejected'))
+      resolve({ behavior: 'deny' })
+    }
+  }
+
+  private enterWait(): void {
+    this.waits += 1
+    this.setStatus('waiting')
+  }
+
+  private leaveWait(): void {
+    if (this.waits === 0) return
+    this.waits -= 1
+    if (this.waits === 0 && this.state === 'waiting') this.setStatus('busy')
   }
 
   async setPermissionMode(mode: string): Promise<void> {
@@ -514,10 +571,7 @@ export class AgentSession {
     this.disposed = true
     this.stopMcpPolling()
     // A question nobody can answer any more must not hold the agent open.
-    for (const [, waiting] of this.pendingQuestions) waiting.resolve({ behavior: 'deny' })
-    this.pendingQuestions.clear()
-    for (const [, resolve] of this.pendingPlans) resolve({ behavior: 'deny' })
-    this.pendingPlans.clear()
+    this.cancelWaits()
 
     const driver = this.driver
     this.driver = null
@@ -653,23 +707,39 @@ export class AgentSession {
     const requestId = opts.toolUseId ?? randomUUID()
     const target = displayTarget(input)
 
-    const previous = this.state
-    this.setStatus('waiting')
+    // The question is cancelled through a controller of the session's own,
+    // so «Стоп» reaches it whether or not the SDK ever fires its signal.
+    const controller = new AbortController()
+    const cancel = (): void => controller.abort()
+    if (opts.signal?.aborted) return { behavior: 'deny' }
+    opts.signal?.addEventListener('abort', cancel, { once: true })
+    this.openPermissions.set(requestId, controller)
+    this.enterWait()
+
+    let answer: PermissionAnswer
     try {
-      let answer: PermissionAnswer
-      try {
-        answer = await ask({ requestId, tabId: this.options.tabId, toolName, target, input })
-      } catch {
-        // A gate that failed is not a gate that said yes.
-        answer = { behavior: 'deny' }
-      }
+      answer = await ask(
+        { requestId, tabId: this.options.tabId, toolName, target, input },
+        controller.signal
+      )
+    } catch {
+      // A gate that failed is not a gate that said yes.
+      answer = { behavior: 'deny' }
+    } finally {
+      opts.signal?.removeEventListener('abort', cancel)
+    }
+    // An answer to a question nobody waits on any more is no answer.
+    if (controller.signal.aborted) answer = { behavior: 'deny' }
+
+    // Still open unless «Стоп» already closed it — and marked its card.
+    if (this.openPermissions.get(requestId) === controller) {
+      this.openPermissions.delete(requestId)
+      this.leaveWait()
       this.emit(
         this.builder.resolvePermission(requestId, answer.behavior === 'allow' ? 'allowed' : 'denied')
       )
-      return answer
-    } finally {
-      this.setStatus(previous === 'waiting' ? 'busy' : previous)
     }
+    return answer
   }
 
   private askPlan(
@@ -679,14 +749,27 @@ export class AgentSession {
     const requestId = opts.toolUseId ?? randomUUID()
     const text = typeof input['plan'] === 'string' ? input['plan'] : ''
     this.emit(this.builder.addPlan(requestId, text))
+    if (opts.signal?.aborted) {
+      this.emit(this.builder.resolvePlan(requestId, 'rejected'))
+      return Promise.resolve({ behavior: 'deny' })
+    }
 
-    const previous = this.state
-    this.setStatus('waiting')
+    this.enterWait()
     return new Promise<PermissionAnswer>((resolve) => {
-      this.pendingPlans.set(requestId, (answer) => {
-        this.setStatus(previous === 'waiting' ? 'busy' : previous)
+      // The SDK gave up on the plan: it can no longer be approved.
+      const onAbort = (): void => {
+        if (this.pendingPlans.get(requestId) !== settle) return
+        this.pendingPlans.delete(requestId)
+        this.leaveWait()
+        this.emit(this.builder.resolvePlan(requestId, 'rejected'))
+        resolve({ behavior: 'deny' })
+      }
+      const settle = (answer: PermissionAnswer): void => {
+        opts.signal?.removeEventListener('abort', onAbort)
         resolve(answer)
-      })
+      }
+      opts.signal?.addEventListener('abort', onAbort, { once: true })
+      this.pendingPlans.set(requestId, settle)
     })
   }
 
@@ -701,16 +784,26 @@ export class AgentSession {
       this.emit(this.builder.apply(this.questionMessage(toolUseId, input)))
     }
 
-    const previous = this.state
-    this.setStatus('waiting')
+    // A question the SDK has already given up on is not asked: its card stays,
+    // and a click on it goes as a message.
+    if (opts.signal?.aborted) return Promise.resolve({ behavior: 'deny' })
+
+    this.enterWait()
     return new Promise<PermissionAnswer>((resolve) => {
-      this.pendingQuestions.set(toolUseId, {
-        input,
-        resolve: (answer) => {
-          this.setStatus(previous === 'waiting' ? 'busy' : previous)
-          resolve(answer)
-        }
-      })
+      // The SDK stopped waiting: the entry goes, so a later click on the card
+      // is sent as a message instead of answering a promise nobody reads.
+      const onAbort = (): void => {
+        if (this.pendingQuestions.get(toolUseId)?.resolve !== settle) return
+        this.pendingQuestions.delete(toolUseId)
+        this.leaveWait()
+        resolve({ behavior: 'deny' })
+      }
+      const settle = (answer: PermissionAnswer): void => {
+        opts.signal?.removeEventListener('abort', onAbort)
+        resolve(answer)
+      }
+      opts.signal?.addEventListener('abort', onAbort, { once: true })
+      this.pendingQuestions.set(toolUseId, { input, resolve: settle })
     })
   }
 

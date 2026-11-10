@@ -101,6 +101,33 @@ describe('PermissionBroker', () => {
     await expect(other).resolves.toEqual({ behavior: 'allow' })
   })
 
+  test('аборт сигнала отклоняет запрос и убирает его из ожидающих', async () => {
+    const { broker, asked, saved } = makeBroker()
+    const ctrl = new AbortController()
+
+    const pending = broker.request('tab-1', 'Bash', { command: 'npm test' }, 'r1', ctrl.signal)
+    expect(asked.map((r) => r.requestId)).toEqual(['r1'])
+
+    ctrl.abort()
+    await expect(pending).resolves.toEqual({ behavior: 'deny' })
+
+    // A late click is about a question nobody waits on: no rule comes of it.
+    broker.answer('r1', { behavior: 'allow', remember: true })
+    expect(saved).toEqual([])
+    expect(broker.rules()).toEqual([])
+  })
+
+  test('уже отменённый сигнал не спрашивает человека вовсе', async () => {
+    const { broker, asked } = makeBroker()
+    const ctrl = new AbortController()
+    ctrl.abort()
+
+    await expect(
+      broker.request('tab-1', 'Bash', { command: 'npm test' }, 'r1', ctrl.signal)
+    ).resolves.toEqual({ behavior: 'deny' })
+    expect(asked).toEqual([])
+  })
+
   test('ответ на неизвестный запрос игнорируется', () => {
     const { broker } = makeBroker()
     expect(() => broker.answer('нет-такого', { behavior: 'allow' })).not.toThrow()

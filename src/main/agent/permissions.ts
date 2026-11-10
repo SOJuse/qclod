@@ -42,18 +42,35 @@ export class PermissionBroker {
     toolName: string,
     input: Record<string, unknown>,
     /** The id the asking side already used; a new one would not be answerable. */
-    knownRequestId?: string
+    knownRequestId?: string,
+    /**
+     * Fires when the asking side stops waiting («Стоп»). The request is then
+     * refused and forgotten: a click on its card afterwards answers nothing
+     * and, above all, saves no rule.
+     */
+    signal?: AbortSignal
   ): Promise<PermissionAnswer> {
     // Rules are read fresh every time: the user can delete one in settings
     // while an agent is mid-run, and the next call must respect that.
     const decided = matchRule(this.options.loadRules(), toolName, input)
     if (decided) return { behavior: decided }
+    if (signal?.aborted) return { behavior: 'deny' }
 
     const requestId = knownRequestId ?? randomUUID()
     const target = displayTarget(input)
 
     return new Promise<PermissionAnswer>((resolve) => {
-      this.pending.set(requestId, { tabId, toolName, input, resolve })
+      const onAbort = (): void => {
+        if (this.pending.get(requestId)?.resolve !== settle) return
+        this.pending.delete(requestId)
+        resolve({ behavior: 'deny' })
+      }
+      const settle = (answer: PermissionAnswer): void => {
+        signal?.removeEventListener('abort', onAbort)
+        resolve(answer)
+      }
+      this.pending.set(requestId, { tabId, toolName, input, resolve: settle })
+      signal?.addEventListener('abort', onAbort, { once: true })
       this.options.ask({ requestId, tabId, toolName, target, input })
     })
   }

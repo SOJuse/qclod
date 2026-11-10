@@ -1,4 +1,4 @@
-/* Qclod design tokens — glass / neon, dark only (spec 6.2). */
+/* Qclod design tokens — graphite, dark only (spec 6). Tokens are roles. */
 
 @font-face {
   font-family: 'Geist Mono';
@@ -10,45 +10,63 @@
 :root {
   color-scheme: dark;
 
-  /* Surfaces sit on top of the window's acrylic material. */
-  --surface: rgba(14, 16, 28, 0.72);
-  --surface-raised: rgba(24, 27, 44, 0.78);
-  --surface-sunken: rgba(9, 10, 19, 0.62);
+  /* Graphite surfaces: opaque steps of grey, told apart by tone, not by shadow. */
+  --bg: #0f0f11;
+  --surface: #16161a;
+  --surface-raised: #1d1d22;
+  --surface-hover: #26262d;
 
-  --accent: #6e8bff;
+  --border: #26262d;
+  --border-strong: #34343d;
+  --border-accent: color-mix(in srgb, var(--accent) 55%, var(--border));
+
+  --text: #ececf1;
+  --text-dim: #a1a1ab;
+  --text-faint: #8a8a95;
+
+  --accent: #5a8bff;
   /* Text on a solid accent fill: the primary button. */
-  --on-accent: #0b0e1f;
-  --glow: #b07cff;
-  --ok: #67d8a0;
-  --warn: #ffc46b;
-  --danger: #ff7a7a;
+  --on-accent: #0b0d14;
 
-  --text: #e6e8f2;
-  --text-dim: #99a0bd;
-  --text-faint: #666e8c;
+  /* Focus is the one loud thing: the accent ring that makes the keyboard visible. */
+  --focus-ring-width: 2px;
+  --focus-ring-color: var(--accent);
+  --focus-offset: 2px;
+  --focus-ring: 0 0 0 var(--focus-ring-width) var(--focus-ring-color);
 
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --border-accent: rgba(110, 139, 255, 0.55);
+  /* removed in Task 5 */
+  --surface-sunken: var(--bg);
+  --glow: var(--accent);
+  --glow-accent: var(--focus-ring);
+  --glow-soft: none;
+  --menu-blur: 0px;
+  --ok: var(--status-ok);
+  --warn: var(--status-warn);
+  --danger: var(--status-critical);
 
-  --glow-accent: 0 0 0 1px rgba(110, 139, 255, 0.45), 0 0 18px rgba(110, 139, 255, 0.22);
-  --glow-soft: 0 0 24px rgba(176, 124, 255, 0.14);
+  /* Radii by hierarchy: a path in text, a chip, a control, a sheet. */
+  --radius-hair: 3px;
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
 
-  --radius: 10px;
-  --radius-sm: 6px;
+  /* Shadows only under what floats: menus and modal sheets. The dimmer is not blurred. */
+  --shadow-menu: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.6);
+  --backdrop: rgba(0, 0, 0, 0.55);
 
   /* A small button inside a line of text: the dead-session strip, a notice. */
   --button-sm-pad: 4px 11px;
-  --button-sm-radius: 7px;
-  --button-sm-font-size: 12px;
+  --button-sm-radius: var(--radius);
+  --button-sm-font-size: var(--text-sm);
   --button-sm-gap: 10px;
 
   /* A one-line strip above the input: the dead-session strip. */
   --strip-pad: 7px 11px;
   --strip-gap: 10px;
   --strip-margin: 7px;
-  --strip-radius: 8px;
-  --strip-font-size: 12px;
+  --strip-radius: var(--radius);
+  --strip-font-size: var(--text-sm);
 
   --titlebar-height: 38px;
 
@@ -58,22 +76,31 @@
   --dur-fast: 120ms;
   --dur: 200ms;
 
-  /* Stage 2: action categories. Colour marks the icon and the left rule only, never text. */
-  --cat-read: #8b93a7;
-  --cat-search: #22a0c8;
-  --cat-edit: #4aa43c;
-  --cat-command: #c47c10;
-  --cat-agent: #8f7cf0;
-  --cat-mcp: #dc5c98;
+  /* Action categories. Colour marks the icon and the left rule only, never text. */
+  --cat-read: #9b9ba6;
+  --cat-search: #40c3dd;
+  --cat-edit: #6cc35b;
+  --cat-command: #e6a03c;
+  /* Light lavender: kept away from the blue accent (= plan) by lightness. */
+  --cat-agent: #d4aaff;
+  --cat-mcp: #f2689a;
   --cat-plan: var(--accent);
   --cat-other: var(--text-faint);
 
-  /* Reserved for context meters and errors; never a category colour. */
-  --status-ok: #0ca30c;
-  --status-warn: #fab219;
-  --status-critical: #e5484d;
-  /* Light enough that the empty part reads as a bar, so 13% is not a lone dot. */
-  --meter-track: #3a3f56;
+  /* Reserved for context meters and errors; never a category colour, never text. */
+  --status-ok: #4cc38a;
+  --status-warn: #f5c04a;
+  --status-critical: #ff6369;
+  /* Light enough that the empty part reads as a bar; every fill keeps 3:1 against it. */
+  --meter-track: #3a3a44;
+
+  /* Code highlight: the one exception to text tokens. */
+  --syn-keyword: #c9a6ff;
+  --syn-string: #9fd67f;
+  --syn-number: #f0b45a;
+  --syn-type: #7cc8f0;
+  --syn-comment: var(--text-faint);
+  --syn-punct: var(--text-dim);
 
   /* Context breakdown bar (categorical palette, dark steps). */
   --seg-1: #3987e5;
@@ -86,17 +113,33 @@
   --seg-buffer: repeating-linear-gradient(135deg, var(--meter-track) 0 3px, transparent 3px 6px);
 
   --font-ui: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+
+  /* Six steps, no more. Prose in the ribbon is lg; the interface is md. */
   --text-xs: 11px;
   --text-sm: 12px;
   --text-md: 13px;
-  --text-lg: 15px;
-  --text-xl: 18px;
+  --text-lg: 14px;
+  --text-xl: 16px;
+  --text-2xl: 20px;
+
+  --leading-tight: 1.25;
+  --leading: 1.45;
+  --leading-prose: 1.6;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-strong: 600;
 
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 24px;
+
+  /* The chat column: NowLine, the input and the close warning share its width. */
+  --content-max-w: 920px;
+  --content-gutter: 20px;
+  --prose-max-w: 72ch;
 
   --rule-category: 2px;
   /* An opened tool card's output block scrolls past this height until «Показать всё». */
@@ -112,30 +155,29 @@
   /* A pasted image: its thumbnail in the composer chip, and in the user's bubble. */
   --thumb-chip-h: 36px;
   --thumb-row-h: 96px;
-  --danger-fill: rgba(255, 122, 122, 0.1);
-  --danger-border: rgba(255, 122, 122, 0.45);
 
-  --backdrop: rgba(6, 7, 14, 0.5);
-  --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.55);
+  /* Tints are mixed into an opaque surface, never laid over the window. */
+  --hover-fill: var(--surface-hover);
+  --accent-fill: color-mix(in srgb, var(--accent) 16%, var(--surface-raised));
+  --accent-fill-strong: color-mix(in srgb, var(--accent) 30%, var(--surface-raised));
+  --warn-fill: color-mix(in srgb, var(--status-warn) 8%, var(--surface));
+  --warn-border: color-mix(in srgb, var(--status-warn) 40%, var(--border));
+  --danger-fill: color-mix(in srgb, var(--status-critical) 10%, var(--bg));
+  --danger-border: color-mix(in srgb, var(--status-critical) 45%, var(--border));
+  --critical-fill: color-mix(in srgb, var(--status-critical) 9%, var(--surface-raised));
+  --critical-border: color-mix(in srgb, var(--status-critical) 45%, var(--border));
 
   /* The list that opens above the input (InlineMenu). */
-  --shadow-menu: 0 18px 40px rgba(0, 0, 0, 0.45);
-  --menu-blur: 14px;
   --menu-row-h: 28px;
-  --hover-fill: rgba(255, 255, 255, 0.07);
-  --accent-fill: rgba(110, 139, 255, 0.16);
-  --accent-fill-strong: rgba(110, 139, 255, 0.3);
-  --warn-fill: rgba(255, 196, 107, 0.08);
-  --warn-border: rgba(255, 196, 107, 0.4);
 
   /* A path in the text and its right-click menu (paths/Paths.css). */
-  --radius-hair: 3px;
   --path-menu-min-w: 200px;
   --path-menu-max-w: 360px;
 
-  /* The live «now» line above the input: as wide as the input, its list of agents capped. */
-  --now-max-w: 920px;
-  --now-gutter: 20px;
+  /* The live «now» line above the input; its list of agents capped. */
+  /* removed in Task 5 */
+  --now-max-w: var(--content-max-w);
+  --now-gutter: var(--content-gutter);
   --now-list-max-w: 520px;
   --now-list-max-h: 240px;
   --now-pulse: 1.8s;
@@ -145,12 +187,9 @@
   --meter-h: 6px;
   --meter-primary-w: 88px;
   --meter-primary-h: 8px;
-  --weight-medium: 500;
   --status-pad: 2px 6px;
   --dropdown-menu-min-w: 220px;
   --dropdown-menu-max-w: 340px;
-  --critical-fill: color-mix(in srgb, var(--status-critical) 9%, var(--surface-raised));
-  --critical-border: color-mix(in srgb, var(--status-critical) 45%, var(--border));
 
   /* The Ctrl+K window of app actions. */
   --palette-top: 12vh;

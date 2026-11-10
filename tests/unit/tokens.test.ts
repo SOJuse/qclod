@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test } from 'vitest'
+import { contrast, deltaE, readTokens, resolveColor } from './cssTokens'
 
 const css = readFileSync(resolve(__dirname, '../../src/renderer/styles/tokens.css'), 'utf8')
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8'))
@@ -30,4 +31,46 @@ test('значения токенов совпадают с таблицей', (
 
 test('lucide-react закреплён точной версией', () => {
   expect(pkg.dependencies['lucide-react']).toBe('1.62.0')
+})
+
+const t = readTokens(css)
+const SURFACES = ['--bg', '--surface', '--surface-raised']
+const TEXTISH = ['--text', '--text-dim', '--text-faint', '--accent',
+  '--cat-read', '--cat-search', '--cat-edit', '--cat-command', '--cat-agent', '--cat-mcp', '--cat-plan', '--cat-other',
+  '--status-ok', '--status-warn', '--status-critical']
+
+test('поверхности — непрозрачные ступени из спеки', () => {
+  expect(resolveColor(t, '--bg')).toBe('#0f0f11')
+  expect(resolveColor(t, '--surface')).toBe('#16161a')
+  expect(resolveColor(t, '--surface-raised')).toBe('#1d1d22')
+  expect(resolveColor(t, '--surface-hover')).toBe('#26262d')
+})
+
+test.each(TEXTISH.flatMap((fg) => SURFACES.map((bg) => [fg, bg])))('%s на %s — не меньше 4.5:1', (fg, bg) => {
+  expect(contrast(resolveColor(t, fg), resolveColor(t, bg))).toBeGreaterThanOrEqual(4.5)
+})
+
+test.each([['--text', '--surface-hover'], ['--text-dim', '--surface-hover'], ['--on-accent', '--accent']])(
+  '%s на %s — не меньше 4.5:1', (fg, bg) => expect(contrast(resolveColor(t, fg), resolveColor(t, bg))).toBeGreaterThanOrEqual(4.5))
+
+test.each(['--syn-keyword', '--syn-string', '--syn-number', '--syn-type', '--syn-comment', '--syn-punct'])(
+  'подсветка %s читается на фоне кода', (n) => expect(contrast(resolveColor(t, n), resolveColor(t, '--bg'))).toBeGreaterThanOrEqual(4.5))
+
+test.each(['--status-ok', '--status-warn', '--status-critical', '--text-dim'])('заливка %s видна на треке (≥ 3:1)', (n) => {
+  expect(contrast(resolveColor(t, n), resolveColor(t, '--meter-track'))).toBeGreaterThanOrEqual(3)
+})
+
+test('цветные категории различимы попарно (ΔE OKLab ≥ 15), агент далеко от плана', () => {
+  const cats = ['search', 'edit', 'command', 'agent', 'mcp', 'plan'].map((c) => resolveColor(t, `--cat-${c}`))
+  for (let i = 0; i < cats.length; i++) for (let j = i + 1; j < cats.length; j++) {
+    expect(deltaE(cats[i], cats[j])).toBeGreaterThanOrEqual(15)
+  }
+})
+
+test('шкала шрифта — ровно шесть ступеней', () => {
+  const sizes = [...t].filter(([k, v]) => k.startsWith('--text-') && /px$/.test(v))
+  expect(Object.fromEntries(sizes)).toEqual({
+    '--text-xs': '11px', '--text-sm': '12px', '--text-md': '13px',
+    '--text-lg': '14px', '--text-xl': '16px', '--text-2xl': '20px'
+  })
 })

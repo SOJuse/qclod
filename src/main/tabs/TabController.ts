@@ -18,7 +18,7 @@ import type {
   UserInput
 } from '../../shared/types'
 import { isDirectory, loadTabs, saveTabs, type LoadedTab } from '../store/tabsStore'
-import { seedFromTranscript, type AgentSession, type SessionSeed } from '../agent/AgentSession'
+import { MAX_QUEUED, seedFromTranscript, type AgentSession, type SessionSeed } from '../agent/AgentSession'
 import { EMPTY_PANEL } from '../agent/panelData'
 import { classifyStartFailure } from '../agent/startFailure'
 import type { AgentSessionManager } from '../agent/AgentSessionManager'
@@ -95,6 +95,11 @@ export class TabController {
    * the tab) would open the conversation being left, a second time.
    */
   private readonly replacing = new Set<TabId>()
+  /**
+   * What the user sent while the tab's session was being swapped. The swapper
+   * hands it to the new session after the old one's queue (`handOver`).
+   */
+  private readonly held = new Map<TabId, UserInput[]>()
 
   constructor(private readonly deps: TabControllerDeps) {}
 
@@ -303,9 +308,10 @@ export class TabController {
         prepare(tab)
         await this.startSession(id)
       }
-      this.handOver(this.deps.manager.get(id), unsent, queued)
+      this.handOver(id, this.deps.manager.get(id), unsent, queued)
     } finally {
       this.replacing.delete(id)
+      this.held.delete(id)
     }
   }
 
@@ -316,10 +322,34 @@ export class TabController {
    * goes one message per turn as before. A message must not vanish because
    * the session under it was swapped (ruling C8).
    */
-  private handOver(fresh: AgentSession | undefined, unsent: UserInput[], queued: UserInput[]): void {
+  private handOver(
+    id: TabId,
+    fresh: AgentSession | undefined,
+    unsent: UserInput[],
+    queued: UserInput[]
+  ): void {
+    const held = this.held.get(id) ?? []
+    this.held.delete(id)
     if (!fresh) return
     for (const sent of unsent) fresh.resend(sent)
-    fresh.requeue(queued)
+    fresh.requeue([...queued, ...held])
+  }
+
+  /**
+   * A message from the user for this tab. While the session is being swapped
+   * it is held and goes to the one taking its place; otherwise the session
+   * takes it or refuses it. False means it went nowhere, and the window gives
+   * it back to the input line.
+   */
+  send(id: TabId, input: UserInput): boolean {
+    if (this.replacing.has(id)) {
+      const held = this.held.get(id) ?? []
+      if (held.length >= MAX_QUEUED) return false
+      held.push(input)
+      this.held.set(id, held)
+      return true
+    }
+    return this.deps.manager.get(id)?.send(input) ?? false
   }
 
   /** Records a launch option the user changed while the tab was running. */
@@ -520,7 +550,7 @@ export class TabController {
       // takes over what was owed.
       const other = this.deps.manager.get(id)
       if (other) {
-        this.handOver(other, unsent, queued)
+        this.handOver(id, other, unsent, queued)
         return
       }
       const fresh = this.deps.manager.create(id, tab.cwd, launch, seed)
@@ -532,10 +562,11 @@ export class TabController {
           : `Сессия не запустилась: ${reason}`
       this.emitRibbon(id, fresh.notice(said))
       await fresh.start()
-      this.handOver(fresh, unsent, queued)
+      this.handOver(id, fresh, unsent, queued)
       this.rememberSession(id, fresh)
     } finally {
       this.replacing.delete(id)
+      this.held.delete(id)
     }
   }
 

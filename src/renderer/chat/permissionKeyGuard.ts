@@ -30,6 +30,33 @@ export function focusedLongEnough(since: number | null, arrivedAt: number): bool
   return since !== null && arrivedAt - since >= FOCUS_BEFORE_MS
 }
 
+/**
+ * A card is mounted again whenever its row scrolls back into the virtualised
+ * ribbon or its tab is shown again. It must neither count as a new arrival
+ * nor take focus a second time, so both are kept by request, not by mount.
+ */
+const arrivals = new Map<string, number>()
+const offered = new Set<string>()
+/** Enough for any session's cards; the oldest are forgotten first. */
+const REMEMBERED = 500
+
+/** When this request first showed; `now` the first time it is asked about. */
+export function arrivalOf(requestId: string, now: number): number {
+  const known = arrivals.get(requestId)
+  if (known !== undefined) return known
+  arrivals.set(requestId, now)
+  if (arrivals.size > REMEMBERED) arrivals.delete(arrivals.keys().next().value!)
+  return now
+}
+
+/** True the first time a card for this request may try to take focus, false after. */
+export function claimFocusOffer(requestId: string): boolean {
+  if (offered.has(requestId)) return false
+  offered.add(requestId)
+  if (offered.size > REMEMBERED) offered.delete(offered.values().next().value!)
+  return true
+}
+
 /** The window lost focus: key-ups will go elsewhere, so nothing stays held. */
 export function clearHeldKeys(): void {
   down.clear()

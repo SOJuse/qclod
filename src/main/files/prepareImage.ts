@@ -6,6 +6,10 @@ import { saveImageBuffer, type PasteExt } from './imagePaste'
 export const MAX_IMAGE_SIDE = 2000
 /** As base64 this is about 5 MB, the most the API takes for one image. */
 export const MAX_IMAGE_BYTES = 3_750_000
+/** A picture bigger than this by either side is not decoded at all: its pixels alone run to gigabytes. */
+export const MAX_SOURCE_SIDE = 16_384
+/** Nor is a paste this heavy. */
+export const MAX_SOURCE_BYTES = 50 * 1024 * 1024
 /** The chip and the bubble show the picture this big by its longer side. */
 const THUMB_SIDE = 160
 /** A thumbnail is an inline picture; a longer one is not kept (sanitizeInput's limit). */
@@ -32,6 +36,35 @@ export function sniffImageType(bytes: Buffer): string | null {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
   if (at(0, 'GIF87a') || at(0, 'GIF89a')) return 'image/gif'
   if (at(0, 'RIFF') && at(8, 'WEBP')) return 'image/webp'
+  return null
+}
+
+/**
+ * The size a PNG or JPEG says it is, read from its header without decoding
+ * it. Null when the header does not say (the decoder then decides).
+ */
+export function headerSize(bytes: Buffer, type: string): { width: number; height: number } | null {
+  if (type === 'image/png') {
+    if (bytes.length < 24 || bytes.toString('latin1', 12, 16) !== 'IHDR') return null
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+  }
+  if (type !== 'image/jpeg') return null
+  // Segments follow SOI; the first start-of-frame carries the size.
+  let at = 2
+  while (at + 4 <= bytes.length) {
+    if (bytes[at] !== 0xff) return null
+    const marker = bytes[at + 1]!
+    if (marker === 0xff) {
+      at += 1
+      continue
+    }
+    const isFrame = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
+    if (isFrame) {
+      if (at + 9 > bytes.length) return null
+      return { height: bytes.readUInt16BE(at + 5), width: bytes.readUInt16BE(at + 7) }
+    }
+    at += 2 + bytes.readUInt16BE(at + 2)
+  }
   return null
 }
 
@@ -78,6 +111,11 @@ export function prepareImage(
   const source = Buffer.from(dataBase64, 'base64')
   const type = sniffImageType(source)
   if (!type) return { error: 'Не похоже на картинку' }
+  if (source.length > MAX_SOURCE_BYTES) return { error: 'Картинка слишком большая' }
+  const declared = headerSize(source, type)
+  if (declared && Math.max(declared.width, declared.height) > MAX_SOURCE_SIDE) {
+    return { error: 'Картинка слишком большая' }
+  }
 
   if (type === 'image/gif' || type === 'image/webp') {
     if (source.length > MAX_IMAGE_BYTES) return { error: 'Картинка слишком большая' }

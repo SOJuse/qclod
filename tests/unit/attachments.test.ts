@@ -196,6 +196,12 @@ describe('отправка, отложенная до готовности сн�
     expect(queuedSendStep(true, [ready, failed])).toBe('cancel')
   })
 
+  test('вкладка умерла, пока ждали снимок, — отправка отменяется, текст остаётся', () => {
+    expect(queuedSendStep(true, [ready], true)).toBe('cancel')
+    expect(queuedSendStep(true, [ready, waiting], true)).toBe('cancel')
+    expect(queuedSendStep(false, [ready], true)).toBe('none')
+  })
+
   test('снимок убрали крестиком, пока ждали, — отправка отменяется', () => {
     expect(queuedSendStep(true, [])).toBe('cancel')
     expect(queuedSendStep(true, [{ kind: 'file', path: 'C:/a.ts' }])).toBe('cancel')

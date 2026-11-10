@@ -50,7 +50,8 @@ const api = {
   restartTab: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.tabsRestart, id),
   retryTab: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.tabsRetry, id),
 
-  send: (id: TabId, input: UserInput): Promise<void> =>
+  /** False when the tab could not take the message: it goes back to the input line. */
+  send: (id: TabId, input: UserInput): Promise<boolean> =>
     ipcRenderer.invoke(CHANNELS.agentSend, id, input),
   /** Stops the turn; resolves with the messages that were waiting to be sent. */
   interrupt: (id: TabId): Promise<UserInput[]> => ipcRenderer.invoke(CHANNELS.agentInterrupt, id),

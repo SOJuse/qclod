@@ -169,6 +169,9 @@ export function sanitizeInput(value: unknown, userData?: string): UserInput {
 }
 
 const MAX_ANSWER = 2000
+/** A card asks at most four questions; this is only a ceiling on garbage. */
+const MAX_ANSWERS = 64
+const MAX_QUESTION = 2000
 
 /**
  * The answers of a question card: question text -> chosen label(s). An answer
@@ -178,9 +181,13 @@ const MAX_ANSWER = 2000
 export function sanitizeQuestionAnswers(value: unknown): Record<string, string> {
   if (!isPlainObject(value)) return {}
   const out: Record<string, string> = {}
+  let kept = 0
   for (const [question, answer] of Object.entries(value)) {
+    if (kept >= MAX_ANSWERS) break
     if (typeof answer !== 'string' || answer.length > MAX_ANSWER) continue
+    if (question.length > MAX_QUESTION) continue
     out[question] = answer
+    kept += 1
   }
   return out
 }

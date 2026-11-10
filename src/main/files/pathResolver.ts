@@ -21,7 +21,7 @@ const MISSING_TTL_MS = 1000
 /** How long a tab may act on a path after it last found it. */
 const GRANT_TTL_MS = 30 * 60_000
 const MAX_ENTRIES = 5000
-const MAX_PER_CALL = 200
+export const MAX_PER_CALL = 200
 
 /** CON, nul.txt, COM1, `aux .ts`: Windows opens the device, whatever the folder. */
 const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)$/i

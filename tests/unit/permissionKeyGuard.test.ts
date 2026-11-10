@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'vitest'
-import { ARM_MS, FOCUS_BEFORE_MS, clearHeldKeys, createKeyGuard, focusedLongEnough } from '@renderer/chat/permissionKeyGuard'
+import {
+  ARM_MS,
+  FOCUS_BEFORE_MS,
+  arrivalOf,
+  claimFocusOffer,
+  clearHeldKeys,
+  createKeyGuard,
+  focusedLongEnough
+} from '@renderer/chat/permissionKeyGuard'
 
 describe('createKeyGuard', () => {
   test('до фокуса карточки клавиши не принимаются', () => {
@@ -55,5 +63,19 @@ describe('потеря фокуса окном', () => {
     guard.focus(1000, new Set(['Enter']))
     clearHeldKeys()
     expect(guard.allows('Enter', 5000)).toBe(true)
+  })
+})
+
+describe('фокус карточки предлагается один раз на запрос', () => {
+  test('время прихода запоминается по запросу и не сбрасывается при новом монтировании', () => {
+    expect(arrivalOf('r-arr', 100)).toBe(100)
+    expect(arrivalOf('r-arr', 5000)).toBe(100)
+    expect(arrivalOf('r-other', 5000)).toBe(5000)
+  })
+
+  test('второе монтирование той же карточки фокус уже не берёт', () => {
+    expect(claimFocusOffer('r-claim')).toBe(true)
+    expect(claimFocusOffer('r-claim')).toBe(false)
+    expect(claimFocusOffer('r-claim-2')).toBe(true)
   })
 })

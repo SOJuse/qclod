@@ -155,8 +155,8 @@ describe('agent:send и files:prepareImage', () => {
     handlers.clear()
     registerAgentIpc({
       getWindow: () => null,
-      controller: { list: () => [{ id: 't1', cwd: CWD }] },
-      manager: { get: () => ({ send: (input: unknown) => sent.push(input) }) },
+      controller: { list: () => [{ id: 't1', cwd: CWD }], send: (_id: string, input: unknown) => sent.push(input) > 0 },
+      manager: {},
       broker: {},
       rememberDefault: () => undefined,
       resolver: new PathResolver(),
@@ -206,8 +206,11 @@ describe('pastes: настоящий путь и типы', () => {
     handlers.clear()
     registerAgentIpc({
       getWindow: () => null,
-      controller: { list: () => [{ id: 't1', cwd: CWD }] },
-      manager: { get: () => ({ send: (input: { attachments: unknown[] }) => sent.push(input) }) },
+      controller: {
+        list: () => [{ id: 't1', cwd: CWD }],
+        send: (_id: string, input: { attachments: unknown[] }) => sent.push(input) > 0
+      },
+      manager: {},
       broker: {},
       rememberDefault: () => undefined,
       resolver: new PathResolver(),

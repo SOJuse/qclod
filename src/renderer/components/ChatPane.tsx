@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { TriangleAlert } from 'lucide-react'
-import type { SessionSummary } from '../../shared/types'
+import type { SessionSummary, UserInput } from '../../shared/types'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { compactNow, sendCommand } from '../input/slash'
+import {
+  draftWithReturned,
+  pendingFromSent,
+  prepareAttachment,
+  type PendingImage
+} from '../input/attachments'
 import { Ribbon } from './Ribbon'
 import { Composer } from './Composer'
 import { NowLine } from './NowLine'
 import { TodoStrip } from './TodoStrip'
+import { QueueStrip } from './QueueStrip'
 import { StatusLine } from './StatusLine'
 import { ContextBanner } from './ContextBanner'
 import { EmptyTab } from './EmptyTab'
@@ -71,6 +78,35 @@ export function ChatPane({
     () => (items ?? []).flatMap((item) => (item.kind === 'user' ? [item.text] : [])),
     [items]
   )
+
+  /** main finished preparing an image: its chip becomes the thumbnail, or the error. */
+  function applyPrepared(file: File, patch: Pick<PendingImage, 'prepared' | 'error'>): void {
+    setAttachments(
+      tabId,
+      (useAppStore.getState().attachmentsByTab[tabId] ?? []).map((item) =>
+        item.kind === 'image' && item.file === file ? { ...item, ...patch } : item
+      )
+    )
+  }
+
+  /**
+   * «Стоп» handed the queue back: its texts go into the field before what is
+   * already typed, its attachments back as chips — nothing the user wrote is
+   * lost by stopping.
+   */
+  function takeBack(returned: UserInput[]): void {
+    if (returned.length === 0) return
+    const state = useAppStore.getState()
+    setDraft(tabId, draftWithReturned(returned.map((r) => r.text), state.draftByTab[tabId] ?? ''))
+    const chips = returned.flatMap((r) => r.attachments.map(pendingFromSent))
+    setAttachments(tabId, [...chips, ...(state.attachmentsByTab[tabId] ?? [])])
+    // An image that came back without main's copy is prepared again.
+    for (const chip of chips) {
+      if (chip.kind !== 'image' || !chip.file || chip.prepared || chip.error) continue
+      const file = chip.file
+      void prepareAttachment(chip, window.qclod.prepareImage).then((patch) => applyPrepared(file, patch))
+    }
+  }
 
   // The session's commands are asked for the first time a slash is typed in
   // this tab; after that the main process pushes every change. A session that
@@ -145,6 +181,8 @@ export function ChatPane({
         />
       )}
 
+      <QueueStrip queue={panel.queue ?? []} onCancel={(id) => void window.qclod.cancelQueued(tabId, id)} />
+
       <Composer
         tabId={tabId}
         status={status}
@@ -170,7 +208,7 @@ export function ChatPane({
         onSubmit={(text, attachments) => {
           void window.qclod.send(tabId, { text, attachments })
         }}
-        onInterrupt={() => void window.qclod.interrupt(tabId)}
+        onInterrupt={() => void window.qclod.interrupt(tabId).then(takeBack)}
         onCycleMode={onCycleMode}
         onRestart={() => {
           // The new session's panel replaces the old one's whole: its cost and
@@ -189,14 +227,7 @@ export function ChatPane({
             .then(() => window.qclod.panel(tabId))
             .then((snapshot) => useAppStore.getState().setPanelSnapshot(tabId, snapshot))
         }}
-        onImagePrepared={(file, patch) =>
-          setAttachments(
-            tabId,
-            (useAppStore.getState().attachmentsByTab[tabId] ?? []).map((item) =>
-              item.kind === 'image' && item.file === file ? { ...item, ...patch } : item
-            )
-          )
-        }
+        onImagePrepared={applyPrepared}
         onPickFiles={() => {
           void window.qclod.pickFiles().then((paths) => {
             if (paths.length === 0) return

@@ -10,6 +10,7 @@ import type {
   LimitWindow,
   ModelOption,
   PanelData,
+  TaskOutput,
   UserInput
 } from '../../shared/types'
 import type { AgentDriver, ContextUsage, DriverOptions } from './driver'
@@ -215,6 +216,35 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
       } catch {
         return null
       }
+    },
+
+    async taskOutput(taskId: string): Promise<TaskOutput | null> {
+      // getTaskOutput is in sdk.mjs but not on the Query type (sdk.d.ts
+      // describes only its request and answer), so it is looked for. A CLI
+      // that refuses — not a shell task, a redacting lane — reads as «no output».
+      const read = (
+        session as unknown as {
+          getTaskOutput?: (
+            id: string
+          ) => Promise<{ output: string; total_bytes: number; truncated: boolean }>
+        }
+      ).getTaskOutput
+      if (typeof read !== 'function') return null
+      try {
+        const answer = await read.call(session, taskId)
+        if (!answer || typeof answer.output !== 'string') return null
+        return {
+          output: answer.output,
+          totalBytes: typeof answer.total_bytes === 'number' ? answer.total_bytes : 0,
+          truncated: answer.truncated === true
+        }
+      } catch {
+        return null
+      }
+    },
+
+    async stopTask(taskId: string): Promise<void> {
+      await session.stopTask(taskId)
     },
 
     async dispose(): Promise<void> {

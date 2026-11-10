@@ -136,9 +136,16 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     session.send(withPastedBytes(sanitizeInput(input, deps.userData)))
   })
 
-  ipcMain.handle(CHANNELS.agentInterrupt, async (_e, id: unknown) => {
-    if (!isString(id)) return
-    await manager.get(id)?.interrupt()
+  // «Стоп» hands back what was waiting to be sent; the window puts it back
+  // in the input field.
+  ipcMain.handle(CHANNELS.agentInterrupt, async (_e, id: unknown): Promise<UserInput[]> => {
+    if (!isString(id)) return []
+    return (await manager.get(id)?.interrupt()) ?? []
+  })
+
+  ipcMain.handle(CHANNELS.agentQueueCancel, (_e, id: unknown, queuedId: unknown): boolean => {
+    if (!isString(id) || !isString(queuedId)) return false
+    return manager.get(id)?.cancelQueued(queuedId) ?? false
   })
 
   // The mode decides whether the agent asks at all, so an unknown string must
@@ -204,6 +211,18 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!isString(id)) return { rev: 0, data: EMPTY_PANEL }
     void manager.get(id)?.refreshMcp().catch(() => undefined)
     return controller.panelOf(id)
+  })
+
+  // The session answers only for a task it lists itself, so a made-up id
+  // never reaches the agent.
+  ipcMain.handle(CHANNELS.agentTaskOutput, async (_e, id: unknown, taskId: unknown) => {
+    if (!isString(id) || !isString(taskId) || taskId === '') return null
+    return (await manager.get(id)?.taskOutput(taskId)) ?? null
+  })
+
+  ipcMain.handle(CHANNELS.agentTaskStop, async (_e, id: unknown, taskId: unknown) => {
+    if (!isString(id) || !isString(taskId) || taskId === '') return
+    await manager.get(id)?.stopTask(taskId)
   })
 
   ipcMain.handle(CHANNELS.permissionAnswer, (_e, requestId: unknown, answer: unknown) => {

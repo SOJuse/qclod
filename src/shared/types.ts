@@ -257,6 +257,44 @@ export interface PanelData {
   permissionMode: PermissionMode
   mcp: McpServerInfo[]
   projectSettings: ProjectSettingsInfo | null
+  /** Messages sent while the agent was working, waiting for it to be free. */
+  queue: QueuedMessage[]
+  /** Background shells and the like, newest first; subagents have their own cards. */
+  backgroundTasks: BackgroundTask[]
+}
+
+/** A message waiting its turn: what the strip above the input field shows of it. */
+export interface QueuedMessage {
+  id: string
+  text: string
+  /** How many files and pictures go with it. */
+  attachments: number
+}
+
+/**
+ * One background task as the status line lists it, from the SDK's task_*
+ * events. The end time is ours: the SDK's notification carries none.
+ */
+export interface BackgroundTask {
+  taskId: string
+  toolUseId?: string
+  /** task_type as the SDK names it: local_bash, monitor, … */
+  type: string
+  description: string
+  /** The Bash call's command, when the task came from one. */
+  command?: string
+  /** interrupted: the agent itself died while the task ran; no end was ever reported. */
+  status: 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted'
+  /** epoch ms */
+  startedAt: number
+  endedAt?: number
+}
+
+/** The end of a background task's output (get_task_output: the last 8 KiB). */
+export interface TaskOutput {
+  output: string
+  totalBytes: number
+  truncated: boolean
 }
 
 // ------------------------------------------------------------------ the rest

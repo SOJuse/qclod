@@ -184,6 +184,10 @@
   --status-pad: 2px 6px;
   --dropdown-menu-min-w: 220px;
   --dropdown-menu-max-w: 340px;
+  /* The background commands' list and the output tail an opened row shows. */
+  --bg-list-w: 460px;
+  --bg-list-max-h: 360px;
+  --bg-output-max-h: 180px;
 
   /* The Ctrl+K window of app actions. */
   --palette-top: 12vh;

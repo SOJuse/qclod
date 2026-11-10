@@ -14,6 +14,7 @@ import type {
   RibbonItem,
   SessionStatus,
   TabId,
+  TaskOutput,
   TodoItem,
   UserInput
 } from '../../shared/types'
@@ -22,6 +23,7 @@ import type { ToolPermissionContext } from './permissionContext'
 import { parseExtraFlags } from './launchFlags'
 import { composeText } from './userMessage'
 import { PanelCollector, readProjectSettings } from './panelData'
+import { BackgroundTracker } from './backgroundTasks'
 import { displayTarget } from './permissionStore'
 import { AgentNotFoundError } from './resolveExecutable'
 import { findAgent } from '../setup/findAgent'
@@ -127,6 +129,7 @@ export class AgentSession {
   private readonly options: AgentSessionOptions
   private readonly builder: RibbonBuilder
   private readonly collector: PanelCollector
+  private readonly backgroundTasks = new BackgroundTracker()
   private readonly changeListeners: ChangeListener[] = []
   private readonly panelListeners: PanelListener[] = []
   private readonly statusListeners: StatusListener[] = []
@@ -175,6 +178,17 @@ export class AgentSession {
    * leave the tab idle, not working on a turn that is not there.
    */
   private turnRunning = false
+  /**
+   * Messages sent while a turn was under way, oldest first. They wait here —
+   * not in the ribbon — until the agent is free, and go one per turn.
+   */
+  private queue: Array<{ id: string; input: UserInput }> = []
+  /**
+   * How many «Стоп» are on their way. Meanwhile a message goes straight to
+   * the agent: the queue was handed back when Stop was pressed, and a message
+   * typed after that is meant to be sent, not pulled back too.
+   */
+  private stopsInFlight = 0
   private mcpTimer: ReturnType<typeof setTimeout> | null = null
   /** Repeats asked since the servers were last all settled. */
   private mcpPolls = 0
@@ -489,9 +503,22 @@ export class AgentSession {
     }
   }
 
+  /**
+   * A message from the user. While a turn is under way it waits in the queue
+   * and goes when the turn ends; otherwise it goes now.
+   */
   send(input: UserInput): void {
     if (!this.driver) return
+    if (this.turnRunning && this.stopsInFlight === 0) {
+      this.queue.push({ id: randomUUID(), input })
+      this.emitQueue()
+      return
+    }
+    this.sendNow(input)
+  }
 
+  private sendNow(input: UserInput): void {
+    if (!this.driver) return
     // The text is composed once, here. The ribbon shows what the user typed
     // with their files as chips; the agent — and therefore the echo that comes
     // back — gets the composed version, which is what the dedup must match.
@@ -543,18 +570,73 @@ export class AgentSession {
    * not wait for it to land: a message sent meanwhile starts a turn of its
    * own, and that turn — its status, its first question — is left alone.
    */
-  async interrupt(): Promise<void> {
-    if (!this.driver) return
+  async interrupt(): Promise<UserInput[]> {
+    if (!this.driver) return []
     const stopped = this.turn
+    // Taken before anything is awaited: the turn's result could otherwise
+    // arrive first and send the next one off after all (ruling C7).
+    const returned = this.takeQueue()
     this.cancelWaits()
-    await this.driver.interrupt().catch(() => undefined)
+    this.stopsInFlight += 1
+    try {
+      await this.driver.interrupt().catch(() => undefined)
+    } finally {
+      this.stopsInFlight -= 1
+    }
     // A question asked while the interrupt was on its way belongs to the
     // turn being stopped and is refused with it; left open, it would hold a
     // count of one behind an idle tab.
     this.cancelWaits({ upTo: stopped })
-    if (this.turn !== stopped) return
+    if (this.turn !== stopped) return returned
     this.turnRunning = false
     this.setStatus('idle')
+    return returned
+  }
+
+  /** Takes a message off the queue before it goes. False when it is not there. */
+  cancelQueued(id: string): boolean {
+    const at = this.queue.findIndex((q) => q.id === id)
+    if (at === -1) return false
+    this.queue.splice(at, 1)
+    this.emitQueue()
+    return true
+  }
+
+  /** Empties the queue and hands over what was in it — to «Стоп», or to a successor. */
+  takeQueue(): UserInput[] {
+    if (this.queue.length === 0) return []
+    const taken = this.queue.map((q) => q.input)
+    this.queue = []
+    this.emitQueue()
+    return taken
+  }
+
+  /**
+   * Takes over a predecessor's queue. A free session sends the first message
+   * at once; one that is not up holds them all and sends nothing.
+   */
+  requeue(inputs: UserInput[]): void {
+    if (inputs.length === 0) return
+    for (const input of inputs) this.queue.push({ id: randomUUID(), input })
+    this.emitQueue()
+    if (!this.turnRunning) this.sendQueued()
+  }
+
+  /** The agent is free: the oldest waiting message goes. */
+  private sendQueued(): boolean {
+    if (!this.driver || this.queue.length === 0) return false
+    const next = this.queue.shift()!
+    this.emitQueue()
+    this.sendNow(next.input)
+    return true
+  }
+
+  private emitQueue(): void {
+    this.emitPanel(
+      this.collector.setQueue(
+        this.queue.map((q) => ({ id: q.id, text: q.input.text, attachments: q.input.attachments.length }))
+      )
+    )
   }
 
   /**
@@ -700,6 +782,32 @@ export class AgentSession {
     this.mcpTimer = null
   }
 
+  /**
+   * The end of a background task's output. Only a task this tab lists is
+   * asked about: an id from anywhere else never reaches the agent.
+   */
+  async taskOutput(taskId: string): Promise<TaskOutput | null> {
+    const driver = this.driver
+    if (!driver || !this.backgroundTasks.tasks.some((t) => t.taskId === taskId)) return null
+    return driver.taskOutput(taskId).catch(() => null)
+  }
+
+  /** Stops one of this tab's background tasks while it is still running. */
+  async stopTask(taskId: string): Promise<void> {
+    const driver = this.driver
+    const task = this.backgroundTasks.tasks.find((t) => t.taskId === taskId)
+    if (!driver || task?.status !== 'running') return
+    // The task's notification, not this call, tells the list it has ended.
+    // A refusal is the user's to see: it reaches the row that asked.
+    await driver.stopTask(taskId)
+  }
+
+  /** The agent is gone: its background tasks are cut off with it. */
+  private cutOffBackground(): void {
+    const tasks = this.backgroundTasks.endAll('interrupted')
+    if (tasks) this.emitPanel(this.collector.setBackgroundTasks(tasks))
+  }
+
   /** Everything the panel knows about this tab right now. */
   get panel(): PanelData {
     return this.collector.data
@@ -713,6 +821,8 @@ export class AgentSession {
   async dispose(): Promise<void> {
     this.disposed = true
     this.turnRunning = false
+    // The queue is dropped with the session by design: a closed tab's
+    // messages have nowhere to go. A swap takes it first (`takeQueue`).
     this.stopMcpPolling()
     // A question nobody can answer any more must not hold the agent open.
     this.cancelWaits()
@@ -754,7 +864,10 @@ export class AgentSession {
         this.onMessage(message)
       }
       // The stream ending by itself means the agent exited.
-      if (this.driver === driver) this.setStatus('stopped')
+      if (this.driver === driver) {
+        this.cutOffBackground()
+        this.setStatus('stopped')
+      }
     } catch (err) {
       if (this.driver === driver) this.fail(err)
     }
@@ -774,6 +887,8 @@ export class AgentSession {
       this.mode = this.collector.data.permissionMode
       this.emitPanel(panel)
     }
+    const tasks = this.backgroundTasks.apply(message)
+    if (tasks) this.emitPanel(this.collector.setBackgroundTasks(tasks))
     const todo = this.builder.todo
     if (todo) this.todoItems = todo
 
@@ -791,7 +906,9 @@ export class AgentSession {
         break
       case 'result':
         this.turnRunning = false
-        this.setStatus('idle')
+        // A message waiting its turn goes straight on: the tab stays busy
+        // rather than flicking to idle (and chiming) in between.
+        if (!this.sendQueued()) this.setStatus('idle')
         this.background(this.refreshContext())
         break
       default:
@@ -1003,6 +1120,7 @@ export class AgentSession {
     // must not stay live (a click could save a rule from a dead session).
     this.cancelWaits()
     if (dead) void dead.dispose().catch(() => undefined)
+    this.cutOffBackground()
     this.failure = text
     this.emit(this.builder.closeOpen())
     this.emit(this.builder.notice(explain(text), 'error'))

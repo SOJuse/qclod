@@ -32,6 +32,7 @@ export type FakeStep =
       steps: FakeStep[]
     }
   | FakeBackgroundAgentStep
+  | FakeBackgroundBashStep
   | { kind: 'compact'; preTokens: number; postTokens: number; trigger?: 'auto' | 'manual' }
   | { kind: 'crash'; message: string }
   /** Says «картинок: N; типы: …; байт: M» about the images of the last send. */
@@ -57,6 +58,27 @@ export interface FakeBackgroundAgentStep {
   } | null
 }
 
+/** A Bash call with run_in_background; its output grows and it ends after the turn. */
+export interface FakeBackgroundBashStep {
+  kind: 'backgroundBash'
+  command: string
+  /** task_started's description; the command when not given. */
+  description?: string
+  /** `b` and 8 hex digits when not given. */
+  taskId?: string
+  /** Pieces of output, one every pauseMs after the turn's result, read by taskOutput(). */
+  chunks?: string[]
+  pauseMs?: number
+  /** null or absent: the command never ends by itself. */
+  finish?: 'completed' | 'failed' | null
+}
+
+export interface FakeTaskOutput {
+  output: string
+  totalBytes: number
+  truncated: boolean
+}
+
 export interface FakePermissionAnswer {
   behavior: 'allow' | 'deny'
   message?: string
@@ -76,6 +98,8 @@ export interface FakePlanLimits {
 export interface FakeScript {
   steps?: FakeStep[]
   nextTurn?: FakeStep[]
+  /** The i-th message sent (0-based) plays `turns[i]`; past the list, `nextTurn`. */
+  turns?: FakeStep[][]
   sessionId?: string
   costUsd?: number
   contextPercent?: number
@@ -86,6 +110,10 @@ export interface FakeScript {
   planLimits?: FakePlanLimits | null
   /** Delay before getContextUsage() answers. */
   contextUsageDelayMs?: number
+  /** taskOutput() answers null: a CLI that cannot read a task's output. */
+  taskOutputUnavailable?: boolean
+  /** stopTask() rejects with this message and the task keeps running. */
+  stopTaskError?: string
   canUseTool?: (
     toolName: string,
     input: Record<string, unknown>,
@@ -139,6 +167,8 @@ export interface FakeDriver {
     percentage: number
     categories: Array<{ name: string; tokens: number; kind: string }>
   }>
+  taskOutput(taskId: string): Promise<FakeTaskOutput | null>
+  stopTask(taskId: string): Promise<void>
   dispose(): Promise<void>
 
   readonly sent: Array<{ text: string; attachments: unknown[] }>

@@ -33,6 +33,10 @@ for await (const message of driver.messages) { /* ... */ }
 `init` и `rate_limit_event` приходят один раз за сессию; каждый ход
 заканчивается `result/success`.
 
+Чтобы ходы отвечали по-разному, есть `turns: FakeStep[][]`: i-е отправленное
+сообщение (с нуля, ход из `steps` не считается) играет `turns[i]`; когда
+список кончился — `nextTurn`.
+
 Модель, контекст и лимиты до первого сообщения можно узнать только
 запросом: `getContextUsage()` (с полем `model`; `contextUsageDelayMs`
 задерживает ответ) и `planLimits()` (окна из `script.planLimits`, `null` —
@@ -60,6 +64,7 @@ for await (const message of driver.messages) { /* ... */ }
 | `todo` | вызов `TodoWrite` со списком задач |
 | `subagent` | вызов `Agent`, вложенные шаги помечаются `parent_tool_use_id`; `tool_use_result` — `AgentOutput` (`status: completed`, `agentId`, `totalTokens`, `totalDurationMs`, `totalToolUseCount`, `content`), итоги — из `stats` под теми же именами; `report` — текст отчёта (`content[].text` и текст `tool_result`, по умолчанию «подагент закончил»); `subagent` внутри `steps` — вложенный: его шаги помечены его собственным id |
 | `backgroundAgent` | вызов `Agent` с `run_in_background: true`; `tool_result` «Async agent launched successfully.» с `tool_use_result.status: async_launched`; `system/task_started`. **После `result` этого хода** — по `system/task_progress` на каждый элемент `progress`, затем (если `finish` не `null`) `system/task_notification` и сообщение пользователя с `origin.kind: task-notification` и текстом `<task-notification>…`. `pauseMs` — пауза между событиями; `agentId` по умолчанию — `a` и 16 hex. Порядок «после `result`» — решение C2 (тест видит, что ход кончился, а агент ещё работает); ответного хода главного агента на уведомление фейк не играет |
+| `backgroundBash` | вызов `Bash` с `run_in_background: true`; `tool_result` «Command running in background with ID: <id>» и `tool_use_result {stdout:'', stderr:'', interrupted:false, backgroundTaskId}`; `system/task_started {task_id, tool_use_id, description, task_type:'local_bash', is_backgrounded:true}`; `system/background_tasks_changed` со всеми работающими. **После `result` хода** — по куску из `chunks` каждые `pauseMs` (их копит `taskOutput`), затем, если `finish` не `null`, `task_notification {status, output_file, summary}` и `background_tasks_changed` без этой задачи. `taskId` по умолчанию — `b` и 8 hex, `description` — сама команда. **Формы взяты из `sdk.d.ts` и `sdk-tools.d.ts`, не с живой сессии** |
 | `compact` | `compact_boundary` с токенами до и после |
 | `crash` | бросает ошибку посреди потока |
 | `reportInput` | текст агента «картинок: N; типы: image/png; байт: M» по последнему `send`: сколько вложений-картинок пришло, их `mediaType` через запятую и сумма байт после декодирования base64 — чтобы e2e видел, что картинка дошла настоящим вложением |
@@ -75,6 +80,20 @@ for await (const message of driver.messages) { /* ... */ }
 
 `interrupt()` абортит `signal` всех открытых вопросов `canUseTool`; такой
 вопрос считается отказом и больше не держит ход.
+
+**Фоновые задачи.** Фейк — это драйвер (`AgentDriver`), а не `Query` SDK,
+поэтому методы названы по драйверу (решение C12): `taskOutput(id)` вместо
+`getTaskOutput` и `stopTask(id)`. `taskOutput` отдаёт
+`{output, totalBytes, truncated}` — последние 8 КиБ того, что накопили куски
+`backgroundBash`, полный размер в байтах и признак обрезки; для чужого id —
+`null`; со скриптом `taskOutputUnavailable: true` — всегда `null` (CLI, который
+не умеет читать вывод). Со скриптом `stopTaskError: '…'` `stopTask` бросает
+ошибку с этим текстом, а задача работает дальше. `stopTask(id)` у работающей задачи сразу, вне очереди
+хода, выдаёт `task_notification` со `status: 'stopped'` и
+`background_tasks_changed` без неё; куски после этого не копятся, своего
+уведомления задача больше не шлёт. Формы — из `sdk.d.ts`
+(`SDKControlGetTaskOutputResponse`, `SDKTaskNotificationMessage`,
+`SDKBackgroundTasksChangedMessage`), не с живой сессии.
 
 ## Транскрипты на диске: `../transcript.mjs`
 

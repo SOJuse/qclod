@@ -329,3 +329,80 @@ test('история вкладки — из её ленты, у второй в
     rmSync(other, { recursive: true, force: true })
   }
 })
+
+/** A first answer slow enough to type the next message into. */
+const SLOW_FIRST_TURN = {
+  steps: [],
+  turns: [[{ kind: 'textStream', pieces: ['думаю ', 'ещё ', 'немного ', 'готово'], pauseMs: 700 }]],
+  nextTurn: [{ kind: 'text', text: 'закоммитил' }]
+}
+
+async function sendWhileBusy(win: Page, first: string, next: string): Promise<void> {
+  const input = win.locator('[data-testid="composer-input"]')
+  await input.click()
+  await input.fill(first)
+  await input.press('Enter')
+  await expect(win.locator('[data-testid="composer-stop"]')).toBeVisible({ timeout: 15000 })
+  await input.fill(next)
+  await input.press('Enter')
+  await expect(input).toHaveValue('')
+}
+
+const userBubbles = (win: Page) => win.locator('[data-testid="ribbon-user"]')
+
+test('пока агент отвечает, Enter ставит сообщение в очередь; оно уходит само', async () => {
+  const { app, profile, win } = await launch(SLOW_FIRST_TURN)
+  try {
+    await sendWhileBusy(win, 'сделай фичу', 'и потом закоммить')
+
+    const queued = win.locator('[data-testid="queue-item"]')
+    await expect(queued).toHaveText('В очереди: «и потом закоммить»')
+    await expect(win.locator('[data-testid="queue-cancel"]')).toHaveAttribute('title', 'Убрать из очереди')
+    // Not said yet: no bubble for it while it waits.
+    await expect(userBubbles(win)).toHaveCount(1)
+
+    await expect(userBubbles(win).nth(1)).toContainText('и потом закоммить', { timeout: 15000 })
+    await expect(queued).toHaveCount(0)
+    await expect(win.getByText('закоммитил')).toBeVisible({ timeout: 15000 })
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('крестик убирает из очереди', async () => {
+  const { app, profile, win } = await launch(SLOW_FIRST_TURN)
+  try {
+    await sendWhileBusy(win, 'сделай фичу', 'не надо этого')
+    await expect(win.locator('[data-testid="queue-item"]')).toHaveCount(1)
+
+    await win.locator('[data-testid="queue-cancel"]').click()
+    await expect(win.locator('[data-testid="queue-item"]')).toHaveCount(0)
+
+    // The turn ends and nothing more goes.
+    await expect(win.locator('[data-testid="composer-send"]')).toBeVisible({ timeout: 15000 })
+    await expect(win.getByText('закоммитил')).toHaveCount(0)
+    await expect(userBubbles(win)).toHaveCount(1)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('Esc возвращает очередь в поле ввода', async () => {
+  const { app, profile, win } = await launch(SLOW_FIRST_TURN)
+  try {
+    await sendWhileBusy(win, 'сделай фичу', 'и потом закоммить')
+    await expect(win.locator('[data-testid="queue-item"]')).toHaveCount(1)
+
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.fill('уже набрано')
+    await input.press('Escape')
+
+    // The waiting message comes back before what was typed, a blank line apart.
+    await expect(input).toHaveValue('и потом закоммить\n\nуже набрано')
+    await expect(win.locator('[data-testid="queue-item"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="composer-send"]')).toBeVisible({ timeout: 15000 })
+    await expect(userBubbles(win)).toHaveCount(1)
+  } finally {
+    await close(app, profile)
+  }
+})

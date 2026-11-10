@@ -1,0 +1,68 @@
+/*
+ * Messages waiting for the agent, as quiet rows above the input — the same
+ * width and look as the checklist strip. Words wear text tokens.
+ */
+
+.queue-strip {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-hair);
+  width: min(var(--now-max-w), calc(100% - var(--now-gutter) * 2));
+  margin: 0 auto var(--strip-margin);
+  padding: 0;
+  list-style: none;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  color: var(--text-dim);
+}
+
+.queue-item > svg {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.queue-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-attachments {
+  color: var(--text-faint);
+}
+
+.queue-cancel {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gap-hair);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.queue-cancel:hover {
+  color: var(--text);
+  background: var(--hover-fill);
+}
+
+.queue-cancel:focus-visible {
+  outline: 1px solid var(--border-accent);
+  outline-offset: 1px;
+}

@@ -114,6 +114,36 @@ describe('InputHistory', () => {
     expect(h.next()).toBe('чер')
   })
 
+  test('правка вызванной записи: ↓ возвращает исходный черновик', () => {
+    const h = new InputHistory(['а', 'б'])
+    h.prev('чер')
+    h.edit()
+    expect(h.next()).toBe('чер')
+    expect(h.next()).toBeUndefined()
+  })
+
+  test('после правки ↑ листает дальше, черновик цел', () => {
+    const h = new InputHistory(['а', 'б'])
+    h.prev('чер')
+    h.edit()
+    expect(h.prev('б!')).toBe('а')
+    expect(h.next()).toBe('б')
+    h.edit()
+    expect(h.next()).toBe('чер')
+  })
+
+  test('новая запись посреди просмотра: позиция остаётся на той же записи', () => {
+    const h = new InputHistory(['а', 'б', 'в'])
+    h.prev('чер')
+    expect(h.prev('')).toBe('б')
+    h.setEntries(['а', 'б', 'в', 'г'])
+    expect(h.prev('')).toBe('а')
+    expect(h.next()).toBe('б')
+    expect(h.next()).toBe('в')
+    expect(h.next()).toBe('г')
+    expect(h.next()).toBe('чер')
+  })
+
   test('setEntries вне просмотра оставляет позицию «не листаем»', () => {
     const h = new InputHistory(['а'])
     h.setEntries(['а', 'б'])

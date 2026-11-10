@@ -10,6 +10,8 @@ export class InputHistory {
   private items: string[] = []
   private position = -1
   private draft = ''
+  /** The recalled entry was edited: ↓ now leaves the history for the draft. */
+  private edited = false
 
   constructor(
     entries: string[] = [],
@@ -38,13 +40,16 @@ export class InputHistory {
       if (kept[kept.length - 1] === text) continue
       kept.push(text)
     }
-    this.items = kept.reverse().slice(0, this.limit)
+    const next = kept.reverse().slice(0, this.limit)
+    // Newer entries shift the older ones; browsing stays on the same entry.
+    if (this.position >= 0) this.position += next.length - this.items.length
+    this.items = next
     if (this.position >= this.items.length) this.position = this.items.length - 1
     if (this.position < 0) this.position = -1
   }
 
   push(text: string): void {
-    this.position = -1
+    this.reset()
     if (text.trim() === '') return
     if (this.items[0] === text) return
     this.items.unshift(text)
@@ -55,17 +60,28 @@ export class InputHistory {
   prev(draft: string): string | undefined {
     if (this.items.length === 0) return undefined
     if (this.position < 0) this.draft = draft
+    this.edited = false
     this.position = Math.min(this.position + 1, this.items.length - 1)
     return this.items[this.position]
   }
 
   next(): string | undefined {
     if (this.position < 0) return undefined
+    if (this.edited) {
+      this.reset()
+      return this.draft
+    }
     this.position -= 1
     return this.position < 0 ? this.draft : this.items[this.position]
   }
 
+  /** The person typed into a recalled entry; the held draft stays. */
+  edit(): void {
+    if (this.position >= 0) this.edited = true
+  }
+
   reset(): void {
     this.position = -1
+    this.edited = false
   }
 }

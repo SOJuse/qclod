@@ -94,6 +94,15 @@ describe('resolveComposerKey', () => {
     ).toBe('caret')
   })
 
+  test('во время набора через IME стрелки отдаются ему, истории нет', () => {
+    expect(
+      resolveComposerKey(key({ key: 'ArrowUp', isComposing: true }), ctx({ text: '' }))
+    ).toBe('native')
+    expect(resolveComposerKey(key({ key: 'ArrowDown', keyCode: 229 }), ctx({ text: '' }))).toBe(
+      'native'
+    )
+  })
+
   test('стрелки ведут по подсказке, пока она открыта', () => {
     expect(resolveComposerKey(key({ key: 'ArrowUp' }), ctx({ popupOpen: true }))).toBe('popupNav')
     expect(resolveComposerKey(key({ key: 'Enter' }), ctx({ popupOpen: true }))).toBe('popupAccept')

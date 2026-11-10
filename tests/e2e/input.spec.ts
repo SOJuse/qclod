@@ -262,6 +262,44 @@ test('↑ приносит прошлое сообщение, ↓ возвращ
   }
 })
 
+test('команда, отправленная из списка, тоже вспоминается по ↑', async () => {
+  const { app, profile, win } = await launch({ steps: [], nextTurn: [] })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    await input.fill('/compact')
+    await input.press('Enter')
+    await expect(win.locator('[data-testid="ribbon-user"]')).toContainText('/compact')
+    await expect(input).toHaveValue('')
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('/compact')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('правка вызванного сообщения: ↓ возвращает исходный черновик', async () => {
+  const { app, profile, win } = await launch({ steps: [], nextTurn: [] })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    await input.fill('прошлое')
+    await input.press('Enter')
+    await expect(input).toHaveValue('')
+    await input.fill('черновик')
+    await input.press('Home')
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('прошлое')
+    await input.press('End')
+    await input.type('!')
+    await expect(input).toHaveValue('прошлое!')
+    await input.press('ArrowDown')
+    await expect(input).toHaveValue('черновик')
+  } finally {
+    await close(app, profile)
+  }
+})
+
 test('история вкладки — из её ленты, у второй вкладки своя', async () => {
   const other = mkdtempSync(join(tmpdir(), 'qclod-input-other-'))
   const { app, profile, win } = await launchWith(

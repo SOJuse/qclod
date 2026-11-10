@@ -596,6 +596,9 @@ export class AgentSession {
     this.launchedAgent = true
 
     this.pump = this.readMessages(this.driver)
+    // The stored effort is asked for first, so the control request is on the
+    // wire before the first queued message and that message runs at it.
+    this.background(this.applyStoredEffort())
     // What was sent while the agent was starting goes now.
     if (!this.sendQueued()) this.setStatus('idle')
     this.emitPanel(this.collector.setProjectSettings(readProjectSettings(this.options.cwd)))
@@ -608,7 +611,6 @@ export class AgentSession {
     // names the model; the plan's limits come from the usage call, since no
     // rate_limit_event arrives before the first message either. None of them
     // may become an unhandled rejection, even one thrown synchronously.
-    this.background(this.applyStoredEffort())
     this.background(this.refreshContext())
     this.background(this.refreshModels())
     this.background(this.refreshMcp())

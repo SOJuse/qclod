@@ -1416,6 +1416,33 @@ describe('AgentSession: панель полна до первого сообще
     await session.dispose()
   })
 
+  test('сохранённое усилие уходит раньше первого сообщения из очереди', async () => {
+    const { session, driver } = makeSession({ steps: [] }, { overrides: { effort: 'high' } })
+    const order: string[] = []
+    const d = driver as unknown as {
+      setEffort: (e: string) => Promise<void>
+      send: (...args: unknown[]) => unknown
+    }
+    const setEffort = d.setEffort.bind(driver)
+    const send = d.send.bind(driver)
+    d.setEffort = (e) => {
+      order.push(`effort:${e}`)
+      return setEffort(e)
+    }
+    d.send = (...args) => {
+      order.push('send')
+      return send(...args)
+    }
+
+    const started = session.start()
+    expect(session.send({ text: 'привет', attachments: [] })).toBe(true)
+    await started
+
+    await vi.waitFor(() => expect(order).toContain('send'))
+    expect(order.slice(0, 2)).toEqual(['effort:high', 'send'])
+    await session.dispose()
+  })
+
   test('отказ драйвера применить сохранённое усилие не попадает в панель и виден заметкой', async () => {
     const { session, driver } = makeSession({ steps: [] }, { overrides: { effort: 'high' } })
     const rec = watch(session)

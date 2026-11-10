@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AppSettings } from '../../shared/types'
+import { sanitizeDefaults } from '../tabs/sanitize'
 
 export const SETTINGS_FILE = 'settings.json'
 
@@ -47,7 +48,7 @@ export function loadSettings(dir: string): AppSettings {
   return {
     ...DEFAULT_SETTINGS,
     ...stored,
-    defaults: { ...DEFAULT_SETTINGS.defaults, ...(stored.defaults ?? {}) }
+    defaults: { ...DEFAULT_SETTINGS.defaults, ...sanitizeDefaults(stored.defaults) }
   }
 }
 

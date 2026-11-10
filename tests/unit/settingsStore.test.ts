@@ -9,6 +9,17 @@ function freshDir(): string {
 }
 
 describe('settingsStore', () => {
+  test('bypassPermissions в settings.json читается как default', () => {
+    const dir = freshDir()
+    writeFileSync(
+      join(dir, SETTINGS_FILE),
+      JSON.stringify({ defaults: { permissionMode: 'bypassPermissions', model: 'm' } }),
+      'utf8'
+    )
+    expect(loadSettings(dir).defaults).toEqual({ permissionMode: 'default', model: 'm' })
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   test('отсутствующий файл даёт настройки по умолчанию', () => {
     const dir = freshDir()
     expect(loadSettings(dir)).toEqual(DEFAULT_SETTINGS)

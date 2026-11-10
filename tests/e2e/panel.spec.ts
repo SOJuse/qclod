@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -226,6 +226,48 @@ test('после перезагрузки окна панель снова по�
     })
     await expect(again.locator('[data-testid="panel-model"]')).toHaveValue('claude-opus-5')
     await expect(again.locator('[data-testid="panel-limits"]')).toContainText('13%')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('модель и усилие вкладки переживают перезапуск приложения', async () => {
+  const { app, profile } = await launch({ steps: [] })
+  try {
+    const win = await app.firstWindow()
+    const panel = win.locator('[data-testid="side-panel"]')
+    await expect(panel.locator('select[data-testid="panel-model"]')).toHaveValue('claude-opus-5', {
+      timeout: 15000
+    })
+
+    await panel.locator('select[data-testid="panel-model"]').selectOption('claude-sonnet-5')
+    await expect(panel.locator('select[data-testid="panel-model"]')).toHaveValue('claude-sonnet-5')
+    await panel.locator('select[data-testid="panel-effort"]').selectOption('low')
+    await expect(panel.locator('select[data-testid="panel-effort"]')).toHaveValue('low')
+    // Both are written to disk before the app is closed.
+    await expect
+      .poll(() => readFileSync(join(profile, 'tabs.json'), 'utf8'), { timeout: 10000 })
+      .toContain('claude-sonnet-5')
+    await app.close()
+
+    const again = await electron.launch({
+      args: ['.'],
+      env: {
+        ...process.env,
+        QCLOD_USER_DATA: profile,
+        QCLOD_FAKE_SDK_SCRIPT: JSON.stringify({ steps: [] })
+      } as Record<string, string>
+    })
+    try {
+      const win2 = await again.firstWindow()
+      const panel2 = win2.locator('[data-testid="side-panel"]')
+      await expect(panel2.locator('select[data-testid="panel-model"]')).toHaveValue('claude-sonnet-5', {
+        timeout: 15000
+      })
+      await expect(panel2.locator('select[data-testid="panel-effort"]')).toHaveValue('low')
+    } finally {
+      await again.close().catch(() => undefined)
+    }
   } finally {
     await close(app, profile)
   }

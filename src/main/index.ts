@@ -15,6 +15,7 @@ import { SessionHistory } from './agent/sessionHistory'
 import { loadTranscript } from './agent/transcript'
 import { TabController } from './tabs/TabController'
 import { pickDefaultCwd } from './tabs/defaultCwd'
+import { mergeDefaults } from './tabs/sanitize'
 import { notifyIfNeeded } from './notifications'
 import { RendererOutbox } from './rendererOutbox'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
@@ -199,14 +200,24 @@ app.whenReady().then(async () => {
     getSettings: () => settings,
     setSettings: (patch) => {
       const previousHotkey = settings.globalHotkey
-      settings = { ...settings, ...patch, defaults: { ...settings.defaults, ...patch.defaults } }
+      settings = mergeDefaults(settings, patch)
       saveSettings(userData, settings)
       if (settings.globalHotkey !== previousHotkey) hotkey.apply(settings.globalHotkey)
       return settings
     }
   })
 
-  registerAgentIpc({ getWindow: () => mainWindow, controller, manager, broker })
+  registerAgentIpc({
+    getWindow: () => mainWindow,
+    controller,
+    manager,
+    broker,
+    rememberDefault: (patch) => {
+      settings = mergeDefaults(settings, { defaults: patch })
+      saveSettings(userData, settings)
+      send(CHANNELS.settingsChanged, settings)
+    }
+  })
   ipcMain.handle(CHANNELS.hotkeyStatus, () => hotkey.status)
 
   mainWindow = createMainWindow()

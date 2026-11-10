@@ -29,7 +29,13 @@ export function createDriverFactory(): DriverFactory {
         // signal — read the same way the real driver reads them.
         canUseTool: (toolName: string, input: Record<string, unknown>, opts: unknown) =>
           options.canUseTool(toolName, input, toPermissionContext(opts)),
-        init: { cwd: options.cwd, ...(parsed['init'] as object) }
+        // The model the tab asked for at launch is the one the fixture starts in,
+        // as the real CLI does with --model.
+        init: {
+          cwd: options.cwd,
+          ...(options.model ? { model: options.model } : {}),
+          ...(parsed['init'] as object)
+        }
       })
     }
   }

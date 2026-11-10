@@ -1471,4 +1471,20 @@ describe('TabController: подмена сессии, «Повторить» и 
     expect(said.some((n) => n.text.includes('Прошлую переписку'))).toBe(false)
     expect(harness.created.at(-1)!.resume).toBeUndefined()
   })
+
+  test('guard: две вкладки на одной папке хранят свою модель независимо', async () => {
+    const { controller } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    const first = controller.list()[0]!.id
+    const second = controller.create(projectA).id
+
+    controller.rememberOverride(first, { model: 'claude-sonnet-5' })
+    controller.rememberOverride(second, { model: 'claude-opus-5', effort: 'low' })
+
+    const [a, b] = controller.list()
+    expect(a!.overrides).toMatchObject({ model: 'claude-sonnet-5' })
+    expect(a!.overrides.effort).toBeUndefined()
+    expect(b!.overrides).toMatchObject({ model: 'claude-opus-5', effort: 'low' })
+  })
 })

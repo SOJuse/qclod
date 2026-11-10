@@ -1,6 +1,7 @@
 import {
   EFFORT_LEVELS,
   PERMISSION_MODES,
+  type AppSettings,
   type EffortLevel,
   type LaunchOverrides,
   type PermissionAnswer,
@@ -51,6 +52,28 @@ export function sanitizeOverrides(value: unknown): LaunchOverrides {
     out[key] = candidate
   }
   return out
+}
+
+/**
+ * Launch options as a default for new tabs. Like a tab's own overrides, except
+ * that a bypass is not dropped but becomes the ordinary mode: a new tab must not
+ * inherit it, and must not come up with no mode at all (spec 5.4).
+ */
+export function sanitizeDefaults(value: unknown): LaunchOverrides {
+  const bypass = isPlainObject(value) && value['permissionMode'] === 'bypassPermissions'
+  const out = sanitizeOverrides(value)
+  if (bypass) out.permissionMode = 'default'
+  return out
+}
+
+/** Settings with a patch applied; the defaults inside the patch are sanitised first. */
+export function mergeDefaults(settings: AppSettings, patch: Partial<AppSettings>): AppSettings {
+  const { defaults, ...rest } = patch
+  return {
+    ...settings,
+    ...rest,
+    defaults: { ...settings.defaults, ...(defaults === undefined ? {} : sanitizeDefaults(defaults)) }
+  }
 }
 
 /**

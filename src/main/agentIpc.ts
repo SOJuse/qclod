@@ -26,6 +26,8 @@ export interface AgentIpcDeps {
   controller: TabController
   manager: AgentSessionManager
   broker: PermissionBroker
+  /** The last choice becomes what a new tab starts with. */
+  rememberDefault: (patch: LaunchOverrides) => void
 }
 
 function isString(value: unknown): value is string {
@@ -102,12 +104,20 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     await manager.get(id)?.setPermissionMode(mode)
     // What the session actually ended up in — a refused bypass leaves it alone.
     const actual = manager.get(id)?.panel.permissionMode
-    if (actual) controller.rememberOverride(id, { permissionMode: actual })
+    if (actual) {
+      // saveTabs drops a bypass; the default sanitiser turns it into 'default'.
+      controller.rememberOverride(id, { permissionMode: actual })
+      deps.rememberDefault({ permissionMode: actual })
+    }
   })
 
   ipcMain.handle(CHANNELS.agentModel, async (_e, id: unknown, model: unknown) => {
     if (!isString(id) || !isString(model) || model === '') return
-    await manager.get(id)?.setModel(model)
+    const session = manager.get(id)
+    if (!session) return
+    await session.setModel(model)
+    controller.rememberOverride(id, { model })
+    deps.rememberDefault({ model })
   })
 
   // The levels are an enum, not free text: an unknown one would be refused
@@ -121,6 +131,7 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     // Kept in Qclod's own tabs.json, so a reopened tab starts at the same
     // level — the user's settings files are never touched.
     controller.rememberOverride(id, { effort: level as EffortLevel })
+    deps.rememberDefault({ effort: level as EffortLevel })
   })
 
   ipcMain.handle(CHANNELS.agentCommands, async (_e, id: unknown) => {

@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest'
+import type { AppSettings } from '@shared/types'
 import {
+  mergeDefaults,
   sanitizeAnswer,
+  sanitizeDefaults,
   sanitizeInput,
   sanitizeOverrides,
   sanitizeQuestionAnswers,
@@ -165,5 +168,55 @@ describe('sanitizeQuestionAnswers', () => {
     expect(sanitizeQuestionAnswers({ A: 'я'.repeat(2001), B: 'я'.repeat(2000) })).toEqual({
       B: 'я'.repeat(2000)
     })
+  })
+})
+
+describe('sanitizeDefaults', () => {
+  test('bypass в умолчаниях становится default', () => {
+    expect(sanitizeDefaults({ permissionMode: 'bypassPermissions', effort: 'high' })).toEqual({
+      permissionMode: 'default',
+      effort: 'high'
+    })
+  })
+
+  test('обычные режимы и мусор — как у sanitizeOverrides', () => {
+    expect(sanitizeDefaults({ permissionMode: 'plan', model: 'm', effort: 'huge', x: 1 })).toEqual({
+      permissionMode: 'plan',
+      model: 'm'
+    })
+    expect(sanitizeDefaults('не объект')).toEqual({})
+  })
+})
+
+describe('mergeDefaults', () => {
+  const base: AppSettings = {
+    agentPath: 'claude',
+    globalHotkey: 'Ctrl+Alt+Q',
+    notificationsEnabled: true,
+    soundEnabled: true,
+    fontSize: 14,
+    closeToTray: true,
+    panelOpen: true,
+    defaults: { permissionMode: 'acceptEdits' }
+  }
+
+  test('выбор модели в одной вкладке становится умолчанием для новых', () => {
+    const next = mergeDefaults(base, { defaults: { model: 'claude-sonnet-5' } })
+    expect(next.defaults).toEqual({ permissionMode: 'acceptEdits', model: 'claude-sonnet-5' })
+  })
+
+  test('bypass не становится умолчанием, а прежнее умолчание заменяется на default', () => {
+    const next = mergeDefaults(base, { defaults: { permissionMode: 'bypassPermissions' } })
+    expect(next.defaults.permissionMode).toBe('default')
+  })
+
+  test('settingsSet с мусором в умолчаниях не портит остальное', () => {
+    const next = mergeDefaults(base, { fontSize: 16, defaults: { effort: 'low', extra: 1 } as never })
+    expect(next.fontSize).toBe(16)
+    expect(next.defaults).toEqual({ permissionMode: 'acceptEdits', effort: 'low' })
+  })
+
+  test('патч без defaults оставляет умолчания как были', () => {
+    expect(mergeDefaults(base, { fontSize: 16 }).defaults).toEqual(base.defaults)
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadTabs, saveTabs, TABS_FILE } from '@main/store/tabsStore'
@@ -139,6 +139,25 @@ describe('tabsStore: усилие', () => {
     writeFileSync(
       join(dir, TABS_FILE),
       JSON.stringify([{ id: 't1', cwd: tmpdir(), title: 'x', overrides: { effort: 'ultra' } }]),
+      'utf8'
+    )
+    expect(loadTabs(dir)[0]!.overrides).toEqual({})
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('bypassPermissions не попадает в tabs.json', () => {
+    const dir = freshDir()
+    saveTabs(dir, [tab({ overrides: { permissionMode: 'bypassPermissions', model: 'm' } })])
+    expect(loadTabs(dir)[0]!.overrides).toEqual({ model: 'm' })
+    expect(readFileSync(join(dir, TABS_FILE), 'utf8')).not.toContain('bypassPermissions')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('bypassPermissions из старого tabs.json при чтении отбрасывается', () => {
+    const dir = freshDir()
+    writeFileSync(
+      join(dir, TABS_FILE),
+      JSON.stringify([{ id: 't', cwd: tmpdir(), title: 't', overrides: { permissionMode: 'bypassPermissions' } }]),
       'utf8'
     )
     expect(loadTabs(dir)[0]!.overrides).toEqual({})

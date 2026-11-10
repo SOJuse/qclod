@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu } from 'electron'
 import { homedir } from 'node:os'
+import { APP_ID } from '../shared/appId'
 import { createMainWindow, hardenWebContents, offScreen, RENDERER_ENTRY } from './window'
 import { registerBaseIpc } from './ipc'
 import { registerAgentIpc } from './agentIpc'
@@ -20,6 +21,7 @@ import { notifyIfNeeded, shouldRaiseWindowForPermission } from './notifications'
 import { RendererOutbox } from './rendererOutbox'
 import { PathResolver } from './files/pathResolver'
 import { cleanupPasteDir } from './files/imagePaste'
+import { createUpdateSource, UpdateFlow } from './update/updater'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -72,6 +74,9 @@ if (userDataOverride) app.setPath('userData', userDataOverride)
 // The tray keeps the app alive after its window closes, which a headless test
 // run cannot shut down cleanly.
 const headless = process.env['QCLOD_HEADLESS'] === '1'
+
+// Matches the AUMID of the NSIS shortcut, so Windows notifications are tied to it.
+app.setAppUserModelId(APP_ID)
 
 // Windows would report an off-screen window as covered, and Chromium would
 // stop painting it (window.ts).
@@ -238,7 +243,9 @@ app.whenReady().then(async () => {
       saveSettings(userData, settings)
       if (settings.globalHotkey !== previousHotkey) hotkey.apply(settings.globalHotkey)
       return settings
-    }
+    },
+    // Tabs that stopped for want of a login carry on by themselves.
+    onLoggedIn: () => void controller.afterLogin()
   })
 
   // e2e reads what a click on a path did from here (fileActions.ts). Only the
@@ -262,6 +269,21 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle(CHANNELS.hotkeyStatus, () => hotkey.status)
+
+  // Updates come from GitHub releases and install on restart or on quit. A
+  // failed check is a console line only (updater.ts). quitAndInstall ends in
+  // app.quit(), so the before-quit below sets `quitting` and the window's
+  // close-to-tray does not catch that exit.
+  const updateSource = createUpdateSource(app.isPackaged)
+  const updates = updateSource
+    ? new UpdateFlow({
+        source: updateSource,
+        onState: (state) => send(CHANNELS.updateChanged, state),
+        log: (message) => console.warn('[update]', message)
+      })
+    : null
+  ipcMain.handle(CHANNELS.updateGet, () => updates?.state ?? { kind: 'idle' })
+  ipcMain.handle(CHANNELS.updateRestart, () => updates?.restart() ?? false)
 
   mainWindow = createMainWindow()
   loadRenderer(mainWindow)
@@ -289,6 +311,7 @@ app.whenReady().then(async () => {
   mainWindow.webContents.once('did-finish-load', () => {
     void controller.restore()
     tray?.rebuild()
+    updates?.start(updateSource?.firstCheckMs)
   })
 
   app.on('before-quit', (event) => {

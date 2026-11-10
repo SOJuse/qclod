@@ -1,19 +1,51 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { npmFixture } from './npmFixture'
 import { checkEnvironment } from '@main/setup/environment'
-import { findAgent } from '@main/setup/findAgent'
+import { findAgent, locateAgent } from '@main/setup/findAgent'
 import { detectInstallMethod, WINGET_ID, NPM_PACKAGE } from '@main/setup/install'
 
 describe('checkEnvironment', () => {
   test('находит установленный агент и его версию', async () => {
-    const report = await checkEnvironment('claude')
+    const report = await checkEnvironment('claude', { authStatus: async () => 'in' })
 
     expect(report.agent.found).toBe(true)
     expect(report.agent.path).toBeTruthy()
+    expect(report.auth).toBe('in')
     expect(report.ready).toBe(true)
+  })
+
+  test('агент есть, но вход не выполнен — не готово', async () => {
+    const report = await checkEnvironment('claude', { authStatus: async () => 'out' })
+    expect(report.agent.found).toBe(true)
+    expect(report.auth).toBe('out')
+    expect(report.ready).toBe(false)
+  })
+
+  test('вход неизвестен — работать не мешает', async () => {
+    const report = await checkEnvironment('claude', { authStatus: async () => 'unknown' })
+    expect(report.auth).toBe('unknown')
+    expect(report.ready).toBe(true)
+  })
+
+  test('без агента вход не спрашивается', async () => {
+    const authStatus = vi.fn(async () => 'in' as const)
+    const report = await checkEnvironment('C:/нет/такого/claude.exe', {
+      env: { PATH: '' },
+      detect: async () => null,
+      authStatus
+    })
+    expect(report.agent.found).toBe(false)
+    expect(report.auth).toBeNull()
+    expect(authStatus).not.toHaveBeenCalled()
+  })
+
+  test('проверке входа отдаётся найденный путь агента', async () => {
+    const authStatus = vi.fn(async (_agent: string) => 'in' as const)
+    const report = await checkEnvironment('claude', { authStatus })
+    expect(authStatus).toHaveBeenCalledWith(report.agent.path)
   })
 
   test('несуществующий путь — не найден, и это не исключение', async () => {
@@ -26,14 +58,14 @@ describe('checkEnvironment', () => {
   test('версия старого npm-пакета (cli.js) спрашивается через node', async () => {
     const root = mkdtempSync(join(tmpdir(), 'qclod-npm-'))
     const cli = npmFixture(root, 'js')
-    const report = await checkEnvironment(cli)
+    const report = await checkEnvironment(cli, { authStatus: async () => 'in' })
 
     expect(report.agent.path).toBe(cli)
     expect(report.agent.version).toBe('1.0.99')
   })
 
   test('пустая настройка читается как «claude»', async () => {
-    const report = await checkEnvironment('')
+    const report = await checkEnvironment('', { authStatus: async () => 'in' })
     expect(report.ready).toBe(true)
   })
 })
@@ -83,5 +115,49 @@ describe('detectInstallMethod', () => {
     // winget: Anthropic PBC / Claude Code. npm: the published package.
     expect(WINGET_ID).toBe('Anthropic.ClaudeCode')
     expect(NPM_PACKAGE).toBe('@anthropic-ai/claude-code')
+  })
+})
+
+function brokenShimEnv(): NodeJS.ProcessEnv {
+  const appData = mkdtempSync(join(tmpdir(), 'qclod-shim-'))
+  const npm = join(appData, 'npm')
+  mkdirSync(npm)
+  writeFileSync(
+    join(npm, 'claude.cmd'),
+    '@ECHO off\r\n"%dp0%\\node_modules\\x\\missing.exe" %*\r\n',
+    'utf8'
+  )
+  return { APPDATA: appData, PATH: '', PATHEXT: '.EXE;.CMD' }
+}
+
+describe('причина «агент не найден»', () => {
+  test('locateAgent отдаёт текст про .cmd-обёртку', () => {
+    expect(() => locateAgent('claude', brokenShimEnv())).toThrow(/\.cmd-обёртка/)
+  })
+
+  test('checkEnvironment показывает причину', async () => {
+    const report = await checkEnvironment('claude', {
+      env: brokenShimEnv(),
+      detect: async () => 'winget'
+    })
+    expect(report.agent.found).toBe(false)
+    expect(report.agent.problem).toMatch(/\.cmd-обёртка/)
+  })
+
+  test('неверный путь в настройках назван', async () => {
+    const report = await checkEnvironment('C:/нет/такого/claude.exe', {
+      env: { PATH: '' },
+      detect: async () => 'winget'
+    })
+    expect(report.agent.problem).toContain('C:/нет/такого/claude.exe')
+  })
+
+  test('на чистой машине причины нет', async () => {
+    const report = await checkEnvironment('claude', {
+      env: { PATH: '' },
+      detect: async () => null
+    })
+    expect(report.agent.found).toBe(false)
+    expect(report.agent.problem).toBeUndefined()
   })
 })

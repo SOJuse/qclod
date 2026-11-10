@@ -13,6 +13,7 @@ import { HistoryScreen } from '../components/HistoryScreen'
 import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { ActionPalette } from '../components/ActionPalette'
+import { UpdateBanner } from '../components/UpdateBanner'
 import { compactNow } from '../input/slash'
 import { hint, resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
 import { PANEL_MIN_WIDTH, nextOverride, panelVisible, type PanelOverride } from './panelVisibility'
@@ -35,6 +36,11 @@ export function App(): JSX.Element {
   const focusComposer = useCallback(() => setFocusToken((n) => n + 1), [])
   const [environment, setEnvironment] = useState<EnvironmentReport | null>(null)
   const [setupDismissed, setSetupDismissed] = useState(false)
+  /**
+   * Set by the first report that was not ready. The screen then stays until
+   * «Начать работу», so finishing step 2 is seen rather than skipped past.
+   */
+  const [setupNeeded, setSetupNeeded] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   /** Ctrl+W was pressed once on a working tab; a second press within 3 s closes it. */
   const [closeGuardTab, setCloseGuardTab] = useState<string | null>(null)
@@ -59,7 +65,10 @@ export function App(): JSX.Element {
   }, [])
 
   const recheck = useCallback((): void => {
-    void window.qclod.checkEnvironment().then(setEnvironment)
+    void window.qclod.checkEnvironment().then((report) => {
+      setEnvironment(report)
+      if (!report.ready) setSetupNeeded(true)
+    })
   }, [])
 
   // Checked once at start: without Claude Code on the machine there is nothing
@@ -390,13 +399,35 @@ export function App(): JSX.Element {
     if (splitTabId) loadRibbon(splitTabId)
   }, [splitTabId, loadRibbon])
 
-  if (environment && !environment.ready && !setupDismissed) {
+  if (environment && setupNeeded && !setupDismissed) {
+    // Settings open over the setup screen; closing them checks again, since
+    // the agent path is what they were opened for.
     return (
-      <SetupScreen
-        report={environment}
-        onRecheck={recheck}
-        onDone={() => setSetupDismissed(true)}
-      />
+      <>
+        <SetupScreen
+          report={environment}
+          onRecheck={recheck}
+          onDone={() => setSetupDismissed(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+        {settingsOpen && settings && (
+          <SettingsScreen
+            settings={settings}
+            version={version}
+            models={[]}
+            focusField="agentPath"
+            onPatch={async (patch) => {
+              const next = await window.qclod.setSettings(patch)
+              setSettings(next)
+              return next
+            }}
+            onClose={() => {
+              setSettingsOpen(false)
+              recheck()
+            }}
+          />
+        )}
+      </>
     )
   }
 
@@ -417,6 +448,7 @@ export function App(): JSX.Element {
         onToggleSplit={toggleSplit}
         splitOpen={splitTabId !== null}
       />
+      <UpdateBanner />
       <div className={`app-body${splitTabId ? ' app-split' : ''}`}>
         <div className="app-panes">
           <ChatPane

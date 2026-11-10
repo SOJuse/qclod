@@ -1,6 +1,6 @@
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { resolveExecutable } from '../agent/resolveExecutable'
+import { AgentNotFoundError, resolveExecutable } from '../agent/resolveExecutable'
 
 /**
  * Where Claude Code ends up, besides PATH.
@@ -54,22 +54,40 @@ function knownLocations(env: NodeJS.ProcessEnv): string[] {
  * already there — then the places an installer would have put it.
  */
 export function findAgent(configured: string, env: NodeJS.ProcessEnv): string | null {
-  const wanted = configured.trim() || 'claude'
-
   try {
-    return resolveExecutable(wanted, env)
+    return locateAgent(configured, env)
   } catch {
-    // Not on PATH. If the user typed a full path and it is wrong, saying so is
-    // better than quietly running some other agent they did not name.
-    if (wanted !== 'claude') return null
+    return null
   }
+}
 
-  for (const place of knownLocations(env)) {
+/**
+ * Same search as findAgent, but a miss throws AgentNotFoundError, carrying the
+ * first unusable .cmd wrapper met on the way so the reason reaches the person.
+ */
+export function locateAgent(configured: string, env: NodeJS.ProcessEnv): string {
+  const wanted = configured.trim() || 'claude'
+  let shim: string | undefined
+
+  const attempt = (target: string): string | undefined => {
     try {
-      return resolveExecutable(place, env)
-    } catch {
-      // Not there, or nothing runnable there: try the next place.
+      return resolveExecutable(target, env)
+    } catch (err) {
+      if (err instanceof AgentNotFoundError) shim ??= err.shim
+      return undefined
     }
   }
-  return null
+
+  const direct = attempt(wanted)
+  if (direct) return direct
+
+  // Not on PATH. If the user typed a full path and it is wrong, saying so is
+  // better than quietly running some other agent they did not name.
+  if (wanted === 'claude') {
+    for (const place of knownLocations(env)) {
+      const found = attempt(place)
+      if (found) return found
+    }
+  }
+  throw new AgentNotFoundError(wanted, shim)
 }

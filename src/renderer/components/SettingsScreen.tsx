@@ -28,6 +28,8 @@ interface Props {
   onClose: () => void
   /** Closing gives focus back to the opener; this runs when the opener is gone. */
   onFocusLost?: () => void
+  /** A field to start in, selected: the setup screen opens settings for the agent path. */
+  focusField?: 'agentPath'
 }
 
 export function SettingsScreen({
@@ -36,7 +38,8 @@ export function SettingsScreen({
   models,
   onPatch: save,
   onClose,
-  onFocusLost
+  onFocusLost,
+  focusField
 }: Props): JSX.Element {
   const [hotkeyStatus, setHotkeyStatus] = useState<HotkeyRegistration | null>(null)
   const [rules, setRules] = useState<PermissionRuleView[]>([])
@@ -56,8 +59,9 @@ export function SettingsScreen({
 
   useEffect(() => {
     // Focus inside the sheet is what lets Esc reach it. It lands on a control, not
-    // on the sheet itself, so the ring shows where Tab goes from here.
-    closeButton.current?.focus()
+    // on the sheet itself, so the ring shows where Tab goes from here. A field that
+    // asked for focus keeps it; it is inside the sheet, so Esc still works.
+    if (!focusField) closeButton.current?.focus()
     return () => clearTimeout(savedTimer.current)
   }, [])
 
@@ -159,6 +163,8 @@ export function SettingsScreen({
               <input
                 type="text"
                 data-testid="setting-agentPath"
+                autoFocus={focusField === 'agentPath'}
+                onFocus={focusField === 'agentPath' ? (e) => e.target.select() : undefined}
                 defaultValue={settings.agentPath}
                 onBlur={(e) => onPatch({ agentPath: e.target.value })}
               />

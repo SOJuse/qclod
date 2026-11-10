@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 import { AgentSession, seedFromTranscript } from '../../src/main/agent/AgentSession'
 import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
+import { LOGIN_NEEDED_TEXT } from '../../src/main/agent/startFailure'
 import type { AgentDriver, DriverOptions } from '../../src/main/agent/driver'
 import { toPermissionContext } from '../../src/main/agent/permissionContext'
 import { PermissionBroker } from '../../src/main/agent/permissions'
@@ -190,6 +191,24 @@ describe('AgentSession', () => {
     const notices = rec.items.filter((i) => i.kind === 'notice')
     expect(notices.at(-1)).toMatchObject({ tone: 'error' })
     expect((notices.at(-1) as { text: string }).text).toContain('агент умер')
+  })
+
+  test('новая сессия без входа: notice «Войти», сырой ошибки в ленте нет', async () => {
+    const raw = 'Not logged in · Please run /login'
+    const { session } = makeSession({ steps: [{ kind: 'crash', message: raw }] })
+    const rec = watch(session)
+
+    await session.start()
+    await settle(session)
+
+    expect(session.status).toBe('error')
+    const notices = rec.items.filter((i) => i.kind === 'notice')
+    expect(notices.at(-1)).toEqual(
+      expect.objectContaining({ tone: 'error', action: 'login', text: LOGIN_NEEDED_TEXT })
+    )
+    expect(JSON.stringify(rec.items)).not.toContain('Not logged in')
+    // The raw words stay for whoever needs to know why: the tab, the retry.
+    expect(session.error).toBe(raw)
   })
 
   test('отсутствующий исполняемый файл даёт понятную ошибку, а не падение', async () => {

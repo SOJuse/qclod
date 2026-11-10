@@ -75,14 +75,14 @@ describe('строка-заметка в ленте', () => {
   })
 
   test('заметка с action login даёт кнопку «Войти», она открывает тот же вход, что установка', () => {
-    const openTerminal = vi.fn(async () => undefined)
-    vi.stubGlobal('window', { qclod: { openTerminal } })
+    const login = vi.fn(async () => undefined)
+    vi.stubGlobal('window', { qclod: { login } })
     const tree = createElement(NoticeRow, { item: notice('login') })
 
     expect(renderToStaticMarkup(tree)).toContain('не вошёл в аккаунт')
     expect(find(tree, 'notice-login')!.props.children).toBe('Войти')
     click(tree, 'notice-login')
-    expect(openTerminal).toHaveBeenCalledTimes(1)
+    expect(login).toHaveBeenCalledTimes(1)
   })
 
   test('обычная заметка без кнопки', () => {

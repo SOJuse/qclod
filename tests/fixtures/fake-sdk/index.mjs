@@ -28,11 +28,66 @@
  * @typedef {{kind:'backgroundBash', command:string, description?:string, taskId?:string, chunks?:string[], pauseMs?:number,
  *   finish?:'completed'|'failed'|null}} BackgroundBashStep
  * @typedef {{kind:'compact', preTokens:number, postTokens:number, trigger?:'auto'|'manual'}} CompactStep
- * @typedef {{kind:'crash', message:string}} CrashStep
+ * @typedef {{kind:'crash', message:string, times?:number, beforeInit?:boolean}} CrashStep
  * @typedef {{kind:'reportInput'}} ReportInputStep
  */
 
 import { randomUUID } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+/** How many sessions each `crash` step with `times` has been played in, by its message. */
+const CRASHES_FILE = 'fake-sdk-crashes.json'
+
+/**
+ * Which `crash` steps with `times` this session plays, decided once as the
+ * session (the driver) is made: the first `times` sessions get the step, the
+ * ones after skip it. The count lives in QCLOD_USER_DATA, since the app makes
+ * a new driver per start. Without that folder there is nowhere to count, and
+ * every such step crashes, as before.
+ */
+function crashingThisSession(script) {
+  const dir = process.env.QCLOD_USER_DATA
+  const counted = [...(script.steps ?? []), ...(script.nextTurn ?? [])].filter(
+    (step) => step.kind === 'crash' && step.times !== undefined
+  )
+  if (!dir || counted.length === 0) return null
+  const file = join(dir, CRASHES_FILE)
+  let counts = {}
+  try {
+    counts = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    // Not written yet: no session has been made.
+  }
+  const crashing = new Set()
+  const seen = new Set()
+  for (const step of counted) {
+    // Counted once per session, however many steps share the message.
+    if (seen.has(step.message)) continue
+    seen.add(step.message)
+    const sessions = counts[step.message] ?? 0
+    if (sessions < step.times) crashing.add(step.message)
+    counts[step.message] = sessions + 1
+  }
+  writeFileSync(file, JSON.stringify(counts), 'utf8')
+  return crashing
+}
+
+/** Whether a `crash` step fires in this session; `crashing` is from `crashingThisSession`. */
+function crashes(step, crashing) {
+  return step.times === undefined || crashing === null || crashing.has(step.message)
+}
+
+/**
+ * A `crash` with `beforeInit` is an agent that dies before it introduces
+ * itself — as one that is not logged in does: no `system/init`, no echo,
+ * just the error, once it is given something to answer.
+ */
+function crashBeforeInit(turn, crashing) {
+  for (const step of turn) {
+    if (step.kind === 'crash' && step.beforeInit && crashes(step, crashing)) throw new Error(step.message)
+  }
+}
 
 const DEFAULT_COMMANDS = [
   { name: 'compact', description: 'Сжать контекст', argumentHint: '', builtin: true },
@@ -69,6 +124,8 @@ function pause(ms) {
 
 export function createFakeSdk(script = {}) {
   const steps = script.steps ?? []
+  // Decided as the session is made, so each session counts once.
+  const crashing = crashingThisSession(script)
   const sessionId = script.sessionId ?? randomUUID()
   const canUseTool = script.canUseTool ?? (async () => ({ behavior: 'allow' }))
 
@@ -674,6 +731,8 @@ export function createFakeSdk(script = {}) {
           break
 
         case 'crash':
+          // A beforeInit crash was settled before the turn began.
+          if (step.beforeInit || !crashes(step, crashing)) break
           throw new Error(step.message)
 
         // What the last send carried, as the agent would count it: the
@@ -735,6 +794,7 @@ export function createFakeSdk(script = {}) {
     // Non-empty steps are a turn sent before the stream opened. An empty
     // script waits for the first message and says nothing until then.
     if (steps.length > 0) {
+      crashBeforeInit(steps, crashing)
       yield* introduce()
       yield* play(steps)
       yield* finishTurn()
@@ -753,6 +813,7 @@ export function createFakeSdk(script = {}) {
       const input = inbox.shift()
       if (!input) continue
 
+      crashBeforeInit(script.nextTurn ?? [], crashing)
       yield* introduce()
       // The CLI echoes the message back before answering it.
       yield {

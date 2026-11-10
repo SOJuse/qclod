@@ -8,6 +8,7 @@ import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
 import type { AgentDriver } from '../../src/main/agent/driver'
 import { TABS_FILE } from '../../src/main/store/tabsStore'
 import { EMPTY_PANEL } from '../../src/main/agent/panelData'
+import { LOGIN_NEEDED_TEXT } from '../../src/main/agent/startFailure'
 import type { PanelEvent, RibbonEvent, StatusEvent, TabState } from '../../src/shared/types'
 import { readTranscript } from '../../src/main/agent/transcript'
 import { resumedSession, writeTranscript } from '../fixtures/transcript.mjs'
@@ -110,6 +111,11 @@ function makeController(
     everyStreamFails?: string
     /** A resumed driver dies on its first message: the agent is not logged in. Read on every start. */
     notLoggedInOnSend?: boolean
+    /**
+     * A new (not resumed) driver dies before init on its first message with
+     * what this returns for its folder; undefined, it works. Read on every start.
+     */
+    freshFailsOnSend?: (cwd: string) => string | undefined
   } = {}
 ): Harness {
   const changed: TabState[][] = []
@@ -138,6 +144,8 @@ function makeController(
       if (options.notLoggedInOnSend && driverOptions.resume) {
         return deadResumeFor('Not logged in · Please run /login', 'firstSend')
       }
+      const freshFailure = driverOptions.resume ? undefined : options.freshFailsOnSend?.(driverOptions.cwd)
+      if (freshFailure) return deadResumeFor(freshFailure, 'firstSend')
       if (options.resumeFailsSync && driverOptions.resume) {
         throw new Error(`Сессия ${driverOptions.resume} не открывается`)
       }
@@ -1384,10 +1392,7 @@ describe('TabController: подмена сессии, «Повторить» и 
 
     const said = notices(harness.controller, 'a')
     expect(said.some((n) => n.text.includes('Прошлую переписку'))).toBe(false)
-    expect(said.at(-1)).toMatchObject({
-      text: 'Claude Code не вошёл в аккаунт. Войдите и нажмите «Повторить».',
-      action: 'login'
-    })
+    expect(said.at(-1)).toMatchObject({ text: LOGIN_NEEDED_TEXT, action: 'login' })
   })
 
   test('«Повторить», пока вход не сделан, снова пробует ту же переписку', async () => {
@@ -1486,6 +1491,204 @@ describe('TabController: подмена сессии, «Повторить» и 
     expect(a!.overrides).toMatchObject({ model: 'claude-sonnet-5' })
     expect(a!.overrides.effort).toBeUndefined()
     expect(b!.overrides).toMatchObject({ model: 'claude-opus-5', effort: 'low' })
+  })
+})
+
+describe('TabController: новая вкладка без входа', () => {
+  const NOT_LOGGED_IN = 'Not logged in · Please run /login'
+  const notices = (controller: TabController, id: string): Array<{ text: string; action?: string }> =>
+    controller.itemsOf(id).filter((i) => i.kind === 'notice') as Array<{ text: string; action?: string }>
+
+  test('ошибка входа на вкладке без lastSessionId — canRetry и одна notice «Войти»', async () => {
+    const harness = makeController({ freshFailsOnSend: () => NOT_LOGGED_IN })
+    const tab = harness.controller.create(projectA)
+    await harness.controller.whenSettled()
+    expect(harness.controller.list()[0]!.lastSessionId).toBeUndefined()
+
+    harness.manager.get(tab.id)!.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(harness.controller.list()[0]!.status).toBe('error'))
+    await harness.controller.whenSettled()
+
+    expect(harness.controller.list()[0]!.canRetry).toBe(true)
+    const login = notices(harness.controller, tab.id).filter((n) => n.action === 'login')
+    expect(login).toEqual([expect.objectContaining({ text: LOGIN_NEEDED_TEXT })])
+  })
+
+  test('на resume-пути notice «Войти» в ленте ровно одна', async () => {
+    const harness = makeController({ notLoggedInOnSend: true })
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+
+    harness.manager.get('a')!.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(harness.controller.list()[0]!.canRetry).toBe(true))
+    await harness.controller.whenSettled()
+
+    const login = notices(harness.controller, 'a').filter((n) => n.action === 'login')
+    expect(login).toEqual([expect.objectContaining({ text: LOGIN_NEEDED_TEXT })])
+    expect(notices(harness.controller, 'a').some((n) => n.text.includes(NOT_LOGGED_IN))).toBe(false)
+  })
+
+  test('afterLogin поднимает новую сессию только у вкладки, которой нужен вход', async () => {
+    const projectC = mkdtempSync(join(tmpdir(), 'qclod-c-'))
+    try {
+      const loggedIn = { value: false }
+      const harness = makeController({
+        freshFailsOnSend: (cwd) => {
+          if (cwd === projectA && !loggedIn.value) return NOT_LOGGED_IN
+          if (cwd === projectB) return 'агент умер'
+          return undefined
+        }
+      })
+      const needsLogin = harness.controller.create(projectA)
+      const brokenOther = harness.controller.create(projectB)
+      const idle = harness.controller.create(projectC)
+      await harness.controller.whenSettled()
+      harness.manager.get(needsLogin.id)!.send({ text: 'привет', attachments: [] })
+      harness.manager.get(brokenOther.id)!.send({ text: 'привет', attachments: [] })
+      await vi.waitFor(() => {
+        const tabs = harness.controller.list()
+        expect(tabs[0]!.status).toBe('error')
+        expect(tabs[1]!.status).toBe('error')
+      })
+      await harness.controller.whenSettled()
+      const before = {
+        needsLogin: harness.manager.get(needsLogin.id),
+        brokenOther: harness.manager.get(brokenOther.id),
+        idle: harness.manager.get(idle.id)
+      }
+      expect(before.idle!.status).toBe('idle')
+      const createdBefore = harness.created.length
+
+      loggedIn.value = true
+      await harness.controller.afterLogin()
+      await harness.controller.whenSettled()
+
+      expect(harness.manager.get(needsLogin.id)).not.toBe(before.needsLogin)
+      expect(harness.manager.get(needsLogin.id)!.status).toBe('idle')
+      expect(harness.manager.get(brokenOther.id)).toBe(before.brokenOther)
+      expect(harness.manager.get(idle.id)).toBe(before.idle)
+      // One new session, and what the user wrote reached it once.
+      expect(harness.created).toHaveLength(createdBefore + 1)
+      expect(harness.created.at(-1)!.driver.sent).toEqual([{ text: 'привет', attachments: [] }])
+      const bubbles = harness.controller.itemsOf(needsLogin.id).filter((i) => i.kind === 'user')
+      expect(bubbles).toHaveLength(1)
+    } finally {
+      rmSync(projectC, { recursive: true, force: true })
+    }
+  })
+
+  /** A tab whose new session died for want of a login, and a switch that logs the user in. */
+  async function stoppedForLogin(): Promise<{ harness: Harness; id: string; logIn: () => void }> {
+    const loggedIn = { value: false }
+    const harness = makeController({ freshFailsOnSend: () => (loggedIn.value ? undefined : NOT_LOGGED_IN) })
+    const { id } = harness.controller.create(projectA)
+    await harness.controller.whenSettled()
+    harness.manager.get(id)!.send({ text: 'привет', attachments: [] })
+    await vi.waitFor(() => expect(harness.controller.list()[0]!.canRetry).toBe(true))
+    await harness.controller.whenSettled()
+    return { harness, id, logIn: () => (loggedIn.value = true) }
+  }
+
+  /** Every message any working session was given, and how many were made. */
+  const allSent = (harness: Harness): unknown[] => harness.created.flatMap((c) => c.driver.sent)
+
+  test('afterLogin во время «Повторить» на той же вкладке: сообщение уходит один раз', async () => {
+    const { harness, id, logIn } = await stoppedForLogin()
+    logIn()
+
+    await Promise.all([harness.controller.retry(id), harness.controller.afterLogin()])
+    await harness.controller.whenSettled()
+
+    expect(harness.created).toHaveLength(1)
+    expect(allSent(harness)).toEqual([{ text: 'привет', attachments: [] }])
+    expect(harness.manager.get(id)!.status).toBe('idle')
+  })
+
+  test('«Повторить» во время afterLogin на той же вкладке: сообщение уходит один раз', async () => {
+    const { harness, id, logIn } = await stoppedForLogin()
+    logIn()
+
+    await Promise.all([harness.controller.afterLogin(), harness.controller.retry(id)])
+    await harness.controller.whenSettled()
+
+    expect(harness.created).toHaveLength(1)
+    expect(allSent(harness)).toEqual([{ text: 'привет', attachments: [] }])
+  })
+
+  test('двойной клик «Повторить»: сообщение уходит один раз', async () => {
+    const { harness, id, logIn } = await stoppedForLogin()
+    logIn()
+
+    await Promise.all([harness.controller.retry(id), harness.controller.retry(id)])
+    await harness.controller.whenSettled()
+
+    expect(harness.created).toHaveLength(1)
+    expect(allSent(harness)).toEqual([{ text: 'привет', attachments: [] }])
+  })
+
+  test('второй afterLogin поверх первого: одна новая сессия, сообщение уходит один раз', async () => {
+    const { harness, logIn } = await stoppedForLogin()
+    logIn()
+
+    await Promise.all([harness.controller.afterLogin(), harness.controller.afterLogin()])
+    await harness.controller.whenSettled()
+
+    expect(harness.created).toHaveLength(1)
+    expect(allSent(harness)).toEqual([{ text: 'привет', attachments: [] }])
+  })
+
+  test('вкладку, которую «Повторили» руками, пока afterLogin занят другой, он не трогает', async () => {
+    const loggedIn = { value: false }
+    const harness = makeController({ freshFailsOnSend: () => (loggedIn.value ? undefined : NOT_LOGGED_IN) })
+    const first = harness.controller.create(projectA)
+    const second = harness.controller.create(projectB)
+    await harness.controller.whenSettled()
+    harness.manager.get(first.id)!.send({ text: 'раз', attachments: [] })
+    harness.manager.get(second.id)!.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() =>
+      expect(harness.controller.list().every((t) => t.canRetry === true)).toBe(true)
+    )
+    await harness.controller.whenSettled()
+    loggedIn.value = true
+
+    const afterLogin = harness.controller.afterLogin()
+    await harness.controller.retry(second.id)
+    const byHand = harness.manager.get(second.id)
+    await afterLogin
+    await harness.controller.whenSettled()
+
+    // The session the user started stays; nothing was sent to the tab twice.
+    expect(harness.manager.get(second.id)).toBe(byHand)
+    expect(harness.created).toHaveLength(2)
+    const sent = allSent(harness).map((s) => (s as { text: string }).text)
+    expect(sent.sort()).toEqual(['два', 'раз'])
+  })
+
+  test('afterLogin: сбой одной вкладки не останавливает остальные', async () => {
+    const harness = makeController({ freshFailsOnSend: () => NOT_LOGGED_IN })
+    const first = harness.controller.create(projectA)
+    const second = harness.controller.create(projectB)
+    await harness.controller.whenSettled()
+    harness.manager.get(first.id)!.send({ text: 'раз', attachments: [] })
+    harness.manager.get(second.id)!.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() =>
+      expect(harness.controller.list().every((t) => t.status === 'error')).toBe(true)
+    )
+    await harness.controller.whenSettled()
+    const dead = harness.manager.get(second.id)
+
+    const retry = harness.controller.retry.bind(harness.controller)
+    vi.spyOn(harness.controller, 'retry').mockImplementation(async (id) => {
+      if (id === first.id) throw new Error('не поднялась')
+      return retry(id)
+    })
+    await harness.controller.afterLogin()
+    await harness.controller.whenSettled()
+
+    expect(harness.manager.get(second.id)).not.toBe(dead)
+    // The tab that could not carry on says so in its own ribbon.
+    expect(notices(harness.controller, first.id).at(-1)!.text).toContain('не поднялась')
   })
 })
 

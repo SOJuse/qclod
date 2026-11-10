@@ -44,7 +44,7 @@ export function NoticeRow({ item }: { item: Extract<Item, { kind: 'notice' }> })
           className="row-notice-action"
           data-testid="notice-login"
           title="Открыть терминал, чтобы войти в Claude Code"
-          onClick={() => void window.qclod.openTerminal()}
+          onClick={() => void window.qclod.login()}
         >
           Войти
         </button>

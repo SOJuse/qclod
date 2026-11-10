@@ -22,7 +22,7 @@ describe('findMentionQuery', () => {
   })
 
   test('почта не считается упоминанием', () => {
-    expect(findMentionQuery('пиши на noreply', 23)).toBeNull()
+    expect(findMentionQuery('пиши на name@example.com', 24)).toBeNull()
   })
 
   test('курсор перед @ ничего не открывает', () => {

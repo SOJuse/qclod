@@ -25,8 +25,8 @@ import { composeText } from './userMessage'
 import { PanelCollector, readProjectSettings } from './panelData'
 import { BackgroundTracker } from './backgroundTasks'
 import { displayTarget } from './permissionStore'
-import { AgentNotFoundError } from './resolveExecutable'
-import { findAgent } from '../setup/findAgent'
+import { locateAgent } from '../setup/findAgent'
+import { classifyStartFailure, LOGIN_NEEDED_TEXT } from './startFailure'
 
 export interface AgentSessionOptions {
   tabId: TabId
@@ -380,6 +380,18 @@ export class AgentSession {
     return this.builder.notice(text, tone, action)
   }
 
+  /**
+   * Whether the ribbon already asks to log in, with nothing sent since. The
+   * one test for it: a session that took a dead one's place and died the
+   * same way — «Повторить» before the login was done — and the tab recovering
+   * a dead resume both use it, so the notice is never stacked.
+   */
+  toldToLogIn(): boolean {
+    const items = this.builder.items
+    const since = items.slice(items.findLastIndex((i) => i.kind === 'user') + 1)
+    return since.some((i) => i.kind === 'notice' && i.action === 'login' && i.text === LOGIN_NEEDED_TEXT)
+  }
+
   async start(resumeId?: string): Promise<void> {
     if (this.driver || this.disposed) return
     this.setStatus('starting')
@@ -409,10 +421,8 @@ export class AgentSession {
         ((p: string) => {
           // PATH is captured when a process starts, so an agent installed
           // while Qclod was open is invisible to it; findAgent also looks
-          // where the installers put it.
-          const found = findAgent(p, process.env)
-          if (!found) throw new AgentNotFoundError(p)
-          return found
+          // where the installers put it. A miss keeps its own reason.
+          return locateAgent(p, process.env)
         })
       executablePath = resolve(this.options.agentPath)
     } catch (err) {
@@ -1146,9 +1156,16 @@ export class AgentSession {
     this.cutOffBackground()
     this.failure = text
     this.emit(this.builder.closeOpen())
-    this.emit(
-      opts.quiet ? this.builder.notice(`${text}.`, 'info') : this.builder.notice(explain(text), 'error')
-    )
+    // «Not logged in · Please run /login» names a command the user has no
+    // terminal for; the notice offers the button instead. The raw words stay
+    // in `error`, where the tab reads why the session died.
+    if (opts.quiet) {
+      this.emit(this.builder.notice(`${text}.`, 'info'))
+    } else if (classifyStartFailure(text) !== 'not-logged-in') {
+      this.emit(this.builder.notice(explain(text), 'error'))
+    } else if (!this.toldToLogIn()) {
+      this.emit(this.builder.notice(LOGIN_NEEDED_TEXT, 'error', 'login'))
+    }
     this.setStatus('error')
   }
 

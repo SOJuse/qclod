@@ -55,6 +55,8 @@ function makeController(
     defaults?: { model?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan' }
     historyMessages?: unknown[]
     onPanel?: (event: PanelEvent) => void
+    /** Sees each ribbon event as it leaves, before anything mutates it. */
+    onRibbon?: (event: RibbonEvent) => void
   } = {}
 ): Harness {
   const changed: TabState[][] = []
@@ -99,7 +101,10 @@ function makeController(
       }
     },
     onChanged: (tabs) => changed.push(tabs),
-    onRibbon: (event) => ribbon.push(event),
+    onRibbon: (event) => {
+      ribbon.push(event)
+      options.onRibbon?.(event)
+    },
     onPanel: options.onPanel ?? (() => undefined),
     onStatus: () => undefined,
     onCommands: () => undefined
@@ -697,5 +702,123 @@ describe('TabController: панель после перезапуска', () => 
     store.setPanelSnapshot(tab.id, snapshot)
     expect(useAppStore.getState().panelByTab[tab.id]).toEqual(snapshot.data)
     expect(snapshot.data.cost).toBeNull()
+  })
+})
+
+describe('TabController: ревизия ленты', () => {
+  const twoTabs = (): void =>
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'сессия-a' },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {}, lastSessionId: 'сессия-b' }
+    ])
+  const history = [
+    { type: 'user', message: { role: 'user', content: 'старый вопрос' } },
+    { type: 'assistant', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'старый ответ' }] } }
+  ]
+  const script = {
+    steps: [
+      { kind: 'text' as const, text: 'первое' },
+      { kind: 'textStream' as const, pieces: ['по', 'том'] },
+      { kind: 'tool' as const, name: 'Read', input: { file_path: 'C:/a.ts' }, result: 'x' }
+    ]
+  }
+
+  function revsOf(events: RibbonEvent[], tabId: string): number[] {
+    return events.filter((e) => e.tabId === tabId).map((e) => e.rev)
+  }
+
+  test('каждое событие несёт ревизию, она только растёт, снимок знает последнюю', async () => {
+    const { controller, ribbon, speak } = makeController({ script })
+    const tab = controller.create(projectA)
+    await speak(tab.id)
+
+    const revs = revsOf(ribbon, tab.id)
+    expect(revs.length).toBeGreaterThan(2)
+    for (let i = 1; i < revs.length; i++) expect(revs[i]!).toBeGreaterThan(revs[i - 1]!)
+
+    const snapshot = controller.ribbonOf(tab.id)
+    expect(snapshot.rev).toBe(revs.at(-1))
+    expect(snapshot.items).toEqual(controller.itemsOf(tab.id))
+  })
+
+  test('вкладка без ленты отдаёт пустой снимок с ревизией 0', () => {
+    const { controller } = makeController()
+    expect(controller.ribbonOf('нет-такой')).toEqual({ rev: 0, items: [], todo: null })
+  })
+
+  test('снимок в любой момент плюс все события дают ту же ленту, что в main', async () => {
+    // What the window sees: each event and the snapshot cross IPC as copies.
+    const seen: RibbonEvent[] = []
+    let snapshotAt = -1
+    let snapshot: ReturnType<TabController['ribbonOf']> | null = null
+    const harness = makeController({
+      script,
+      onRibbon: (event) => {
+        seen.push(structuredClone(event))
+        // Taken mid-stream, while later changes are still to come.
+        if (seen.length === 3) {
+          snapshot = structuredClone(harness.controller.ribbonOf(event.tabId))
+          snapshotAt = seen.length
+        }
+      }
+    })
+    const tab = harness.controller.create(projectA)
+    await harness.speak(tab.id)
+    expect(snapshot).not.toBeNull()
+
+    // Order one: the snapshot is answered before the batch carrying its last changes.
+    const store = useAppStore.getState()
+    store.setRibbon(tab.id, snapshot!)
+    for (const e of seen) store.applyRibbon(e.tabId, e.changes, e.rev)
+    expect(useAppStore.getState().ribbonByTab[tab.id]).toEqual(harness.controller.itemsOf(tab.id))
+
+    // Order two: those events land first, the snapshot after them.
+    useAppStore.setState({ ribbonByTab: {}, ribbonRevByTab: {} })
+    for (const e of seen.slice(0, snapshotAt)) store.applyRibbon(e.tabId, e.changes, e.rev)
+    store.setRibbon(tab.id, snapshot!)
+    for (const e of seen.slice(snapshotAt)) store.applyRibbon(e.tabId, e.changes, e.rev)
+    expect(useAppStore.getState().ribbonByTab[tab.id]).toEqual(harness.controller.itemsOf(tab.id))
+  })
+
+  test('ревизия продолжается, когда сессия принимает превью, и не идёт назад', async () => {
+    const { controller, ribbon, speak } = makeController({ script, historyMessages: history })
+    twoTabs()
+    await controller.restore()
+    await controller.whenSettled()
+
+    const preview = controller.ribbonOf('b')
+    expect(preview.rev).toBeGreaterThan(0)
+    expect(preview.items.length).toBeGreaterThan(0)
+    const sentBefore = ribbon.length
+
+    await controller.activate('b')
+    await speak('b')
+
+    const after = revsOf(ribbon.slice(sentBefore), 'b')
+    expect(after.length).toBeGreaterThan(0)
+    for (const rev of after) expect(rev).toBeGreaterThan(preview.rev)
+    expect(controller.ribbonOf('b').rev).toBe(after.at(-1))
+  })
+
+  test('перезапуск не повторяет ревизий и не теряет историю', async () => {
+    const { controller, ribbon, speak } = makeController({ script })
+    const tab = controller.create(projectA)
+    await speak(tab.id)
+    const before = controller.ribbonOf(tab.id)
+    const beforeIds = before.items.map((i) => i.id)
+    const sentBefore = ribbon.length
+
+    await controller.restart(tab.id)
+    await speak(tab.id)
+
+    const after = revsOf(ribbon.slice(sentBefore), tab.id)
+    expect(after.length).toBeGreaterThan(0)
+    for (const rev of after) expect(rev).toBeGreaterThan(before.rev)
+    // The window keeps what it showed; the snapshot must say the same, and
+    // the new session's items must not reuse the old ids.
+    const ids = controller.itemsOf(tab.id).map((i) => i.id)
+    expect(ids.slice(0, beforeIds.length)).toEqual(beforeIds)
+    expect(ids.length).toBeGreaterThan(beforeIds.length)
+    expect(new Set(ids).size).toBe(ids.length)
   })
 })

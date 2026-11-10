@@ -234,3 +234,56 @@ test('лента держится у низа, пока ты не прокрут
     await close(app, profile)
   }
 })
+
+test('перезагрузка окна посреди потока: ни повторов, ни потерь', async () => {
+  const total = 300
+  const steps = Array.from({ length: total }, (_, i) => ({
+    kind: 'textStream',
+    pieces: [`часть ${i + 1} `, `конец ${i + 1}`],
+    pauseMs: 10
+  }))
+  const { app, profile } = await launch({ steps })
+  try {
+    const win = await app.firstWindow()
+    const texts = win.locator('[data-testid="ribbon-agentText"]')
+    await expect(texts.first()).toContainText('конец 1', { timeout: 15000 })
+
+    // Three times, while changes are still pouring in and some sit in the batch.
+    for (let round = 0; round < 3; round++) {
+      await win.reload()
+      await expect(texts.first()).toBeVisible({ timeout: 15000 })
+    }
+    // Still streaming after the reloads, or the test proves nothing.
+    await expect(win.getByText(`конец ${total}`)).toHaveCount(0)
+
+    await expect(texts.last()).toContainText(`конец ${total}`, { timeout: 20000 })
+    // Virtualised: walk the ribbon top to bottom. A doubled item sits next to
+    // its twin, so it shows up twice in one screenful; the order of first
+    // sightings is the ribbon's order.
+    const { shown, doubled } = await win.locator('[data-testid="ribbon"]').evaluate(async (el) => {
+      const seen: string[] = []
+      const doubled: string[] = []
+      const frame = (): Promise<void> =>
+        new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      for (let top = 0; ; top += Math.max(50, el.clientHeight / 2)) {
+        el.scrollTop = top
+        await frame()
+        const here = [...el.querySelectorAll('[data-testid="ribbon-agentText"]')].map((node) =>
+          (node as HTMLElement).innerText.trim()
+        )
+        for (const [i, text] of here.entries()) {
+          if (here.indexOf(text) !== i) doubled.push(text)
+          if (!seen.includes(text)) seen.push(text)
+        }
+        if (top >= el.scrollHeight) break
+      }
+      return { shown: seen, doubled }
+    })
+    expect(doubled).toEqual([])
+    expect(shown).toEqual(
+      Array.from({ length: total }, (_, i) => `часть ${i + 1} конец ${i + 1}`)
+    )
+  } finally {
+    await close(app, profile)
+  }
+})

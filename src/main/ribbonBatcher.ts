@@ -11,7 +11,7 @@ import type { RibbonChange, RibbonEvent, TabId } from '../shared/types'
  * for.
  */
 export class RibbonBatcher {
-  private readonly queued = new Map<TabId, RibbonChange[]>()
+  private readonly queued = new Map<TabId, { changes: RibbonChange[]; rev: number }>()
   private timer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
@@ -22,8 +22,12 @@ export class RibbonBatcher {
   push(event: RibbonEvent): void {
     if (event.changes.length === 0) return
     const existing = this.queued.get(event.tabId)
-    if (existing) existing.push(...event.changes)
-    else this.queued.set(event.tabId, [...event.changes])
+    if (existing) {
+      existing.changes.push(...event.changes)
+      // The batch is as new as its newest change: the rev was given when the
+      // change was made, not now, so a snapshot taken meanwhile already has it.
+      existing.rev = Math.max(existing.rev, event.rev)
+    } else this.queued.set(event.tabId, { changes: [...event.changes], rev: event.rev })
 
     if (this.timer === null) {
       this.timer = setTimeout(() => this.flush(), this.frameMs)
@@ -35,7 +39,7 @@ export class RibbonBatcher {
       clearTimeout(this.timer)
       this.timer = null
     }
-    for (const [tabId, changes] of this.queued) this.flushTo({ tabId, changes })
+    for (const [tabId, { changes, rev }] of this.queued) this.flushTo({ tabId, changes, rev })
     this.queued.clear()
   }
 }

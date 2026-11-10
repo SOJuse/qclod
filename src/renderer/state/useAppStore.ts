@@ -6,6 +6,7 @@ import type {
   PanelSnapshot,
   RibbonChange,
   RibbonItem,
+  RibbonSnapshot,
   TabId,
   TabState,
   TodoItem
@@ -30,6 +31,8 @@ interface AppState {
   splitTabId: TabId | null
   tabs: TabState[]
   ribbonByTab: Record<TabId, RibbonItem[]>
+  /** The newest ribbon revision applied per tab — anything not newer is already in. */
+  ribbonRevByTab: Record<TabId, number>
   todoByTab: Record<TabId, TodoItem[]>
   panelByTab: Record<TabId, PanelData>
   /** The newest panel revision applied per tab — a snapshot older than it is stale. */
@@ -46,8 +49,8 @@ interface AppState {
   setActiveTabId: (id: TabId) => void
   setSplitTabId: (id: TabId | null) => void
   setTabs: (tabs: TabState[]) => void
-  setRibbon: (id: TabId, items: RibbonItem[]) => void
-  applyRibbon: (id: TabId, changes: RibbonChange[]) => void
+  setRibbon: (id: TabId, snapshot: RibbonSnapshot) => void
+  applyRibbon: (id: TabId, changes: RibbonChange[], rev: number) => void
   applyPanel: (id: TabId, patch: Partial<PanelData>, rev: number) => void
   setPanelSnapshot: (id: TabId, snapshot: PanelSnapshot) => void
   setDraft: (id: TabId, text: string) => void
@@ -70,11 +73,22 @@ export function reduceRibbon(
       copied = true
     }
   }
+  // Where each id sits, built once per batch: a replayed session arrives as
+  // thousands of appends in one batch, and a scan per append would be quadratic.
+  let positions: Map<string, number> | null = null
+  const positionOf = (id: string): number => {
+    positions ??= new Map(next.map((item, i) => [item.id, i]))
+    return positions.get(id) ?? -1
+  }
 
   for (const change of changes) {
     if (change.kind === 'append') {
       ensureCopy()
-      next.push(change.item)
+      // A second safety net behind the revisions: the same item twice is
+      // the newer copy of it, never a second bubble.
+      const at = positionOf(change.item.id)
+      if (at === -1) positions!.set(change.item.id, next.push(change.item) - 1)
+      else next[at] = change.item
     } else if (change.kind === 'update') {
       const at = next.findIndex((item) => item.id === change.id)
       if (at === -1) continue
@@ -94,6 +108,7 @@ export const useAppStore = create<AppState>((set) => ({
   splitTabId: null,
   tabs: [],
   ribbonByTab: {},
+  ribbonRevByTab: {},
   todoByTab: {},
   panelByTab: {},
   panelRevByTab: {},
@@ -126,13 +141,26 @@ export const useAppStore = create<AppState>((set) => ({
       splitTabId: tabs.some((t) => t.id === state.splitTabId) ? state.splitTabId : null
     })),
 
-  setRibbon: (id, items) => set((state) => ({ ribbonByTab: { ...state.ribbonByTab, [id]: items } })),
-
-  applyRibbon: (id, changes) =>
+  // The snapshot is the whole ribbon at its revision: it replaces whatever
+  // the window holds unless that is already newer. Events it already holds
+  // arrive later with a revision no newer than it, and are dropped.
+  setRibbon: (id, snapshot) =>
     set((state) => {
+      if (snapshot.rev < (state.ribbonRevByTab[id] ?? -1)) return state
+      return {
+        ribbonByTab: { ...state.ribbonByTab, [id]: snapshot.items },
+        ribbonRevByTab: { ...state.ribbonRevByTab, [id]: snapshot.rev },
+        ...(snapshot.todo ? { todoByTab: { ...state.todoByTab, [id]: snapshot.todo } } : {})
+      }
+    }),
+
+  applyRibbon: (id, changes, rev) =>
+    set((state) => {
+      if (rev <= (state.ribbonRevByTab[id] ?? -1)) return state
       const { items, todo } = reduceRibbon(state.ribbonByTab[id] ?? [], changes)
       return {
         ribbonByTab: { ...state.ribbonByTab, [id]: items },
+        ribbonRevByTab: { ...state.ribbonRevByTab, [id]: rev },
         ...(todo ? { todoByTab: { ...state.todoByTab, [id]: todo } } : {})
       }
     }),

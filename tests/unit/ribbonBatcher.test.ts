@@ -14,7 +14,7 @@ describe('RibbonBatcher', () => {
     const sent: RibbonEvent[] = []
     const batcher = new RibbonBatcher((event) => sent.push(event))
 
-    for (let i = 0; i < 1000; i++) batcher.push({ tabId: 'a', changes: [change(`i${i}`)] })
+    for (let i = 0; i < 1000; i++) batcher.push({ tabId: 'a', rev: i + 1, changes: [change(`i${i}`)] })
     expect(sent).toHaveLength(0)
 
     vi.advanceTimersByTime(20)
@@ -26,8 +26,8 @@ describe('RibbonBatcher', () => {
     const sent: RibbonEvent[] = []
     const batcher = new RibbonBatcher((event) => sent.push(event))
 
-    batcher.push({ tabId: 'a', changes: [change('первое')] })
-    batcher.push({ tabId: 'a', changes: [change('второе')] })
+    batcher.push({ tabId: 'a', rev: 1, changes: [change('первое')] })
+    batcher.push({ tabId: 'a', rev: 1, changes: [change('второе')] })
     vi.advanceTimersByTime(20)
 
     expect(sent[0]!.changes.map((c) => (c.kind === 'append' ? c.item.id : ''))).toEqual([
@@ -40,8 +40,8 @@ describe('RibbonBatcher', () => {
     const sent: RibbonEvent[] = []
     const batcher = new RibbonBatcher((event) => sent.push(event))
 
-    batcher.push({ tabId: 'a', changes: [change('из a')] })
-    batcher.push({ tabId: 'b', changes: [change('из b')] })
+    batcher.push({ tabId: 'a', rev: 1, changes: [change('из a')] })
+    batcher.push({ tabId: 'b', rev: 1, changes: [change('из b')] })
     vi.advanceTimersByTime(20)
 
     expect(sent).toHaveLength(2)
@@ -52,7 +52,7 @@ describe('RibbonBatcher', () => {
     const sent: RibbonEvent[] = []
     const batcher = new RibbonBatcher((event) => sent.push(event))
 
-    batcher.push({ tabId: 'a', changes: [] })
+    batcher.push({ tabId: 'a', rev: 1, changes: [] })
     vi.advanceTimersByTime(20)
 
     expect(sent).toEqual([])
@@ -62,12 +62,25 @@ describe('RibbonBatcher', () => {
     const sent: RibbonEvent[] = []
     const batcher = new RibbonBatcher((event) => sent.push(event))
 
-    batcher.push({ tabId: 'a', changes: [change('первая волна')] })
+    batcher.push({ tabId: 'a', rev: 1, changes: [change('первая волна')] })
     vi.advanceTimersByTime(20)
-    batcher.push({ tabId: 'a', changes: [change('вторая волна')] })
+    batcher.push({ tabId: 'a', rev: 1, changes: [change('вторая волна')] })
     vi.advanceTimersByTime(20)
 
     expect(sent).toHaveLength(2)
     expect(sent[1]!.changes).toHaveLength(1)
+  })
+
+  test('пачка несёт ревизию последнего своего изменения', () => {
+    const sent: RibbonEvent[] = []
+    const batcher = new RibbonBatcher((event) => sent.push(event))
+
+    batcher.push({ tabId: 'a', rev: 3, changes: [change('третье')] })
+    batcher.push({ tabId: 'b', rev: 4, changes: [change('из b')] })
+    batcher.push({ tabId: 'a', rev: 7, changes: [change('седьмое')] })
+    vi.advanceTimersByTime(20)
+
+    expect(sent.find((e) => e.tabId === 'a')?.rev).toBe(7)
+    expect(sent.find((e) => e.tabId === 'b')?.rev).toBe(4)
   })
 })

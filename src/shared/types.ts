@@ -291,6 +291,18 @@ export interface HotkeyRegistration {
 export interface RibbonEvent {
   tabId: TabId
   changes: RibbonChange[]
+  /**
+   * The revision of the last change in `changes`. Grows with every change,
+   * across sessions; orders events against snapshots.
+   */
+  rev: number
+}
+
+/** A tab's whole ribbon at revision `rev` — what a window asks for to catch up. */
+export interface RibbonSnapshot {
+  rev: number
+  items: RibbonItem[]
+  todo: TodoItem[] | null
 }
 
 export interface PanelEvent {

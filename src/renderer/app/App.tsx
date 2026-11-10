@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   CommandInfo,
   EnvironmentReport,
@@ -115,7 +115,7 @@ export function App(): JSX.Element {
       window.qclod.onSettingsChanged(setSettings),
       window.qclod.onTabsChanged(setTabs),
       window.qclod.onActivateTab((id) => setActiveTabId(id)),
-      window.qclod.onRibbon((event) => applyRibbon(event.tabId, event.changes)),
+      window.qclod.onRibbon((event) => applyRibbon(event.tabId, event.changes, event.rev)),
       window.qclod.onPanel((event) => applyPanel(event.tabId, event.patch, event.rev)),
       // The list is live: a plugin installed mid-session changes it.
       window.qclod.onCommandsChanged((event) => {
@@ -209,38 +209,37 @@ export function App(): JSX.Element {
     if (!activeTabId && tabs.length > 0) setActiveTabId(tabs[0]!.id)
   }, [tabs, activeTabId, setActiveTabId])
 
-  // A reloaded window has missed every ribbon event; the tab it lands on needs
-  // its ribbon fetched, or the chat and the panel's agents stay empty. Only
-  // after a reload: on a normal start the events are still on their way, and a
-  // snapshot taken beside them would put the same items in twice. Same guard
-  // as in `activate`: whatever arrived while asking wins.
+  /**
+   * Asks for a tab's whole ribbon, once per tab for the life of this window.
+   * A reloaded window, or one shown a tab for the first time, has missed the
+   * events that built it. The snapshot and the events still in flight are
+   * ordered by revision in the store, so whichever lands first, nothing is
+   * shown twice or lost; after it, the events alone keep the tab current.
+   */
+  const ribbonsAsked = useRef(new Set<string>())
+  const loadRibbon = useCallback(
+    (id: string): void => {
+      if (ribbonsAsked.current.has(id)) return
+      ribbonsAsked.current.add(id)
+      void window.qclod.ribbon(id).then((snapshot) => setRibbon(id, snapshot))
+    },
+    [setRibbon]
+  )
+
+  // On mount and on every switch, for both panes — as the panel is.
   useEffect(() => {
-    if (!activeTabId || useAppStore.getState().ribbonByTab[activeTabId] !== undefined) return
-    const [navigation] = performance.getEntriesByType('navigation') as PerformanceNavigationTiming[]
-    if (navigation?.type !== 'reload') return
-    const id = activeTabId
-    void window.qclod.ribbon(id).then((items) => {
-      if (useAppStore.getState().ribbonByTab[id] === undefined) setRibbon(id, items)
-    })
-  }, [activeTabId, setRibbon])
+    if (activeTabId) loadRibbon(activeTabId)
+  }, [activeTabId, loadRibbon])
+  useEffect(() => {
+    if (splitTabId) loadRibbon(splitTabId)
+  }, [splitTabId, loadRibbon])
 
   const activate = useCallback(
     (id: string) => {
       setActiveTabId(id)
       void window.qclod.activateTab(id)
-
-      // Only a tab we have never drawn needs its ribbon fetched. Fetching it
-      // on every switch raced the live stream: the snapshot is taken when the
-      // request is made and applied when it returns, so anything that arrived
-      // in between — a replayed conversation, or the message you just typed —
-      // was wiped by a picture of the past.
-      if (useAppStore.getState().ribbonByTab[id] === undefined) {
-        void window.qclod.ribbon(id).then((items) => {
-          if (useAppStore.getState().ribbonByTab[id] === undefined) setRibbon(id, items)
-        })
-      }
     },
-    [setActiveTabId, setRibbon]
+    [setActiveTabId]
   )
 
 

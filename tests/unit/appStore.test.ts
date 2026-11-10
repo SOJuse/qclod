@@ -71,3 +71,83 @@ describe('useAppStore: панель', () => {
     expect(useAppStore.getState().panelByTab['a']?.model).toBe('x')
   })
 })
+
+describe('useAppStore: лента и ревизии', () => {
+  const notice = (id: string, text = id) =>
+    ({ kind: 'notice', id, text, tone: 'info' }) as const
+  const append = (id: string, text = id) => ({ kind: 'append' as const, item: notice(id, text) })
+  const ids = (tab: string): string[] =>
+    (useAppStore.getState().ribbonByTab[tab] ?? []).map((i) => i.id)
+
+  test('снимок, затем запоздавшее событие из него же — без повторов', () => {
+    const store = useAppStore.getState()
+    // The snapshot already holds r1..r3; the event carrying r3 was still in the batch.
+    store.setRibbon('a', { rev: 3, items: [notice('r1'), notice('r2'), notice('r3')], todo: null })
+    store.applyRibbon('a', [append('r3')], 3)
+
+    expect(ids('a')).toEqual(['r1', 'r2', 'r3'])
+  })
+
+  test('событие раньше снимка — снимок всё равно ставит всю историю', () => {
+    const store = useAppStore.getState()
+    // A live change lands before the snapshot was answered.
+    store.applyRibbon('a', [append('r4')], 4)
+    store.setRibbon('a', {
+      rev: 4,
+      items: [notice('r1'), notice('r2'), notice('r3'), notice('r4')],
+      todo: null
+    })
+
+    expect(ids('a')).toEqual(['r1', 'r2', 'r3', 'r4'])
+  })
+
+  test('события новее снимка ложатся поверх него', () => {
+    const store = useAppStore.getState()
+    store.setRibbon('a', { rev: 2, items: [notice('r1'), notice('r2')], todo: null })
+    store.applyRibbon('a', [append('r3'), { kind: 'update', id: 'r1', patch: { text: 'новое' } }], 5)
+
+    expect(ids('a')).toEqual(['r1', 'r2', 'r3'])
+    expect(useAppStore.getState().ribbonByTab['a']?.[0]).toMatchObject({ text: 'новое' })
+    expect(useAppStore.getState().ribbonRevByTab['a']).toBe(5)
+  })
+
+  test('событие с ревизией не новее текущей отбрасывается', () => {
+    const store = useAppStore.getState()
+    store.applyRibbon('a', [append('r1')], 5)
+    store.applyRibbon('a', [append('r0')], 4)
+    store.applyRibbon('a', [{ kind: 'update', id: 'r1', patch: { text: 'старое' } }], 5)
+
+    expect(ids('a')).toEqual(['r1'])
+    expect(useAppStore.getState().ribbonByTab['a']?.[0]).toMatchObject({ text: 'r1' })
+  })
+
+  test('старый снимок не затирает ленту новее себя', () => {
+    const store = useAppStore.getState()
+    store.setRibbon('a', { rev: 6, items: [notice('r1'), notice('r2')], todo: null })
+    store.setRibbon('a', { rev: 5, items: [notice('r1')], todo: null })
+
+    expect(ids('a')).toEqual(['r1', 'r2'])
+  })
+
+  test('повторное добавление того же id заменяет элемент, а не дублирует', () => {
+    const store = useAppStore.getState()
+    store.applyRibbon('a', [append('r1', 'первый')], 1)
+    store.applyRibbon('a', [append('r1', 'второй'), append('r2')], 2)
+
+    expect(ids('a')).toEqual(['r1', 'r2'])
+    expect(useAppStore.getState().ribbonByTab['a']?.[0]).toMatchObject({ text: 'второй' })
+  })
+
+  test('снимок приносит и список задач', () => {
+    const store = useAppStore.getState()
+    store.setRibbon('a', {
+      rev: 1,
+      items: [],
+      todo: [{ content: 'разобрать ленту', status: 'in_progress' }]
+    })
+
+    expect(useAppStore.getState().todoByTab['a']).toEqual([
+      { content: 'разобрать ленту', status: 'in_progress' }
+    ])
+  })
+})

@@ -11,7 +11,7 @@ import type {
   PermissionAnswer,
   PersistedTab,
   RibbonEvent,
-  RibbonItem,
+  RibbonSnapshot,
   SessionSummary,
   StatusEvent,
   TabId,
@@ -58,8 +58,8 @@ const api = {
     ipcRenderer.invoke(CHANNELS.agentEffort, id, level),
 
   commands: (id: TabId): Promise<CommandInfo[]> => ipcRenderer.invoke(CHANNELS.agentCommands, id),
-  /** Everything already in this tab's ribbon — used when a tab is opened. */
-  ribbon: (id: TabId): Promise<RibbonItem[]> => ipcRenderer.invoke(CHANNELS.agentRibbon, id),
+  /** The tab's whole ribbon with its revision — for a window catching up. */
+  ribbon: (id: TabId): Promise<RibbonSnapshot> => ipcRenderer.invoke(CHANNELS.agentRibbon, id),
   /** The tab's whole panel with its revision; live MCP follows as an event. */
   panel: (id: TabId): Promise<PanelSnapshot> => ipcRenderer.invoke(CHANNELS.agentPanel, id),
 

@@ -1,7 +1,13 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { CHANNELS } from '../shared/channels'
 import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
-import type { EffortLevel, LaunchOverrides, PanelSnapshot, TabId } from '../shared/types'
+import type {
+  EffortLevel,
+  LaunchOverrides,
+  PanelSnapshot,
+  RibbonSnapshot,
+  TabId
+} from '../shared/types'
 import { buildFileIndex } from './files/fileIndex'
 import type { TabController } from './tabs/TabController'
 import { EMPTY_PANEL } from './agent/panelData'
@@ -115,11 +121,12 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     return (await manager.get(id)?.commands()) ?? []
   })
 
-  // The ribbon a tab already has — what a tab being switched to needs in order
-  // to draw itself without replaying the whole session.
-  ipcMain.handle(CHANNELS.agentRibbon, (_e, id: unknown) => {
-    if (!isString(id)) return []
-    return controller.itemsOf(id)
+  // The ribbon a tab already has, with its revision — what a window needs in
+  // order to draw a tab without replaying the whole session. The revision
+  // tells the window which events still in flight the snapshot already holds.
+  ipcMain.handle(CHANNELS.agentRibbon, (_e, id: unknown): RibbonSnapshot => {
+    if (!isString(id)) return { rev: 0, items: [], todo: null }
+    return controller.ribbonOf(id)
   })
 
   // What the panel holds right now, answered at once — a reloaded window or

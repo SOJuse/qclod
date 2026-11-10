@@ -9,6 +9,7 @@ import type {
   RibbonChange,
   RibbonEvent,
   RibbonItem,
+  RibbonSnapshot,
   SessionStatus,
   SessionSummary,
   StatusEvent,
@@ -41,6 +42,19 @@ export interface TabControllerDeps {
   onCommands: (event: { tabId: TabId; commands: CommandInfo[] }) => void
 }
 
+let lastRibbonRev = 0
+
+/**
+ * The next ribbon revision, shared by every tab and session in the process.
+ * A tab's session is replaced on restart or recovery, and a restored tab's
+ * preview is taken over by its session: a counter of their own would start
+ * again from zero and make the new changes look older than the window's.
+ */
+function nextRibbonRev(): number {
+  lastRibbonRev += 1
+  return lastRibbonRev
+}
+
 /**
  * Owns the list of tabs and keeps each one's agent in step with it.
  *
@@ -63,6 +77,13 @@ export class TabController {
   private readonly previews = new Map<TabId, SessionSeed>()
   /** Previews still being read, so a second ask waits for the same read. */
   private readonly previewing = new Map<TabId, Promise<SessionSeed | null>>()
+  /**
+   * The revision of each tab's last ribbon change. Given when the change is
+   * made, not when it is sent, so a snapshot and the events still waiting in
+   * the batch can be told apart: whatever the snapshot already holds carries a
+   * revision no newer than its own.
+   */
+  private readonly ribbonRevs = new Map<TabId, number>()
   /** The plan's windows as last reported; they are the account's, not a tab's. */
   private planLimits: PanelData['limits'] | null = null
 
@@ -78,6 +99,16 @@ export class TabController {
 
   itemsOf(id: TabId): RibbonItem[] {
     return this.deps.manager.get(id)?.items ?? this.previews.get(id)?.builder.items ?? []
+  }
+
+  /**
+   * The tab's whole ribbon and the revision it is at, for a window that
+   * missed the events — reloaded, or seeing the tab for the first time.
+   */
+  ribbonOf(id: TabId): RibbonSnapshot {
+    const session = this.deps.manager.get(id)
+    const todo = session ? session.todo : (this.previews.get(id)?.builder.todo ?? null)
+    return { rev: this.ribbonRevs.get(id) ?? 0, items: this.itemsOf(id), todo }
   }
 
   /**
@@ -188,6 +219,7 @@ export class TabController {
     if (index === -1) return
     this.tabs.splice(index, 1)
     this.previews.delete(id)
+    this.ribbonRevs.delete(id)
     await this.deps.manager.close(id)
 
     if (this.activeId === id) {
@@ -204,9 +236,15 @@ export class TabController {
   async restart(id: TabId): Promise<void> {
     const tab = this.tabs.find((t) => t.id === id)
     if (!tab) return
+    // The conversation the window shows stays, and the new session's items
+    // number on after it — as on recovery from a dead session. A fresh
+    // ribbon here would leave the window holding items main no longer has,
+    // and new ones under the same ids.
+    const seed = this.deps.manager.get(id)?.successorSeed()
     await this.deps.manager.close(id)
     delete tab.lastSessionId
-    this.previews.delete(id)
+    if (seed) this.previews.set(id, seed)
+    else this.previews.delete(id)
     await this.ensureSession(id)
   }
 
@@ -366,7 +404,7 @@ export class TabController {
   }
 
   private wire(id: TabId, session: AgentSession): void {
-    session.onChange((changes) => this.deps.onRibbon({ tabId: id, changes }))
+    session.onChange((changes) => this.emitRibbon(id, changes))
     session.onPanel((patch, rev) => {
       this.deps.onPanel({ tabId: id, patch, rev })
       if (patch.limits) this.sharePlanLimits(patch.limits)
@@ -419,7 +457,10 @@ export class TabController {
   // -------------------------------------------------------------- plumbing
 
   private emitRibbon(id: TabId, changes: RibbonChange[]): void {
-    if (changes.length > 0) this.deps.onRibbon({ tabId: id, changes })
+    if (changes.length === 0) return
+    const rev = nextRibbonRev()
+    this.ribbonRevs.set(id, rev)
+    this.deps.onRibbon({ tabId: id, changes, rev })
   }
 
   private emitWholePanel(id: TabId, snapshot: PanelSnapshot): void {

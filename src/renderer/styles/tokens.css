@@ -56,6 +56,49 @@
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --dur-fast: 120ms;
   --dur: 200ms;
+
+  /* Stage 2: action categories. Colour marks the icon and the left rule only, never text. */
+  --cat-read: #8b93a7;
+  --cat-search: #22a0c8;
+  --cat-edit: #4aa43c;
+  --cat-command: #c47c10;
+  --cat-agent: #8f7cf0;
+  --cat-mcp: #dc5c98;
+  --cat-plan: var(--accent);
+  --cat-other: var(--text-faint);
+
+  /* Reserved for context meters and errors; never a category colour. */
+  --status-ok: #0ca30c;
+  --status-warn: #fab219;
+  --status-critical: #e5484d;
+  --meter-track: #26262d;
+
+  /* Context breakdown bar (categorical palette, dark steps). */
+  --seg-1: #3987e5;
+  --seg-2: #d95926;
+  --seg-3: #199e70;
+  --seg-4: #c98500;
+  --seg-5: #d55181;
+  --seg-6: #9085e9;
+  --seg-free: var(--meter-track);
+  --seg-buffer: repeating-linear-gradient(135deg, var(--meter-track) 0 3px, transparent 3px 6px);
+
+  --font-ui: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 18px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  --rule-category: 2px;
+  --gap-hair: 2px;
+  --radius-pill: 999px;
 }
 
 * {

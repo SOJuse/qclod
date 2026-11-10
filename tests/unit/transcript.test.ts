@@ -192,6 +192,57 @@ describe('transcript: что из него читается', () => {
     expect(text(notices[0]!)).toContain('<tool-use-id>toolu_01TestsRun8bQf2Lx9Kd3Vw7</tool-use-id>')
   })
 
+  test('набранное во время работы агента приходит один раз, на своём месте', async () => {
+    const messages = await read()
+    const typed = messages.filter((m) => text(m) === 'и ещё глянь логи')
+    expect(typed).toEqual([
+      expect.objectContaining({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: 'и ещё глянь логи' } })
+    ])
+    const at = messages.indexOf(typed[0]!)
+    const notice = messages.findIndex((m) => (m['origin'] as Message | undefined)?.['kind'] === 'task-notification')
+    expect(at).toBeGreaterThan(notice)
+    expect(text(messages[at + 1]!)).toBe('жду подагентов')
+  })
+
+  test('очередь: текст и картинка массивом, уведомление массивом, дубль в строке user', async () => {
+    const configDir = tempDir()
+    const base = { isSidechain: false, sessionId, cwd }
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
+    const notice =
+      '<task-notification>\n<task-id>a9</task-id>\n<tool-use-id>toolu_9</tool-use-id>\n' +
+      '<status>completed</status>\n<summary>done</summary>\n</task-notification>'
+    const queued = (uuid: string, parentUuid: string | null, prompt: unknown): Message => ({
+      ...base,
+      type: 'attachment',
+      uuid,
+      parentUuid,
+      attachment: { type: 'queued_command', prompt, commandMode: 'prompt', timestamp: 'x' }
+    })
+    const path = writeTranscript(configDir, cwd, sessionId, [
+      queued('a', null, [{ type: 'text', text: 'посмотри картинку' }, image]),
+      queued('b', 'a', [{ type: 'text', text: notice }]),
+      queued('c', 'b', 'повтор'),
+      // Should a CLI ever write the same prompt again as the next user line, it is shown once.
+      { ...base, type: 'user', uuid: 'd', parentUuid: 'c', message: { role: 'user', content: 'повтор' } }
+    ])
+    const messages = (await readTranscript(path)) as Message[]
+    expect(messages).toEqual([
+      {
+        type: 'user',
+        uuid: 'a',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: [{ type: 'text', text: 'посмотри картинку' }, image] }
+      },
+      {
+        type: 'user',
+        origin: { kind: 'task-notification' },
+        parent_tool_use_id: null,
+        message: { role: 'user', content: notice }
+      },
+      { type: 'user', uuid: 'd', parent_tool_use_id: null, message: { role: 'user', content: 'повтор' } }
+    ])
+  })
+
   test('ветка, отрезанная перемоткой, в историю не попадает', async () => {
     const messages = await read()
     expect(messages.some((m) => text(m) === 'старый вариант')).toBe(false)
@@ -243,6 +294,8 @@ describe('transcript: что из него читается', () => {
     const messages = (await readTranscript(path)) as Message[]
     expect(messages).toEqual([
       { type: 'user', uuid: 'a', parent_tool_use_id: null, message: { role: 'user', content: 'привет' } },
+      // A prompt typed mid-turn is the person's own message, not a service line.
+      { type: 'user', uuid: 'd', parent_tool_use_id: null, message: { role: 'user', content: 'ещё вопрос' } },
       {
         type: 'user',
         uuid: 'e',

@@ -223,8 +223,11 @@ test('открытая из истории сессия показывает т�
     const divider = ribbon.locator('[data-testid="ribbon-compaction"]')
     await expect(divider).toHaveCount(1)
     await expect(divider).toContainText('Что было до сжатия')
-    await expect(ribbon.locator('[data-testid="ribbon-user"]')).toHaveCount(2)
-    await expect(ribbon.locator('[data-testid="ribbon-user"]').last()).toContainText('теперь проверь тесты')
+    const bubbles = ribbon.locator('[data-testid="ribbon-user"]')
+    await expect(bubbles).toHaveCount(3)
+    await expect(bubbles.nth(1)).toContainText('теперь проверь тесты')
+    // Typed while the agent was busy: still the person's own words, once.
+    await expect(bubbles.nth(2)).toContainText('и ещё глянь логи')
 
     // All four subagents, each with an honest state.
     const heads = ribbon.locator('[data-testid="subagent-head"]')

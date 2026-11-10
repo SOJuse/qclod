@@ -831,7 +831,8 @@ describe('RibbonBuilder: сессия, восстановленная из фа�
     expect(nested[0]).toMatchObject({ kind: 'tool', name: 'Read', state: 'done' })
     expect(b.items.filter((i) => i.parentId === tests.id).map((i) => i.kind)).toEqual(['tool', 'agentText'])
     // A subagent's prompt is from the main agent, not the person: no bubble.
-    expect(bubbles(b)).toEqual(['найди, где падает вставка', 'теперь проверь тесты'])
+    // What was typed mid-turn is the person's too, shown once, after the notice.
+    expect(bubbles(b)).toEqual(['найди, где падает вставка', 'теперь проверь тесты', 'и ещё глянь логи'])
   })
 
   test('сводка сжатия — не пузырь, а часть разделителя', async () => {

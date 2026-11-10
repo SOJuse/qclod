@@ -14,7 +14,8 @@
  * (`parentUuid: null` plus `logicalParentUuid`), `queue-operation`,
  * `file-history-snapshot` and `cost-state` lines; `compactMetadata.trigger`,
  * `preTokens`, `postTokens`; the `queued_command` attachment's `prompt`,
- * `commandMode`, `timestamp`; the `async_launched` toolUseResult keys;
+ * `commandMode`, `timestamp` (plus `origin`, `source_uuid` on a prompt the
+ * person typed mid-turn, which is never also written as a user line); the `async_launched` toolUseResult keys;
  * subagent lines being sidechains with `agentId`, the first one a prompt with
  * `parentUuid: null`; meta's `agentType`, `description`, `toolUseId`,
  * `spawnDepth`. Real lines carry more keys than these (`promptId`,
@@ -60,6 +61,8 @@ export function writeTranscript(configDir, cwd, sessionId, lines, subagents = {}
 const EXPLORE_ID = 'a1c4e7b2d9f0a3b56'
 const TESTS_ID = 'a2b8d1f4c7e0a9d32'
 const LONG_REVIEW_ID = 'a3f2a6c9e1b4d7f08'
+
+const QUEUED_PROMPT = 'и ещё глянь логи'
 
 const NOTIFICATION =
   '<task-notification>\n' +
@@ -290,6 +293,27 @@ export function resumedSession(sessionId, cwd) {
   // In the real file a notice queued mid-turn arrives as this attachment only;
   // it is not repeated as a user line. (A user line with origin
   // task-notification is the other way a notice arrives, never both at once.)
+
+  // 9. Something the person typed while the agent was busy: queued, then
+  // delivered as an attachment only, never as a user line of its own.
+  lines.push({
+    type: 'queue-operation',
+    operation: 'enqueue',
+    timestamp: stamp(),
+    sessionId,
+    content: QUEUED_PROMPT
+  })
+  add({
+    type: 'attachment',
+    attachment: {
+      type: 'queued_command',
+      prompt: QUEUED_PROMPT,
+      commandMode: 'prompt',
+      origin: { kind: 'human' },
+      source_uuid: '00000000-0000-4000-8000-0000000000ff',
+      timestamp: new Date(clock).toISOString()
+    }
+  })
 
   // 7. The last word, with the usage the panel should start from.
   assistant([{ type: 'text', text: 'жду подагентов' }], {

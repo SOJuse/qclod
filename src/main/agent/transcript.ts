@@ -155,27 +155,56 @@ function toMessage(line: Line): Line | null {
     }
   }
 
-  // A background agent's notice queued while the main agent was busy is
-  // written only as this attachment; the stream would have carried it as a
-  // task-notification user message.
-  if (type === 'attachment' && isObject(line['attachment'])) {
-    const attachment = line['attachment']
-    const prompt = attachment['prompt']
-    if (
-      attachment['type'] === 'queued_command' &&
-      typeof prompt === 'string' &&
-      prompt.includes('<task-notification>')
-    ) {
+  // Whatever was queued while the main agent was busy is written only as this
+  // attachment: a background agent's notice, or a message the person typed
+  // mid-turn. The stream would have carried either as a user message.
+  const prompt = queuedPrompt(line)
+  if (prompt !== undefined) {
+    const text = textOf(prompt)
+    if (text.includes('<task-notification>')) {
       return {
         type: 'user',
         origin: { kind: 'task-notification' },
-        message: { role: 'user', content: prompt },
+        message: { role: 'user', content: text },
         parent_tool_use_id: null
       }
+    }
+    if (line['attachment'] && (line['attachment'] as Line)['commandMode'] === 'prompt') {
+      return { type: 'user', uuid: line['uuid'], message: { role: 'user', content: prompt }, parent_tool_use_id: null }
     }
   }
 
   return null
+}
+
+/** The prompt of a queued_command attachment: a string or content blocks. */
+function queuedPrompt(line: Line): string | unknown[] | undefined {
+  if (line['type'] !== 'attachment' || !isObject(line['attachment'])) return undefined
+  const attachment = line['attachment']
+  if (attachment['type'] !== 'queued_command') return undefined
+  const prompt = attachment['prompt']
+  return typeof prompt === 'string' || Array.isArray(prompt) ? prompt : undefined
+}
+
+/** The text of a message content: the string itself, or its text blocks joined. */
+function textOf(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter(isObject)
+    .filter((b) => b['type'] === 'text' && typeof b['text'] === 'string')
+    .map((b) => b['text'] as string)
+    .join('\n')
+}
+
+/**
+ * A queued prompt the CLI also wrote out as the very next user line. The
+ * files seen so far never do, but showing a message twice is the worse miss.
+ */
+function repeatedByNext(line: Line, next: Line | undefined): boolean {
+  if (!next || next['type'] !== 'user' || !isObject(next['message'])) return false
+  const text = textOf(queuedPrompt(line))
+  return text !== '' && textOf(next['message']['content']) === text
 }
 
 function blocksOf(line: Line): Line[] {
@@ -261,7 +290,8 @@ export async function readTranscript(path: string): Promise<unknown[]> {
   const ids = hasAgents ? agentIds(lines, subagentsDir) : new Map<string, string>()
 
   const messages: unknown[] = []
-  for (const line of chain) {
+  for (const [index, line] of chain.entries()) {
+    if (queuedPrompt(line) !== undefined && repeatedByNext(line, chain[index + 1])) continue
     const message = toMessage(line)
     if (message) messages.push(message)
     for (const toolUseId of agentCalls(line)) {

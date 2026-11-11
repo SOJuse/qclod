@@ -422,3 +422,152 @@ test('80% и 92% — разные значки уровня в панели и �
     await app.close()
   }
 })
+
+// ------------------------------------------------- ribbon, status line, meters (Task 11)
+
+const TEXT_DIM = 'rgb(161, 161, 171)'
+const CRITICAL = 'rgb(255, 99, 105)'
+
+const meterParts = (win: Page) => {
+  const meter = win.locator('[data-testid="status-context"]')
+  const style = (sel: string, prop: 'backgroundColor' | 'color' | 'fontVariantNumeric') =>
+    meter.locator(sel).evaluate((e, p) => getComputedStyle(e)[p], prop)
+  return { meter, style }
+}
+
+test('индикатор: обычный уровень без статусного цвета, подпись текстовым токеном, концы скруглены', async () => {
+  const { app, win } = await launchQclod({ script: { steps: [], contextPercent: 42, contextPercentByTurn: [92] } })
+  try {
+    const { meter, style } = meterParts(win)
+    await expect(meter).toContainText('42%', { timeout: 15000 })
+    await expect(meter.locator('.meter')).toHaveAttribute('data-level', 'ok')
+    expect(await style('.meter-fill', 'backgroundColor')).toBe(TEXT_DIM)
+    expect(await style('.meter-label', 'color')).toBe(TEXT_DIM)
+    expect(await style('.meter-label', 'fontVariantNumeric')).toContain('tabular-nums')
+    const [radius, height] = await meter
+      .locator('.meter-fill')
+      .evaluate((e) => [parseFloat(getComputedStyle(e).borderRadius), e.getBoundingClientRect().height])
+    expect(radius).toBeGreaterThanOrEqual(height / 2 - 0.5)
+    // The panel's limit bars are the same meter (its context is the breakdown chart, not a meter).
+    const panelFill = win.locator('[data-testid="side-panel"] .panel-limit .meter-fill').first()
+    expect(await panelFill.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe(TEXT_DIM)
+    await shot(win, '11-status-42')
+
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    await input.fill('дальше')
+    await input.press('Enter')
+    await expect(meter).toContainText('92%', { timeout: 15000 })
+    await expect(meter.locator('.meter')).toHaveAttribute('data-level', 'critical')
+    // The fill eases into its new colour.
+    await expect.poll(() => style('.meter-fill', 'backgroundColor')).toBe(CRITICAL)
+    expect(await style('.meter-label', 'color')).toBe(TEXT_DIM)
+    await shot(win, '11-status-92')
+  } finally {
+    await app.close()
+  }
+})
+
+test('строка статуса в одну строку при открытой панели: значки уровня и Remote Control на месте', async () => {
+  const now = Math.floor(Date.now() / 1000)
+  const { app, win } = await launchQclod({
+    script: {
+      steps: [],
+      contextPercent: 92,
+      rateLimits: { fiveHour: { utilization: 0.95, resetsAt: now + 3600 }, sevenDay: { utilization: 0.85, resetsAt: now + 86400 } },
+      remoteControl: { bridge: [{ state: 'reconnecting' }] }
+    }
+  })
+  try {
+    // The default window: 1180 wide, the side panel open.
+    expect(await win.evaluate(() => window.outerWidth)).toBe(1180)
+    await expect(win.locator('[data-testid="side-panel"]')).toBeVisible()
+    const toggle = win.locator('[data-testid="remote-toggle"]')
+    await expect(toggle).toBeEnabled({ timeout: 15000 })
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('data-state', 'reconnecting', { timeout: 15000 })
+    await expect(win.locator('[data-testid="status-context-alert"]')).toBeVisible({ timeout: 15000 })
+    await expect(win.locator('[data-testid="status-limit-5h-alert"]')).toBeVisible()
+    await expect(win.locator('[data-testid="status-limit-7d-alert"]')).toBeVisible()
+    await expect(win.locator('[data-testid="side-panel"]')).toBeVisible()
+
+    // One row: every child of the line shares one vertical band, and the line is one row tall.
+    const rows = await win.locator('[data-testid="status-line"]').evaluate((line) => {
+      const items = [...line.querySelectorAll<HTMLElement>('.status-group > *')].map((e) => e.getBoundingClientRect())
+      const tops = items.map((r) => Math.round(r.top + r.height / 2))
+      return { spread: Math.max(...tops) - Math.min(...tops), height: line.getBoundingClientRect().height, tallest: Math.max(...items.map((r) => r.height)) }
+    })
+    expect(rows.spread).toBeLessThanOrEqual(2)
+    expect(rows.height).toBeLessThanOrEqual(rows.tallest + 1)
+    await shot(win, '11-panel')
+  } finally {
+    await app.close()
+  }
+})
+
+/** The rgb() of the category and status colours, read off the page's own tokens. */
+const COLOURED = ['--status-ok', '--status-warn', '--status-critical', '--cat-read', '--cat-search', '--cat-edit', '--cat-command', '--cat-agent', '--cat-mcp']
+
+/** Elements whose own words wear a category or status colour. Icons (svg) carry no text and are skipped. */
+const wordsInColour = (win: Page) =>
+  win.evaluate((names) => {
+    const probe = document.createElement('span')
+    document.body.append(probe)
+    const colours = new Set(names.map((n) => {
+      probe.style.color = `var(${n})`
+      return getComputedStyle(probe).color
+    }))
+    probe.remove()
+    return [...document.querySelectorAll<HTMLElement>('body *')]
+      .filter((el) => !el.closest('svg') && [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent!.trim() !== ''))
+      .filter((el) => colours.has(getComputedStyle(el).color))
+      .map((el) => `${el.className || el.tagName}: ${el.textContent!.trim().slice(0, 40)}`)
+  }, COLOURED)
+
+test('лента и подагент на графите; ни одно слово не в цвете категории или статуса', async () => {
+  const failed = { kind: 'toolError', name: 'Bash', input: { command: 'npm run lint' }, error: 'линтер нашёл 2 проблемы' }
+  // The command is slow, so the «now» line can be seen while it runs.
+  const slow = ALL_CATEGORIES.map((s) => (s.name === 'Bash' ? { ...s, pauseMs: 2500 } : s))
+  const { app, win } = await launchQclod({ script: { steps: [], contextPercent: 92, turns: [[...slow.slice(0, -1), failed, slow.at(-1)]] } })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.fill('Почини вход')
+    await input.press('Enter')
+
+    // The «now» line: the chat's own surface, a hairline above, the category rule on the left.
+    const now = win.locator('[data-testid="now-line"][data-category="command"]')
+    await expect(now).toBeVisible({ timeout: 15000 })
+    const nowLook = await now.evaluate((e) => {
+      const s = getComputedStyle(e)
+      return { bg: s.backgroundColor, top: `${s.borderTopWidth} ${s.borderTopColor}`, rule: s.borderLeftWidth }
+    })
+    expect(nowLook).toEqual({ bg: 'rgb(22, 22, 26)', top: '1px rgb(38, 38, 45)', rule: '2px' })
+    await shot(win, '11-now')
+
+    await expect(win.locator('[data-testid="ribbon-agentText"]').last()).toContainText('Готово', { timeout: 15000 })
+
+    // Cards: raised, bordered, a 2px category rule; the chip a tint mixed into the card itself.
+    const card = win.locator('.tool-card[data-category="edit"]').first()
+    const look = await card.evaluate((e) => {
+      const s = getComputedStyle(e)
+      return { bg: s.backgroundColor, border: s.borderTopColor, rule: s.borderLeftWidth }
+    })
+    expect(look).toEqual({ bg: 'rgb(29, 29, 34)', border: 'rgb(38, 38, 45)', rule: '2px' })
+    const chip = await card.locator('.tool-chip').evaluate((e) => getComputedStyle(e).backgroundColor)
+    // Opaque: mixed into the card's surface. Chromium reports a mix as `color(srgb r g b)`, with `/ a` only when see-through.
+    expect(chip).toMatch(/^color\(srgb [\d.]+ [\d.]+ [\d.]+\)$/)
+    await card.locator('.tool-head').hover()
+    expect(await card.locator('.tool-head').evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(38, 38, 45)')
+    await shot(win, '11-ribbon')
+
+    const sub = win.locator('[data-testid="ribbon-subagent"]').first()
+    await sub.locator('[data-testid="subagent-head"]').click()
+    await expect(sub.locator('.tool-card').first()).toBeVisible()
+    await sub.scrollIntoViewIfNeeded()
+    await shot(win, '11-subagent')
+
+    expect(await wordsInColour(win)).toEqual([])
+  } finally {
+    await app.close()
+  }
+})

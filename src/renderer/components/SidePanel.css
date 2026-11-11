@@ -7,7 +7,7 @@
   overflow-y: auto;
   padding: 0 0 16px;
   border-left: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--surface);
   font-size: var(--text-sm);
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
@@ -21,7 +21,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 11px 14px;
-  background: var(--bg);
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
   font-size: var(--text-md);
@@ -72,27 +72,9 @@
   font-style: italic;
 }
 
+/* The shared meter (ui/meter.css), the panel's full width. */
 .panel-bar {
-  height: 4px;
-  border-radius: 999px;
-  background: var(--meter-track);
-  overflow: hidden;
   margin: 5px 0;
-}
-
-.panel-bar > div {
-  height: 100%;
-  border-radius: 999px;
-  background: var(--accent);
-  transition: width var(--dur) var(--ease);
-}
-
-.panel-bar[data-level='warn'] > div {
-  background: var(--status-warn);
-}
-
-.panel-bar[data-level='critical'] > div {
-  background: var(--status-critical);
 }
 
 .panel-limit + .panel-limit {
@@ -187,7 +169,7 @@
   height: 46px;
   border: 1px solid var(--border);
   border-right: none;
-  border-radius: 7px 0 0 7px;
+  border-radius: var(--radius) 0 0 var(--radius);
   background: var(--surface-raised);
   color: var(--text-faint);
   cursor: pointer;
@@ -265,7 +247,7 @@
   gap: 2px;
   height: 8px;
   margin: 5px 0 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
@@ -339,7 +321,7 @@
   display: block;
   width: 18px;
   height: 10px;
-  border-radius: 3px;
+  border-radius: var(--radius-hair);
 }
 
 .context-tokens {

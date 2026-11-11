@@ -1,0 +1,44 @@
+/*
+ * A meter: how full the context or a plan limit is (status line, side panel).
+ * The track is --meter-track; the fill keeps the quiet text tone while all is
+ * well and takes the status colour only at warn or critical — beside it the
+ * level's own icon, so colour is never the only sign. Ends are rounded by half
+ * the bar's height. The figure (.meter-label) is text: a text token, tabular figures.
+ */
+
+.meter {
+  position: relative;
+  flex: 0 0 auto;
+  display: block;
+  height: var(--meter-h);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--meter-track);
+}
+
+.meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--text-dim);
+  transition: width var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.meter[data-level='warn'] .meter-fill {
+  background: var(--status-warn);
+}
+
+.meter[data-level='critical'] .meter-fill {
+  background: var(--status-critical);
+}
+
+.meter-label {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meter-fill {
+    transition: none;
+  }
+}

@@ -1,7 +1,8 @@
 /*
- * The live «now» line above the input. A neutral strip; the category colour
- * (--cat) marks only the rule on the left and the icon chip, as on a tool
- * card. Every word wears a text token.
+ * The live «now» line above the input. A strip of the chat's own surface,
+ * set off from the ribbon by a hairline above it; the category colour (--cat)
+ * marks only the rule on the left and the icon chip, as on a tool card. Every
+ * word wears a text token.
  */
 
 .now-line {
@@ -14,10 +15,9 @@
   width: min(var(--content-max-w), calc(100% - 2 * var(--content-gutter)));
   margin: 0 auto var(--strip-margin);
   padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
-  border: 1px solid var(--border);
+  border-top: 1px solid var(--border);
   border-left: var(--rule-category) solid var(--cat);
-  border-radius: var(--radius-sm);
-  background: var(--surface-raised);
+  background: var(--surface);
   font-size: var(--text-md);
   color: var(--text);
 }
@@ -34,7 +34,7 @@
 .now-line[data-category='writing'] { --cat: var(--text-faint); }
 .now-line[data-category='waiting'] { --cat: var(--cat-plan); }
 
-/* The same tinted square a tool card puts its icon in. While a turn runs it breathes. */
+/* The same tinted square a tool card puts its icon in, mixed into this strip's surface. While a turn runs it breathes. */
 .now-chip {
   flex: 0 0 auto;
   display: inline-flex;
@@ -43,7 +43,7 @@
   width: var(--tool-chip-size);
   height: var(--tool-chip-size);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--cat) var(--tool-chip-tint), transparent);
+  background: color-mix(in srgb, var(--cat) var(--tool-chip-tint), var(--surface));
 }
 
 .now-line.is-turn .now-chip svg {

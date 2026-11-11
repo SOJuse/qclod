@@ -16,6 +16,7 @@ import { contextLevel } from '../chat/contextLevel'
 import { EFFORT_LABEL, EFFORT_SHORT, MODE_LABEL } from '../labels'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { BackgroundTasks } from './BackgroundTasks'
+import '../ui/meter.css'
 import './StatusLine.css'
 
 interface Props {
@@ -195,9 +196,9 @@ function LimitMeter({
 }
 
 /**
- * A short bar and its number. The fill takes the level's colour and, past
- * 80%, an alert icon joins it — colour is never the only sign. The number
- * keeps the text colour.
+ * A short bar and its number (ui/meter.css). The fill stays quiet until 80%,
+ * then takes the level's colour and an alert icon joins it — colour is never
+ * the only sign. The number keeps a text colour throughout.
  */
 function Meter({
   testId,
@@ -224,9 +225,9 @@ function Meter({
       data-testid={testId}
       title={title}
     >
-      <span className="status-meter-label">{label}</span>
+      <span className="status-meter-name">{label}</span>
       <span
-        className="status-meter-bar"
+        className="meter status-meter-bar"
         data-level={level}
         role="meter"
         aria-label={label}
@@ -235,11 +236,11 @@ function Meter({
         aria-valuenow={shown ?? undefined}
       >
         <span
-          className="status-meter-fill"
+          className="meter-fill"
           style={{ width: `${Math.min(100, Math.max(0, percent ?? 0))}%` }}
         />
       </span>
-      <span className="status-meter-value">
+      <span className="meter-label status-meter-value">
         {shown === null ? '—' : `${approximate ? '≈' : ''}${shown}%`}
       </span>
       {level !== 'ok' && (

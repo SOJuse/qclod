@@ -112,3 +112,7 @@ test('нет Unicode-глифов вместо значков', () => {
   )
   expect(found.map(([f, n, l]) => `${f}:${n}: ${l.trim()}`)).toEqual([])
 })
+// A tint over `transparent` takes whatever lies under it; tints mix into an opaque surface instead.
+test('тонировки смешаны с непрозрачной поверхностью, не с transparent', () => {
+  expect(hits(/color-mix\([^;]*,\s*transparent\s*\)/g)).toEqual([])
+})

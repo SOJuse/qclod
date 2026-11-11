@@ -7,6 +7,7 @@ import { hint } from '../app/shortcuts'
 import { ContextBreakdown } from './ContextBreakdown'
 import { AGENT_STATE_LABEL } from './agentState'
 import { RemoteSection } from './RemoteSection'
+import '../ui/meter.css'
 import './SidePanel.css'
 
 interface Props {
@@ -247,8 +248,8 @@ function Empty({ started, text }: { started: boolean; text?: string }): JSX.Elem
 /** The same thresholds as the status line under the input (80% and 90%). */
 function Bar({ percent }: { percent: number }): JSX.Element {
   return (
-    <div className="panel-bar" data-level={contextLevel(percent)}>
-      <div style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+    <div className="meter panel-bar" data-level={contextLevel(percent)}>
+      <div className="meter-fill" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
     </div>
   )
 }

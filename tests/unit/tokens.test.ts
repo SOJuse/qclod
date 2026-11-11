@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test } from 'vitest'
-import { contrast, deltaE, readTokens, resolveColor } from './cssTokens'
+import { contrast, deltaE, mix, readTokens, resolveColor } from './cssTokens'
 
 const css = readFileSync(resolve(__dirname, '../../src/renderer/styles/tokens.css'), 'utf8')
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8'))
@@ -100,4 +100,16 @@ test('интерфейс по умолчанию — Inter, ступень md, �
   expect(body).toMatch(/font-family:\s*var\(--font-ui\)/)
   expect(body).toMatch(/font-size:\s*var\(--text-md\)/)
   expect(body).toMatch(/line-height:\s*var\(--leading\)/)
+})
+
+test('чип категории: значок читается на своей тонировке (≥ 3:1)', () => {
+  expect(mix('#ffffff', '#000000', 50)).toBe('#808080')
+  const tint = parseFloat(t.get('--tool-chip-tint') ?? '')
+  expect(tint).toBeGreaterThan(0)
+  // A chip sits on a card (--surface-raised), in the «now» line (--surface) and on a hovered head (--surface-hover).
+  const icons = ['read', 'search', 'edit', 'command', 'agent', 'mcp', 'plan', 'other'].map((c) => `--cat-${c}`).concat('--status-critical')
+  for (const icon of icons) for (const surface of ['--surface-raised', '--surface', '--surface-hover']) {
+    const fg = resolveColor(t, icon)
+    expect(contrast(fg, mix(fg, resolveColor(t, surface), tint)), `${icon} на ${surface}`).toBeGreaterThanOrEqual(3)
+  }
 })

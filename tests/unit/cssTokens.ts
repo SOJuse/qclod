@@ -65,6 +65,13 @@ function luminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
+/** `color-mix(in srgb, a pct%, b)` for two opaque colours: each sRGB channel weighted, rounded to a byte. */
+export function mix(a: string, b: string, pct: number): string {
+  const [x, y] = [srgb(a), srgb(b)]
+  const p = pct / 100
+  return '#' + x.map((c, i) => Math.round((c * p + y[i] * (1 - p)) * 255).toString(16).padStart(2, '0')).join('')
+}
+
 /** WCAG 2.x contrast ratio, 1..21. */
 export function contrast(a: string, b: string): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)

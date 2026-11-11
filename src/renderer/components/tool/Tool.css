@@ -55,7 +55,7 @@
   align-items: center;
 }
 
-/* The category's one patch of fill: a small tinted square behind its icon. */
+/* The category's one patch of fill: a small square behind its icon, the category mixed into the card. */
 .tool-chip {
   flex: 0 0 auto;
   display: inline-flex;
@@ -64,11 +64,11 @@
   width: var(--tool-chip-size);
   height: var(--tool-chip-size);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--cat) var(--tool-chip-tint), transparent);
+  background: color-mix(in srgb, var(--cat) var(--tool-chip-tint), var(--surface-raised));
 }
 
 .tool-card.is-error .tool-chip {
-  background: color-mix(in srgb, var(--status-critical) var(--tool-chip-tint), transparent);
+  background: color-mix(in srgb, var(--status-critical) var(--tool-chip-tint), var(--surface-raised));
 }
 
 .tool-name {
@@ -340,11 +340,11 @@
 }
 
 .diff-line.is-add {
-  background: color-mix(in srgb, var(--cat-edit) 16%, transparent);
+  background: color-mix(in srgb, var(--cat-edit) 16%, var(--bg));
 }
 
 .diff-line.is-del {
-  background: color-mix(in srgb, var(--status-critical) 16%, transparent);
+  background: color-mix(in srgb, var(--status-critical) 16%, var(--bg));
 }
 
 .diff-no {

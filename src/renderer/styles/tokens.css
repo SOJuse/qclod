@@ -137,7 +137,8 @@
   --tool-head-h-compact: 24px;
   --tool-chip-size: 20px;
   --tool-chip-size-compact: 16px;
-  --tool-chip-tint: 18%;
+  /* How much category goes into the chip's surface: every icon keeps 3:1 on it (tokens.test.ts). */
+  --tool-chip-tint: 14%;
   --gap-hair: 2px;
   --radius-pill: 999px;
   /* A pasted image: its thumbnail in the composer chip, and in the user's bubble. */

@@ -25,6 +25,8 @@
   margin: 0 auto var(--space-2);
   font-size: var(--text-xs);
   color: var(--text-dim);
+  /* The line answers to its own width, not the window's: the open side panel eats 270px of it. */
+  container-type: inline-size;
 }
 
 .status-group {
@@ -117,6 +119,25 @@
 
 .status-remote[data-state='failed'] > svg {
   color: var(--status-critical);
+}
+
+/*
+ * Too narrow for everything (an 800px window with the panel open leaves ~490px): the least
+ * important controls go, in this order: the remote switch, effort and mode, then the model.
+ * The panel beside the line holds the model, and the meters never go.
+ */
+@container (max-width: 540px) {
+  .status-remote,
+  .status-group > .dropdown:has([data-testid='status-mode']),
+  .status-group > .dropdown:has([data-testid='status-effort']) {
+    display: none;
+  }
+}
+
+@container (max-width: 470px) {
+  .status-group > .dropdown:has([data-testid='status-model']) {
+    display: none;
+  }
 }
 
 /* ------------------------------------------------------------------ meters */

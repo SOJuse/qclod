@@ -1,5 +1,5 @@
 import type { LimitWindow, McpServerInfo, PanelData, RemoteInfo, SubagentState } from '../../shared/types'
-import { untilReset } from '../../shared/format'
+import { plural, untilReset } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
 import { PanelRightClose } from 'lucide-react'
 import { LevelIcon, levelLabel } from '../ui/icons'
@@ -168,7 +168,7 @@ export function SidePanel({ data, started, agents, remote, onRemote, onClose }: 
                   (agent.lastTool || agent.toolCalls) && (
                     <div className="panel-line panel-dim panel-agent-stats">
                       <span>{agent.lastTool ?? ''}</span>
-                      <span>{agent.toolCalls ? `${agent.toolCalls} инструментов` : ''}</span>
+                      <span>{agent.toolCalls ? `${agent.toolCalls} ${plural(agent.toolCalls, 'вызов', 'вызова', 'вызовов')}` : ''}</span>
                     </div>
                   )
                 ) : agent.state === 'failed' ? (

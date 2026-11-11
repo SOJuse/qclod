@@ -588,7 +588,7 @@ export function App(): JSX.Element {
             title={hint('Показать панель', 'togglePanel')}
             onClick={togglePanel}
           >
-            <PanelRightOpen size={16} aria-hidden="true" />
+            <PanelRightOpen size={14} aria-hidden="true" />
           </button>
         )}
       </div>

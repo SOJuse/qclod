@@ -131,6 +131,12 @@
   accent-color: var(--accent);
 }
 
+/* A section that could not be read: the notice sits in the column, not centred. */
+.settings-group .state-view {
+  margin: 0;
+  padding: var(--space-1) 0;
+}
+
 .settings-warning {
   margin: 6px 0 0;
   padding: 7px 9px;
@@ -238,4 +244,14 @@
   font-size: var(--text-xs);
   color: var(--status-ok);
   animation: settings-in var(--dur) var(--ease);
+}
+
+/* The refusal: the reason is read in text colour, the status colour stays on the icon. */
+.settings-saved.is-failed {
+  color: var(--text);
+}
+
+.settings-saved.is-failed svg {
+  flex: none;
+  color: var(--status-critical);
 }

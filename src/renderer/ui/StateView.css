@@ -1,0 +1,111 @@
+/*
+ * Loading, empty and error: a small notice centred in the space it fills,
+ * read left to right — icon, what is going on, why, one button.
+ */
+.state-view {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-2);
+  row-gap: var(--space-2);
+  align-items: start;
+  width: fit-content;
+  max-width: min(100%, 52ch);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4);
+  font-size: var(--text-md);
+  line-height: var(--leading);
+}
+
+.state-view-icon {
+  /* Sits on the title's first line. */
+  margin-top: var(--gap-hair);
+  color: var(--text-faint);
+}
+
+.state-view.is-error .state-view-icon {
+  color: var(--status-critical);
+}
+
+.state-view-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-hair);
+  min-width: 0;
+}
+
+.state-view-title {
+  margin: 0;
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+/* Loading and empty are the quiet ones: the title steps back to dim. */
+.state-view.is-loading .state-view-title,
+.state-view.is-empty .state-view-title {
+  color: var(--text-dim);
+  font-weight: var(--weight-regular);
+}
+
+.state-view-hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.state-view-action {
+  grid-column: 2;
+  justify-self: start;
+  padding: var(--button-sm-pad);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--button-sm-radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
+}
+
+.state-view-action:hover {
+  border-color: var(--border-accent);
+  background: var(--hover-fill);
+}
+
+/*
+ * A fast answer should not flash a spinner: loading shows itself only once
+ * the wait is long enough to notice.
+ */
+.state-view.is-loading {
+  animation: state-view-in var(--dur) var(--ease) 150ms both;
+}
+
+.state-view.is-loading .state-view-icon {
+  animation: state-view-spin 900ms linear infinite;
+}
+
+@keyframes state-view-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes state-view-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .state-view.is-loading {
+    animation-duration: 1ms;
+  }
+
+  .state-view.is-loading .state-view-icon {
+    animation: none;
+  }
+}

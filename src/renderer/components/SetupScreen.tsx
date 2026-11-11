@@ -5,6 +5,8 @@ import './SetupScreen.css'
 
 interface Props {
   report: EnvironmentReport
+  /** A check is under way: «Проверить снова» says so and cannot be pressed again. */
+  checking?: boolean
   onRecheck: () => void
   onDone: () => void
   onOpenSettings: () => void
@@ -37,7 +39,7 @@ interface StepView {
  * machine has nothing to drive. This screen pays that price out loud, as two
  * steps: put Claude Code on the machine, then log in once.
  */
-export function SetupScreen({ report, onRecheck, onDone, onOpenSettings }: Props): JSX.Element {
+export function SetupScreen({ report, checking = false, onRecheck, onDone, onOpenSettings }: Props): JSX.Element {
   const [log, setLog] = useState<string[]>([])
   const [installing, setInstalling] = useState(false)
   const [installFailed, setInstallFailed] = useState(false)
@@ -259,10 +261,11 @@ export function SetupScreen({ report, onRecheck, onDone, onOpenSettings }: Props
           <SetupButton
             action={{
               testId: 'setup-recheck',
-              label: 'Проверить снова',
+              label: checking ? 'Проверяю…' : 'Проверить снова',
               title: 'Проверить, что Claude Code на месте и вход выполнен',
               run: onRecheck
             }}
+            disabled={checking}
           />
           <SetupButton
             action={{ testId: 'setup-done', label: 'Начать работу', title: 'Перейти к работе', run: onDone }}

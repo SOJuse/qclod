@@ -2,11 +2,16 @@ import { X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { SessionSummary } from '../../shared/types'
 import { useModalFocus } from '../ui/modalFocus'
+import { StateView } from '../ui/StateView'
 import './HistoryScreen.css'
 
 interface Props {
   cwd: string
+  /** `null` while the list is being read. */
   sessions: SessionSummary[] | null
+  /** Why the list could not be read; it is read again by `onRetry`. */
+  error?: string | null
+  onRetry?: () => void
   onOpen: (session: SessionSummary) => void
   onClose: () => void
   /** Closing gives focus back to the opener; this runs when the opener is gone. */
@@ -35,7 +40,15 @@ export function when(timestamp: number): string {
  * own invention (spec 6.9, constraint 5.4). Opening one puts it in a new tab,
  * through the same resume path a restart uses.
  */
-export function HistoryScreen({ cwd, sessions, onOpen, onClose, onFocusLost }: Props): JSX.Element {
+export function HistoryScreen({
+  cwd,
+  sessions,
+  error = null,
+  onRetry,
+  onOpen,
+  onClose,
+  onFocusLost
+}: Props): JSX.Element {
   const [query, setQuery] = useState('')
   const field = useRef<HTMLInputElement | null>(null)
   const sheet = useRef<HTMLElement | null>(null)
@@ -97,14 +110,36 @@ export function HistoryScreen({ cwd, sessions, onOpen, onClose, onFocusLost }: P
           onChange={(e) => setQuery(e.target.value)}
         />
 
-        {sessions === null ? (
-          <div className="history-empty">Читаю…</div>
+        {error !== null ? (
+          <StateView
+            kind="error"
+            title="Не удалось прочитать историю"
+            hint={error}
+            {...(onRetry
+              ? {
+                  action: {
+                    label: 'Повторить',
+                    onClick: () => {
+                      // The button goes with the error; focus stays in the sheet.
+                      field.current?.focus()
+                      onRetry()
+                    }
+                  }
+                }
+              : {})}
+          />
+        ) : sessions === null ? (
+          <StateView kind="loading" title="Читаю историю…" />
         ) : shown.length === 0 ? (
-          <div className="history-empty" data-testid="history-empty">
-            {sessions.length === 0
-              ? 'В этой папке ещё не было разговоров'
-              : 'Ничего не нашлось'}
-          </div>
+          <StateView
+            kind="empty"
+            testId="history-empty"
+            title={
+              sessions.length === 0
+                ? 'В этой папке ещё не было разговоров'
+                : `Ничего не нашлось по «${query.trim()}»`
+            }
+          />
         ) : (
           <ul className="history-list">
             {shown.map((session) => (

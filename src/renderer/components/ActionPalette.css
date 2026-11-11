@@ -79,8 +79,8 @@
   color: var(--text-faint);
 }
 
-.action-palette-empty {
+/* No match: the notice sits under the field, not in the middle of nowhere. */
+.action-palette .state-view {
+  margin: 0;
   padding: var(--space-3) var(--space-4);
-  font-size: var(--text-sm);
-  color: var(--text-faint);
 }

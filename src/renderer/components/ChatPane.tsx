@@ -18,6 +18,7 @@ import { QueueStrip } from './QueueStrip'
 import { StatusLine } from './StatusLine'
 import { ContextBanner } from './ContextBanner'
 import { EmptyTab } from './EmptyTab'
+import { StateView } from '../ui/StateView'
 import './ChatPane.css'
 
 interface Props {
@@ -37,6 +38,9 @@ interface Props {
   notice?: { testId: string; text: string } | null
   /** Shows the side panel, as its button does: Remote Control's link and QR live there. */
   onShowPanel: () => void
+  /** Why the tab's ribbon could not be read; `onRetryRibbon` asks again. */
+  ribbonError?: string | null
+  onRetryRibbon?: () => void
 }
 
 /**
@@ -57,7 +61,9 @@ export function ChatPane({
   onCycleMode,
   onOpenSession,
   notice,
-  onShowPanel
+  onShowPanel,
+  ribbonError = null,
+  onRetryRibbon
 }: Props): JSX.Element {
   const tabs = useAppStore((s) => s.tabs)
   const ribbonByTab = useAppStore((s) => s.ribbonByTab)
@@ -157,9 +163,22 @@ export function ChatPane({
         cwd={tab?.cwd ?? ''}
         tabId={tabId}
         whenEmpty={
-          tab && ribbonLoaded ? (
+          !tab ? null : ribbonError !== null ? (
+            <div className="ribbon-state">
+              <StateView
+                kind="error"
+                title="Не удалось загрузить разговор"
+                hint={ribbonError}
+                {...(onRetryRibbon ? { action: { label: 'Повторить', onClick: onRetryRibbon } } : {})}
+              />
+            </div>
+          ) : ribbonLoaded ? (
             <EmptyTab tabId={tabId} cwd={tab.cwd} onOpenSession={(s) => onOpenSession(tabId, s)} />
-          ) : null
+          ) : (
+            <div className="ribbon-state">
+              <StateView kind="loading" title="Загружаю разговор…" />
+            </div>
+          )
         }
         onAnswerPermission={(requestId, behavior, remember) => {
           void window.qclod.answerPermission(requestId, {

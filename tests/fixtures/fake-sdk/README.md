@@ -117,6 +117,18 @@ for await (const message of driver.messages) { /* ... */ }
 раздела «Сверка с SDK и CLI» плана
 `docs/superpowers/plans/2026-11-10-qclod-v3-stage5-remote.md`.
 
+## Медленный и падающий IPC (не фейк, а шов в main)
+
+Чтобы увидеть загрузку и ошибку экранов, обработчики `history:list`,
+`agent:ribbon`, `settings:get`, `settings:set`, `hotkey:status`,
+`permission:rules` и `setup:check` обёрнуты в `withFault`
+(`src/main/testSeams/ipcFaults.ts`). Только в e2e-сборке:
+
+- `QCLOD_FAKE_SLOW` — JSON `{ "канал": мс }`: обработчик сперва ждёт;
+- `QCLOD_FAKE_FAIL` — JSON `{ "канал": "причина" }`: вызов отклоняется с `new Error(причина)`;
+- `QCLOD_FAKE_FAIL_TIMES` — JSON `{ "канал": n }`: отказывать только первые n вызовов
+  (без него — все), чтобы «Повторить» было видно в деле.
+
 ## Транскрипты на диске: `../transcript.mjs`
 
 Для тестов возобновления сессии из её JSONL-файла.

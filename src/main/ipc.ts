@@ -6,6 +6,7 @@ import { detectInstallMethods, installWithFallback, InstallSlot } from './setup/
 import { fakeInstaller, type FakeInstallConfig } from './setup/fakeInstall'
 import { CHANNELS } from '../shared/channels'
 import { offScreen } from './window'
+import { withFault } from './testSeams/ipcFaults'
 import type { AppSettings, AuthStatus } from '../shared/types'
 
 export interface BaseIpcDeps {
@@ -33,13 +34,15 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
   const install = new InstallSlot()
 
   ipcMain.handle(CHANNELS.appVersion, () => app.getVersion())
-  ipcMain.handle(CHANNELS.settingsGet, () => deps.getSettings())
-  ipcMain.handle(CHANNELS.settingsSet, (_e, patch: Partial<AppSettings>) => {
-    const next = deps.setSettings(patch)
-    const win = getWindow()
-    if (win && !win.isDestroyed()) win.webContents.send(CHANNELS.settingsChanged, next)
-    return next
-  })
+  ipcMain.handle(CHANNELS.settingsGet, () => withFault(CHANNELS.settingsGet, () => deps.getSettings()))
+  ipcMain.handle(CHANNELS.settingsSet, (_e, patch: Partial<AppSettings>) =>
+    withFault(CHANNELS.settingsSet, () => {
+      const next = deps.setSettings(patch)
+      const win = getWindow()
+      if (win && !win.isDestroyed()) win.webContents.send(CHANNELS.settingsChanged, next)
+      return next
+    })
+  )
 
   // ---------------------------------------------------------------- setup
 
@@ -59,10 +62,12 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
   }
 
   ipcMain.handle(CHANNELS.setupCheck, () =>
-    checkEnvironment(deps.getSettings().agentPath, {
-      ...(fake ? { detect: fake.detect } : {}),
-      ...(fakeAuth ? { authStatus: fakeAuthStatus } : {})
-    })
+    withFault(CHANNELS.setupCheck, () =>
+      checkEnvironment(deps.getSettings().agentPath, {
+        ...(fake ? { detect: fake.detect } : {}),
+        ...(fakeAuth ? { authStatus: fakeAuthStatus } : {})
+      })
+    )
   )
 
   /** The agent the login window was opened for; the watch asks about it. */

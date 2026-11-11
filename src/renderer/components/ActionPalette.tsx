@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { score } from '../../shared/commandFilter'
 import { APP_ACTIONS, type AppActionId } from '../app/shortcuts'
 import { useModalFocus } from '../ui/modalFocus'
+import { StateView } from '../ui/StateView'
 import './ActionPalette.css'
 
 interface Props {
@@ -91,7 +92,7 @@ export function ActionPalette({ onRun, onClose, onFocusLost }: Props): JSX.Eleme
           }}
         />
         {shown.length === 0 ? (
-          <div className="action-palette-empty">Такого действия нет</div>
+          <StateView kind="empty" title="Такого действия нет" />
         ) : (
           <ul className="action-palette-list" id="action-palette-list" role="listbox" ref={list}>
             {shown.map((action, index) => (

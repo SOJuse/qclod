@@ -387,3 +387,18 @@ export function toolOutcome(item: ToolCardItem, view: ToolView): string {
       return failed ? 'ошибка' : 'готово'
   }
 }
+
+/** A bare acknowledgement from a tool says nothing a person can use. */
+const ACK = /^(ok(ay)?|done|success)\.?$/i
+
+/**
+ * What a folded card shows on the right: nothing while the call runs; for a
+ * tool Qclod has no view of, its own summary, a bare «ok» said as «готово».
+ */
+export function cardOutcome(item: ToolCardItem, view: ToolView): string {
+  if (item.kind === 'tool' && item.state === 'running') return ''
+  if (view.type === 'generic' && item.kind === 'tool' && item.summary) {
+    return ACK.test(item.summary.trim()) ? 'готово' : item.summary
+  }
+  return toolOutcome(item, view)
+}

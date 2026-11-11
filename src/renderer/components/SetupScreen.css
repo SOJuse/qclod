@@ -1,7 +1,8 @@
 /*
- * First run: two steps in a quiet card. The one detail that moves is the rail
- * between the step markers, which fills with the accent up to the step being
- * worked on. Below SettingsScreen (z-index 20), which opens over it.
+ * First run: two steps in the same sheet as settings and history (ui/controls.css),
+ * centred on the window's ground, not modal. The one detail that moves is the
+ * rail between the step markers, which fills with the accent up to the step
+ * being worked on. Below SettingsScreen (z-index 20), which opens over it.
  */
 .setup {
   --setup-marker: calc(var(--space-5) + var(--space-1));
@@ -14,30 +15,22 @@
   justify-content: center;
   padding: var(--space-5) var(--space-4);
   overflow-y: auto;
-  background: var(--surface);
+  background: var(--bg);
   font-family: var(--font-ui);
   color: var(--text);
 }
 
 .setup-card {
   width: min(600px, 100%);
-  padding: var(--space-5);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-modal);
-  text-align: left;
+  max-height: none;
 }
 
-.setup-title {
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-xl);
-  font-weight: var(--weight-strong);
-  line-height: var(--leading-tight);
+.setup-head {
+  padding: var(--space-4) var(--space-5) var(--space-3);
 }
 
 .setup-lead {
-  margin: 0 0 var(--space-5);
+  margin: var(--space-2) 0 0;
   max-width: 62ch;
   color: var(--text-dim);
   font-size: var(--text-sm);
@@ -48,8 +41,9 @@
 
 .setup-steps {
   margin: 0;
-  padding: 0;
+  padding: var(--space-4) var(--space-5);
   list-style: none;
+  overflow: visible;
 }
 
 .setup-step {
@@ -73,26 +67,34 @@
   height: var(--setup-marker);
   border: 1.5px solid var(--border-strong);
   border-radius: var(--radius-pill);
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-size: var(--text-sm);
   font-weight: var(--weight-strong);
   font-variant-numeric: tabular-nums;
 }
 
+/* The step being worked on: the accent frames it, the number stays text. */
 .setup-step[data-state='active'] .setup-marker {
   border-color: var(--accent);
   background: var(--accent-fill);
-  color: var(--accent);
+  color: var(--text);
 }
 
+/* Done and blocked markers hold an icon only: the status colour is the icon's. */
 .setup-step[data-state='done'] .setup-marker {
   border-color: var(--status-ok);
+}
+
+.setup-step[data-state='done'] .setup-marker svg {
   color: var(--status-ok);
 }
 
 .setup-step[data-state='blocked'] .setup-marker {
   border-color: var(--critical-border);
   background: var(--critical-fill);
+}
+
+.setup-step[data-state='blocked'] .setup-marker svg {
   color: var(--status-critical);
 }
 
@@ -100,6 +102,9 @@
 .setup-step[data-testid='setup-step-login'][data-state='blocked'] .setup-marker {
   border-color: var(--warn-border);
   background: var(--warn-fill);
+}
+
+.setup-step[data-testid='setup-step-login'][data-state='blocked'] .setup-marker svg {
   color: var(--status-warn);
 }
 
@@ -158,7 +163,7 @@
 }
 
 .setup-step[data-state='todo'] .setup-step-name {
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 
 .setup-step-actions {
@@ -173,10 +178,6 @@
   color: var(--text-dim);
   font-size: var(--text-sm);
   line-height: var(--leading-prose);
-}
-
-.setup-step[data-state='todo'] .setup-step-text {
-  color: var(--text-faint);
 }
 
 .setup-step[data-state='blocked'] .setup-step-text {
@@ -200,65 +201,32 @@
   word-break: break-word;
 }
 
-/* ---------------------------------------------------------------- buttons */
+/* ---------------------------------------------------------------- the foot */
 
 .setup-actions {
+  align-items: center;
+  padding: var(--space-3) var(--space-5);
+}
+
+/* A check that could not run: one line, the icon carries the colour. */
+.setup-check-error {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex: 1 1 auto;
+  align-items: center;
   gap: var(--space-2);
-  margin-top: var(--space-5);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--border);
-}
-
-.setup-button {
-  padding: var(--button-sm-pad);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--button-sm-radius);
-  background: transparent;
+  min-width: 0;
+  margin: 0 auto 0 0;
   color: var(--text);
-  font: inherit;
   font-size: var(--text-sm);
-  line-height: var(--leading);
+}
+
+.setup-check-error span {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
-  transition:
-    border-color var(--dur-fast) var(--ease),
-    background-color var(--dur-fast) var(--ease);
 }
 
-.setup-button:hover:not(:disabled) {
-  border-color: var(--border-accent);
-  background: var(--hover-fill);
-}
-
-.setup-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.setup-button:disabled {
-  color: var(--text-faint);
-  border-color: var(--border);
-  cursor: not-allowed;
-}
-
-.setup-button.is-primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: var(--weight-strong);
-}
-
-.setup-button.is-primary:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--accent);
-  filter: brightness(1.08);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .setup-button {
-    transition: none;
-  }
+.setup-check-error svg {
+  flex: none;
+  color: var(--status-critical);
 }

@@ -86,10 +86,12 @@
   white-space: nowrap;
 }
 
+/* Dates are read, not decoration: secondary text, not the faintest. */
 .empty-tab-session-when {
   flex: 0 0 auto;
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
 }
 
 .empty-tab-tips {

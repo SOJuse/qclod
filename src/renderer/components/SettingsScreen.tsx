@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, X } from 'lucide-react'
+import { Check, TriangleAlert, X } from 'lucide-react'
 import { ERROR_ICON } from '../ui/icons'
 import { reasonOf, StateView } from '../ui/StateView'
 import {
@@ -64,13 +64,17 @@ export function SettingsScreen({
     setHotkeyError(null)
     window.qclod.hotkeyStatus().then(setHotkeyStatus, (err) => setHotkeyError(reasonOf(err)))
   }, [])
-  useEffect(loadHotkey, [settings?.globalHotkey, loadHotkey])
+  useEffect(() => {
+    loadHotkey()
+  }, [settings?.globalHotkey, loadHotkey])
 
   const loadRules = useCallback((): void => {
     setRulesError(null)
     window.qclod.permissionRules().then(setRules, (err) => setRulesError(reasonOf(err)))
   }, [])
-  useEffect(loadRules, [loadRules])
+  useEffect(() => {
+    loadRules()
+  }, [loadRules])
 
   /** A «Повторить» goes with its error; focus stays in the sheet rather than falling to the page. */
   const retry = (run: () => void) => (): void => {
@@ -116,9 +120,9 @@ export function SettingsScreen({
   const modelKnown = model === '' || models.some((m) => m.value === model)
 
   return (
-    <div className="settings-backdrop" data-testid="settings" onMouseDown={onClose}>
+    <div className="sheet-backdrop settings-backdrop" data-testid="settings" onMouseDown={onClose}>
       <section
-        className="settings"
+        className="sheet settings"
         ref={sheet}
         tabIndex={-1}
         role="dialog"
@@ -127,8 +131,8 @@ export function SettingsScreen({
         onKeyDown={onKeyDown}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="settings-head">
-          <h2>Настройки</h2>
+        <header className="sheet-head">
+          <h2 className="sheet-title">Настройки</h2>
           <div className="settings-head-end">
             {saveError !== null ? (
               <span className="settings-saved is-failed" data-testid="settings-save-failed" role="alert">
@@ -146,7 +150,7 @@ export function SettingsScreen({
             <button
               ref={closeButton}
               type="button"
-              className="settings-close"
+              className="btn btn-ghost btn-sm"
               data-testid="close-settings"
               aria-label="Закрыть настройки"
               title="Закрыть настройки"
@@ -158,7 +162,7 @@ export function SettingsScreen({
         </header>
 
         {settings === null ? (
-          <div className="settings-body">
+          <div className="sheet-body">
             {loadError !== null ? (
               <StateView
                 kind="error"
@@ -171,11 +175,12 @@ export function SettingsScreen({
             )}
           </div>
         ) : (
-          <div className="settings-body">
+          <div className="sheet-body">
             <Group title="Окно">
               <Field label="Вызов из любого места">
                 <input
                   type="text"
+                  className="field"
                   data-testid="setting-globalHotkey"
                   defaultValue={settings.globalHotkey}
                   onBlur={(e) => onPatch({ globalHotkey: e.target.value })}
@@ -193,6 +198,7 @@ export function SettingsScreen({
                 hotkeyStatus &&
                 !hotkeyStatus.ok && (
                   <p className="settings-warning" data-testid="hotkey-warning">
+                    <TriangleAlert size={14} aria-hidden="true" />
                     {hotkeyStatus.reason}
                   </p>
                 )
@@ -224,6 +230,7 @@ export function SettingsScreen({
               <Field label="Путь к исполняемому файлу">
                 <input
                   type="text"
+                  className="field"
                   data-testid="setting-agentPath"
                   autoFocus={focusField === 'agentPath'}
                   onFocus={focusField === 'agentPath' ? (e) => e.target.select() : undefined}
@@ -233,6 +240,7 @@ export function SettingsScreen({
               </Field>
               <Field label="Модель по умолчанию">
                 <select
+                  className="field"
                   data-testid="setting-defaultModel"
                   value={model}
                   onChange={(e) => onPatch({ defaults: { model: e.target.value } })}
@@ -248,6 +256,7 @@ export function SettingsScreen({
               </Field>
               <Field label="Усилие по умолчанию">
                 <select
+                  className="field"
                   data-testid="setting-defaultEffort"
                   value={settings.defaults.effort ?? ''}
                   onChange={(e) => onPatch({ defaults: { effort: e.target.value as EffortLevel } })}
@@ -262,6 +271,7 @@ export function SettingsScreen({
               </Field>
               <Field label="Режим по умолчанию">
                 <select
+                  className="field"
                   data-testid="setting-defaultPermissionMode"
                   value={settings.defaults.permissionMode ?? 'default'}
                   onChange={(e) => onPatch({ defaults: { permissionMode: e.target.value as PermissionMode } })}
@@ -276,6 +286,7 @@ export function SettingsScreen({
               <Field label="Дополнительные флаги">
                 <input
                   type="text"
+                  className="field"
                   data-testid="setting-defaultExtraFlags"
                   placeholder="--verbose"
                   defaultValue={settings.defaults.extraFlags ?? ''}
@@ -288,6 +299,7 @@ export function SettingsScreen({
               <Field label="Команда редактора">
                 <input
                   type="text"
+                  className="field"
                   data-testid="setting-editorCommand"
                   maxLength={1000}
                   placeholder="code -g {path}:{line}"
@@ -298,7 +310,7 @@ export function SettingsScreen({
                   }}
                 />
               </Field>
-              <p className="settings-note">
+              <p className="field-hint">
                 Для пункта «Открыть в редакторе» в меню пути. Вместо {'{path}'} встанет файл, вместо {'{line}'} и{' '}
                 {'{column}'} — строка и столбец. Пусто — пункта нет.
               </p>
@@ -314,7 +326,7 @@ export function SettingsScreen({
                   action={{ label: 'Повторить', onClick: retry(loadRules) }}
                 />
               ) : rules.length === 0 ? (
-                <p className="settings-note" data-testid="rules-empty">
+                <p className="field-hint" data-testid="rules-empty">
                   Пока ничего. Кнопка «Разрешить всё такое» в диалоге добавит сюда правило.
                 </p>
               ) : (
@@ -325,6 +337,7 @@ export function SettingsScreen({
                       {rule.target && <span className="settings-rule-target">{rule.target}</span>}
                       <button
                         type="button"
+                        className="btn btn-ghost btn-sm"
                         data-testid="permission-rule-delete"
                         aria-label={`Забыть правило для ${rule.toolName}`}
                         title={`Забыть правило для ${rule.toolName}`}
@@ -341,7 +354,7 @@ export function SettingsScreen({
                   ))}
                 </ul>
               )}
-              <p className="settings-note">
+              <p className="field-hint">
                 Правила живут в хранилище Qclod. В папке вашего проекта ничего не меняется.
               </p>
             </Group>
@@ -366,7 +379,7 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 function Field({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
   return (
     <label className="settings-field">
-      <span>{label}</span>
+      <span className="field-label">{label}</span>
       {children}
     </label>
   )

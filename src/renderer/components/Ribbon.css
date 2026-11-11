@@ -216,7 +216,6 @@
   gap: 8px;
 }
 
-.row-permission-actions button,
 .row-question-options button {
   padding: 5px 12px;
   border-radius: 7px;
@@ -227,56 +226,8 @@
   cursor: pointer;
 }
 
-.row-permission-actions button:hover,
 .row-question-options button:not(:disabled):hover {
   border-color: var(--accent);
-}
-
-.row-permission-actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.row-permission-actions kbd {
-  padding: 0 var(--space-1);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-hair);
-  font: inherit;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-}
-
-/* The one button that answers yes: solid accent, the strongest thing on the card. */
-.row-permission-actions .btn-primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: var(--weight-strong);
-}
-
-.row-permission-actions .btn-primary:hover {
-  border-color: var(--accent);
-  filter: brightness(1.1);
-}
-
-.row-permission-actions .btn-primary kbd {
-  border-color: color-mix(in srgb, var(--on-accent) 45%, var(--accent));
-  color: var(--on-accent);
-}
-
-.row-permission-actions .btn-danger {
-  border-color: var(--critical-border);
-  background: var(--critical-fill);
-}
-
-.row-permission-actions .btn-danger svg {
-  color: var(--status-critical);
-}
-
-.row-permission-actions .btn-danger:hover {
-  border-color: var(--status-critical);
 }
 
 /* The card spans the ribbon, which clips sideways: its ring goes inside.
@@ -343,15 +294,9 @@
   color: var(--accent);
 }
 
+/* Its look is .btn .btn-primary (ui/controls.css). */
 .row-question-submit {
   margin-top: var(--space-3);
-  padding: 5px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--accent);
-  background: var(--surface);
-  color: var(--accent);
-  font-size: var(--text-sm);
-  cursor: pointer;
 }
 
 .row-question-done {
@@ -359,12 +304,6 @@
   font-size: var(--text-sm);
   line-height: var(--leading);
   color: var(--text-dim);
-}
-
-.row-question-submit:disabled {
-  border-color: var(--border);
-  color: var(--text-dim);
-  cursor: default;
 }
 
 /* ------------------------------------------------------- compaction, notes */
@@ -490,22 +429,6 @@
   display: flex;
   gap: 8px;
   padding: 0 14px 12px;
-}
-
-.row-plan-actions button {
-  padding: 6px 14px;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-
-.row-plan-actions button:first-child {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
 }
 
 .row-plan-done {

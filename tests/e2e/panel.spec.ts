@@ -77,7 +77,7 @@ test('панель показывает контекст, лимиты, моде
   }
 })
 
-test('пустые данные показываются как «появится после запуска», а не нулями', async () => {
+test('пустые данные показываются как «Появится после запуска», а не нулями', async () => {
   // A folder that no longer exists: no session starts, so there is nothing to
   // report — and nothing must be invented.
   const gone = join(mkdtempSync(join(tmpdir(), 'qclod-gone-')), 'нет-такой-папки')
@@ -102,7 +102,7 @@ test('пустые данные показываются как «появитс
     await expect(panel).toBeVisible({ timeout: 15000 })
 
     await expect(panel.locator('[data-testid="panel-empty"]').first()).toContainText(
-      'появится после запуска'
+      'Появится после запуска'
     )
     await expect(panel).not.toContainText('0%')
     await expect(panel).not.toContainText('$0.00')

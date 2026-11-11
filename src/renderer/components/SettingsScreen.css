@@ -1,72 +1,36 @@
-.settings-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 56px 20px 20px;
-  background: var(--backdrop);
-  animation: settings-in var(--dur) var(--ease);
-}
+/* Settings: a sheet (ui/controls.css) of labelled rows in groups. */
 
-@keyframes settings-in {
-  from {
-    opacity: 0;
-  }
-}
-
-.settings {
-  display: flex;
-  flex-direction: column;
-  width: min(620px, 100%);
-  max-height: 100%;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-modal);
-  overflow: hidden;
-}
-
-.settings-head {
+.settings-head-end {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-2);
 }
 
-.settings-head h2 {
-  margin: 0;
-  font-size: var(--text-lg);
-  font-weight: var(--weight-strong);
+/* The answer to a change: the status colour is on the icon, the words in text colour. */
+.settings-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  animation: sheet-in var(--dur) var(--ease);
 }
 
-.settings-close {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-faint);
-  font-size: var(--text-lg);
-  cursor: default;
+.settings-saved svg {
+  flex: none;
+  color: var(--status-ok);
 }
 
-.settings-close:hover {
-  background: var(--hover-fill);
+.settings-saved.is-failed {
   color: var(--text);
 }
 
-.settings-body {
-  padding: 4px 16px 16px;
-  overflow-y: auto;
+.settings-saved.is-failed svg {
+  color: var(--status-critical);
 }
 
 .settings-group {
-  padding: 14px 0;
+  padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -75,32 +39,22 @@
 }
 
 .settings-group h3 {
-  margin: 0 0 10px;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-  color: var(--accent);
+  margin: 0 0 var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
 }
 
 .settings-field {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 5px 0;
-  font-size: var(--text-sm);
-  color: var(--text-dim);
+  gap: var(--space-4);
+  padding: var(--space-1) 0;
 }
 
-.settings-field input,
-.settings-field select {
+.settings-field .field {
   width: 260px;
-  padding: 6px 9px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--text-sm);
 }
 
 /* Every text field here holds a shortcut, a path, flags or a command. */
@@ -108,21 +62,11 @@
   font-family: var(--font-mono);
 }
 
-.settings-field select {
-  cursor: pointer;
-}
-
-/* The ring is the global outline (tokens.css); the border only follows it. */
-.settings-field input:focus-visible,
-.settings-field select:focus-visible {
-  border-color: var(--border-accent);
-}
-
 .settings-toggle {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 5px 0;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
   font-size: var(--text-sm);
   color: var(--text-dim);
 }
@@ -137,56 +81,44 @@
   padding: var(--space-1) 0;
 }
 
+/* The shortcut could not be taken: a caution, its colour on the icon. */
 .settings-warning {
-  margin: 6px 0 0;
-  padding: 7px 9px;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2);
   border: 1px solid var(--warn-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   background: var(--warn-fill);
+  color: var(--text);
   font-size: var(--text-xs);
+  line-height: var(--leading);
+}
+
+.settings-warning svg {
+  flex: none;
   color: var(--status-warn);
 }
 
 .settings-version {
-  margin: 16px 0 0;
+  margin: var(--space-4) 0 0;
   font-size: var(--text-xs);
   color: var(--text-faint);
 }
 
-.settings-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 14px;
-}
-
-.settings-button {
-  padding: 7px 16px;
-  border: 1px solid var(--border-accent);
-  border-radius: var(--radius-sm);
-  background: var(--accent-fill);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--text-sm);
-  cursor: default;
-  transition: background var(--dur-fast) var(--ease);
-}
-
-.settings-button:hover {
-  background: var(--accent-fill-strong);
-}
-
 .settings-rules {
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-2);
   padding: 0;
   list-style: none;
 }
 
 .settings-rules li {
   display: flex;
-  align-items: baseline;
-  gap: 9px;
-  padding: 5px 8px;
-  border-radius: var(--button-sm-radius);
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
   font-size: var(--text-sm);
 }
 
@@ -195,8 +127,8 @@
 }
 
 .settings-rule-tool {
-  font-weight: var(--weight-strong);
   flex: 0 0 auto;
+  font-weight: var(--weight-strong);
 }
 
 .settings-rule-target {
@@ -207,51 +139,11 @@
   white-space: nowrap;
 }
 
-.settings-rules button {
+.settings-rules .btn {
   margin-left: auto;
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-  font-size: var(--text-md);
-  line-height: 1;
-  padding: 0 4px;
-  border-radius: var(--radius-pill);
 }
 
-.settings-rules button:hover {
-  color: var(--status-critical);
-  background: var(--border);
-}
-
-.settings-note {
-  margin: 6px 0 0;
-  color: var(--text-faint);
-  font-size: var(--text-xs);
-  line-height: var(--leading);
-}
-
-.settings-head-end {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.settings-saved {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-xs);
-  color: var(--status-ok);
-  animation: settings-in var(--dur) var(--ease);
-}
-
-/* The refusal: the reason is read in text colour, the status colour stays on the icon. */
-.settings-saved.is-failed {
-  color: var(--text);
-}
-
-.settings-saved.is-failed svg {
-  flex: none;
+/* Forgetting a rule: the cross turns red, nothing else does. */
+.settings-rules .btn:hover svg {
   color: var(--status-critical);
 }

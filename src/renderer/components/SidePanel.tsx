@@ -151,7 +151,7 @@ export function SidePanel({ data, started, agents, remote, onRemote, onClose }: 
 
       <Section title="Агенты">
         {agents.length === 0 ? (
-          <Empty started={started} text="подагентов не было" />
+          <Empty started={started} text="Агентов нет" />
         ) : (
           <ul className="panel-agents" data-testid="panel-agents">
             {agents.map((agent) => (
@@ -198,7 +198,7 @@ export function SidePanel({ data, started, agents, remote, onRemote, onClose }: 
             ))}
           </ul>
         ) : (
-          <Empty started={started} text="серверов нет" />
+          <Empty started={started} text="Серверов нет" />
         )}
       </Section>
 
@@ -239,7 +239,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Empty({ started, text }: { started: boolean; text?: string }): JSX.Element {
   return (
     <div className="panel-empty" data-testid="panel-empty">
-      {text ?? (started ? 'появится после первого ответа' : 'появится после запуска')}
+      {text ?? (started ? 'Появится после первого ответа' : 'Появится после запуска')}
     </div>
   )
 }

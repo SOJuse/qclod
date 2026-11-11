@@ -75,23 +75,24 @@ export function HistoryScreen({
   )
 
   return (
-    <div className="history-backdrop" data-testid="history-screen" onMouseDown={onClose}>
+    <div className="sheet-backdrop history-backdrop" data-testid="history-screen" onMouseDown={onClose}>
       <section
         ref={sheet}
-        className="history"
+        className="sheet history"
         role="dialog"
         aria-modal="true"
         aria-label="История"
         onKeyDown={onKeyDown}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="history-head">
-          <div>
-            <h2>История</h2>
+        <header className="sheet-head">
+          <div className="history-heading">
+            <h2 className="sheet-title">История</h2>
             <span className="history-cwd">{cwd}</span>
           </div>
           <button
             type="button"
+            className="btn btn-ghost btn-sm"
             data-testid="history-close"
             aria-label="Закрыть историю"
             title="Закрыть (Esc)"
@@ -101,14 +102,16 @@ export function HistoryScreen({
           </button>
         </header>
 
-        <input
-          ref={field}
-          className="history-query"
-          data-testid="history-query"
-          placeholder="Найти в прошлых разговорах…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        <div className="history-search">
+          <input
+            ref={field}
+            className="field history-query"
+            data-testid="history-query"
+            placeholder="Найти в прошлых разговорах…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
 
         {error !== null ? (
           <StateView
@@ -141,7 +144,7 @@ export function HistoryScreen({
             }
           />
         ) : (
-          <ul className="history-list">
+          <ul className="sheet-body history-list">
             {shown.map((session) => (
               <li key={session.id}>
                 {/* A button, so Tab reaches it and Enter opens it. */}

@@ -49,10 +49,10 @@ export function ActionPalette({ onRun, onClose, onFocusLost }: Props): JSX.Eleme
   }
 
   return (
-    <div className="action-palette-backdrop" onMouseDown={onClose}>
+    <div className="sheet-backdrop action-palette-backdrop" onMouseDown={onClose}>
       <div
         ref={sheet}
-        className="action-palette ring-host"
+        className="sheet action-palette ring-host"
         data-testid="action-palette"
         role="dialog"
         aria-modal="true"
@@ -94,7 +94,7 @@ export function ActionPalette({ onRun, onClose, onFocusLost }: Props): JSX.Eleme
         {shown.length === 0 ? (
           <StateView kind="empty" title="Такого действия нет" />
         ) : (
-          <ul className="action-palette-list" id="action-palette-list" role="listbox" ref={list}>
+          <ul className="sheet-body action-palette-list" id="action-palette-list" role="listbox" ref={list}>
             {shown.map((action, index) => (
               <li
                 key={action.id}

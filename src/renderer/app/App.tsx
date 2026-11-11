@@ -77,17 +77,23 @@ export function App(): JSX.Element {
 
   /** A check is under way: «Проверить снова» says so and waits. */
   const [checking, setChecking] = useState(false)
+  /** Why the last check could not run; the setup screen says so in one line. */
+  const [checkError, setCheckError] = useState<string | null>(null)
   const recheck = useCallback((): void => {
     setChecking(true)
     window.qclod
       .checkEnvironment()
       .then(
         (report) => {
+          setCheckError(null)
           setEnvironment(report)
           if (!report.ready) setSetupNeeded(true)
         },
-        // A check that could not run changes nothing: the last report stays.
-        (err) => console.warn('[setup] check failed:', reasonOf(err))
+        // A check that could not run changes nothing: the last report stays, and the reason is shown.
+        (err) => {
+          console.warn('[setup] check failed:', reasonOf(err))
+          setCheckError(reasonOf(err))
+        }
       )
       .finally(() => setChecking(false))
   }, [])
@@ -478,6 +484,7 @@ export function App(): JSX.Element {
         <SetupScreen
           report={environment}
           checking={checking}
+          checkError={checkError}
           onRecheck={recheck}
           onDone={() => setSetupDismissed(true)}
           onOpenSettings={() => setSettingsOpen(true)}

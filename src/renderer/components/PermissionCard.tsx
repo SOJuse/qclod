@@ -193,7 +193,7 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
         <div className="row-permission-actions">
           <button
             type="button"
-            className="btn-primary"
+            className="btn btn-primary"
             data-testid="permission-allow"
             title="Разрешить (Enter)"
             onClick={() => answer('allow')}
@@ -204,6 +204,7 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
           </button>
           <button
             type="button"
+            className="btn"
             data-testid="permission-allow-all"
             title="Разрешить всё такое (A)"
             onClick={() => answer('allow', true)}
@@ -214,7 +215,7 @@ export function PermissionCard({ item, active = false, onAnswer }: Props): JSX.E
           </button>
           <button
             type="button"
-            className="btn-danger"
+            className="btn btn-danger"
             data-testid="permission-deny"
             title="Отклонить (Esc)"
             onClick={() => answer('deny')}

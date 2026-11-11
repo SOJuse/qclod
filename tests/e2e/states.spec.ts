@@ -191,12 +191,13 @@ test('лента не загрузилась — ошибка и «Повтор�
   }
 })
 
-test('панель без данных — «появится после первого ответа»', async () => {
+test('панель без данных — «Появится после первого ответа», агентов — «Агентов нет»', async () => {
   const { app, win } = await launchQclod({ script: { steps: [] } })
   try {
     const panel = win.locator('[data-testid="side-panel"]')
     await expect(panel).toBeVisible({ timeout: 15000 })
-    await expect(panel.locator('[data-testid="panel-empty"]').first()).toContainText('появится после первого ответа')
+    await expect(panel.locator('[data-testid="panel-empty"]').first()).toContainText('Появится после первого ответа')
+    await expect(panel.locator('[data-testid="panel-empty"]', { hasText: 'Агентов нет' })).toHaveCount(1)
     await shot(win, '09-panel-empty')
   } finally {
     await app.close()

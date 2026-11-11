@@ -233,11 +233,17 @@
   border: 1px solid var(--warn-border);
   border-radius: var(--radius-pill);
   background: var(--warn-fill);
-  color: var(--status-warn);
+  color: var(--text);
   font: inherit;
   font-size: var(--text-xs);
   cursor: default;
   -webkit-app-region: no-drag;
+}
+
+/* The status colour is on the triangle only; the words stay text. */
+.hotkey-warning > svg {
+  flex: 0 0 auto;
+  color: var(--status-warn);
 }
 
 .hotkey-warning:hover {

@@ -95,7 +95,7 @@ export function QuestionCard({ item, onAnswer }: Props): JSX.Element {
       {!instant && !answered && (
         <button
           type="button"
-          className="row-question-submit"
+          className="btn btn-primary row-question-submit"
           data-testid="question-submit"
           title="Отправить ответ агенту"
           disabled={!complete}

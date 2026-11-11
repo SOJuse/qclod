@@ -5,6 +5,7 @@ import '@fontsource-variable/inter/wght-italic.css'
 import '@fontsource-variable/geist-mono'
 import '@fontsource-variable/geist-mono/wght-italic.css'
 import './styles/tokens.css'
+import './ui/controls.css'
 import { App } from './app/App'
 
 const container = document.getElementById('root')

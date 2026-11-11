@@ -105,19 +105,35 @@ test('настройки открываются сразу и показываю
 
 test('вкладки и версия не прочитались при старте — окно не роняет необработанных ошибок', async () => {
   const { app, win } = await launchQclod({
-    // The tabs fail three times: twice on the first start (read and its one retry), then once more.
-    env: {
-      QCLOD_FAKE_FAIL: '{"tabs:list":"нет ответа","app:version":"нет ответа"}',
-      QCLOD_FAKE_FAIL_TIMES: '{"tabs:list":3}'
-    }
+    env: { QCLOD_FAKE_FAIL: '{"app:version":"нет ответа"}' }
   })
   try {
-    // The first start ran before a listener could be attached; a reload runs the same reads again.
+    // The tabs reach the window only through the read and its retry: their push
+    // is held back, and the first read after a reload fails once. A handler on
+    // the window's own ipc goes before ipcMain's; it takes itself away when hit,
+    // so the next read reaches the real one.
+    await app.evaluate(({ BrowserWindow }) => {
+      const wc = BrowserWindow.getAllWindows()[0].webContents
+      const send = wc.send.bind(wc)
+      wc.send = (channel: string, ...args: unknown[]): void => {
+        if (channel !== 'tabs:changed') send(channel, ...args)
+      }
+      const seen = globalThis as { __qclodTabsFailed?: number }
+      seen.__qclodTabsFailed = 0
+      wc.ipc.handle('tabs:list', () => {
+        seen.__qclodTabsFailed = (seen.__qclodTabsFailed ?? 0) + 1
+        wc.ipc.removeHandler('tabs:list')
+        throw new Error('нет ответа')
+      })
+    })
     const errors: string[] = []
     win.on('pageerror', (err) => errors.push(err.message))
     await win.reload()
-    // After the reload the tabs fail once more, and the retry brings them.
-    await expect(win.locator('[data-testid="composer-input"]')).toBeVisible({ timeout: 15000 })
+    // The first read failed; only the retry can bring the tab.
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(1, { timeout: 15000 })
+    expect(
+      await app.evaluate(() => (globalThis as { __qclodTabsFailed?: number }).__qclodTabsFailed)
+    ).toBe(1)
     await win.locator('[data-testid="open-settings"]').click()
     await expect(win.locator('[data-testid="settings"]')).toBeVisible()
     // An unknown version is left out, not printed as a gap.

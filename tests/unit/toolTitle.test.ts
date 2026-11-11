@@ -67,3 +67,13 @@ test('идущий вызов итога не показывает', () => {
   const item = { ...generic('Skill', 'ok'), state: 'running' as const }
   expect(cardOutcome(item, toolView(item))).toBe('')
 })
+
+test('голое «ok» в открытой карточке тоже читается как «готово»', () => {
+  for (const word of ['ok', 'OK', 'Ok.', 'done', 'success']) {
+    expect(toolView(generic('EnterPlanMode', word)), word).toEqual({ type: 'generic', text: 'готово' })
+  }
+  expect(toolView(generic('Skill', 'Launching skill: review'))).toEqual({
+    type: 'generic',
+    text: 'Launching skill: review'
+  })
+})

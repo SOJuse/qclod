@@ -17,7 +17,7 @@
   align-items: center;
   gap: 6px;
   padding: 3px 5px 3px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--surface-raised);
   font-size: var(--text-sm);
@@ -145,7 +145,7 @@
   display: grid;
   place-items: center;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;

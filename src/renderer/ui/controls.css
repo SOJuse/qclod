@@ -221,6 +221,8 @@ select.field {
   min-height: 0;
   padding: var(--space-2) var(--space-4) var(--space-4);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .sheet-foot {

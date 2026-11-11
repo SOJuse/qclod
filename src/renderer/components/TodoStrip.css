@@ -59,6 +59,8 @@
   z-index: 20;
   max-height: var(--now-list-max-h);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
   margin: 0;
   padding: var(--space-1);
   list-style: none;

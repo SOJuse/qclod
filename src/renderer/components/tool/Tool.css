@@ -241,6 +241,8 @@
   list-style: none;
   max-height: var(--tool-output-max);
   overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .tool-list li {

@@ -95,7 +95,7 @@ export function StatusLine({ tabId, data, started, slot, remote, onToggleRemote 
         <Dropdown
           testId="status-mode"
           label="Режим разрешений"
-          title="Режим разрешений — Shift+Tab по кругу"
+          title={`Режим разрешений: ${MODE_LABEL[data.permissionMode] ?? data.permissionMode} — Shift+Tab по кругу`}
           icon={<ShieldCheck size={13} aria-hidden="true" />}
           value={data.permissionMode}
           options={MODE_OPTIONS}

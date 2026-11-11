@@ -116,3 +116,20 @@ test('нет Unicode-глифов вместо значков', () => {
 test('тонировки смешаны с непрозрачной поверхностью, не с transparent', () => {
   expect(hits(/color-mix\([^;]*,\s*transparent\s*\)/g)).toEqual([])
 })
+
+// A scroller without these shows the system's bright scrollbar on the graphite surface.
+// `scrollbar-width: none` (the tab strip) counts too: that one hides it on purpose.
+test('у каждой прокручиваемой области тонкая полоса прокрутки в цветах темы', () => {
+  const scrollers = cssRules().filter((r) => /overflow(-[xy])?:\s*(auto|scroll)/.test(r.body))
+  const bare = scrollers.filter(
+    (r) =>
+      !/scrollbar-width:\s*none/.test(r.body) &&
+      !(/scrollbar-width:\s*thin/.test(r.body) && /scrollbar-color:\s*var\(--[\w-]+\)\s+transparent/.test(r.body))
+  )
+  expect(bare.map((r) => `${r.file}: ${r.selector}`)).toEqual([])
+})
+
+// A circle (50%) is geometry, not a radius of the scale.
+test('скругления — только токены --radius-*', () => {
+  expect(hits(/radius:\s*(?!\s)[^;]*\d(px|em|rem)[^;]*/g).filter((h) => !h.includes('tokens.css'))).toEqual([])
+})

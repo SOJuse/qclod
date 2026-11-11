@@ -123,6 +123,8 @@ test('модель, усилие и режим меняются из строк�
     await choose(win, 'status-mode', 'plan')
     await expect(mode).toHaveAttribute('data-value', 'plan', { timeout: 15000 })
     await expect(mode).toContainText('план')
+    // The tooltip says which mode it is, not only that there is one.
+    await expect(mode).toHaveAttribute('title', 'Режим разрешений: план — Shift+Tab по кругу')
   } finally {
     await close(app, profile)
   }

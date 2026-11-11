@@ -423,6 +423,8 @@
   line-height: var(--leading-prose);
   max-height: 420px;
   overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .row-plan-actions {

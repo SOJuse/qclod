@@ -5,6 +5,7 @@ import type { ResolvedPath, TabId } from '../../shared/types'
 import { useAppStore } from '../state/useAppStore'
 import { relativePath } from './linkify'
 import { freshTarget } from './useResolvedPaths'
+import { ERROR_ICON } from '../ui/icons'
 
 interface Item {
   label: string
@@ -165,7 +166,8 @@ export function PathMenu({
       ))}
       {error && (
         <p className="path-menu-error" data-testid="path-menu-error" role="alert">
-          {error}
+          <ERROR_ICON size={13} aria-hidden="true" />
+          <span>{error}</span>
         </p>
       )}
     </div>,

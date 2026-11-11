@@ -94,7 +94,7 @@ li.md-task {
   width: 13px;
   height: 13px;
   border: 1px solid var(--border-strong);
-  border-radius: 3px;
+  border-radius: var(--radius-hair);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -136,7 +136,7 @@ li.md-task {
 
 .md-code {
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface-hover);
   border: 1px solid var(--border);
   font-size: var(--text-md);
@@ -147,7 +147,7 @@ li.md-task {
 .md-codeblock {
   margin: 10px 0;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--bg);
   overflow: hidden;
 }
@@ -174,7 +174,7 @@ li.md-task {
   font-size: var(--text-xs);
   cursor: pointer;
   padding: 1px 4px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .md-copy:hover {
@@ -186,6 +186,8 @@ li.md-task {
   margin: 0;
   padding: 10px 12px;
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
   font-size: var(--text-md);
   line-height: var(--leading-prose);
   tab-size: 2;
@@ -241,8 +243,10 @@ li.md-task {
 .md-table-wrap {
   margin: 10px 0;
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 
 .md-table {

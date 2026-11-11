@@ -269,14 +269,26 @@ test('в палитре выбранная строка — заливка на�
 test('у скрепки своё кольцо, рамка поля ввода загорается только от самого поля', async () => {
   const { app, win } = await launchQclod({ env: focusEnv })
   try {
-    const rowShadow = (): Promise<string> =>
-      win.locator('.composer-row').evaluate((el) => getComputedStyle(el).boxShadow)
+    const row = win.locator('.composer-row')
+    const rowShadow = (): Promise<string> => row.evaluate((el) => getComputedStyle(el).boxShadow)
+    // Why this used to fail now and then: the field takes focus by itself when
+    // the tab opens, so the row starts lit. Moving focus away starts a
+    // box-shadow transition (var(--dur), 200 ms) back to none, and until the
+    // first animation frame after that, getComputedStyle still returns the full
+    // «rgb(90, 139, 255) 0px 0px 0px 2px». Alone the read lands a few frames
+    // in (already rgba(…, 0.4)); in a loaded full run frames come late and it
+    // read the start value. So the row is read only once its transition is over.
+    const settled = (): Promise<string> =>
+      row.evaluate(async (el) => {
+        await Promise.all(el.getAnimations().map((a) => a.finished))
+        return getComputedStyle(el).boxShadow
+      })
     // The clip comes right after the last recent conversation in Tab order.
     await win.locator('[data-testid="empty-recent"]').last().focus()
     await win.keyboard.press('Tab')
     await expect(win.locator('[data-testid="composer-clip"]')).toBeFocused()
     await expectFocusRing(win)
-    expect(await rowShadow()).not.toContain('rgb(90, 139, 255)')
+    expect(await settled()).not.toContain('90, 139, 255')
     await win.keyboard.press('Tab')
     await expect(win.locator('[data-testid="composer-input"]')).toBeFocused()
     await expect.poll(rowShadow).toContain('rgb(90, 139, 255)')

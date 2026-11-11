@@ -1,5 +1,6 @@
-import { BrowserWindow, shell, type WebContents } from 'electron'
+import { BrowserWindow, shell, type BrowserWindowConstructorOptions, type WebContents } from 'electron'
 import { join } from 'node:path'
+import { WINDOW_BG } from '../shared/theme'
 import { isSafeExternalUrl, makeNavigationGuard } from './security'
 
 export const RENDERER_ENTRY = join(__dirname, '../renderer/index.html')
@@ -12,16 +13,15 @@ export const RENDERER_ENTRY = join(__dirname, '../renderer/index.html')
  */
 export const offScreen = __QCLOD_TEST_SEAMS__ && process.env['QCLOD_E2E_INVISIBLE'] === '1'
 
-export function createMainWindow(): BrowserWindow {
-  const win = new BrowserWindow({
+export function mainWindowOptions(): BrowserWindowConstructorOptions {
+  return {
     width: 1180,
     height: 760,
     minWidth: 800,
     minHeight: 600,
     show: false,
     frame: false,
-    backgroundColor: '#00000000',
-    backgroundMaterial: 'acrylic',
+    backgroundColor: WINDOW_BG,
     title: 'Qclod',
     // Far past any monitor, and shown without being activated.
     ...(offScreen ? { x: -20000, y: -20000, skipTaskbar: true } : {}),
@@ -33,7 +33,11 @@ export function createMainWindow(): BrowserWindow {
       // Off screen the page would count as hidden and stall its timers.
       ...(offScreen ? { backgroundThrottling: false } : {})
     }
-  })
+  }
+}
+
+export function createMainWindow(): BrowserWindow {
+  const win = new BrowserWindow(mainWindowOptions())
 
   // Navigation hardening is registered app-wide via `web-contents-created`,
   // so every webContents gets it, not just this window.

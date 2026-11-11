@@ -1,7 +1,7 @@
 .composer {
   flex: 0 0 auto;
   margin: 0 auto 14px;
-  width: min(920px, calc(100% - 40px));
+  width: min(var(--content-max-w), calc(100% - 2 * var(--content-gutter)));
   position: relative;
 }
 
@@ -17,10 +17,10 @@
   align-items: center;
   gap: 6px;
   padding: 3px 5px 3px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--surface-raised);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--text-dim);
   max-width: 260px;
 }
@@ -30,7 +30,7 @@
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1;
   padding: 1px 3px;
   border-radius: 50%;
@@ -67,12 +67,12 @@
   width: auto;
   max-width: calc(var(--thumb-chip-h) * 2);
   object-fit: cover;
-  background: var(--surface-sunken);
+  background: var(--bg);
 }
 
 .composer-chip-wait {
   width: var(--thumb-chip-h);
-  background: var(--surface-sunken);
+  background: var(--bg);
   animation: composer-chip-wait 1.2s var(--ease) infinite alternate;
 }
 
@@ -88,13 +88,13 @@
 
 .composer-chip.is-error {
   padding-left: var(--space-2);
-  border-color: var(--danger-border);
-  background: var(--danger-fill);
+  border-color: var(--critical-border);
+  background: var(--critical-fill);
   color: var(--text);
 }
 
 .composer-chip.is-error > svg {
-  color: var(--danger);
+  color: var(--status-critical);
   flex-shrink: 0;
 }
 
@@ -115,9 +115,9 @@
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 
-.composer-row:focus-within {
+/* The ring itself comes from .ring-host (tokens.css); the field inside is .ring-on-parent. */
+.composer-row:has(.ring-on-parent:focus-visible) {
   border-color: var(--border-accent);
-  box-shadow: var(--glow-accent);
 }
 
 .composer-input {
@@ -126,13 +126,11 @@
   max-height: 260px;
   resize: none;
   border: none;
-  outline: none;
   background: transparent;
   color: var(--text);
   font: inherit;
-  line-height: 1.5;
+  line-height: var(--leading);
   padding: 2px 0;
-  user-select: text;
 }
 
 .composer-input::placeholder {
@@ -147,11 +145,11 @@
   display: grid;
   place-items: center;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--text-lg);
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
@@ -163,16 +161,16 @@
 
 .composer-send {
   background: var(--accent);
-  color: #0c0f1c;
+  color: var(--on-accent);
 }
 
 .composer-send:hover {
-  background: color-mix(in srgb, var(--accent) 85%, white);
-  color: #0c0f1c;
+  background: color-mix(in srgb, var(--accent) 85%, var(--text));
+  color: var(--on-accent);
 }
 
 .composer-send.is-busy {
-  background: var(--danger);
+  background: var(--status-critical);
 }
 
 .mention-popup {
@@ -185,11 +183,11 @@
   gap: var(--strip-gap);
   margin-bottom: var(--strip-margin);
   padding: var(--strip-pad);
-  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  border: 1px solid var(--critical-border);
   border-radius: var(--strip-radius);
-  background: color-mix(in srgb, var(--danger) 9%, var(--surface-raised));
-  color: var(--danger);
-  font-size: var(--strip-font-size);
+  background: var(--critical-fill);
+  color: var(--text);
+  font-size: var(--text-sm);
 }
 
 /* The buttons sit together at the right end, «Повторить» first. */
@@ -204,7 +202,7 @@
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: var(--button-sm-font-size);
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 

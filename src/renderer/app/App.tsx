@@ -8,7 +8,7 @@ import type {
 } from '../../shared/types'
 import { REMOTE_OFF } from '../../shared/remote'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
-import { TitleBar } from '../components/TitleBar'
+import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { ChatPane } from '../components/ChatPane'
 import { SidePanel } from '../components/SidePanel'
 import { HistoryScreen } from '../components/HistoryScreen'
@@ -17,9 +17,20 @@ import { SettingsScreen } from '../components/SettingsScreen'
 import { ActionPalette } from '../components/ActionPalette'
 import { UpdateBanner } from '../components/UpdateBanner'
 import { compactNow } from '../input/slash'
+import { reasonOf } from '../ui/StateView'
 import { hint, resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
 import { PANEL_MIN_WIDTH, nextOverride, panelVisible, type PanelOverride } from './panelVisibility'
 import './App.css'
+
+/** A failed first read of the tabs is asked once more after this long. */
+const TABS_RETRY_MS = 500
+
+/** The map without one key; the same object when the key is not there. */
+function without(all: Record<string, string>, id: string): Record<string, string> {
+  if (!(id in all)) return all
+  const { [id]: _gone, ...rest } = all
+  return rest
+}
 
 /**
  * The window: tabs across the top, the conversation below.
@@ -33,7 +44,10 @@ export function App(): JSX.Element {
   const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const [focusToken, setFocusToken] = useState(0)
+  /** Where focus goes when a closed sheet's opener is gone: the active tab's input. */
+  const focusComposer = useCallback(() => setFocusToken((n) => n + 1), [])
   const [environment, setEnvironment] = useState<EnvironmentReport | null>(null)
   const [setupDismissed, setSetupDismissed] = useState(false)
   /**
@@ -64,11 +78,27 @@ export function App(): JSX.Element {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  /** A check is under way: «Проверить снова» says so and waits. */
+  const [checking, setChecking] = useState(false)
+  /** Why the last check could not run; the setup screen says so in one line. */
+  const [checkError, setCheckError] = useState<string | null>(null)
   const recheck = useCallback((): void => {
-    void window.qclod.checkEnvironment().then((report) => {
-      setEnvironment(report)
-      if (!report.ready) setSetupNeeded(true)
-    })
+    setChecking(true)
+    window.qclod
+      .checkEnvironment()
+      .then(
+        (report) => {
+          setCheckError(null)
+          setEnvironment(report)
+          if (!report.ready) setSetupNeeded(true)
+        },
+        // A check that could not run changes nothing: the last report stays, and the reason is shown.
+        (err) => {
+          console.warn('[setup] check failed:', reasonOf(err))
+          setCheckError(reasonOf(err))
+        }
+      )
+      .finally(() => setChecking(false))
   }, [])
 
   // Checked once at start: without Claude Code on the machine there is nothing
@@ -136,11 +166,24 @@ export function App(): JSX.Element {
   const setPanelSnapshot = useAppStore((s) => s.setPanelSnapshot)
   const setFileIndex = useAppStore((s) => s.setFileIndex)
 
+  /** Why the settings could not be read; the settings sheet shows it with «Повторить». */
+  const [settingsError, setSettingsError] = useState<string | null>(null)
+  const loadSettings = useCallback((): void => {
+    setSettingsError(null)
+    window.qclod.getSettings().then(setSettings, (err) => setSettingsError(reasonOf(err)))
+  }, [setSettings])
+
   useEffect(() => {
-    void window.qclod.getSettings().then(setSettings)
-    void window.qclod.listTabs().then(setTabs)
-    void window.qclod.appVersion().then(setVersion)
-    void window.qclod.hotkeyStatus().then(setHotkey)
+    loadSettings()
+    // Neither read is fatal. The tabs are asked once more and also arrive by
+    // their push; without a version the settings sheet leaves it out.
+    let tabsRetry: ReturnType<typeof setTimeout> | undefined
+    window.qclod.listTabs().then(setTabs, () => {
+      tabsRetry = setTimeout(() => window.qclod.listTabs().then(setTabs, () => undefined), TABS_RETRY_MS)
+    })
+    window.qclod.appVersion().then(setVersion, () => setVersion(''))
+    // The title bar only hints with it; the settings sheet reports a failure itself.
+    window.qclod.hotkeyStatus().then(setHotkey, () => setHotkey(null))
 
     const unsubscribers = [
       window.qclod.onSettingsChanged(setSettings),
@@ -154,9 +197,10 @@ export function App(): JSX.Element {
       )
     ]
     return () => {
+      clearTimeout(tabsRetry)
       for (const off of unsubscribers) off()
     }
-  }, [setSettings, setTabs, setActiveTabId, applyRibbon, applyPanel])
+  }, [loadSettings, setSettings, setTabs, setActiveTabId, applyRibbon, applyPanel])
 
   /**
    * Asks for a tab's whole panel. Events alone are not enough: a reloaded
@@ -210,12 +254,28 @@ export function App(): JSX.Element {
     override: panelOverride
   })
 
+  /** Only the latest read may fill the screen; an older answer arriving late is dropped. */
+  const historyRead = useRef(0)
+  const loadHistory = useCallback((): void => {
+    if (!activeTabId) return
+    const read = ++historyRead.current
+    setSessions(null)
+    setHistoryError(null)
+    window.qclod.listHistory(activeTabId).then(
+      (list) => {
+        if (read === historyRead.current) setSessions(list)
+      },
+      (err) => {
+        if (read === historyRead.current) setHistoryError(reasonOf(err))
+      }
+    )
+  }, [activeTabId])
+
   const openHistory = useCallback((): void => {
     if (!activeTabId) return
-    setSessions(null)
     setHistoryOpen(true)
-    void window.qclod.listHistory(activeTabId).then(setSessions)
-  }, [activeTabId])
+    loadHistory()
+  }, [activeTabId, loadHistory])
 
   /** Shift+Tab walks the everyday modes; «без проверок» is not on the ring. */
   const cycleMode = useCallback((): void => {
@@ -390,13 +450,31 @@ export function App(): JSX.Element {
     const open = new Set(tabs.map((t) => t.id))
     for (const id of ribbonsAsked.current) if (!open.has(id)) ribbonsAsked.current.delete(id)
   }, [tabs])
+  /** Why a tab's ribbon could not be read, by tab; the pane shows it with «Повторить». */
+  const [ribbonErrors, setRibbonErrors] = useState<Record<string, string>>({})
   const loadRibbon = useCallback(
     (id: string): void => {
       if (ribbonsAsked.current.has(id)) return
       ribbonsAsked.current.add(id)
-      void window.qclod.ribbon(id).then((snapshot) => setRibbon(id, snapshot))
+      window.qclod.ribbon(id).then(
+        (snapshot) => {
+          setRibbon(id, snapshot)
+          setRibbonErrors((all) => without(all, id))
+        },
+        (err) => setRibbonErrors((all) => ({ ...all, [id]: reasonOf(err) }))
+      )
     },
     [setRibbon]
+  )
+  /** «Повторить» asks for the same ribbon again; the button goes, so focus goes to the input. */
+  const retryRibbon = useCallback(
+    (id: string): void => {
+      setRibbonErrors((all) => without(all, id))
+      ribbonsAsked.current.delete(id)
+      loadRibbon(id)
+      focusComposer()
+    },
+    [loadRibbon, focusComposer]
   )
 
   // On mount and on every switch, for both panes — as the panel is.
@@ -412,15 +490,20 @@ export function App(): JSX.Element {
     // the agent path is what they were opened for.
     return (
       <>
+        <SetupTitleBar />
         <SetupScreen
           report={environment}
+          checking={checking}
+          checkError={checkError}
           onRecheck={recheck}
           onDone={() => setSetupDismissed(true)}
           onOpenSettings={() => setSettingsOpen(true)}
         />
-        {settingsOpen && settings && (
+        {settingsOpen && (
           <SettingsScreen
             settings={settings}
+            loadError={settingsError}
+            onRetryLoad={loadSettings}
             version={version}
             models={[]}
             focusField="agentPath"
@@ -470,6 +553,8 @@ export function App(): JSX.Element {
             onOpenHistory={openHistory}
             onOpenSession={openSession}
             onShowPanel={revealPanel}
+            ribbonError={ribbonErrors[activeTabId] ?? null}
+            onRetryRibbon={() => retryRibbon(activeTabId)}
             notice={
               closeGuardTab === activeTabId
                 ? { testId: 'close-guard', text: 'Агент работает — Ctrl+W ещё раз закроет вкладку' }
@@ -489,6 +574,8 @@ export function App(): JSX.Element {
               onOpenHistory={openHistory}
               onOpenSession={openSession}
               onShowPanel={revealPanel}
+              ribbonError={ribbonErrors[splitTabId] ?? null}
+              onRetryRibbon={() => retryRibbon(splitTabId)}
             />
           )}
         </div>
@@ -511,7 +598,7 @@ export function App(): JSX.Element {
             title={hint('Показать панель', 'togglePanel')}
             onClick={togglePanel}
           >
-            <PanelRightOpen size={16} aria-hidden="true" />
+            <PanelRightOpen size={14} aria-hidden="true" />
           </button>
         )}
       </div>
@@ -519,10 +606,10 @@ export function App(): JSX.Element {
         <HistoryScreen
           cwd={tabs.find((t) => t.id === activeTabId)?.cwd ?? ''}
           sessions={sessions}
-          onClose={() => {
-            setHistoryOpen(false)
-            setFocusToken((n) => n + 1)
-          }}
+          error={historyError}
+          onRetry={loadHistory}
+          onClose={() => setHistoryOpen(false)}
+          onFocusLost={focusComposer}
           onOpen={(session) => {
             setHistoryOpen(false)
             openSession(activeTabId, session)
@@ -536,15 +623,15 @@ export function App(): JSX.Element {
             setFocusToken((n) => n + 1)
             runAction(id)
           }}
-          onClose={() => {
-            setPaletteOpen(false)
-            setFocusToken((n) => n + 1)
-          }}
+          onClose={() => setPaletteOpen(false)}
+          onFocusLost={focusComposer}
         />
       )}
-      {settingsOpen && settings && (
+      {settingsOpen && (
         <SettingsScreen
           settings={settings}
+          loadError={settingsError}
+          onRetryLoad={loadSettings}
           version={version}
           models={(activeTabId ? panelByTab[activeTabId]?.models : undefined) ?? []}
           onPatch={async (patch) => {
@@ -553,6 +640,7 @@ export function App(): JSX.Element {
             return next
           }}
           onClose={() => setSettingsOpen(false)}
+          onFocusLost={focusComposer}
         />
       )}
     </div>

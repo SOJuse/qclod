@@ -88,6 +88,32 @@ test('без Claude Code встречает экран установки, а н
   }
 })
 
+test('над экраном установки — полоса окна: его можно двигать, свернуть, развернуть и закрыть', async () => {
+  const clean = cleanMachine()
+  const { app, profile } = await launch('claude', { ...clean.env, ...fakeInstall({ methods: ['winget'], results: [] }) })
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('[data-testid="setup-screen"]')).toBeVisible({ timeout: 20000 })
+
+    const bar = win.locator('[data-testid="setup-title-bar"]')
+    await expect(bar).toBeVisible()
+    // The window is frameless: this strip is what it is dragged by.
+    await expect(bar).toHaveCSS('-webkit-app-region', 'drag')
+    for (const id of ['window-minimize', 'window-maximize', 'window-close']) {
+      await expect(bar.locator(`[data-testid="${id}"]`)).toBeVisible()
+    }
+    // Nothing of a working window yet: no tabs, no history, no split.
+    await expect(bar.locator('[data-testid="tab"], [data-testid="open-history"], [data-testid="toggle-split"]')).toHaveCount(0)
+
+    // In e2e the window is not kept in the tray, so closing it ends the app.
+    const closed = Promise.all([win.waitForEvent('close'), app.waitForEvent('close')])
+    await bar.locator('[data-testid="window-close"]').click()
+    await closed
+  } finally {
+    await close(app, profile)
+  }
+})
+
 test('кнопка установки активна — ставить есть чем, и ничего больше не просят', async () => {
   const clean = cleanMachine()
   const { app, profile } = await launch('claude', { ...clean.env, ...fakeInstall({ methods: ['winget'], results: [] }) })

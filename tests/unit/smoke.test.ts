@@ -15,6 +15,6 @@ describe('scaffold', () => {
     expect(source).toContain('frame: false')
     expect(source).toContain('contextIsolation: true')
     expect(source).toContain('nodeIntegration: false')
-    expect(source).toContain("backgroundMaterial: 'acrylic'")
+    expect(source).not.toContain('backgroundMaterial')
   })
 })

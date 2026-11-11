@@ -1,37 +1,26 @@
-/* Ctrl+K: a small window near the top, centred. */
+/* Ctrl+K: the sheet (ui/controls.css) at its narrowest — one field over one list. */
 
 .action-palette-backdrop {
-  position: fixed;
-  inset: 0;
   z-index: 50;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding-top: var(--palette-top);
-  background: var(--backdrop);
 }
 
 .action-palette {
-  width: min(var(--palette-width), calc(100% - var(--space-5) * 2));
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--border-accent);
-  border-radius: var(--radius);
-  background: var(--surface-raised);
-  box-shadow: var(--glow-accent), var(--shadow-menu);
-  backdrop-filter: blur(var(--menu-blur));
+  width: min(var(--palette-width), 100%);
+}
+
+/* Focus lives in the field (.ring-on-parent); the sheet is its frame (.ring-host) and keeps its shadow. */
+.action-palette:has(.ring-on-parent:focus-visible) {
+  box-shadow: var(--focus-ring), var(--shadow-modal);
 }
 
 .action-palette-query {
+  flex: none;
   margin: 0;
   padding: var(--space-3) var(--space-4);
   border: none;
   border-bottom: 1px solid var(--border);
-  outline: none;
   background: transparent;
   color: var(--text);
-  font-family: var(--font-ui);
   font-size: var(--text-lg);
 }
 
@@ -40,10 +29,9 @@
 }
 
 .action-palette-list {
-  max-height: calc(var(--menu-row-h) * 8);
+  max-height: calc(var(--menu-row-h) * 8 + var(--space-1) * 2);
   margin: 0;
   padding: var(--space-1);
-  overflow-y: auto;
   list-style: none;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
@@ -57,15 +45,16 @@
   height: var(--menu-row-h);
   padding: 0 var(--space-3);
   border-radius: var(--radius-sm);
-  font-family: var(--font-ui);
   font-size: var(--text-md);
   color: var(--text-dim);
   cursor: default;
 }
 
+/* The chosen row is the list's focus (aria-activedescendant): hover fill and the
+   ring's own colour and width as a stripe on its left edge. */
 .action-palette-item.is-selected {
-  background: var(--accent-fill);
-  box-shadow: inset var(--rule-category) 0 0 var(--accent);
+  background: var(--surface-hover);
+  box-shadow: inset var(--focus-ring-width) 0 0 var(--focus-ring-color);
   color: var(--text);
 }
 
@@ -73,12 +62,11 @@
   flex: 0 0 auto;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 
-.action-palette-empty {
+/* No match: the notice sits under the field, not in the middle of nowhere. */
+.action-palette .state-view {
+  margin: 0;
   padding: var(--space-3) var(--space-4);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  color: var(--text-faint);
 }

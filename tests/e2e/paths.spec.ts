@@ -152,7 +152,11 @@ test('команда редактора, которую нельзя выпол�
   await expect(link).toBeVisible({ timeout: 15000 })
   await link.click({ button: 'right' })
   await win.locator('[data-testid="path-menu-item"]', { hasText: 'Открыть в редакторе' }).click()
-  await expect(win.locator('[data-testid="path-menu-error"]')).toHaveText(/кавыч/i)
+  const error = win.locator('[data-testid="path-menu-error"]')
+  await expect(error).toHaveText(/кавыч/i)
+  // The status colour is on the icon; the words stay text-coloured.
+  await expect(error.locator('svg.lucide-circle-alert')).toHaveCount(1)
+  await expect(error).toHaveCSS('color', await win.evaluate(() => getComputedStyle(document.body).color))
   expect(await shellLog()).toEqual([])
 })
 

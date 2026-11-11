@@ -6,7 +6,7 @@
 .todo-strip-wrap {
   position: relative;
   flex: 0 0 auto;
-  width: min(var(--now-max-w), calc(100% - var(--now-gutter) * 2));
+  width: min(var(--content-max-w), calc(100% - 2 * var(--content-gutter)));
   margin: 0 auto var(--strip-margin);
 }
 
@@ -20,7 +20,6 @@
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
   font: inherit;
-  font-family: var(--font-ui);
   font-size: var(--text-md);
   color: var(--text-dim);
   text-align: left;
@@ -32,14 +31,9 @@
   background: var(--hover-fill);
 }
 
-.todo-strip:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}
-
 .todo-count {
   flex: 0 0 auto;
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
@@ -65,13 +59,14 @@
   z-index: 20;
   max-height: var(--now-list-max-h);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
   margin: 0;
   padding: var(--space-1);
   list-style: none;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
-  backdrop-filter: blur(var(--menu-blur));
   box-shadow: var(--shadow-menu);
 }
 

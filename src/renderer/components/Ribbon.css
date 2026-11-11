@@ -19,7 +19,7 @@
 .ribbon-row {
   max-width: 820px;
   margin: 0 auto;
-  font-size: 14px;
+  font-size: var(--text-lg);
 }
 
 /* ---------------------------------------------------------- the user's turn */
@@ -28,16 +28,18 @@
   margin: 22px 0 10px;
   padding: 10px 14px;
   border-left: 2px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
-  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-raised));
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
 
 .row-user-text {
+  max-width: var(--prose-max-w);
+  text-align: left;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text);
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: var(--text-lg);
+  line-height: var(--leading-prose);
 }
 
 /* A message typed on the phone or claude.ai: the same bubble, one quiet line above. */
@@ -75,7 +77,7 @@
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
+  background: var(--bg);
   color: var(--text-faint);
   overflow: hidden;
 }
@@ -108,15 +110,11 @@
   border-color: var(--border-strong);
 }
 
-.row-user-image.is-openable:focus-visible {
-  outline: none;
-  box-shadow: var(--glow-accent);
-}
-
 .row-chip {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-raised);
   color: var(--text-dim);
 }
@@ -129,9 +127,13 @@
 }
 
 .row-agent.is-streaming .md > :last-child::after {
-  content: '▍';
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
   margin-left: 2px;
-  opacity: 0.5;
+  vertical-align: text-bottom;
+  background: var(--accent);
   animation: ribbon-caret 1s steps(2) infinite;
 }
 
@@ -141,11 +143,16 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .row-agent.is-streaming .md > :last-child::after {
+    animation: none;
+  }
+}
+
 /* --------------------------------------------------------------- thinking */
 
 .thinking {
   margin: var(--space-1) 0;
-  font-family: var(--font-ui);
   font-size: var(--text-md);
   color: var(--text-dim);
 }
@@ -175,9 +182,8 @@
   padding-left: var(--space-3);
   border-left: 1px solid var(--border);
   white-space: pre-wrap;
-  line-height: 1.5;
+  line-height: var(--leading);
   color: var(--text-dim);
-  user-select: text;
 }
 
 /* ------------------------------------------------------------ permissions */
@@ -186,7 +192,7 @@
   margin: 10px 0;
   padding: 11px 13px;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: color-mix(in srgb, var(--accent) 8%, var(--surface-raised));
 }
 
@@ -199,7 +205,7 @@
 
 .row-permission-target {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -210,82 +216,34 @@
   gap: 8px;
 }
 
-.row-permission-actions button,
 .row-question-options button {
   padding: 5px 12px;
-  border-radius: 7px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 
-.row-permission-actions button:hover,
 .row-question-options button:not(:disabled):hover {
   border-color: var(--accent);
 }
 
-.row-permission-actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.row-permission-actions kbd {
-  padding: 0 var(--space-1);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-hair);
-  font: inherit;
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-}
-
-/* The one button that answers yes: solid accent, the strongest thing on the card. */
-.row-permission-actions .btn-primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 600;
-}
-
-.row-permission-actions .btn-primary:hover {
-  border-color: var(--accent);
-  filter: brightness(1.1);
-}
-
-.row-permission-actions .btn-primary kbd {
-  border-color: color-mix(in srgb, var(--on-accent) 45%, transparent);
-  color: var(--on-accent);
-}
-
-.row-permission-actions .btn-danger {
-  border-color: var(--critical-border);
-  background: var(--critical-fill);
-}
-
-.row-permission-actions .btn-danger svg {
-  color: var(--status-critical);
-}
-
-.row-permission-actions .btn-danger:hover {
-  border-color: var(--status-critical);
-}
-
-.row-permission:focus-visible,
-.row-permission-actions button:focus-visible {
-  outline: none;
-  box-shadow: var(--glow-accent);
+/* The card spans the ribbon, which clips sideways: its ring goes inside.
+   Its buttons take the global ring as it is. */
+.row-permission:focus-visible {
+  outline-offset: var(--focus-offset-inset);
 }
 
 .row-permission-done {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-dim);
 }
 
 .row-permission.is-denied {
-  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
-  background: color-mix(in srgb, var(--danger) 7%, var(--surface-raised));
+  border-color: var(--critical-border);
+  background: var(--critical-fill);
 }
 
 /* -------------------------------------------------------------- questions */
@@ -294,7 +252,7 @@
   margin: 10px 0;
   padding: 11px 13px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: var(--surface-raised);
 }
 
@@ -336,27 +294,16 @@
   color: var(--accent);
 }
 
+/* Its look is .btn .btn-primary (ui/controls.css). */
 .row-question-submit {
   margin-top: var(--space-3);
-  padding: 5px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--accent);
-  background: var(--surface);
-  color: var(--accent);
-  font-size: var(--text-sm);
-  cursor: pointer;
 }
 
 .row-question-done {
   margin-top: var(--space-3);
   font-size: var(--text-sm);
+  line-height: var(--leading);
   color: var(--text-dim);
-}
-
-.row-question-submit:disabled {
-  border-color: var(--border);
-  color: var(--text-dim);
-  cursor: default;
 }
 
 /* ------------------------------------------------------- compaction, notes */
@@ -366,7 +313,7 @@
   align-items: center;
   gap: 10px;
   margin: 18px 0;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-dim);
 }
 
@@ -380,7 +327,7 @@
 
 .row-compaction-summary {
   margin: -10px 0 18px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-dim);
   text-align: center;
 }
@@ -393,8 +340,8 @@
   margin-top: 8px;
   padding: 10px 13px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
   color: var(--text);
   text-align: left;
   white-space: pre-wrap;
@@ -403,15 +350,17 @@
 .row-notice {
   margin: 10px 0;
   padding: 10px 13px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--radius);
+  font-size: var(--text-md);
   background: var(--surface-raised);
   color: var(--text-dim);
 }
 
 .row-notice.is-error {
-  background: color-mix(in srgb, var(--danger) 10%, var(--surface-raised));
-  color: var(--danger);
+  /* Status colour marks the stripe and the fill; the words stay text-coloured. */
+  border-left: var(--rule-category) solid var(--status-critical);
+  background: var(--critical-fill);
+  color: var(--text);
 }
 
 .row-notice-action {
@@ -422,7 +371,7 @@
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: var(--button-sm-font-size);
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 
@@ -430,14 +379,23 @@
   border-color: var(--border-accent);
 }
 
+/* The reason keeps the text colour; the critical colour is only on its icon. */
 .row-notice-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
   margin-top: var(--space-2);
-  color: var(--danger);
+  color: var(--text);
+}
+
+.row-notice-error > svg {
+  flex: 0 0 auto;
+  margin-top: var(--gap-hair);
+  color: var(--status-critical);
 }
 
 /* The conversation is text people copy out of; the chrome around it is not. */
 .ribbon {
-  user-select: text;
 }
 
 /* ------------------------------------------------------------- plan mode */
@@ -445,17 +403,16 @@
 .row-plan {
   margin: 12px 0;
   border: 1px solid var(--border-accent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--glow) 7%, var(--surface-raised));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-raised));
   overflow: hidden;
 }
 
 .row-plan-head {
   padding: 8px 13px;
   border-bottom: 1px solid var(--border);
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
   color: var(--text-dim);
 }
 
@@ -463,9 +420,11 @@
   padding: 12px 14px;
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.6;
+  line-height: var(--leading-prose);
   max-height: 420px;
   overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .row-plan-actions {
@@ -474,25 +433,9 @@
   padding: 0 14px 12px;
 }
 
-.row-plan-actions button {
-  padding: 6px 14px;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.row-plan-actions button:first-child {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #0c0f1c;
-}
-
 .row-plan-done {
   padding: 0 14px 12px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-dim);
 }
 

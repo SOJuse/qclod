@@ -4,6 +4,7 @@ import { APP_ID } from '../shared/appId'
 import { createMainWindow, hardenWebContents, offScreen, RENDERER_ENTRY } from './window'
 import { registerBaseIpc } from './ipc'
 import { registerAgentIpc } from './agentIpc'
+import { withFault } from './testSeams/ipcFaults'
 import { loadSettings, saveSettings } from './store/settingsStore'
 import { HotkeyRegistrar } from './hotkey/globalHotkey'
 import { createTray } from './tray'
@@ -268,7 +269,7 @@ app.whenReady().then(async () => {
       send(CHANNELS.settingsChanged, settings)
     }
   })
-  ipcMain.handle(CHANNELS.hotkeyStatus, () => hotkey.status)
+  ipcMain.handle(CHANNELS.hotkeyStatus, () => withFault(CHANNELS.hotkeyStatus, () => hotkey.status))
 
   // Updates come from GitHub releases and install on restart or on quit. A
   // failed check is a console line only (updater.ts). quitAndInstall ends in

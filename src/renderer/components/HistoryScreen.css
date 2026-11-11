@@ -1,129 +1,96 @@
+/* History: a sheet (ui/controls.css) with a search field over the list of past conversations. */
+
 .history-backdrop {
-  position: fixed;
-  inset: 0;
   z-index: 45;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding-top: 9vh;
-  background: rgba(5, 6, 12, 0.55);
-  backdrop-filter: blur(3px);
 }
 
 .history {
-  width: min(640px, calc(100% - 48px));
-  max-height: 74vh;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface-raised);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), var(--glow-soft);
-  overflow: hidden;
+  width: min(640px, 100%);
 }
 
-.history-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px 10px;
-}
-
-.history-head h2 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+.history-heading {
+  min-width: 0;
 }
 
 .history-cwd {
   display: block;
-  margin-top: 3px;
-  font-size: 11px;
-  color: var(--text-faint);
+  margin-top: var(--space-1);
+  max-width: 480px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 420px;
 }
 
-.history-head button {
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-  font-size: 18px;
-  line-height: 1;
-  padding: 0 2px;
-}
-
-.history-head button:hover {
-  color: var(--text);
+.history-search {
+  flex: none;
+  padding: var(--space-3) var(--space-4) var(--space-2);
 }
 
 .history-query {
-  margin: 0 16px 10px;
-  padding: 8px 11px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  outline: none;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 12.5px;
-}
-
-.history-query:focus {
-  border-color: var(--border-accent);
-}
-
-.history-query::placeholder {
-  color: var(--text-faint);
+  width: 100%;
+  min-height: 34px;
+  font-size: var(--text-md);
 }
 
 .history-list {
   margin: 0;
-  padding: 0 8px 10px;
+  padding: 0 var(--space-2) var(--space-2);
   list-style: none;
-  overflow-y: auto;
 }
 
+/* A whole row is one button: Tab reaches it, Enter opens it. */
 .history-item {
-  padding: 9px 11px;
-  border-radius: 8px;
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
 }
 
-.history-item:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+/* The chosen row: Enter in the search field opens it. */
+.history-item:hover,
+.history-item:focus-visible,
+.history-item[aria-current='true'] {
+  background: var(--surface-hover);
+}
+
+/* The list scrolls and its first row touches the top edge: the ring goes inside. */
+.history-item:focus-visible {
+  outline-offset: var(--focus-offset-inset);
+}
+
+.history-title,
+.history-first,
+.history-when {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .history-title {
   color: var(--text);
-  font-size: 12.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
 }
 
 .history-first {
-  margin-top: 2px;
+  margin-top: var(--gap-hair);
   color: var(--text-dim);
-  font-size: 11.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: var(--text-sm);
 }
 
 .history-when {
-  margin-top: 3px;
-  color: var(--text-faint);
-  font-size: 11px;
-}
-
-.history-empty {
-  padding: 26px 16px 32px;
-  text-align: center;
-  color: var(--text-faint);
-  font-size: 12px;
+  margin-top: var(--gap-hair);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
 }

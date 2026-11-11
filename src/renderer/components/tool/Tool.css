@@ -10,7 +10,6 @@
   border-left: var(--rule-category) solid var(--cat);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
-  font-family: var(--font-ui);
   font-size: var(--text-md);
   color: var(--text);
 }
@@ -47,8 +46,7 @@
 }
 
 .tool-head:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: -1px;
+  outline-offset: var(--focus-offset-inset);
 }
 
 .tool-status {
@@ -57,7 +55,7 @@
   align-items: center;
 }
 
-/* The category's one patch of fill: a small tinted square behind its icon. */
+/* The category's one patch of fill: a small square behind its icon, the category mixed into the card. */
 .tool-chip {
   flex: 0 0 auto;
   display: inline-flex;
@@ -66,16 +64,16 @@
   width: var(--tool-chip-size);
   height: var(--tool-chip-size);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--cat) var(--tool-chip-tint), transparent);
+  background: color-mix(in srgb, var(--cat) var(--tool-chip-tint), var(--surface-raised));
 }
 
 .tool-card.is-error .tool-chip {
-  background: color-mix(in srgb, var(--status-critical) var(--tool-chip-tint), transparent);
+  background: color-mix(in srgb, var(--status-critical) var(--tool-chip-tint), var(--surface-raised));
 }
 
 .tool-name {
   flex: 0 0 auto;
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   color: var(--text);
 }
 
@@ -139,7 +137,6 @@
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3) var(--space-3);
   border-top: 1px solid var(--border);
-  user-select: text;
 }
 
 .tool-mono {
@@ -212,11 +209,11 @@
   max-height: var(--tool-output-max);
   overflow: auto;
   border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
+  background: var(--bg);
   color: var(--text);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  line-height: 1.5;
+  line-height: var(--leading);
   white-space: pre-wrap;
   word-break: break-word;
   scrollbar-width: thin;
@@ -244,6 +241,8 @@
   list-style: none;
   max-height: var(--tool-output-max);
   overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .tool-list li {
@@ -278,7 +277,7 @@
 .tool-args th {
   width: 1%;
   white-space: nowrap;
-  font-weight: 400;
+  font-weight: var(--weight-regular);
   color: var(--text-dim);
 }
 
@@ -313,14 +312,14 @@
 .tool-numbered {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  line-height: 1.5;
+  line-height: var(--leading);
 }
 
 .diff {
   max-height: var(--tool-output-max);
   overflow: auto;
   border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
+  background: var(--bg);
   padding: var(--space-1) 0;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
@@ -343,11 +342,11 @@
 }
 
 .diff-line.is-add {
-  background: color-mix(in srgb, var(--cat-edit) 16%, transparent);
+  background: color-mix(in srgb, var(--cat-edit) 16%, var(--bg));
 }
 
 .diff-line.is-del {
-  background: color-mix(in srgb, var(--status-critical) 16%, transparent);
+  background: color-mix(in srgb, var(--status-critical) 16%, var(--bg));
 }
 
 .diff-no {

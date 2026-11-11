@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { CircleAlert, Cpu, Gauge, ShieldCheck, Smartphone } from 'lucide-react'
+import { Cpu, Gauge, ShieldCheck, Smartphone } from 'lucide-react'
+import { LEVEL_LABEL, LevelIcon } from '../ui/icons'
 import {
   EFFORT_LEVELS,
   PERMISSION_MODES,
@@ -15,6 +16,7 @@ import { contextLevel } from '../chat/contextLevel'
 import { EFFORT_LABEL, EFFORT_SHORT, MODE_LABEL } from '../labels'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { BackgroundTasks } from './BackgroundTasks'
+import '../ui/meter.css'
 import './StatusLine.css'
 
 interface Props {
@@ -93,7 +95,7 @@ export function StatusLine({ tabId, data, started, slot, remote, onToggleRemote 
         <Dropdown
           testId="status-mode"
           label="Режим разрешений"
-          title="Режим разрешений — Shift+Tab по кругу"
+          title={`Режим разрешений: ${MODE_LABEL[data.permissionMode] ?? data.permissionMode} — Shift+Tab по кругу`}
           icon={<ShieldCheck size={13} aria-hidden="true" />}
           value={data.permissionMode}
           options={MODE_OPTIONS}
@@ -194,9 +196,9 @@ function LimitMeter({
 }
 
 /**
- * A short bar and its number. The fill takes the level's colour and, past
- * 80%, an alert icon joins it — colour is never the only sign. The number
- * keeps the text colour.
+ * A short bar and its number (ui/meter.css). The fill stays quiet until 80%,
+ * then takes the level's colour and an alert icon joins it — colour is never
+ * the only sign. The number keeps a text colour throughout.
  */
 function Meter({
   testId,
@@ -223,9 +225,9 @@ function Meter({
       data-testid={testId}
       title={title}
     >
-      <span className="status-meter-label">{label}</span>
+      <span className="status-meter-name">{label}</span>
       <span
-        className="status-meter-bar"
+        className="meter status-meter-bar"
         data-level={level}
         role="meter"
         aria-label={label}
@@ -234,15 +236,17 @@ function Meter({
         aria-valuenow={shown ?? undefined}
       >
         <span
-          className="status-meter-fill"
+          className="meter-fill"
           style={{ width: `${Math.min(100, Math.max(0, percent ?? 0))}%` }}
         />
       </span>
-      <span className="status-meter-value">
+      <span className="meter-label status-meter-value">
         {shown === null ? '—' : `${approximate ? '≈' : ''}${shown}%`}
       </span>
       {level !== 'ok' && (
-        <CircleAlert size={12} aria-hidden="true" className="status-meter-alert" data-testid={`${testId}-alert`} />
+        <span className="status-meter-alert" data-testid={`${testId}-alert`}>
+          <LevelIcon level={level} label={LEVEL_LABEL[primary ? 'context' : 'limit'][level]} size={12} />
+        </span>
       )}
     </span>
   )

@@ -1,30 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CircleAlert, LoaderCircle } from 'lucide-react'
-import { mcpParts, toolCategory } from '../../shared/toolCategory'
-import { toolOutcome, toolView, type ToolCardItem, type ToolView } from '../../shared/toolView'
+import { toolCategory } from '../../shared/toolCategory'
+import { toolTitle } from '../../shared/toolTitle'
+import { cardOutcome, toolView, type ToolCardItem, type ToolView } from '../../shared/toolView'
 import { CategoryIcon } from '../ui/icons'
 import { PathLink } from '../paths/PathLink'
 import { useResolvedPaths } from '../paths/useResolvedPaths'
 import { ToolBody } from './tool/ToolBody'
 import './tool/Tool.css'
-
-/** What a call is, in the words a person uses; MCP and unknown tools are named in the head itself. */
-const TOOL_TITLE: Record<string, string> = {
-  Read: 'Чтение',
-  Edit: 'Правка',
-  Write: 'Запись',
-  Bash: 'Команда',
-  Grep: 'Поиск',
-  Glob: 'Поиск файлов',
-  WebFetch: 'Страница',
-  WebSearch: 'Поиск в сети'
-}
-
-function title(name: string): string {
-  const mcp = mcpParts(name)
-  if (mcp) return `${mcp.server} · ${mcp.tool}`
-  return TOOL_TITLE[name] ?? name
-}
 
 /**
  * The one thing the call was about: the command, the file, the query. A
@@ -80,11 +63,7 @@ export function ToolCard({
     if (failed) setOpen(true)
   }, [failed])
 
-  const outcome = running
-    ? ''
-    : view.type === 'generic' && item.kind === 'tool' && item.summary
-      ? item.summary
-      : toolOutcome(item, view)
+  const outcome = cardOutcome(item, view)
   const arg = mainArg(item, view)
   // A path is looked up once the call is done: a running one may still be creating it.
   const argPaths = useMemo(() => (arg.path && !running ? [arg.path] : []), [arg.path, running])
@@ -104,7 +83,7 @@ export function ToolCard({
         <span className="tool-chip">
           <CategoryIcon category={category} />
         </span>
-        <span className="tool-name">{title(item.name)}</span>
+        <span className="tool-name">{toolTitle(item.name)}</span>
         <span
           className={`tool-target${arg.mono ? ' tool-mono' : ''}`}
           title={arg.where ? `${arg.text} в ${arg.where}` : arg.text}

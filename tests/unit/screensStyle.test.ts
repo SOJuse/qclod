@@ -1,0 +1,45 @@
+import { basename } from 'node:path'
+import { expect, test } from 'vitest'
+import { cssRules } from './cssTokens'
+
+// The sheets (settings, history, palette), the setup screen, the empty tab and the shared controls.
+const SCREENS = [
+  'controls.css',
+  'SettingsScreen.css',
+  'HistoryScreen.css',
+  'ActionPalette.css',
+  'SetupScreen.css',
+  'EmptyTab.css'
+]
+const all = cssRules()
+const rules = all.filter((r) => SCREENS.includes(basename(r.file)))
+// Notices that live elsewhere and said their problem in a status colour.
+const NOTICES: Record<string, string[]> = {
+  'TitleBar.css': ['.hotkey-warning'],
+  'Paths.css': ['.path-menu-error']
+}
+
+// A rule that colours an icon may wear a status or category colour; text never does.
+const ICON = /(svg|\.lucide[\w-]*|-icon)(:[\w-]+(\([^)]*\))?)*$/
+
+test('все файлы экранов на месте', () => {
+  expect(new Set(rules.map((r) => basename(r.file)))).toEqual(new Set(SCREENS))
+})
+
+test('статусный и категорийный цвет на экранах — только у значков, не у текста', () => {
+  const notices = all.filter((r) =>
+    (NOTICES[basename(r.file)] ?? []).some((n) => r.selector === n || r.selector.startsWith(n + ':'))
+  )
+  const offenders = [...rules, ...notices]
+    .filter((r) => /(^|[\s;])color:\s*var\(--(status|cat)-/.test(r.body) && !ICON.test(r.selector))
+    .map((r) => `${basename(r.file)}: ${r.selector}`)
+  expect(offenders).toEqual([])
+})
+
+test('модальные окна не рисуют лист и кнопки сами — это controls.css', () => {
+  const own = rules
+    .filter((r) => basename(r.file) !== 'controls.css')
+    .filter((r) => /box-shadow:\s*var\(--shadow-modal\)|background:\s*var\(--backdrop\)/.test(r.body))
+    .map((r) => `${basename(r.file)}: ${r.selector}`)
+  expect(own).toEqual([])
+})

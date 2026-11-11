@@ -329,7 +329,7 @@ export function toolView(item: ToolCardItem): ToolView {
     default:
       break
   }
-  return { type: 'generic', text: resultText(item) }
+  return { type: 'generic', text: failed ? resultText(item) : plainResult(resultText(item)) }
 }
 
 function withTime(word: string, item: ToolCardItem): string {
@@ -386,4 +386,24 @@ export function toolOutcome(item: ToolCardItem, view: ToolView): string {
     default:
       return failed ? 'ошибка' : 'готово'
   }
+}
+
+/** A bare acknowledgement from a tool says nothing a person can use. */
+const ACK = /^(ok(ay)?|done|success)\.?$/i
+
+/** A tool's own words, a bare «ok» said as «готово». */
+function plainResult(text: string): string {
+  return ACK.test(text.trim()) ? 'готово' : text
+}
+
+/**
+ * What a folded card shows on the right: nothing while the call runs; for a
+ * tool Qclod has no view of, its own summary, a bare «ok» said as «готово».
+ */
+export function cardOutcome(item: ToolCardItem, view: ToolView): string {
+  if (item.kind === 'tool' && item.state === 'running') return ''
+  if (view.type === 'generic' && item.kind === 'tool' && item.summary) {
+    return plainResult(item.summary)
+  }
+  return toolOutcome(item, view)
 }

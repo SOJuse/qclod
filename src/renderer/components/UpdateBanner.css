@@ -1,7 +1,7 @@
 /*
  * A downloaded update: one quiet strip across the window under the title bar.
  * The accent is spent on the icon alone; the text stays plain so the strip
- * reads as news, not an alarm. The warning line uses --warn only when a
+ * reads as news, not an alarm. The warning line is dim text, shown only when a
  * restart would cut work short.
  */
 .update-banner {
@@ -38,12 +38,12 @@
 .update-banner-line,
 .update-banner-warning {
   margin: 0;
-  line-height: 1.45;
+  line-height: var(--leading);
 }
 
 .update-banner-warning {
   margin-top: var(--gap-hair);
-  color: var(--warn);
+  color: var(--text-dim);
 }
 
 .update-banner-actions {
@@ -59,8 +59,8 @@
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: var(--button-sm-font-size);
-  line-height: 1.5;
+  font-size: var(--text-sm);
+  line-height: var(--leading);
   white-space: nowrap;
   cursor: pointer;
   transition:
@@ -82,7 +82,7 @@
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 .update-banner-button.is-primary:hover {

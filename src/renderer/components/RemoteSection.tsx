@@ -1,6 +1,7 @@
 import { ExternalLink, Power, Smartphone } from 'lucide-react'
 import type { RemoteInfo } from '../../shared/types'
 import { REMOTE_BLOCK_TEXT, REMOTE_STATE_LABEL, isRemoteLive, safeRemoteUrl } from '../../shared/remote'
+import { ERROR_ICON } from '../ui/icons'
 import { QrCode } from './QrCode'
 import './RemoteSection.css'
 
@@ -92,7 +93,12 @@ export function RemoteSection({ remote, onToggle }: Props): JSX.Element {
         </div>
       )}
 
-      {remote.problem && <p className="remote-problem">{remote.problem}</p>}
+      {remote.problem && (
+        <p className="remote-problem">
+          <ERROR_ICON size={13} aria-hidden="true" />
+          <span>{remote.problem}</span>
+        </p>
+      )}
 
       {live && <p className="panel-note">Закроете вкладку — сессия на телефоне станет недоступна.</p>}
     </section>

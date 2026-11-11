@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, CircleAlert } from 'lucide-react'
 import type { EnvironmentReport, LoginProgress } from '../../shared/types'
+import { ERROR_ICON } from '../ui/icons'
 import './SetupScreen.css'
 
 interface Props {
   report: EnvironmentReport
+  /** A check is under way: «Проверить снова» says so and cannot be pressed again. */
+  checking?: boolean
+  /** Why the last check could not run; shown in one line by «Проверить снова». */
+  checkError?: string | null
   onRecheck: () => void
   onDone: () => void
   onOpenSettings: () => void
@@ -37,7 +42,14 @@ interface StepView {
  * machine has nothing to drive. This screen pays that price out loud, as two
  * steps: put Claude Code on the machine, then log in once.
  */
-export function SetupScreen({ report, onRecheck, onDone, onOpenSettings }: Props): JSX.Element {
+export function SetupScreen({
+  report,
+  checking = false,
+  checkError = null,
+  onRecheck,
+  onDone,
+  onOpenSettings
+}: Props): JSX.Element {
   const [log, setLog] = useState<string[]>([])
   const [installing, setInstalling] = useState(false)
   const [installFailed, setInstallFailed] = useState(false)
@@ -191,13 +203,17 @@ export function SetupScreen({ report, onRecheck, onDone, onOpenSettings }: Props
 
   return (
     <div className="setup" data-testid="setup-screen">
-      <div className="setup-card">
-        <h1 className="setup-title">Подготовим Qclod к работе</h1>
-        <p className="setup-lead">
-          Qclod работает через Claude Code — вашу программу и ваш аккаунт. Нужно два шага.
-        </p>
+      <div className="sheet setup-card">
+        <header className="sheet-head setup-head">
+          <div>
+            <h1 className="sheet-title">Подготовим Qclod к работе</h1>
+            <p className="setup-lead">
+              Qclod работает через Claude Code — вашу программу и ваш аккаунт. Нужно два шага.
+            </p>
+          </div>
+        </header>
 
-        <ol className="setup-steps">
+        <ol className="sheet-body setup-steps">
           {steps.map(({ id, number, name, view, textTestId }) => {
             const primary = view.state !== 'done' && view.state !== 'todo'
             return (
@@ -255,14 +271,21 @@ export function SetupScreen({ report, onRecheck, onDone, onOpenSettings }: Props
           })}
         </ol>
 
-        <div className="setup-actions">
+        <div className="sheet-foot setup-actions">
+          {checkError !== null && (
+            <p className="setup-check-error" data-testid="setup-check-error" role="alert">
+              <ERROR_ICON size={14} aria-hidden="true" />
+              <span>Проверка не прошла: {checkError}</span>
+            </p>
+          )}
           <SetupButton
             action={{
               testId: 'setup-recheck',
-              label: 'Проверить снова',
+              label: checking ? 'Проверяю…' : 'Проверить снова',
               title: 'Проверить, что Claude Code на месте и вход выполнен',
               run: onRecheck
             }}
+            disabled={checking}
           />
           <SetupButton
             action={{ testId: 'setup-done', label: 'Начать работу', title: 'Перейти к работе', run: onDone }}
@@ -287,7 +310,7 @@ function SetupButton({
   return (
     <button
       type="button"
-      className={`setup-button${primary ? ' is-primary' : ''}`}
+      className={`btn${primary ? ' btn-primary' : ''}`}
       data-testid={action.testId}
       title={action.title}
       disabled={disabled}

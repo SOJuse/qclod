@@ -1,0 +1,236 @@
+/*
+ * The shared controls: buttons, fields and the one sheet that settings, history
+ * and the Ctrl+K palette open in (the setup screen uses the same anatomy, not
+ * modal). Screens keep only what is theirs: a list, a log, a row.
+ */
+
+/* ---------------------------------------------------------------- buttons */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--border-accent);
+  background: var(--surface-hover);
+}
+
+.btn:disabled {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+.btn svg {
+  flex: none;
+}
+
+.btn kbd {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-hair);
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+  color: var(--text-dim);
+}
+
+/* The one yes on a screen: solid accent, the strongest thing there. */
+.btn-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: var(--weight-strong);
+}
+
+.btn-primary:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--text) 10%, var(--accent));
+}
+
+.btn-primary kbd {
+  border-color: color-mix(in srgb, var(--on-accent) 45%, var(--accent));
+  color: var(--on-accent);
+}
+
+/* A destructive answer: the frame and the icon carry the red, the label stays text. */
+.btn-danger {
+  border-color: var(--critical-border);
+  background: var(--critical-fill);
+}
+
+.btn-danger svg {
+  color: var(--status-critical);
+}
+
+.btn-danger:hover:not(:disabled) {
+  border-color: var(--status-critical);
+  background: var(--critical-fill);
+}
+
+/* An icon or a quiet word: no frame until the pointer is on it. */
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.btn-sm {
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+}
+
+/* A square icon button: the close cross of a sheet. */
+.btn-sm.btn-ghost:has(> svg:only-child) {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn {
+    transition: none;
+  }
+}
+
+/* ----------------------------------------------------------------- fields */
+
+/* An input or a select; with .ring-host it is the frame around a field that is .ring-on-parent. */
+.field {
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+}
+
+select.field {
+  padding-right: var(--space-2);
+  cursor: pointer;
+}
+
+.field::placeholder {
+  color: var(--text-faint);
+}
+
+/* The ring is the global outline (tokens.css); the border only follows it. */
+.field:focus-visible,
+.field.ring-host:has(.ring-on-parent:focus-visible) {
+  border-color: var(--border-accent);
+}
+
+.field-label {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.field-hint {
+  margin: var(--space-1) 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+}
+
+/* ------------------------------------------------------------------ sheet */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--palette-top) var(--space-5) var(--space-5);
+  background: var(--backdrop);
+  animation: sheet-in var(--dur) var(--ease);
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-backdrop {
+    animation: none;
+  }
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 100%);
+  max-height: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+.sheet-head {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.sheet-title {
+  margin: 0;
+  padding-top: var(--gap-hair);
+  color: var(--text);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+
+.sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.sheet-foot {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}

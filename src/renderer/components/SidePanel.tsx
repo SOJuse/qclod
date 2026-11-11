@@ -1,11 +1,13 @@
 import type { LimitWindow, McpServerInfo, PanelData, RemoteInfo, SubagentState } from '../../shared/types'
-import { untilReset } from '../../shared/format'
+import { plural, untilReset } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
-import { CircleAlert, PanelRightClose } from 'lucide-react'
+import { PanelRightClose } from 'lucide-react'
+import { LevelIcon, levelLabel } from '../ui/icons'
 import { hint } from '../app/shortcuts'
 import { ContextBreakdown } from './ContextBreakdown'
 import { AGENT_STATE_LABEL } from './agentState'
 import { RemoteSection } from './RemoteSection'
+import '../ui/meter.css'
 import './SidePanel.css'
 
 interface Props {
@@ -91,9 +93,12 @@ export function SidePanel({ data, started, agents, remote, onRemote, onClose }: 
             <div className="panel-line">
               {/* Worked out from the record until the tab's agent reports its own. */}
               <span>
-                {contextLevel(data.context.percent) !== 'ok' && (
-                  <CircleAlert className="panel-context-alert" size={13} aria-label="Контекст почти заполнен" />
-                )}
+                <span className="panel-context-alert">
+                  <LevelIcon
+                    level={contextLevel(data.context.percent)}
+                    label={levelLabel('context', contextLevel(data.context.percent))}
+                  />
+                </span>
                 {data.context.estimated ? '≈ ' : ''}
                 {data.context.percent}% из {Math.round(data.context.max / 1000)}k
                 {data.context.estimated ? ' · по записи' : ''}
@@ -147,7 +152,7 @@ export function SidePanel({ data, started, agents, remote, onRemote, onClose }: 
 
       <Section title="Агенты">
         {agents.length === 0 ? (
-          <Empty started={started} text="подагентов не было" />
+          <Empty started={started} text="Агентов нет" />
         ) : (
           <ul className="panel-agents" data-testid="panel-agents">
             {agents.map((agent) => (
@@ -163,7 +168,7 @@ export function SidePanel({ data, started, agents, remote, onRemote, onClose }: 
                   (agent.lastTool || agent.toolCalls) && (
                     <div className="panel-line panel-dim panel-agent-stats">
                       <span>{agent.lastTool ?? ''}</span>
-                      <span>{agent.toolCalls ? `${agent.toolCalls} инструментов` : ''}</span>
+                      <span>{agent.toolCalls ? `${agent.toolCalls} ${plural(agent.toolCalls, 'вызов', 'вызова', 'вызовов')}` : ''}</span>
                     </div>
                   )
                 ) : agent.state === 'failed' ? (
@@ -194,7 +199,7 @@ export function SidePanel({ data, started, agents, remote, onRemote, onClose }: 
             ))}
           </ul>
         ) : (
-          <Empty started={started} text="серверов нет" />
+          <Empty started={started} text="Серверов нет" />
         )}
       </Section>
 
@@ -235,7 +240,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Empty({ started, text }: { started: boolean; text?: string }): JSX.Element {
   return (
     <div className="panel-empty" data-testid="panel-empty">
-      {text ?? (started ? 'появится после первого ответа' : 'появится после запуска')}
+      {text ?? (started ? 'Появится после первого ответа' : 'Появится после запуска')}
     </div>
   )
 }
@@ -243,8 +248,8 @@ function Empty({ started, text }: { started: boolean; text?: string }): JSX.Elem
 /** The same thresholds as the status line under the input (80% and 90%). */
 function Bar({ percent }: { percent: number }): JSX.Element {
   return (
-    <div className="panel-bar" data-level={contextLevel(percent)}>
-      <div style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+    <div className="meter panel-bar" data-level={contextLevel(percent)}>
+      <div className="meter-fill" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
     </div>
   )
 }

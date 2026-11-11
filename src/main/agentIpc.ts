@@ -17,6 +17,7 @@ import { pasteMediaType, pasteRealPath } from './files/imagePaste'
 import { prepareImage } from './files/prepareImage'
 import type { TabController } from './tabs/TabController'
 import { EMPTY_PANEL } from './agent/panelData'
+import { withFault } from './testSeams/ipcFaults'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
 import type { PermissionBroker } from './agent/permissions'
 import {
@@ -96,7 +97,7 @@ function lineNumber(value: unknown): number | undefined {
 export function registerAgentIpc(deps: AgentIpcDeps): void {
   const { controller, manager, broker } = deps
 
-  ipcMain.handle(CHANNELS.tabsList, () => controller.list())
+  ipcMain.handle(CHANNELS.tabsList, () => withFault(CHANNELS.tabsList, () => controller.list()))
 
   ipcMain.handle(CHANNELS.tabsCreate, async (_e, cwd: unknown, overrides: unknown) => {
     if (!isString(cwd)) return null
@@ -212,10 +213,12 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   // The ribbon a tab already has, with its revision — what a window needs in
   // order to draw a tab without replaying the whole session. The revision
   // tells the window which events still in flight the snapshot already holds.
-  ipcMain.handle(CHANNELS.agentRibbon, (_e, id: unknown): RibbonSnapshot => {
-    if (!isString(id)) return { rev: 0, items: [], todo: null }
-    return controller.ribbonOf(id)
-  })
+  ipcMain.handle(CHANNELS.agentRibbon, (_e, id: unknown): Promise<RibbonSnapshot> =>
+    withFault(CHANNELS.agentRibbon, () => {
+      if (!isString(id)) return { rev: 0, items: [], todo: null }
+      return controller.ribbonOf(id)
+    })
+  )
 
   // What the panel holds right now, answered at once — a reloaded window or
   // a missed event must not leave the panel empty. Live MCP state is asked
@@ -257,16 +260,18 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     manager.get(id)?.answerPlan(requestId, approve === true)
   })
 
-  ipcMain.handle(CHANNELS.permissionRules, () => broker.rules())
+  ipcMain.handle(CHANNELS.permissionRules, () => withFault(CHANNELS.permissionRules, () => broker.rules()))
 
   ipcMain.handle(CHANNELS.permissionRuleDelete, (_e, ruleId: unknown) => {
     if (isString(ruleId)) broker.deleteRule(ruleId)
   })
 
-  ipcMain.handle(CHANNELS.historyList, async (_e, id: unknown) => {
-    if (!isString(id)) return []
-    return controller.history(id)
-  })
+  ipcMain.handle(CHANNELS.historyList, (_e, id: unknown) =>
+    withFault(CHANNELS.historyList, async () => {
+      if (!isString(id)) return []
+      return controller.history(id)
+    })
+  )
 
   ipcMain.handle(CHANNELS.historyOpen, (_e, id: unknown, sessionId: unknown, title: unknown) => {
     if (!isString(id) || !isString(sessionId)) return null

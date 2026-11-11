@@ -1,8 +1,8 @@
 /* Markdown inside the ribbon. Sized to be read, not scanned. */
 
 .md {
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: var(--text-lg);
+  line-height: var(--leading-prose);
   color: var(--text);
 }
 
@@ -14,6 +14,15 @@
   margin-bottom: 0;
 }
 
+/* Reading measure: prose, headings, lists and quotes stop at ~72ch, left-aligned; code and tables run wider. */
+.md-p,
+.md-h,
+.md-list,
+.md-quote {
+  max-width: var(--prose-max-w);
+  text-align: left;
+}
+
 .md-p {
   margin: 0 0 10px;
   white-space: pre-wrap;
@@ -21,33 +30,35 @@
 }
 
 /* ------------------------------------------------------------- headings */
+/* h1 2xl; h2 and h3 both xl, told apart by weight (strong vs medium); h4-h6 lg, dim. */
 
 .md-h {
   margin: 18px 0 8px;
-  font-weight: 650;
-  line-height: 1.35;
+  font-weight: var(--weight-strong);
+  line-height: var(--leading);
   color: var(--text);
 }
 
 .md-h1 {
-  font-size: 19px;
+  font-size: var(--text-2xl);
   padding-bottom: 5px;
   border-bottom: 1px solid var(--border);
 }
 
 .md-h2 {
-  font-size: 17px;
+  font-size: var(--text-xl);
   color: color-mix(in srgb, var(--accent) 35%, var(--text));
 }
 
 .md-h3 {
-  font-size: 15px;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-medium);
 }
 
 .md-h4,
 .md-h5,
 .md-h6 {
-  font-size: 14px;
+  font-size: var(--text-lg);
   color: var(--text-dim);
 }
 
@@ -83,23 +94,21 @@ li.md-task {
   width: 13px;
   height: 13px;
   border: 1px solid var(--border-strong);
-  border-radius: 3px;
-  font-size: 10px;
-  line-height: 12px;
-  text-align: center;
-  color: transparent;
+  border-radius: var(--radius-hair);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
+/* A done item is the same box with a tick in it; the tick is an icon, so it may be the status colour. */
 .md-check.is-done {
-  background: var(--ok);
-  border-color: var(--ok);
-  color: #0c0f1c;
+  color: var(--status-ok);
 }
 
 /* ------------------------------------------------------------- emphasis */
 
 .md strong {
-  font-weight: 680;
+  font-weight: var(--weight-strong);
   color: color-mix(in srgb, var(--accent) 22%, var(--text));
 }
 
@@ -115,7 +124,7 @@ li.md-task {
 .md-link {
   color: var(--accent);
   text-decoration: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, var(--surface));
   cursor: pointer;
 }
 
@@ -127,19 +136,19 @@ li.md-task {
 
 .md-code {
   padding: 1px 5px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--glow) 12%, var(--surface-sunken));
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
   border: 1px solid var(--border);
-  font-size: 12.5px;
-  color: color-mix(in srgb, var(--glow) 30%, var(--text));
+  font-size: var(--text-md);
+  color: var(--text);
   word-break: break-word;
 }
 
 .md-codeblock {
   margin: 10px 0;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-sunken);
+  border-radius: var(--radius);
+  background: var(--bg);
   overflow: hidden;
 }
 
@@ -149,13 +158,11 @@ li.md-task {
   justify-content: space-between;
   padding: 5px 11px;
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
+  background: color-mix(in srgb, var(--surface-raised) 60%, var(--bg));
 }
 
 .md-codeblock-lang {
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--text-xs);
   color: var(--text-faint);
 }
 
@@ -164,10 +171,10 @@ li.md-task {
   background: transparent;
   color: var(--text-faint);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--text-xs);
   cursor: pointer;
   padding: 1px 4px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 
 .md-copy:hover {
@@ -179,8 +186,10 @@ li.md-task {
   margin: 0;
   padding: 10px 12px;
   overflow-x: auto;
-  font-size: 12.5px;
-  line-height: 1.55;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+  font-size: var(--text-md);
+  line-height: var(--leading-prose);
   tab-size: 2;
 }
 
@@ -190,28 +199,28 @@ li.md-task {
 }
 
 .tok-keyword {
-  color: #c792ea;
+  color: var(--syn-keyword);
 }
 
 .tok-string {
-  color: #a5e07f;
+  color: var(--syn-string);
 }
 
 .tok-comment {
-  color: var(--text-faint);
+  color: var(--syn-comment);
   font-style: italic;
 }
 
 .tok-number {
-  color: #ffc46b;
+  color: var(--syn-number);
 }
 
 .tok-type {
-  color: #7fd4ff;
+  color: var(--syn-type);
 }
 
 .tok-punct {
-  color: var(--text-dim);
+  color: var(--syn-punct);
 }
 
 /* --------------------------------------------------------------- quotes */
@@ -234,14 +243,16 @@ li.md-task {
 .md-table-wrap {
   margin: 10px 0;
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 
 .md-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--text-md);
 }
 
 .md-table th,
@@ -254,8 +265,7 @@ li.md-task {
 .md-table th {
   background: var(--surface-raised);
   color: var(--text-dim);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: var(--weight-strong);
 }
 
 .md-table tr:last-child td {
@@ -263,5 +273,5 @@ li.md-task {
 }
 
 .md-table tbody tr:hover {
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  background: var(--hover-fill);
 }

@@ -1,7 +1,12 @@
 /*
  * The status line under the input, and the context banner above it.
- * Context leads; the plan's limits sit one step quieter beside it. Past 80% a meter's fill takes the
- * status colour and gains an alert icon; words and numbers keep text colours.
+ * Context leads; the plan's limits sit one step quieter beside it. The bars are the shared meter
+ * (ui/meter.css): quiet until 80%, then the status colour on the fill and an alert icon; words
+ * and numbers keep text colours.
+ *
+ * One row, always: the meters never give way; the left side shrinks instead, its words cut
+ * with an ellipsis (the full one is in the hint). The remote state's word goes first — its icon
+ * keeps the state's colour and the side panel spells it out — then the mode and effort lists.
  */
 
 /* The input sits closer to its own status line than to the window edge. */
@@ -12,34 +17,38 @@
 .status-line {
   flex: 0 0 auto;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-1) var(--space-3);
-  width: min(var(--now-max-w), calc(100% - var(--now-gutter) * 2));
+  gap: var(--space-2);
+  width: min(var(--content-max-w), calc(100% - 2 * var(--content-gutter)));
   margin: 0 auto var(--space-2);
-  font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--text-dim);
+  /* The line answers to its own width, not the window's: the open side panel eats 270px of it. */
+  container-type: inline-size;
 }
 
 .status-group {
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
 }
 
+/* Spacing is 8, not 12: with the Remote Control switch the line still fits one row in a default window with the panel open. */
 .status-meters {
-  gap: var(--space-3);
+  flex: 0 0 auto;
+  gap: var(--space-2);
 }
 
 /* The limits: one step quieter than the context, behind a hairline. */
 .status-limits {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-3);
-  padding-left: var(--space-3);
+  gap: var(--space-2);
+  padding-left: var(--space-2);
   border-left: 1px solid var(--border);
 }
 
@@ -47,6 +56,8 @@
 
 /* Quiet like the lists beside it; on, the icon takes the bridge's colour and its word. */
 .status-remote {
+  flex: 0 8 auto;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -61,14 +72,29 @@
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
+.status-remote > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-group > .dropdown:has([data-testid='status-mode']),
+.status-group > .dropdown:has([data-testid='status-effort']) {
+  flex-shrink: 2;
+}
+
+/* The model keeps its name whole; only an unusually long one is cut. */
+.status-group > .dropdown:has([data-testid='status-model']) {
+  flex-shrink: 0;
+}
+
+.status-group [data-testid='status-model'] .dropdown-value {
+  max-width: 16ch;
+}
+
 .status-remote:hover:not(:disabled) {
   background: var(--hover-fill);
   color: var(--text);
-}
-
-.status-remote:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
 }
 
 .status-remote:disabled {
@@ -76,22 +102,42 @@
   cursor: default;
 }
 
+/* The state's colour is on the phone icon only; the word beside it stays text-coloured. */
 .status-remote > svg {
   flex: 0 0 auto;
   color: var(--text-faint);
 }
 
 .status-remote[data-state='on'] > svg {
-  color: var(--ok);
+  color: var(--status-ok);
 }
 
 .status-remote[data-state='connecting'] > svg,
 .status-remote[data-state='reconnecting'] > svg {
-  color: var(--warn);
+  color: var(--status-warn);
 }
 
 .status-remote[data-state='failed'] > svg {
-  color: var(--danger);
+  color: var(--status-critical);
+}
+
+/*
+ * Too narrow for everything (an 800px window with the panel open leaves ~490px): the least
+ * important controls go, in this order: the remote switch, effort and mode, then the model.
+ * The panel beside the line holds the model, and the meters never go.
+ */
+@container (max-width: 540px) {
+  .status-remote,
+  .status-group > .dropdown:has([data-testid='status-mode']),
+  .status-group > .dropdown:has([data-testid='status-effort']) {
+    display: none;
+  }
+}
+
+@container (max-width: 470px) {
+  .status-group > .dropdown:has([data-testid='status-model']) {
+    display: none;
+  }
 }
 
 /* ------------------------------------------------------------------ meters */
@@ -104,41 +150,16 @@
   cursor: default;
 }
 
-.status-meter-label {
+.status-meter-name {
   color: var(--text-dim);
 }
 
 .status-meter-bar {
-  position: relative;
-  flex: 0 0 auto;
   width: var(--meter-w);
-  height: var(--meter-h);
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--meter-track);
-}
-
-.status-meter-fill {
-  display: block;
-  height: 100%;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  transition: width var(--dur) var(--ease), background var(--dur) var(--ease);
-}
-
-.status-meter-bar[data-level='warn'] .status-meter-fill {
-  background: var(--status-warn);
-}
-
-.status-meter-bar[data-level='critical'] .status-meter-fill {
-  background: var(--status-critical);
 }
 
 .status-meter-value {
   min-width: 3ch;
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
 }
 
 /* Context is the line's main number: a bigger word, a longer, thicker bar, a firmer figure. */
@@ -146,7 +167,7 @@
   gap: var(--space-2);
 }
 
-.status-meter.is-primary .status-meter-label {
+.status-meter.is-primary .status-meter-name {
   font-size: var(--text-sm);
   color: var(--text);
 }
@@ -156,28 +177,16 @@
   height: var(--meter-primary-h);
 }
 
+/* The figure stays --text-dim at every level (meter.css): size and weight make it the main one. */
 .status-meter.is-primary .status-meter-value {
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
-  color: var(--text);
 }
 
-/* Past a threshold a limit's figure reads as firmly as the context's. */
-.status-meter.is-warn .status-meter-value,
-.status-meter.is-critical .status-meter-value {
-  color: var(--text);
-}
-
+/* The icon wears its level's colour itself (LevelIcon). */
 .status-meter-alert {
   flex: 0 0 auto;
-}
-
-.status-meter.is-warn .status-meter-alert {
-  color: var(--status-warn);
-}
-
-.status-meter.is-critical .status-meter-alert {
-  color: var(--status-critical);
+  display: inline-flex;
 }
 
 /* ----------------------------------------------------------- context banner */
@@ -187,20 +196,19 @@
   display: flex;
   align-items: center;
   gap: var(--strip-gap);
-  width: min(var(--now-max-w), calc(100% - var(--now-gutter) * 2));
+  width: min(var(--content-max-w), calc(100% - 2 * var(--content-gutter)));
   margin: 0 auto var(--strip-margin);
   padding: var(--strip-pad);
   border: 1px solid var(--critical-border);
   border-radius: var(--strip-radius);
   background: var(--critical-fill);
-  font-family: var(--font-ui);
-  font-size: var(--strip-font-size);
+  font-size: var(--text-sm);
   color: var(--text);
 }
 
 .context-banner-icon {
   flex: 0 0 auto;
-  color: var(--status-critical);
+  display: inline-flex;
 }
 
 .context-banner-text {
@@ -213,7 +221,7 @@
   border-radius: var(--button-sm-radius);
   background: var(--accent-fill);
   font: inherit;
-  font-size: var(--button-sm-font-size);
+  font-size: var(--text-sm);
   color: var(--text);
   cursor: pointer;
 }
@@ -222,18 +230,12 @@
   background: var(--accent-fill-strong);
 }
 
-.context-banner-action:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}
-
 .context-banner-action:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .status-meter-fill,
   .status-remote {
     transition: none;
   }

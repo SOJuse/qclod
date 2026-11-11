@@ -1,5 +1,6 @@
 import { Columns2, TriangleAlert, History, Minus, Settings, Square, X } from 'lucide-react'
 import { hint } from '../app/shortcuts'
+import { CHROME_ICON_SIZE } from '../ui/icons'
 import { TabStrip } from './TabStrip'
 import type { HotkeyRegistration, TabId, TabState } from '../../shared/types'
 import './TitleBar.css'
@@ -60,7 +61,7 @@ export function TitleBar({
           title={hint('Два разговора рядом', 'toggleSplit')}
           onClick={onToggleSplit}
         >
-          <Columns2 size={15} aria-hidden="true" />
+          <Columns2 size={CHROME_ICON_SIZE} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -70,7 +71,7 @@ export function TitleBar({
           title={hint('Прошлые разговоры', 'history')}
           onClick={onOpenHistory}
         >
-          <History size={15} aria-hidden="true" />
+          <History size={CHROME_ICON_SIZE} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -80,38 +81,63 @@ export function TitleBar({
           title={hint('Настройки', 'settings')}
           onClick={onOpenSettings}
         >
-          <Settings size={15} aria-hidden="true" />
+          <Settings size={CHROME_ICON_SIZE} aria-hidden="true" />
         </button>
-        <button
-          type="button"
-          className="window-button"
-          data-testid="window-minimize"
-          aria-label="Свернуть"
-          title="Свернуть"
-          onClick={() => void window.qclod.minimize()}
-        >
-          <Minus size={15} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="window-button"
-          data-testid="window-maximize"
-          aria-label="Развернуть"
-          title="Развернуть или вернуть размер"
-          onClick={() => void window.qclod.toggleMaximize()}
-        >
-          <Square size={12} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="window-button is-close"
-          data-testid="window-close"
-          aria-label="Закрыть"
-          title="Закрыть окно"
-          onClick={() => void window.qclod.closeWindow()}
-        >
-          <X size={16} aria-hidden="true" />
-        </button>
+        <WindowButtons />
+      </div>
+    </header>
+  )
+}
+
+/** Minimise, maximise, close: the frameless window's own buttons. */
+function WindowButtons(): JSX.Element {
+  return (
+    <>
+      <button
+        type="button"
+        className="window-button"
+        data-testid="window-minimize"
+        aria-label="Свернуть"
+        title="Свернуть"
+        onClick={() => void window.qclod.minimize()}
+      >
+        <Minus size={CHROME_ICON_SIZE} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="window-button"
+        data-testid="window-maximize"
+        aria-label="Развернуть"
+        title="Развернуть или вернуть размер"
+        onClick={() => void window.qclod.toggleMaximize()}
+      >
+        <Square size={CHROME_ICON_SIZE} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="window-button is-close"
+        data-testid="window-close"
+        aria-label="Закрыть"
+        title="Закрыть окно"
+        onClick={() => void window.qclod.closeWindow()}
+      >
+        <X size={CHROME_ICON_SIZE} aria-hidden="true" />
+      </button>
+    </>
+  )
+}
+
+/**
+ * The first-run screen has no tabs yet, but the window still has to be dragged,
+ * minimised and closed: a bar with the mark and the window buttons only.
+ */
+export function SetupTitleBar(): JSX.Element {
+  return (
+    <header className="title-bar" data-testid="setup-title-bar">
+      <span className="title-bar-mark" aria-hidden />
+      <div className="title-bar-spacer" />
+      <div className="window-controls">
+        <WindowButtons />
       </div>
     </header>
   )

@@ -11,7 +11,6 @@
   border-left: var(--rule-category) solid var(--cat-agent);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
-  font-family: var(--font-ui);
   font-size: var(--text-md);
   color: var(--text);
 }
@@ -43,8 +42,7 @@
 }
 
 .subagent-head:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: -1px;
+  outline-offset: var(--focus-offset-inset);
 }
 
 .subagent-chip {
@@ -55,12 +53,12 @@
   width: var(--tool-chip-size);
   height: var(--tool-chip-size);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--cat-agent) var(--tool-chip-tint), transparent);
+  background: color-mix(in srgb, var(--cat-agent) var(--tool-chip-tint), var(--surface-raised));
 }
 
 .subagent-kind {
   flex: 0 0 auto;
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   color: var(--text);
 }
 
@@ -124,7 +122,6 @@
   gap: var(--space-2);
   padding: var(--space-1) var(--space-3) var(--space-3) var(--space-3);
   border-top: 1px solid var(--border);
-  user-select: text;
 }
 
 /* The thread: the agent's own steps hang from its chip, one level in. */
@@ -160,11 +157,6 @@
   color: var(--text);
 }
 
-.subagent-more:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}
-
 /* What it wrote back: the reason it was started, so it reads at full size. */
 .subagent-report {
   padding-top: var(--space-2);
@@ -175,7 +167,7 @@
 .subagent-report-title {
   margin-bottom: var(--space-1);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   color: var(--text-dim);
 }
 

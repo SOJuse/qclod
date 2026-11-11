@@ -26,17 +26,13 @@
   color: var(--text);
 }
 
-.dropdown-button:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}
-
 .dropdown-button[aria-disabled='true'] {
   cursor: default;
   color: var(--text-faint);
 }
 
 .dropdown-value {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

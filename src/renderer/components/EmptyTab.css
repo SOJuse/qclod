@@ -6,6 +6,8 @@
   justify-content: center;
   padding: var(--space-5);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
   /* The ribbon under it is empty; the welcome must not eat its clicks for nothing. */
   pointer-events: none;
 }
@@ -70,7 +72,7 @@
 }
 
 .empty-tab-session:focus-visible {
-  outline: 1px solid var(--border-accent);
+  outline-offset: var(--focus-offset-inset);
 }
 
 .empty-tab-session svg {
@@ -86,10 +88,12 @@
   white-space: nowrap;
 }
 
+/* Dates are read, not decoration: secondary text, not the faintest. */
 .empty-tab-session-when {
   flex: 0 0 auto;
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
 }
 
 .empty-tab-tips {

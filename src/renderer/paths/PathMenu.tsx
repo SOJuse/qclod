@@ -5,6 +5,7 @@ import type { ResolvedPath, TabId } from '../../shared/types'
 import { useAppStore } from '../state/useAppStore'
 import { relativePath } from './linkify'
 import { freshTarget } from './useResolvedPaths'
+import { ERROR_ICON } from '../ui/icons'
 
 interface Item {
   label: string
@@ -133,7 +134,7 @@ export function PathMenu({
   return createPortal(
     <div
       ref={box}
-      className="path-menu"
+      className="path-menu ring-host"
       data-testid="path-menu"
       role="menu"
       aria-label={target.absPath}
@@ -150,7 +151,7 @@ export function PathMenu({
           type="button"
           role="menuitem"
           tabIndex={i === active ? 0 : -1}
-          className={`path-menu-item${i === active ? ' is-active' : ''}`}
+          className={`path-menu-item ring-on-parent${i === active ? ' is-active' : ''}`}
           data-testid="path-menu-item"
           title={item.label}
           onMouseEnter={() => setActive(i)}
@@ -165,7 +166,8 @@ export function PathMenu({
       ))}
       {error && (
         <p className="path-menu-error" data-testid="path-menu-error" role="alert">
-          {error}
+          <ERROR_ICON size={13} aria-hidden="true" />
+          <span>{error}</span>
         </p>
       )}
     </div>,

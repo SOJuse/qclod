@@ -10,7 +10,7 @@
   margin: 0;
   font-family: var(--font-ui);
   font-size: var(--text-sm);
-  line-height: 1.45;
+  line-height: var(--leading);
 }
 
 .remote-lead {
@@ -41,16 +41,16 @@
 }
 
 .remote-state[data-state='on'] .remote-dot {
-  background: var(--ok);
+  background: var(--status-ok);
 }
 
 .remote-state[data-state='connecting'] .remote-dot,
 .remote-state[data-state='reconnecting'] .remote-dot {
-  background: var(--warn);
+  background: var(--status-warn);
 }
 
 .remote-state[data-state='failed'] .remote-dot {
-  background: var(--danger);
+  background: var(--status-critical);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -91,10 +91,9 @@
   margin-top: var(--space-2);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  line-height: 1.5;
+  line-height: var(--leading);
   color: var(--text);
   overflow-wrap: anywhere;
-  user-select: text;
   cursor: text;
 }
 
@@ -114,7 +113,8 @@
   border-radius: var(--button-sm-radius);
   background: transparent;
   font-family: var(--font-ui);
-  font-size: var(--button-sm-font-size);
+  font-size: var(--text-sm);
+  line-height: var(--leading);
   color: var(--text);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
@@ -133,11 +133,6 @@
   background: var(--accent-fill-strong);
 }
 
-.remote-button:focus-visible {
-  outline: 1px solid var(--border-accent);
-  outline-offset: 1px;
-}
-
 .remote-button > svg {
   flex: 0 0 auto;
   color: var(--text-dim);
@@ -148,9 +143,19 @@
   color: var(--text-dim);
 }
 
+/* The words keep the text colour; the critical colour is only on the icon before them. */
 .remote-problem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
   margin-top: var(--space-2);
-  color: var(--danger);
+  color: var(--text);
+}
+
+.remote-problem > svg {
+  flex: 0 0 auto;
+  margin-top: var(--gap-hair);
+  color: var(--status-critical);
 }
 
 @media (prefers-reduced-motion: reduce) {

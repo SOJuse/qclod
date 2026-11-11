@@ -8,7 +8,7 @@ import type {
 } from '../../shared/types'
 import { REMOTE_OFF } from '../../shared/remote'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
-import { TitleBar } from '../components/TitleBar'
+import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { ChatPane } from '../components/ChatPane'
 import { SidePanel } from '../components/SidePanel'
 import { HistoryScreen } from '../components/HistoryScreen'
@@ -21,6 +21,9 @@ import { reasonOf } from '../ui/StateView'
 import { hint, resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
 import { PANEL_MIN_WIDTH, nextOverride, panelVisible, type PanelOverride } from './panelVisibility'
 import './App.css'
+
+/** A failed first read of the tabs is asked once more after this long. */
+const TABS_RETRY_MS = 500
 
 /** The map without one key; the same object when the key is not there. */
 function without(all: Record<string, string>, id: string): Record<string, string> {
@@ -172,8 +175,13 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     loadSettings()
-    void window.qclod.listTabs().then(setTabs)
-    void window.qclod.appVersion().then(setVersion)
+    // Neither read is fatal. The tabs are asked once more and also arrive by
+    // their push; without a version the settings sheet leaves it out.
+    let tabsRetry: ReturnType<typeof setTimeout> | undefined
+    window.qclod.listTabs().then(setTabs, () => {
+      tabsRetry = setTimeout(() => window.qclod.listTabs().then(setTabs, () => undefined), TABS_RETRY_MS)
+    })
+    window.qclod.appVersion().then(setVersion, () => setVersion(''))
     // The title bar only hints with it; the settings sheet reports a failure itself.
     window.qclod.hotkeyStatus().then(setHotkey, () => setHotkey(null))
 
@@ -189,6 +197,7 @@ export function App(): JSX.Element {
       )
     ]
     return () => {
+      clearTimeout(tabsRetry)
       for (const off of unsubscribers) off()
     }
   }, [loadSettings, setSettings, setTabs, setActiveTabId, applyRibbon, applyPanel])
@@ -481,6 +490,7 @@ export function App(): JSX.Element {
     // the agent path is what they were opened for.
     return (
       <>
+        <SetupTitleBar />
         <SetupScreen
           report={environment}
           checking={checking}

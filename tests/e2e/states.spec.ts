@@ -103,6 +103,31 @@ test('настройки открываются сразу и показываю
   }
 })
 
+test('вкладки и версия не прочитались при старте — окно не роняет необработанных ошибок', async () => {
+  const { app, win } = await launchQclod({
+    // The tabs fail three times: twice on the first start (read and its one retry), then once more.
+    env: {
+      QCLOD_FAKE_FAIL: '{"tabs:list":"нет ответа","app:version":"нет ответа"}',
+      QCLOD_FAKE_FAIL_TIMES: '{"tabs:list":3}'
+    }
+  })
+  try {
+    // The first start ran before a listener could be attached; a reload runs the same reads again.
+    const errors: string[] = []
+    win.on('pageerror', (err) => errors.push(err.message))
+    await win.reload()
+    // After the reload the tabs fail once more, and the retry brings them.
+    await expect(win.locator('[data-testid="composer-input"]')).toBeVisible({ timeout: 15000 })
+    await win.locator('[data-testid="open-settings"]').click()
+    await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+    // An unknown version is left out, not printed as a gap.
+    await expect(win.locator('.settings-version')).toHaveText(/^Qclod · /)
+    expect(errors).toEqual([])
+  } finally {
+    await app.close()
+  }
+})
+
 test('настройки не прочитались — ошибка и «Повторить»', async () => {
   const { app, win } = await launchQclod({
     env: { QCLOD_FAKE_FAIL: '{"settings:get":"файл занят"}', QCLOD_FAKE_FAIL_TIMES: '{"settings:get":1}' }

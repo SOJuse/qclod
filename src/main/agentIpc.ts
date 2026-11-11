@@ -97,7 +97,7 @@ function lineNumber(value: unknown): number | undefined {
 export function registerAgentIpc(deps: AgentIpcDeps): void {
   const { controller, manager, broker } = deps
 
-  ipcMain.handle(CHANNELS.tabsList, () => controller.list())
+  ipcMain.handle(CHANNELS.tabsList, () => withFault(CHANNELS.tabsList, () => controller.list()))
 
   ipcMain.handle(CHANNELS.tabsCreate, async (_e, cwd: unknown, overrides: unknown) => {
     if (!isString(cwd)) return null

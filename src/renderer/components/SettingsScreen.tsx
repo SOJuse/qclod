@@ -359,7 +359,7 @@ export function SettingsScreen({
               </p>
             </Group>
 
-            <p className="settings-version">Qclod {version} · обновления ставятся вручную</p>
+            <p className="settings-version">{version ? `Qclod ${version}` : 'Qclod'} · обновления ставятся вручную</p>
           </div>
         )}
       </section>

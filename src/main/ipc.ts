@@ -33,7 +33,7 @@ export function registerBaseIpc(deps: BaseIpcDeps): void {
   /** The install running right now, if any — only one at a time. */
   const install = new InstallSlot()
 
-  ipcMain.handle(CHANNELS.appVersion, () => app.getVersion())
+  ipcMain.handle(CHANNELS.appVersion, () => withFault(CHANNELS.appVersion, () => app.getVersion()))
   ipcMain.handle(CHANNELS.settingsGet, () => withFault(CHANNELS.settingsGet, () => deps.getSettings()))
   ipcMain.handle(CHANNELS.settingsSet, (_e, patch: Partial<AppSettings>) =>
     withFault(CHANNELS.settingsSet, () => {

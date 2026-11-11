@@ -55,8 +55,10 @@
   cursor: pointer;
 }
 
+/* The chosen row: Enter in the search field opens it. */
 .history-item:hover,
-.history-item:focus-visible {
+.history-item:focus-visible,
+.history-item[aria-current='true'] {
   background: var(--surface-hover);
 }
 

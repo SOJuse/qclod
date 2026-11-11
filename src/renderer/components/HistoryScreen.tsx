@@ -50,7 +50,10 @@ export function HistoryScreen({
   onFocusLost
 }: Props): JSX.Element {
   const [query, setQuery] = useState('')
+  /** The row Enter in the field opens, and the one the arrows move from. */
+  const [active, setActive] = useState(0)
   const field = useRef<HTMLInputElement | null>(null)
+  const rows = useRef<Array<HTMLButtonElement | null>>([])
   const sheet = useRef<HTMLElement | null>(null)
   const trap = useModalFocus(sheet, onFocusLost)
 
@@ -73,6 +76,27 @@ export function HistoryScreen({
       session.title.toLowerCase().includes(needle) ||
       session.firstMessage.toLowerCase().includes(needle)
   )
+  const chosen = Math.min(active, Math.max(shown.length - 1, 0))
+
+  // From the field: Down goes into the list, Enter opens the chosen match.
+  const onFieldKeyDown = (e: React.KeyboardEvent): void => {
+    if (shown.length === 0 || e.nativeEvent.isComposing) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      rows.current[chosen]?.focus()
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      onOpen(shown[chosen])
+    }
+  }
+
+  // Along the list; Up from the first row goes back to the field.
+  const onRowKeyDown = (e: React.KeyboardEvent, i: number): void => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    e.preventDefault()
+    if (e.key === 'ArrowUp' && i === 0) field.current?.focus()
+    else rows.current[Math.min(Math.max(i + (e.key === 'ArrowDown' ? 1 : -1), 0), shown.length - 1)]?.focus()
+  }
 
   return (
     <div className="sheet-backdrop history-backdrop" data-testid="history-screen" onMouseDown={onClose}>
@@ -109,7 +133,13 @@ export function HistoryScreen({
             data-testid="history-query"
             placeholder="Найти в прошлых разговорах…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Поиск по истории"
+            aria-keyshortcuts="ArrowDown Enter Escape"
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setActive(0)
+            }}
+            onKeyDown={onFieldKeyDown}
           />
         </div>
 
@@ -145,14 +175,20 @@ export function HistoryScreen({
           />
         ) : (
           <ul className="sheet-body history-list">
-            {shown.map((session) => (
+            {shown.map((session, i) => (
               <li key={session.id}>
                 {/* A button, so Tab reaches it and Enter opens it. */}
                 <button
+                  ref={(el) => {
+                    rows.current[i] = el
+                  }}
                   type="button"
                   data-testid="history-item"
                   className="history-item"
+                  aria-current={i === chosen ? 'true' : undefined}
                   title={session.title}
+                  onFocus={() => setActive(i)}
+                  onKeyDown={(e) => onRowKeyDown(e, i)}
                   onClick={() => onOpen(session)}
                 >
                   <span className="history-title">{session.title}</span>

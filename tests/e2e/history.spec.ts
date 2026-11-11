@@ -121,6 +121,49 @@ test('поиск по истории фильтрует список', async () 
   }
 })
 
+test('история водится с клавиатуры: Enter открывает первое, стрелки ходят по списку, Esc закрывает', async () => {
+  const { app, profile } = await launch(HISTORY)
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+    const query = win.locator('[data-testid="history-query"]')
+    const items = win.locator('[data-testid="history-item"]')
+
+    // The first match is the chosen one while you type.
+    await win.keyboard.press('Control+H')
+    await expect(query).toBeFocused()
+    await expect(items).toHaveCount(2)
+    await expect(items.nth(0)).toHaveAttribute('aria-current', 'true')
+
+    // Down goes into the list and along it; Up from the first row comes back to the field.
+    await query.press('ArrowDown')
+    await expect(items.nth(0)).toBeFocused()
+    await win.keyboard.press('ArrowDown')
+    await expect(items.nth(1)).toBeFocused()
+    await expect(items.nth(1)).toHaveAttribute('aria-current', 'true')
+    await win.keyboard.press('ArrowDown')
+    await expect(items.nth(1)).toBeFocused()
+    await win.keyboard.press('ArrowUp')
+    await win.keyboard.press('ArrowUp')
+    await expect(query).toBeFocused()
+
+    // Esc from the field closes the sheet.
+    await query.press('Escape')
+    await expect(win.locator('[data-testid="history-screen"]')).toHaveCount(0)
+
+    // Typing narrows the list; Enter opens the first match without leaving the field.
+    await win.keyboard.press('Control+H')
+    await query.fill('sdk')
+    await expect(items).toHaveCount(1)
+    await query.press('Enter')
+    await expect(win.locator('[data-testid="history-screen"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+    await expect(win.locator('[data-testid="tab"]').last()).toContainText('Переезд на SDK')
+  } finally {
+    await close(app, profile)
+  }
+})
+
 test('у папки без сессий — понятная пустота, а не пустой список', async () => {
   const { app, profile } = await launch({ sessions: [] })
   try {

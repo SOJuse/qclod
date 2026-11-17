@@ -173,7 +173,9 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     // sanitiser would turn it into 'default' and lose the mode saved before.
     if (actual && actual !== 'bypassPermissions') {
       controller.rememberOverride(id, { permissionMode: actual })
-      deps.rememberDefault({ permissionMode: actual })
+      // «Авто-да» stays with the tab it was confirmed for: as the default it
+      // would reach every new tab and folder without being asked about.
+      if (actual !== 'autoAllow') deps.rememberDefault({ permissionMode: actual })
     }
   })
 

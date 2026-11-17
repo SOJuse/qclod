@@ -62,9 +62,12 @@ export function sanitizeOverrides(value: unknown): LaunchOverrides {
  * inherit it, and must not come up with no mode at all (spec 5.4).
  */
 export function sanitizeDefaults(value: unknown): LaunchOverrides {
-  const bypass = isPlainObject(value) && value['permissionMode'] === 'bypassPermissions'
+  // «Авто-да» is confirmed per tab, so it is no default either.
+  const unasked =
+    isPlainObject(value) &&
+    (value['permissionMode'] === 'bypassPermissions' || value['permissionMode'] === 'autoAllow')
   const out = sanitizeOverrides(value)
-  if (bypass) out.permissionMode = 'default'
+  if (unasked) out.permissionMode = 'default'
   return out
 }
 

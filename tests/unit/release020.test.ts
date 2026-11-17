@@ -15,7 +15,7 @@ import {
   type RibbonItem,
   type SessionStatus
 } from '../../src/shared/types'
-import { sanitizeOverrides } from '../../src/main/tabs/sanitize'
+import { sanitizeDefaults, sanitizeOverrides } from '../../src/main/tabs/sanitize'
 
 function syntheticText(text: string): unknown {
   return {
@@ -100,6 +100,47 @@ describe('«авто-да»: Qclod сам отвечает «разрешить�
     // init says «default»; the panel keeps the tab's own mode.
     expect(session.panel.permissionMode).toBe('autoAllow')
     await session.dispose()
+  })
+
+  test('включение «авто-да» спрашивает подтверждение; без него режим не меняется', async () => {
+    const make = (confirmAutoAllow?: () => Promise<boolean>): AgentSession =>
+      new AgentSession({
+        tabId: 't1',
+        cwd: 'C:/проект',
+        overrides: {},
+        agentPath: 'claude',
+        resolveAgent: () => 'C:/bin/claude.exe',
+        askPermission: async () => ({ behavior: 'deny' as const }),
+        createDriver: () => createFakeSdk({ steps: [] }) as unknown as AgentDriver,
+        panelRefreshMs: 0,
+        ...(confirmAutoAllow ? { confirmAutoAllow } : {})
+      })
+
+    const unconfirmed = make()
+    await unconfirmed.start()
+    await unconfirmed.setPermissionMode('autoAllow')
+    expect(unconfirmed.panel.permissionMode).not.toBe('autoAllow')
+    await unconfirmed.dispose()
+
+    const refused = make(async () => false)
+    await refused.start()
+    await refused.setPermissionMode('autoAllow')
+    expect(refused.panel.permissionMode).not.toBe('autoAllow')
+    await refused.dispose()
+
+    const confirm = vi.fn(async () => true)
+    const agreed = make(confirm)
+    await agreed.start()
+    await agreed.setPermissionMode('autoAllow')
+    expect(agreed.panel.permissionMode).toBe('autoAllow')
+    // Already on: picking it again asks nothing.
+    await agreed.setPermissionMode('autoAllow')
+    expect(confirm).toHaveBeenCalledTimes(1)
+    await agreed.dispose()
+  })
+
+  test('«авто-да» не становится режимом по умолчанию для новых вкладок', () => {
+    expect(sanitizeDefaults({ permissionMode: 'autoAllow' })).toEqual({ permissionMode: 'default' })
   })
 
   test('если CLI отказался сменить режим, панель остаётся на прежнем и в ленте есть объяснение', async () => {

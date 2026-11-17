@@ -61,6 +61,28 @@ async function confirmBypass(win: BrowserWindow | null): Promise<boolean> {
   })
   return response === 1
 }
+
+/** The same question for «авто-да»: Qclod would answer «allow» for the person. */
+async function confirmAutoAllow(win: BrowserWindow | null): Promise<boolean> {
+  const stubbed = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_CONFIRM_AUTO_ALLOW'] : undefined
+  if (stubbed !== undefined) return stubbed === 'allow'
+  if (offScreen) return false
+  if (!win || win.isDestroyed()) return false
+
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Отмена', 'Включить'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Режим «авто-да»',
+    message: 'Qclod будет сам разрешать агенту всё, о чём он спросит',
+    detail:
+      'Агент сможет менять файлы и запускать команды в этой вкладке без вашего ответа. ' +
+      'Сохранённые запреты по-прежнему действуют. Режим запомнится для этой вкладки, ' +
+      'пока вы не выберете другой.'
+  })
+  return response === 1
+}
 let quitting = false
 
 function loadRenderer(win: BrowserWindow): void {
@@ -178,7 +200,8 @@ app.whenReady().then(async () => {
         signal,
         request.auto === true
       ),
-    confirmBypass: () => confirmBypass(mainWindow)
+    confirmBypass: () => confirmBypass(mainWindow),
+    confirmAutoAllow: () => confirmAutoAllow(mainWindow)
   })
 
   // Under the fixture the past conversations come from the environment too,

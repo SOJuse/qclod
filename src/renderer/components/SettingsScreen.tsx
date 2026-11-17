@@ -276,7 +276,7 @@ export function SettingsScreen({
                   value={settings.defaults.permissionMode ?? 'default'}
                   onChange={(e) => onPatch({ defaults: { permissionMode: e.target.value as PermissionMode } })}
                 >
-                  {PERMISSION_MODES.filter((mode) => mode !== 'bypassPermissions').map((mode) => (
+                  {PERMISSION_MODES.filter((mode) => mode !== 'bypassPermissions' && mode !== 'autoAllow').map((mode) => (
                     <option key={mode} value={mode}>
                       {MODE_LABEL[mode]}
                     </option>

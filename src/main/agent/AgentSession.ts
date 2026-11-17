@@ -72,6 +72,11 @@ export interface AgentSessionOptions {
    * `bypassPermissions` outright rather than assuming consent.
    */
   confirmBypass?: () => Promise<boolean>
+  /**
+   * The same, outside the window, for «авто-да»: Qclod would answer every
+   * question by itself. Without it the mode is refused.
+   */
+  confirmAutoAllow?: () => Promise<boolean>
   /** How long to wait before asking again about a server still coming up. */
   mcpPollMs?: number
   /** How long `dispose` waits for the agent to close before giving up. */
@@ -899,7 +904,7 @@ export class AgentSession {
   }
 
   async setPermissionMode(mode: string): Promise<void> {
-    if (!(await this.allowMode(mode))) {
+    if (!(await this.allowMode(mode, true))) {
       // The panel's select is controlled on what the panel knows, so a refusal
       // must still be reported — otherwise it keeps showing the mode the user
       // picked while the session is in another one, and the panel's whole
@@ -1105,8 +1110,17 @@ export class AgentSession {
 
   // ------------------------------------------------------------- the pump
 
-  /** Only one mode needs asking about, and it is asked about every time. */
-  private async allowMode(mode: string): Promise<boolean> {
+  /**
+   * Two modes need asking about. «Без проверок» is asked about every time,
+   * a start included. «Авто-да» is asked about when it is switched on: a tab
+   * reopened in it was confirmed then, and keeps its own choice.
+   */
+  private async allowMode(mode: string, switching = false): Promise<boolean> {
+    if (mode === 'autoAllow') {
+      if (!switching || this.mode === 'autoAllow') return true
+      const confirm = this.options.confirmAutoAllow
+      return confirm ? confirm() : false
+    }
     if (mode !== 'bypassPermissions') return true
     const confirm = this.options.confirmBypass
     if (!confirm) return false

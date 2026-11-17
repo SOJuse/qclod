@@ -183,6 +183,23 @@
   font-weight: var(--weight-medium);
 }
 
+/* When the five-hour window resets, by the system clock. */
+.status-meter-reset {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-hair);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@container (max-width: 640px) {
+  .status-meter-reset {
+    display: none;
+  }
+}
+
 /* The icon wears its level's colour itself (LevelIcon). */
 .status-meter-alert {
   flex: 0 0 auto;

@@ -23,6 +23,8 @@ import { RendererOutbox } from './rendererOutbox'
 import { PathResolver } from './files/pathResolver'
 import { cleanupPasteDir } from './files/imagePaste'
 import { createUpdateSource, UpdateFlow } from './update/updater'
+import { openAgentTerminal, startVoiceTyping } from './system/console'
+import { locateAgent } from './setup/findAgent'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -168,7 +170,14 @@ app.whenReady().then(async () => {
     getAgentPath: () => settings.agentPath,
     createDriver: createDriverFactory(),
     askPermission: (request, signal) =>
-      broker.request(request.tabId, request.toolName, request.input, request.requestId, signal),
+      broker.request(
+        request.tabId,
+        request.toolName,
+        request.input,
+        request.requestId,
+        signal,
+        request.auto === true
+      ),
     confirmBypass: () => confirmBypass(mainWindow)
   })
 
@@ -263,6 +272,20 @@ app.whenReady().then(async () => {
     resolver: new PathResolver(),
     getEditorCommand: () => settings.editorCommand,
     userData,
+    openTerminal: (cwd) => {
+      // e2e records the call instead of opening a console (buildFlags.d.ts).
+      if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_FAKE_SHELL']) {
+        const g = globalThis as { __qclodTerminalOpens?: string[] }
+        ;(g.__qclodTerminalOpens ??= []).push(cwd)
+        return
+      }
+      if (offScreen) return
+      try {
+        openAgentTerminal(locateAgent(settings.agentPath, process.env), cwd)
+      } catch (err) {
+        console.warn('[terminal]', err instanceof Error ? err.message : String(err))
+      }
+    },
     rememberDefault: (patch) => {
       settings = mergeDefaults(settings, { defaults: patch })
       saveSettings(userData, settings)
@@ -270,6 +293,18 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle(CHANNELS.hotkeyStatus, () => withFault(CHANNELS.hotkeyStatus, () => hotkey.status))
+
+  // Voice input is Windows' own (Win+H), pressed for the person: the input
+  // line has the focus already, and the dictation lands in it.
+  ipcMain.handle(CHANNELS.voiceStart, () => {
+    if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_FAKE_SHELL']) {
+      const g = globalThis as { __qclodVoiceStarts?: number }
+      g.__qclodVoiceStarts = (g.__qclodVoiceStarts ?? 0) + 1
+      return
+    }
+    if (offScreen || process.platform !== 'win32') return
+    startVoiceTyping()
+  })
 
   // Updates come from GitHub releases and install on restart or on quit. A
   // failed check is a console line only (updater.ts). quitAndInstall ends in

@@ -138,6 +138,7 @@
 }
 
 .composer-clip,
+.composer-mic,
 .composer-send {
   flex: 0 0 auto;
   width: 28px;
@@ -154,6 +155,7 @@
 }
 
 .composer-clip:hover,
+.composer-mic:hover,
 .composer-send:hover {
   background: var(--border);
   color: var(--text);

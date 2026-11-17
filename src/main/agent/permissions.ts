@@ -48,13 +48,19 @@ export class PermissionBroker {
      * refused and forgotten: a click on its card afterwards answers nothing
      * and, above all, saves no rule.
      */
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    /**
+     * «Авто-да»: nobody is asked — a saved rule still decides (a deny wins
+     * here as everywhere), and everything else is allowed.
+     */
+    auto = false
   ): Promise<PermissionAnswer> {
     // Rules are read fresh every time: the user can delete one in settings
     // while an agent is mid-run, and the next call must respect that.
     const decided = matchRule(this.options.loadRules(), toolName, input)
     if (decided) return { behavior: decided }
     if (signal?.aborted) return { behavior: 'deny' }
+    if (auto) return { behavior: 'allow' }
 
     const requestId = knownRequestId ?? randomUUID()
     const target = displayTarget(input)
@@ -93,6 +99,19 @@ export class PermissionBroker {
     }
 
     request.resolve({ behavior: answer.behavior })
+  }
+
+  /**
+   * The tab was switched to «авто-да» while it had questions open: they are
+   * answered «allow» now, as the mode would have answered them. No rule is
+   * saved — the mode is the standing answer.
+   */
+  allowTab(tabId: TabId): void {
+    for (const [requestId, request] of [...this.pending.entries()]) {
+      if (request.tabId !== tabId) continue
+      this.pending.delete(requestId)
+      request.resolve({ behavior: 'allow' })
+    }
   }
 
   /** A closed tab's agent is gone; its questions are answered so nothing leaks. */

@@ -7,6 +7,7 @@ export const PERMISSION_MODES = [
   'default',
   'acceptEdits',
   'plan',
+  'autoAllow',
   'auto',
   'dontAsk',
   'bypassPermissions'
@@ -16,9 +17,20 @@ export type PermissionMode =
   | 'default'
   | 'acceptEdits'
   | 'plan'
+  /**
+   * Qclod's own mode, unknown to the SDK: the agent runs in `default` and
+   * asks as usual, and Qclod answers every permission request with «allow»
+   * by itself. Deny rules still win; questions and plans still go to the user.
+   */
+  | 'autoAllow'
   | 'auto'
   | 'dontAsk'
   | 'bypassPermissions'
+
+/** The mode the SDK is told: Qclod's own modes run on top of one of its. */
+export function sdkPermissionMode(mode: string): string {
+  return mode === 'autoAllow' ? 'default' : mode
+}
 
 /** What the user attached to a message. */
 export type Attachment =
@@ -100,7 +112,16 @@ export interface QuestionView {
  * into one paragraph.
  */
 export type RibbonItem =
-  | (RibbonBase & { kind: 'user'; text: string; attachments: Attachment[]; remote?: true })
+  | (RibbonBase & {
+      kind: 'user'
+      text: string
+      attachments: Attachment[]
+      remote?: true
+      /** When it was sent, ms since the epoch; absent in a record that has no time. */
+      at?: number
+    })
+  /** The agent finished a turn: when, and how long the turn took. */
+  | (RibbonBase & { kind: 'turnEnd'; at: number; durationMs?: number; failed?: true })
   | (RibbonBase & { kind: 'agentText'; text: string; streaming: boolean })
   | (RibbonBase & { kind: 'thinking'; text: string; done: boolean; durationMs: number })
   | (RibbonBase & ToolCallData & {
@@ -179,9 +200,15 @@ export type RibbonItem =
       kind: 'notice'
       text: string
       tone: 'info' | 'error'
-      /** A way out the notice offers: «Войти» opens the login terminal. */
-      action?: 'login'
+      /**
+       * A way out the notice offers: «Войти» opens the login terminal;
+       * «Открыть терминал» opens Claude Code itself in the tab's folder, for
+       * commands that exist only there (/chrome, /config…).
+       */
+      action?: NoticeAction
     })
+
+export type NoticeAction = 'login' | 'terminal'
 
 export interface TodoItem {
   content: string
@@ -365,6 +392,11 @@ export interface PermissionRequest {
   toolName: string
   target: string
   input: Record<string, unknown>
+  /**
+   * The tab is in «авто-да»: a saved rule still decides, otherwise the answer
+   * is «allow» without asking anyone.
+   */
+  auto?: boolean
 }
 
 export interface PermissionAnswer {

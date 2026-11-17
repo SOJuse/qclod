@@ -280,6 +280,7 @@ export function App(): JSX.Element {
   /** Shift+Tab walks the everyday modes; «без проверок» is not on the ring. */
   const cycleMode = useCallback((): void => {
     if (!activeTabId) return
+    // «Авто-да» is not on it either: one stray key must not turn the asking off.
     const ring = ['default', 'acceptEdits', 'plan'] as const
     const current = useAppStore.getState().panelByTab[activeTabId]?.permissionMode ?? 'default'
     const at = ring.indexOf(current as (typeof ring)[number])

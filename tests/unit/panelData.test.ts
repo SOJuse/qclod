@@ -395,7 +395,8 @@ describe('PanelCollector: панель из записи разговора', ()
       // What the CLI makes up itself is no model anyone is on.
       assistant('<synthetic>', { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0 })
     ])
-    const context = { used: 45674, max: 200_000, percent: 23, categories: [], estimated: true }
+    // Opus 5 has the 1M window: 45 674 tokens of it is 5%, not 23%.
+    const context = { used: 45674, max: 1_000_000, percent: 5, categories: [], estimated: true }
     expect(patch).toEqual({ model: 'claude-opus-5', context })
     expect(collector.data.model).toBe('claude-opus-5')
     expect(collector.data.context).toEqual(context)

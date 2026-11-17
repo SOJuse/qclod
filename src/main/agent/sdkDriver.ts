@@ -3,15 +3,16 @@ import type {
   SDKControlGetUsageResponse
 } from '@anthropic-ai/claude-agent-sdk'
 import { importEsm } from '../esm'
-import type {
-  CommandInfo,
-  EffortLevel,
-  McpServerInfo,
-  LimitWindow,
-  ModelOption,
-  PanelData,
-  TaskOutput,
-  UserInput
+import {
+  sdkPermissionMode,
+  type CommandInfo,
+  type EffortLevel,
+  type McpServerInfo,
+  type LimitWindow,
+  type ModelOption,
+  type PanelData,
+  type TaskOutput,
+  type UserInput
 } from '../../shared/types'
 import { availabilityFrom, safeRemoteUrl, type RemoteAvailability } from '../../shared/remote'
 import type { AgentDriver, ContextUsage, DriverOptions, RemoteLink } from './driver'
@@ -109,8 +110,13 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
       includePartialMessages: true,
       ...(options.model ? { model: options.model } : {}),
       ...(options.permissionMode
-        ? { permissionMode: options.permissionMode as 'default' }
+        ? { permissionMode: sdkPermissionMode(options.permissionMode) as 'default' }
         : {}),
+      // Without it the CLI refuses bypassPermissions — at start and on every
+      // later switch — and the refusal used to be swallowed, so «без проверок»
+      // went on asking about everything. It only makes the mode reachable:
+      // Qclod's own confirmation (AgentSession.allowMode) is the gate.
+      allowDangerouslySkipPermissions: true,
       ...(options.resume ? { resume: options.resume } : {}),
       ...(options.extraArgs && Object.keys(options.extraArgs).length > 0
         ? { extraArgs: options.extraArgs }
@@ -153,7 +159,7 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
     },
 
     async setPermissionMode(mode: string): Promise<void> {
-      await session.setPermissionMode(mode as 'default')
+      await session.setPermissionMode(sdkPermissionMode(mode) as 'default')
     },
 
     async supportedCommands(): Promise<CommandInfo[]> {
@@ -172,8 +178,8 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
       return servers.map((s) => ({ name: s.name, status: s.status as McpServerInfo['status'] }))
     },
 
-    async getContextUsage(): Promise<ContextUsage> {
-      const usage = await session.getContextUsage()
+    async getContextUsage(opts?: { detail?: 'summary' | 'full' }): Promise<ContextUsage> {
+      const usage = await session.getContextUsage(opts?.detail ? { detail: opts.detail } : undefined)
       return {
         totalTokens: usage.totalTokens,
         maxTokens: usage.maxTokens,

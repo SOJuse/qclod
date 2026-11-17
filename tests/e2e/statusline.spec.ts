@@ -47,7 +47,7 @@ test('у поля всегда видны контекст и оба лимит�
     await expect(win.locator('[data-testid="status-limit-5h"]')).toContainText('13%')
     await expect(win.locator('[data-testid="status-limit-7d"]')).toContainText('нед')
     await expect(win.locator('[data-testid="status-limit-7d"]')).toContainText('38%')
-    await expect(win.locator('[data-testid="status-limit-5h"]')).toHaveAttribute('title', /Сброс через/)
+    await expect(win.locator('[data-testid="status-limit-5h"]')).toHaveAttribute('title', /Сброс в \d{2}:\d{2} \(через/)
 
     // Right by the input, below it — not up in the side panel.
     const line = await win.locator('[data-testid="status-line"]').boundingBox()

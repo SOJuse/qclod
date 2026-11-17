@@ -6,6 +6,7 @@ import type {
   ModelOption,
   LaunchOverrides,
   McpServerInfo,
+  NoticeAction,
   PanelData,
   PanelSnapshot,
   PermissionAnswer,
@@ -29,6 +30,25 @@ import { BackgroundTracker } from './backgroundTasks'
 import { displayTarget } from './permissionStore'
 import { locateAgent } from '../setup/findAgent'
 import { classifyStartFailure, LOGIN_NEEDED_TEXT } from './startFailure'
+import { sdkPermissionMode } from '../../shared/types'
+
+/** How a notice names a mode; the window has its own, longer labels. */
+const MODE_NAMES: Record<string, string> = {
+  default: 'спрашивать',
+  acceptEdits: 'принимать правки',
+  plan: 'план',
+  autoAllow: 'авто-да',
+  auto: 'классификатор',
+  dontAsk: 'только разрешённое',
+  bypassPermissions: 'без проверок'
+}
+
+/**
+ * How often a live session asks again for its context and the plan's limits.
+ * rate_limit_event comes only with an answer, so an idle tab used to keep
+ * showing a five-hour window that had long since reset.
+ */
+export const PANEL_REFRESH_MS = 60_000
 
 export interface AgentSessionOptions {
   tabId: TabId
@@ -56,6 +76,8 @@ export interface AgentSessionOptions {
   mcpPollMs?: number
   /** How long `dispose` waits for the agent to close before giving up. */
   disposeTimeoutMs?: number
+  /** How often context and limits are asked for again; 0 never. */
+  panelRefreshMs?: number
   /** A ribbon and panel already on screen, taken over instead of new ones. */
   seed?: SessionSeed
 }
@@ -217,6 +239,7 @@ export class AgentSession {
    */
   private stopsInFlight = 0
   private mcpTimer: ReturnType<typeof setTimeout> | null = null
+  private refreshTimer: ReturnType<typeof setInterval> | null = null
   /** Repeats asked since the servers were last all settled. */
   private mcpPolls = 0
 
@@ -500,7 +523,7 @@ export class AgentSession {
   }
 
   /** Something Qclod itself needs to say — a crash, a session that would not resume. */
-  notice(text: string, tone: 'info' | 'error' = 'info', action?: 'login'): RibbonChange[] {
+  notice(text: string, tone: 'info' | 'error' = 'info', action?: NoticeAction): RibbonChange[] {
     return this.builder.notice(text, tone, action)
   }
 
@@ -537,6 +560,9 @@ export class AgentSession {
       )
       this.emitPanel(this.collector.setPermissionMode('default'))
     }
+    // The SDK knows nothing of Qclod's own modes and reports `default` at
+    // init; the mode is marked as ours so init does not overrule it.
+    if (this.mode === 'autoAllow') this.emitPanel(this.collector.setPermissionMode(this.mode))
 
     let executablePath: string
     try {
@@ -572,7 +598,7 @@ export class AgentSession {
       cwd: this.options.cwd,
       executablePath,
       model: this.options.overrides.model,
-      permissionMode: this.mode,
+      permissionMode: sdkPermissionMode(this.mode),
       extraArgs: flags.args,
       resume: resumeId,
       canUseTool: (toolName, input, opts) => this.onToolPermission(toolName, input, opts)
@@ -616,6 +642,30 @@ export class AgentSession {
     this.background(this.refreshMcp())
     this.background(this.refreshLimits())
     this.background(this.checkRemote())
+    this.startPanelRefresh()
+  }
+
+  /**
+   * Context and limits are asked for again every minute, working or not: a
+   * five-hour window resets on its own clock, and an idle tab must show it.
+   * The cheap «summary» count is used — the full one costs token-count calls.
+   */
+  private startPanelRefresh(): void {
+    const every = this.options.panelRefreshMs ?? PANEL_REFRESH_MS
+    if (every <= 0 || this.refreshTimer) return
+    this.refreshTimer = setInterval(() => {
+      if (!this.driver || this.disposed) return
+      this.background(this.refreshLimits())
+      // A turn under way changes the count with every step; asking then would
+      // only race the answer the result brings.
+      if (!this.turnRunning) this.background(this.refreshContext('summary'))
+    }, every)
+    this.refreshTimer.unref?.()
+  }
+
+  private stopPanelRefresh(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer)
+    this.refreshTimer = null
   }
 
   /** The level this tab was left at, from tabs.json — the session's, not the user's settings. */
@@ -857,10 +907,38 @@ export class AgentSession {
       this.emitPanel(this.collector.currentPermissionMode())
       return
     }
+    const was = this.mode
+    const driver = this.driver
+    if (driver && sdkPermissionMode(mode) !== sdkPermissionMode(was)) {
+      try {
+        await driver.setPermissionMode(sdkPermissionMode(mode))
+      } catch (err) {
+        // The CLI refused: the session stays where it was, and says so —
+        // a mode that silently did not switch is how «без проверок» kept
+        // asking about everything.
+        if (this.driver !== driver) return
+        const reason = err instanceof Error ? err.message : String(err)
+        this.emit(
+          this.builder.notice(
+            `Режим «${MODE_NAMES[mode] ?? mode}» не включился: ${reason}`,
+            'error'
+          )
+        )
+        this.emitPanel(this.collector.currentPermissionMode())
+        return
+      }
+    }
     this.mode = mode
     this.emitPanel(this.collector.setPermissionMode(mode))
-    if (!this.driver) return
-    await this.driver.setPermissionMode(mode).catch(() => undefined)
+    if (mode === 'autoAllow' && was !== 'autoAllow') {
+      this.emit(
+        this.builder.notice(
+          'Режим «авто-да»: Qclod сам отвечает «разрешить» на каждый запрос агента. ' +
+            'Сохранённые запреты по-прежнему действуют, вопросы и планы — за вами.',
+          'info'
+        )
+      )
+    }
   }
 
   async commands(): Promise<ReturnType<AgentDriver['supportedCommands']>> {
@@ -986,6 +1064,7 @@ export class AgentSession {
     // The queue is dropped with the session by design: a closed tab's
     // messages have nowhere to go. A swap takes it first (`takeQueue`).
     this.stopMcpPolling()
+    this.stopPanelRefresh()
     // A question nobody can answer any more must not hold the agent open.
     this.cancelWaits()
 
@@ -1106,6 +1185,8 @@ export class AgentSession {
         // rather than flicking to idle (and chiming) in between.
         if (!this.sendQueued()) this.setStatus('idle')
         this.background(this.refreshContext())
+        // A turn spends the plan; rate_limit_event does not always say so.
+        this.background(this.refreshLimits())
         break
       default:
         break
@@ -1147,11 +1228,13 @@ export class AgentSession {
   }
 
   /** Context is not in the turn's result message (probe note 4): ask for it. */
-  private async refreshContext(): Promise<void> {
+  private async refreshContext(detail?: 'summary' | 'full'): Promise<void> {
     const driver = this.driver
     if (!driver) return
     try {
-      this.emitPanel(this.collector.setContext(await driver.getContextUsage()))
+      const usage = detail ? await driver.getContextUsage({ detail }) : await driver.getContextUsage()
+      if (this.driver !== driver) return
+      this.emitPanel(this.collector.setContext(usage))
     } catch {
       // A session that is shutting down cannot answer; the panel keeps its
       // last numbers rather than showing a hole.
@@ -1179,6 +1262,20 @@ export class AgentSession {
     // two requests. A clock is no id: two asks in one millisecond collided.
     const requestId = opts.toolUseId ?? randomUUID()
     const target = displayTarget(input)
+
+    // «Авто-да»: the agent asked, Qclod answers. No card and no «ждёт» —
+    // the tool's own card shows what ran. A saved deny rule still refuses.
+    if (this.mode === 'autoAllow') {
+      if (opts.signal?.aborted) return { behavior: 'deny' }
+      try {
+        return await ask(
+          { requestId, tabId: this.options.tabId, toolName, target, input, auto: true },
+          opts.signal ?? new AbortController().signal
+        )
+      } catch {
+        return { behavior: 'deny' }
+      }
+    }
 
     // The question is cancelled through a controller of the session's own,
     // so «Стоп» reaches it whether or not the SDK ever fires its signal.
@@ -1324,6 +1421,7 @@ export class AgentSession {
     // would write into a ribbon its successor carries on.
     if (this.disposed) return
     this.turnRunning = false
+    this.stopPanelRefresh()
     const text = err instanceof Error ? err.message : String(err)
     const dead = this.driver
     this.driver = null

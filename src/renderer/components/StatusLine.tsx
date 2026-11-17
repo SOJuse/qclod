@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { Cpu, Gauge, ShieldCheck, Smartphone } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Cpu, Gauge, RotateCcw, ShieldCheck, Smartphone } from 'lucide-react'
 import { LEVEL_LABEL, LevelIcon } from '../ui/icons'
 import {
   EFFORT_LEVELS,
@@ -11,7 +11,7 @@ import {
   type RemoteInfo
 } from '../../shared/types'
 import { REMOTE_BLOCK_TEXT, REMOTE_STATE_LABEL, isRemoteLive } from '../../shared/remote'
-import { untilReset } from '../../shared/format'
+import { clockTime, untilReset } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
 import { EFFORT_LABEL, EFFORT_SHORT, MODE_LABEL } from '../labels'
 import { Dropdown, type DropdownOption } from './Dropdown'
@@ -31,7 +31,12 @@ interface Props {
 }
 
 const MODE_NOTE: Partial<Record<PermissionMode, string>> = {
+  default: 'спрашивает про каждое действие',
+  acceptEdits: 'правки файлов без вопросов, команды — спросит',
   plan: 'только читает и предлагает план',
+  autoAllow: 'агент спрашивает — Qclod сам жмёт «разрешить»',
+  auto: 'решает модель-классификатор; если не уверена — спросит',
+  dontAsk: 'запрещает всё, что не разрешено заранее',
   bypassPermissions: 'спросит подтверждение — выключает все проверки'
 }
 
@@ -135,7 +140,7 @@ export function StatusLine({ tabId, data, started, slot, remote, onToggleRemote 
         />
         {/* The plan's limits are secondary: smaller, set apart by a hairline. */}
         <span className="status-limits">
-          <LimitMeter testId="status-limit-5h" label="5 ч" name="Лимит на 5 часов" window={data.limits.fiveHour} waitingFor={waitingFor} />
+          <LimitMeter testId="status-limit-5h" label="5 ч" name="Лимит на 5 часов" window={data.limits.fiveHour} waitingFor={waitingFor} showReset />
           <LimitMeter testId="status-limit-7d" label="нед" name="Лимит на неделю" window={data.limits.sevenDay} waitingFor={waitingFor} />
           {slot}
         </span>
@@ -175,24 +180,53 @@ function RemoteToggle({ remote, onToggle }: { remote: RemoteInfo; onToggle: () =
   )
 }
 
+/** Re-renders every `everyMs`, so «через 5 мин» and a passed reset stay true. */
+function useNow(everyMs: number): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), everyMs)
+    return () => clearInterval(timer)
+  }, [everyMs])
+  return now
+}
+
 function LimitMeter({
   testId,
   label,
   name,
   window,
-  waitingFor
+  waitingFor,
+  showReset = false
 }: {
   testId: string
   label: string
   name: string
   window: LimitWindow | null
   waitingFor: string
+  /** The reset's time stands beside the bar, not only in its hint. */
+  showReset?: boolean
 }): JSX.Element {
-  const percent = window ? window.utilization * 100 : null
-  const title = window
-    ? `${name}: ${Math.round(window.utilization * 100)}%. Сброс ${untilReset(window.resetsAt)}`
-    : `${name} — появится ${waitingFor}`
-  return <Meter testId={testId} label={label} percent={percent} title={title} />
+  const now = useNow(30_000)
+  // A window whose reset has passed is spent no more: it reads 0% until the
+  // next refresh brings the new one, rather than the old number for hours.
+  const reset = window && window.resetsAt > 0 ? window.resetsAt * 1000 : null
+  const expired = reset !== null && reset <= now
+  const percent = window ? (expired ? 0 : window.utilization * 100) : null
+  const title = !window
+    ? `${name} — появится ${waitingFor}`
+    : expired
+      ? `${name}: сброшен в ${clockTime(reset!, now, false)}`
+      : `${name}: ${Math.round(window.utilization * 100)}%.` +
+        (reset ? ` Сброс в ${clockTime(reset, now, false)} (${untilReset(window.resetsAt, now)})` : '')
+  return (
+    <Meter
+      testId={testId}
+      label={label}
+      percent={percent}
+      title={title}
+      suffix={showReset && reset && !expired ? clockTime(reset, now, false) : undefined}
+    />
+  )
 }
 
 /**
@@ -206,7 +240,8 @@ function Meter({
   percent,
   approximate = false,
   primary = false,
-  title
+  title,
+  suffix
 }: {
   testId: string
   label: string
@@ -215,9 +250,12 @@ function Meter({
   /** The context meter: larger than the limits, the line's main number. */
   primary?: boolean
   title: string
+  /** A short note after the number: when the window resets. */
+  suffix?: string | undefined
 }): JSX.Element {
   // The level follows the whole percent shown, so «90%» is always critical.
-  const shown = percent === null ? null : Math.round(percent)
+  // Nothing is ever fuller than full: a count past the window reads 100%.
+  const shown = percent === null ? null : Math.min(100, Math.max(0, Math.round(percent)))
   const level = shown === null ? 'ok' : contextLevel(shown)
   return (
     <span
@@ -243,6 +281,12 @@ function Meter({
       <span className="meter-label status-meter-value">
         {shown === null ? '—' : `${approximate ? '≈' : ''}${shown}%`}
       </span>
+      {suffix && (
+        <span className="status-meter-reset" data-testid={`${testId}-reset`}>
+          <RotateCcw size={10} aria-hidden="true" />
+          {suffix}
+        </span>
+      )}
       {level !== 'ok' && (
         <span className="status-meter-alert" data-testid={`${testId}-alert`}>
           <LevelIcon level={level} label={LEVEL_LABEL[primary ? 'context' : 'limit'][level]} size={12} />

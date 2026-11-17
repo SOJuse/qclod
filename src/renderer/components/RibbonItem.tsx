@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Brain, Image as ImageIcon, Smartphone } from 'lucide-react'
-import { seconds } from '../../shared/format'
+import { clockTime, seconds } from '../../shared/format'
 import type { Attachment, RibbonItem as Item } from '../../shared/types'
 import { PermissionCard } from './PermissionCard'
 import { PlanCard } from './PlanCard'
@@ -36,7 +36,13 @@ function thinkingLabel(item: Extract<Item, { kind: 'thinking' }>): string {
  * do it: the same login window the setup screen opens. If that window could
  * not be opened, the reason shows under the notice instead of nothing.
  */
-export function NoticeRow({ item }: { item: Extract<Item, { kind: 'notice' }> }): JSX.Element {
+export function NoticeRow({
+  item,
+  tabId
+}: {
+  item: Extract<Item, { kind: 'notice' }>
+  tabId?: string
+}): JSX.Element {
   const [loginError, setLoginError] = useState<string | null>(null)
 
   async function login(): Promise<void> {
@@ -62,6 +68,17 @@ export function NoticeRow({ item }: { item: Extract<Item, { kind: 'notice' }> })
           onClick={() => void login()}
         >
           Войти
+        </button>
+      )}
+      {item.action === 'terminal' && tabId && (
+        <button
+          type="button"
+          className="row-notice-action"
+          data-testid="notice-terminal"
+          title="Откроется окно терминала с Claude Code в папке этой вкладки"
+          onClick={() => void window.qclod.openTerminal(tabId)}
+        >
+          Открыть терминал
         </button>
       )}
       {item.action === 'login' && loginError && (
@@ -183,6 +200,15 @@ export function RibbonRow({
               </div>
             )}
             <div className="row-user-text">{item.text}</div>
+            {item.at !== undefined && (
+              <div
+                className="row-user-time"
+                data-testid="user-time"
+                title={`Отправлено ${new Date(item.at).toLocaleString('ru-RU')}`}
+              >
+                {clockTime(item.at)}
+              </div>
+            )}
             {item.attachments.some((a) => a.kind === 'image') && (
               <div className="row-user-images">
                 {item.attachments.map((a, i) =>
@@ -273,7 +299,19 @@ export function RibbonRow({
         )
 
       case 'notice':
-        return <NoticeRow item={item} />
+        return <NoticeRow item={item} tabId={tabId} />
+
+      case 'turnEnd':
+        return (
+          <div
+            className={`row-turn-end${item.failed ? ' is-failed' : ''}`}
+            data-testid="turn-end"
+            title={new Date(item.at).toLocaleString('ru-RU')}
+          >
+            {item.failed ? 'Остановлен' : 'Готово'} в {clockTime(item.at)}
+            {item.durationMs ? ` · ${seconds(item.durationMs)}` : ''}
+          </div>
+        )
 
       default:
         return <div />

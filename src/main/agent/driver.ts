@@ -28,7 +28,8 @@ export interface AgentDriver {
   setPermissionMode(mode: string): Promise<void>
   supportedCommands(): Promise<CommandInfo[]>
   mcpServerStatus(): Promise<McpServerInfo[]>
-  getContextUsage(): Promise<ContextUsage>
+  /** `summary` answers from the last response's usage, without token-count calls. */
+  getContextUsage(opts?: { detail?: 'summary' | 'full' }): Promise<ContextUsage>
   supportedModels(): Promise<ModelOption[]>
   setModel(model: string): Promise<void>
   /** Session-scoped: never written to the user's settings files. */

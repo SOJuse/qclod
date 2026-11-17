@@ -289,6 +289,11 @@ test('у скрепки своё кольцо, рамка поля ввода з
     await expect(win.locator('[data-testid="composer-clip"]')).toBeFocused()
     await expectFocusRing(win)
     expect(await settled()).not.toContain('90, 139, 255')
+    // The microphone sits beside the clip, with a ring of its own too.
+    await win.keyboard.press('Tab')
+    await expect(win.locator('[data-testid="composer-mic"]')).toBeFocused()
+    await expectFocusRing(win)
+    expect(await settled()).not.toContain('90, 139, 255')
     await win.keyboard.press('Tab')
     await expect(win.locator('[data-testid="composer-input"]')).toBeFocused()
     await expect.poll(rowShadow).toContain('rgb(90, 139, 255)')

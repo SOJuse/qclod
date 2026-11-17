@@ -81,6 +81,11 @@ const api = {
   stopTask: (id: TabId, taskId: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.agentTaskStop, id, taskId),
 
+  /** Claude Code in a console of its own, in the tab's folder. */
+  openTerminal: (id: TabId): Promise<void> => ipcRenderer.invoke(CHANNELS.agentOpenTerminal, id),
+  /** Windows voice typing (Win+H) into the focused field. */
+  startVoice: (): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceStart),
+
   answerPermission: (requestId: string, answer: PermissionAnswer): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.permissionAnswer, requestId, answer),
   permissionRules: (): Promise<Array<{ id: string; toolName: string; target?: string }>> =>

@@ -11,8 +11,9 @@ export const MODE_LABEL: Record<string, string> = {
   default: 'спрашивать',
   acceptEdits: 'принимать правки',
   plan: 'план',
-  auto: 'автоматически',
-  dontAsk: 'не спрашивать',
+  autoAllow: 'авто-да',
+  auto: 'классификатор',
+  dontAsk: 'только разрешённое',
   bypassPermissions: 'без проверок'
 }
 

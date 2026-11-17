@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type {
   BackgroundTask,
   EffortLevel,
+  LimitWindow,
   McpServerInfo,
   ModelOption,
   PanelData,
@@ -41,6 +42,34 @@ function lastMainAnswer(
     return { model, usage: isObject(inner['usage']) ? inner['usage'] : null }
   }
   return null
+}
+
+/** A percent the meters can draw: a whole number from 0 to 100. */
+export function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(100, Math.max(0, Math.round(value)))
+}
+
+/**
+ * Utilization as 0..1. The usage call speaks in percent and the event in
+ * fractions; a value above 1.5 can only be a percent.
+ */
+function fraction(value: number): number {
+  if (!Number.isFinite(value) || value < 0) return 0
+  return value > 1.5 ? value / 100 : value
+}
+
+/**
+ * The window a past conversation's model most likely had. The record names
+ * the model but not its window, and assuming 200K for every one of them made
+ * an Opus conversation at 380K read «190%». A count past 200K proves the
+ * larger window by itself.
+ */
+export function estimatedWindow(model: string, used: number): number {
+  if (model.includes('[1m]') || used > 200_000) return 1_000_000
+  // Opus 5 runs with the 1M window (the CLI reports maxTokens 1000000 for it).
+  if (/opus-[5-9]/i.test(model)) return 1_000_000
+  return 200_000
 }
 
 export const EMPTY_PANEL: PanelData = {
@@ -142,7 +171,9 @@ export class PanelCollector {
       context: {
         used: usage.totalTokens,
         max: usage.maxTokens,
-        percent: usage.percentage,
+        // The CLI's percentage is unclamped (0-100+): over the compaction
+        // window it read 101% or 190%. The meter shows how full, not how far over.
+        percent: clampPercent(usage.percentage),
         // 'free' and 'buffer' are parts of the window the bar draws; 'deferred'
         // tools are not in it yet, so they are not drawn.
         categories: usage.categories.flatMap((c) =>
@@ -195,8 +226,14 @@ export class PanelCollector {
         tokens(u['cache_creation_input_tokens']) +
         tokens(u['cache_read_input_tokens']) +
         tokens(u['output_tokens'])
-      const max = last.model.includes('[1m]') ? 1_000_000 : 200_000
-      patch.context = { used, max, percent: Math.round((used / max) * 100), categories: [], estimated: true }
+      const max = estimatedWindow(last.model, used)
+      patch.context = {
+        used,
+        max,
+        percent: clampPercent(Math.round((used / max) * 100)),
+        categories: [],
+        estimated: true
+      }
     }
     return this.patch(patch)
   }
@@ -256,16 +293,21 @@ export class PanelCollector {
     const windows = info['unifiedWindows']
     if (!isObject(windows)) return null
 
-    const read = (key: string): PanelData['limits']['fiveHour'] => {
+    // A window the event leaves out keeps what is known of it: an event about
+    // the five-hour window used to wipe the weekly one off the panel.
+    const read = (key: string, known: LimitWindow | null): LimitWindow | null => {
       const window = windows[key]
-      if (!isObject(window)) return null
+      if (!isObject(window)) return known
       return {
-        utilization: Number(window['utilization'] ?? 0),
+        utilization: fraction(Number(window['utilization'] ?? 0)),
         resetsAt: Number(window['resetsAt'] ?? 0)
       }
     }
 
-    return this.patch({ limits: { fiveHour: read('five_hour'), sevenDay: read('seven_day') } })
+    const was = this.panel.limits
+    return this.patch({
+      limits: { fiveHour: read('five_hour', was.fiveHour), sevenDay: read('seven_day', was.sevenDay) }
+    })
   }
 
   private onResult(m: Record<string, unknown>): Partial<PanelData> | null {

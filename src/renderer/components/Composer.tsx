@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, Image as ImageIcon, ImageOff, Paperclip, Square, X } from 'lucide-react'
+import { ArrowUp, Image as ImageIcon, ImageOff, Mic, Paperclip, Square, X } from 'lucide-react'
 import type {
   Attachment,
   CommandInfo,
@@ -591,6 +591,23 @@ export function Composer({
           onClick={onPickFiles}
         >
           <Paperclip size={16} aria-hidden="true" />
+        </button>
+
+        {/* Beside the clip, not after the field: Tab from the field still goes to «Отправить». */}
+        <button
+          type="button"
+          className="composer-mic"
+          data-testid="composer-mic"
+          aria-label="Голосовой ввод"
+          title="Голосовой ввод — диктовка Windows (Win+H). Говорите, текст появится в поле"
+          disabled={dead}
+          onClick={() => {
+            // Windows types into whatever has the focus, so the field gets it first.
+            field.current?.focus()
+            void window.qclod.startVoice()
+          }}
+        >
+          <Mic size={16} aria-hidden="true" />
         </button>
 
         <textarea

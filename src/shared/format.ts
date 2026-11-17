@@ -54,6 +54,29 @@ export function clip(text: string, max = 80): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line
 }
 
+/**
+ * A moment as the person's own clock shows it — Windows' time zone, which
+ * Chromium reads from the system: «14:35:07» today, «16 нояб., 14:35» another day.
+ */
+export function clockTime(ms: number, nowMs = Date.now(), withSeconds = true): string {
+  const at = new Date(ms)
+  const now = new Date(nowMs)
+  const sameDay =
+    at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate()
+  const time = at.toLocaleTimeString('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(withSeconds && sameDay ? { second: '2-digit' } : {})
+  })
+  if (sameDay) return time
+  const day = at.toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'short',
+    ...(at.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' })
+  })
+  return `${day}, ${time}`
+}
+
 /** «через 2 ч 15 мин», from a unix timestamp in seconds: when a plan limit resets. */
 export function untilReset(resetsAt: number, nowMs = Date.now()): string {
   const minutes = Math.max(0, Math.round((resetsAt * 1000 - nowMs) / 60000))

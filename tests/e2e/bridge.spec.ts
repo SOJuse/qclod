@@ -1,4 +1,6 @@
 import { test, expect, _electron as electron } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 test('window.qclod есть, window.require нет', async () => {
   const app = await electron.launch({ args: ['.'] })
@@ -24,7 +26,7 @@ test('window.qclod есть, window.require нет', async () => {
   const version = await win.evaluate(() =>
     (window as never as { qclod: { appVersion(): Promise<string> } }).qclod.appVersion()
   )
-  expect(version).toBe('0.1.0')
+  expect(version).toBe(JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8')).version)
 
   await app.close()
 })

@@ -41,6 +41,8 @@ export interface AgentIpcDeps {
   getEditorCommand: () => string
   /** The app's own folder: pasted images are kept in its pastes. */
   userData: string
+  /** Opens Claude Code in a console in this folder. */
+  openTerminal: (cwd: string) => void
 }
 
 function isString(value: unknown): value is string {
@@ -165,6 +167,8 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     await manager.get(id)?.setPermissionMode(mode)
     // What the session actually ended up in — a refused bypass leaves it alone.
     const actual = manager.get(id)?.panel.permissionMode
+    // «Авто-да» answers what is already waiting too, not only what comes next.
+    if (actual === 'autoAllow') broker.allowTab(id)
     // A bypass is for this session only (spec 5.4): remembered, the default
     // sanitiser would turn it into 'default' and lose the mode saved before.
     if (actual && actual !== 'bypassPermissions') {
@@ -239,6 +243,15 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   ipcMain.handle(CHANNELS.agentTaskStop, async (_e, id: unknown, taskId: unknown) => {
     if (!isString(id) || !isString(taskId) || taskId === '') return
     await manager.get(id)?.stopTask(taskId)
+  })
+
+  // Claude Code itself, in a console in the tab's folder: for the commands
+  // that exist only in the terminal. The folder is the tab's, never the window's.
+  ipcMain.handle(CHANNELS.agentOpenTerminal, (_e, id: unknown) => {
+    if (!isString(id)) return
+    const tab = controller.list().find((t) => t.id === id)
+    if (!tab || tab.missingCwd) return
+    deps.openTerminal(tab.cwd)
   })
 
   ipcMain.handle(CHANNELS.permissionAnswer, (_e, requestId: unknown, answer: unknown) => {

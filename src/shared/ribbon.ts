@@ -1,5 +1,6 @@
 import type {
   Attachment,
+  NoticeAction,
   QuestionView,
   RibbonChange,
   RibbonItem,
@@ -331,7 +332,7 @@ export class RibbonBuilder {
     // What is shown and what will be echoed are not always the same string:
     // an attached file reaches the agent as an @-mention appended to the text.
     this.pendingEchoes.push(echoKey)
-    return [this.append({ kind: 'user', id: this.nextId(), text, attachments })]
+    return [this.append({ kind: 'user', id: this.nextId(), text, attachments, at: this.now() })]
   }
 
   /**
@@ -450,7 +451,7 @@ export class RibbonBuilder {
       case 'system':
         return this.onSystem(message)
       case 'result':
-        return this.closeOpenBlocks()
+        return [...this.closeOpenBlocks(), ...this.onResult(message)]
       case 'permission_denied':
         return [
           this.append({
@@ -469,9 +470,32 @@ export class RibbonBuilder {
   notice(
     text: string,
     tone: 'info' | 'error' = 'info',
-    action?: 'login'
+    action?: NoticeAction
   ): RibbonChange[] {
     return [this.append({ kind: 'notice', id: this.nextId(), text, tone, ...(action ? { action } : {}) })]
+  }
+
+  /**
+   * The turn is over: the line under the answer says when, and how long it
+   * took. A slash command answered locally — no model call, no turn — gets
+   * none; neither does a replay, whose record has no results.
+   */
+  private onResult(message: Record<string, unknown>): RibbonChange[] {
+    if (this.replaying) return []
+    const turns = Number(message['num_turns'] ?? 0) || 0
+    const apiMs = Number(message['duration_api_ms'] ?? 0) || 0
+    if (turns === 0 && apiMs === 0) return []
+    const durationMs = Number(message['duration_ms'] ?? 0) || 0
+    const failed = message['is_error'] === true || (str(message['subtype']) !== '' && message['subtype'] !== 'success')
+    return [
+      this.append({
+        kind: 'turnEnd',
+        id: this.nextId(),
+        at: this.now(),
+        ...(durationMs > 0 ? { durationMs } : {}),
+        ...(failed ? { failed: true as const } : {})
+      })
+    ]
   }
 
   // ------------------------------------------------------------- the stream
@@ -590,9 +614,16 @@ export class RibbonBuilder {
     for (const block of asArray(inner['content'])) {
       if (!isObject(block)) continue
       switch (block['type']) {
-        case 'text':
+        case 'text': {
           if (alreadyStreamed) break
           if (!str(block['text']).trim()) break
+          // «/chrome isn't available in this environment.» is the CLI talking,
+          // not the model: it becomes a notice with a way out.
+          const local = inner['model'] === '<synthetic>' ? this.commandNotice(str(block['text'])) : null
+          if (local) {
+            changes.push(this.append(local))
+            break
+          }
           changes.push(
             this.append({
               kind: 'agentText',
@@ -603,6 +634,7 @@ export class RibbonBuilder {
             })
           )
           break
+        }
 
         case 'thinking':
           if (alreadyStreamed) break
@@ -754,7 +786,7 @@ export class RibbonBuilder {
     if (typeof content === 'string') {
       if (message['isSynthetic'] === true || fromAgent || this.consumeEcho(content)) return noticed
       const text = userText(content)
-      return text === '' ? noticed : [...noticed, ...this.appendUser(text)]
+      return text === '' ? noticed : [...noticed, ...this.appendUser(text, [], this.messageTime(message))]
     }
 
     const blocks = asArray(content).filter(isObject)
@@ -782,7 +814,7 @@ export class RibbonBuilder {
 
     if (!text && attachments.length === 0) return noticed
     if (this.consumeEcho(text)) return noticed
-    return [...noticed, ...this.appendUser(text, attachments)]
+    return [...noticed, ...this.appendUser(text, attachments, this.messageTime(message))]
   }
 
   private onToolResult(
@@ -1041,9 +1073,61 @@ export class RibbonBuilder {
     return true
   }
 
-  private appendUser(text: string, attachments: Attachment[] = []): RibbonChange[] {
+  private appendUser(text: string, attachments: Attachment[] = [], at?: number): RibbonChange[] {
     const remote = this.remoteLive && !this.replaying
-    return [this.append({ kind: 'user', id: this.nextId(), text, attachments, ...(remote ? { remote: true as const } : {}) })]
+    return [
+      this.append({
+        kind: 'user',
+        id: this.nextId(),
+        text,
+        attachments,
+        ...(remote ? { remote: true as const } : {}),
+        ...(at !== undefined ? { at } : {})
+      })
+    ]
+  }
+
+  /**
+   * When a message was written: the record's own timestamp, or — live — now.
+   * A replayed message without one has no time rather than a wrong one.
+   */
+  private messageTime(message: Record<string, unknown>): number | undefined {
+    const stamp = message['timestamp']
+    if (typeof stamp === 'string') {
+      const parsed = Date.parse(stamp)
+      if (!Number.isNaN(parsed)) return parsed
+    }
+    return this.replaying ? undefined : this.now()
+  }
+
+  /**
+   * The CLI's own one-line answers to a slash command it will not run here,
+   * in the words of the person using Qclod. Null for any other text.
+   */
+  private commandNotice(text: string): RibbonItem | null {
+    const line = text.trim()
+    const unavailable = /^\/(\S+) isn't available (?:in this environment|over Remote Control)\.?$/.exec(line)
+    if (unavailable) {
+      return {
+        kind: 'notice',
+        id: this.nextId(),
+        text:
+          `Команда /${unavailable[1]} работает только в терминальном Claude Code — в окне Qclod её нет. ` +
+          'Откройте терминал и наберите её там.',
+        tone: 'info',
+        action: 'terminal'
+      }
+    }
+    const unknown = /^Unknown (?:command|skill): \/?(\S+?)(?:\.|$)/.exec(line)
+    if (unknown) {
+      return {
+        kind: 'notice',
+        id: this.nextId(),
+        text: `Неизвестная команда /${unknown[1]}. Список команд — по «/» в поле ввода.`,
+        tone: 'info'
+      }
+    }
+    return null
   }
 
   private parentOf(message: Record<string, unknown>): string | undefined {

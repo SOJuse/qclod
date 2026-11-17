@@ -938,8 +938,8 @@ describe('TabController: фоновая вкладка видна без зап�
     expect(snapshot.data.model).toBe('claude-opus-5')
     expect(snapshot.data.context).toEqual({
       used: 45674,
-      max: 200_000,
-      percent: 23,
+      max: 1_000_000,
+      percent: 5,
       categories: [],
       estimated: true
     })

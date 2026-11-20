@@ -121,7 +121,10 @@ function paneStateAfter(
     activeTabId = near ?? tabs[0]?.id ?? ''
   }
   if (activeTabId && !paneTabIds.includes(activeTabId)) paneTabIds.unshift(activeTabId)
-  return { paneTabIds: paneTabIds.slice(0, MAX_PANES), activeTabId }
+  const next = paneTabIds.slice(0, MAX_PANES)
+  // The same panes keep the same array: effects and storage writes key on it.
+  const same = next.length === state.paneTabIds.length && next.every((id, i) => id === state.paneTabIds[i])
+  return { paneTabIds: same ? state.paneTabIds : next, activeTabId }
 }
 
 export const EMPTY_PANEL: PanelData = Object.freeze({

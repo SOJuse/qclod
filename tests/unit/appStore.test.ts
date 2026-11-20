@@ -324,4 +324,24 @@ describe('useAppStore: панели', () => {
     expect(state.paneTabIds).toEqual(['A', 'C'])
     expect(state.activeTabId).toBe('C')
   })
+
+  test('setTabs без изменений в панелях (только статус) оставляет тот же массив', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('A'), t('B')])
+    store.setPanes(['A', 'B'])
+    const before = useAppStore.getState().paneTabIds
+    store.setTabs([t('A'), { ...t('B'), status: 'busy' }])
+    expect(useAppStore.getState().paneTabIds).toBe(before)
+  })
+
+  test('закрытая вкладка панели даёт новый массив', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('A'), t('B')])
+    store.setPanes(['A', 'B'])
+    const before = useAppStore.getState().paneTabIds
+    store.setTabs([t('A')])
+    const after = useAppStore.getState().paneTabIds
+    expect(after).not.toBe(before)
+    expect(after).toEqual(['A'])
+  })
 })

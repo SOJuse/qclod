@@ -1,4 +1,15 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  nativeTheme,
+  powerSaveBlocker,
+  shell
+} from 'electron'
+import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { APP_ID } from '../shared/appId'
@@ -42,6 +53,13 @@ import { cleanupPasteDir } from './files/imagePaste'
 import { createUpdateSource, UpdateFlow } from './update/updater'
 import { openAgentTerminal, startVoiceTyping } from './system/console'
 import { locateAgent } from './setup/findAgent'
+import {
+  awakeNeeded,
+  electronBlocker,
+  executionStateHelper,
+  KeepAwake,
+  USE_EXECUTION_STATE_HELPER
+} from './system/keepAwake'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -266,6 +284,23 @@ app.whenReady().then(async () => {
     toggleWindow
   )
 
+  // The machine stays awake while an agent works or waits for the person
+  // (system/keepAwake.ts). An off-screen test run holds nothing.
+  const keepAwake = new KeepAwake(
+    offScreen || headless
+      ? []
+      : [
+          electronBlocker(powerSaveBlocker),
+          ...(process.platform === 'win32' && USE_EXECUTION_STATE_HELPER
+            ? [executionStateHelper(spawn, process.pid)]
+            : [])
+        ]
+  )
+  keepAwake.onChange(() => tray?.rebuild())
+  // Fed from the tab statuses; the autonomy host (task 8) adds the limit waits.
+  const refreshAwake = (): void =>
+    keepAwake.set(awakeNeeded(controller.list().map((t) => t.status), []))
+
   // The question is put in the tab's own ribbon and answered from there.
   // A window that is gone cannot answer, so the broker denies rather than
   // leaving the agent waiting forever.
@@ -356,6 +391,7 @@ app.whenReady().then(async () => {
       send(CHANNELS.tabsChanged, tabs)
       tray?.rebuild()
       tray?.refresh()
+      refreshAwake()
     },
     onRibbon: (event) => outbox.ribbon(event),
     onPanel: (event) => send(CHANNELS.panelChanged, event),
@@ -363,6 +399,7 @@ app.whenReady().then(async () => {
     onStatus: (event) => {
       send(CHANNELS.statusChanged, event)
       tray?.refresh()
+      refreshAwake()
       const tab = controller.list().find((t) => t.id === event.tabId)
       // Nor does it show toasts.
       if (!tab || offScreen) return
@@ -489,7 +526,8 @@ app.whenReady().then(async () => {
           send(CHANNELS.activateTab, id)
         },
         toggleWindow,
-        getTone: trayTone
+        getTone: trayTone,
+        isKeepingAwake: () => keepAwake.active
       }))
 
   const rereadTaskbarTheme = (): void => {
@@ -528,6 +566,7 @@ app.whenReady().then(async () => {
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll()
+    keepAwake.dispose()
   })
 
   app.on('activate', () => {

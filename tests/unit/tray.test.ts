@@ -103,6 +103,51 @@ describe('refresh', () => {
   })
 })
 
+describe('«не спать» в меню', () => {
+  async function build(active: boolean, tabs: TabState[]) {
+    vi.resetModules()
+    const built: Array<Array<{ label?: string; enabled?: boolean }>> = []
+    const setToolTip = vi.fn()
+    class FakeTray {
+      setToolTip = setToolTip
+      setImage = vi.fn()
+      setContextMenu = vi.fn()
+      on = vi.fn()
+    }
+    vi.doMock('electron', () => ({
+      app: { quit: vi.fn() },
+      Menu: { buildFromTemplate: (t: never) => (built.push(t), {}) },
+      nativeImage: { createEmpty: () => ({ addRepresentation: vi.fn() }) },
+      nativeTheme: {},
+      Tray: FakeTray
+    }))
+    const { createTray } = await import('../../src/main/tray')
+    createTray({
+      getWindow: () => null,
+      getTabs: () => tabs,
+      onActivateTab: () => undefined,
+      toggleWindow: () => undefined,
+      getTone: () => 'dark',
+      isKeepingAwake: () => active
+    })
+    vi.doUnmock('electron')
+    return { menu: built.at(-1)!, setToolTip }
+  }
+
+  test('при active в меню строка «Не даю компьютеру уснуть — агенты работают»', async () => {
+    const on = await build(true, [tab('busy')])
+    const row = on.menu.find((i) => i.label === 'Не даю компьютеру уснуть — агенты работают')
+    expect(row?.enabled).toBe(false)
+    const off = await build(false, [tab('busy')])
+    expect(off.menu.some((i) => i.label?.startsWith('Не даю'))).toBe(false)
+  })
+
+  test('при active и статусе waiting подсказка — «Qclod — ждёт тебя»', async () => {
+    const { setToolTip } = await build(true, [tab('waiting')])
+    expect(setToolTip).toHaveBeenCalledWith('Qclod — ждёт тебя')
+  })
+})
+
 describe('подсказки', () => {
   test('тексты', () => {
     expect(TRAY_TOOLTIP.idle).toBe('Qclod')

@@ -13,7 +13,11 @@ export interface TrayDeps {
   toggleWindow: () => void
   /** The glyph's tone for the current taskbar. */
   getTone: () => TrayTone
+  /** The machine is being kept awake for the agents (system/keepAwake.ts). */
+  isKeepingAwake?: () => boolean
 }
+
+export const KEEP_AWAKE_LABEL = 'Не даю компьютеру уснуть — агенты работают'
 
 const GLYPH_RGB: Record<TrayTone, readonly [number, number, number]> = {
   dark: [0x1b, 0x1b, 0x1f],
@@ -98,6 +102,28 @@ function trayIcon(tone: TrayTone, status: TrayStatus): Electron.NativeImage {
   return image
 }
 
+export function trayMenuTemplate(
+  deps: Pick<TrayDeps, 'toggleWindow' | 'onActivateTab' | 'isKeepingAwake'>,
+  tabs: TabState[]
+): Electron.MenuItemConstructorOptions[] {
+  const awake: Electron.MenuItemConstructorOptions[] = deps.isKeepingAwake?.()
+    ? [{ type: 'separator' }, { label: KEEP_AWAKE_LABEL, enabled: false }]
+    : []
+  return [
+    { label: 'Показать Qclod', click: deps.toggleWindow },
+    { type: 'separator' },
+    ...(tabs.length === 0
+      ? [{ label: 'Нет чатов', enabled: false } as Electron.MenuItemConstructorOptions]
+      : tabs.map((tab) => ({
+          label: `${tab.badge ? '• ' : ''}${tab.title}`,
+          click: () => deps.onActivateTab(tab.id)
+        }))),
+    ...awake,
+    { type: 'separator' },
+    { label: 'Выйти', click: () => app.quit() }
+  ]
+}
+
 export function createTray(deps: TrayDeps): Tray & { rebuild: () => void; refresh: () => void } {
   const tray = new Tray(trayIcon(deps.getTone(), trayStatus(deps.getTabs())))
   tray.setToolTip(TRAY_TOOLTIP[trayStatus(deps.getTabs())])
@@ -115,21 +141,7 @@ export function createTray(deps: TrayDeps): Tray & { rebuild: () => void; refres
   }
 
   const rebuild = (): void => {
-    const tabs = deps.getTabs()
-    tray.setContextMenu(
-      Menu.buildFromTemplate([
-        { label: 'Показать Qclod', click: deps.toggleWindow },
-        { type: 'separator' },
-        ...(tabs.length === 0
-          ? [{ label: 'Нет чатов', enabled: false } as Electron.MenuItemConstructorOptions]
-          : tabs.map((tab) => ({
-              label: `${tab.badge ? '• ' : ''}${tab.title}`,
-              click: () => deps.onActivateTab(tab.id)
-            }))),
-        { type: 'separator' },
-        { label: 'Выйти', click: () => app.quit() }
-      ])
-    )
+    tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate(deps, deps.getTabs())))
   }
 
   rebuild()

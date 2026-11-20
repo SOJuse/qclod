@@ -320,6 +320,9 @@ function ui(): Storage | null {
   }
 }
 
+/** The history reads under way, by projectKey; `again` — a forced read was asked for meanwhile. */
+const historyReads = new Map<string, { again: boolean }>()
+
 /** What the window held before it was reloaded; a tab that is gone is dropped by setTabs. */
 const restored = loadUi(ui())
 /** After the watchdog's reload a long draft is held back, not put into the field (heldDrafts.ts). */
@@ -393,11 +396,26 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   loadProjectHistory: (cwd, force = false) => {
     const key = projectKey(cwd)
+    const running = historyReads.get(key)
+    if (running) {
+      // The answer on its way may predate what changed (a chat closed meanwhile): one more read follows it.
+      if (force) running.again = true
+      return
+    }
     const known = get().historyByProject[key]
-    if (known === 'loading' || (known !== undefined && known.error === undefined && !force)) return
-    set((state) => ({ historyByProject: { ...state.historyByProject, [key]: 'loading' } }))
-    const done = (entry: ProjectHistory): void =>
+    const list = known !== undefined && known !== 'loading' && known.error === undefined ? known : null
+    if (list && !force) return
+    const read = { again: false }
+    historyReads.set(key, read)
+    // A list already shown stays while it is read again (S2-R18).
+    set((state) => ({
+      historyByProject: { ...state.historyByProject, [key]: list ? { items: list.items, reading: true } : 'loading' }
+    }))
+    const done = (entry: ProjectHistory): void => {
+      historyReads.delete(key)
       set((state) => ({ historyByProject: { ...state.historyByProject, [key]: entry } }))
+      if (read.again) get().loadProjectHistory(cwd, true)
+    }
     window.qclod.projectHistory(cwd).then(
       (items) => done({ items }),
       (err: unknown) => done({ items: [], error: err instanceof Error ? err.message : String(err) })

@@ -36,6 +36,8 @@ test('история в боковой панели: загрузка, зате�
     const loading = sidebar.locator('[data-state="loading"]')
     await expect(loading).toContainText('Загружаю…')
     await expect(loading).toHaveAttribute('role', 'status')
+    // A fast answer never flashes it (S2-R18): it fades in after a short wait.
+    await shownAfterDelay(loading)
     await shot(win, '09-history-loading')
 
     const err = sidebar.locator('[data-state="error"]')
@@ -64,6 +66,55 @@ test('история в боковой панели: «Повторить» чи
     await expect(err).toBeVisible({ timeout: 15000 })
     await err.getByRole('button', { name: 'Повторить' }).click()
     await expect(win.locator('[data-testid="sidebar-session"]')).toHaveCount(1)
+    await expect(err).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('история в боковой панели: при перечитывании список стоит на месте, «Загружаю…» не мигает', async () => {
+  const { app, win } = await launchQclod({
+    env: { QCLOD_FAKE_HISTORY: HISTORY, QCLOD_FAKE_SLOW: '{"projects:history":1500}' }
+  })
+  try {
+    const sidebar = win.locator('[data-testid="sidebar"]')
+    const sessions = sidebar.locator('[data-testid="sidebar-session"]')
+    await expect(sessions).toHaveCount(1, { timeout: 15000 })
+    await sessions.first().click()
+    // Opened, it is a chat: nothing past is left to show while the list is read again.
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+    await expect(sessions).toHaveCount(0)
+
+    // Closed, it is past again at once; the re-read under way (1.5 s) does not wipe it.
+    await win.locator('[data-testid="tab"].is-active .tab-close').click()
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(1)
+    // Counted right now, not waited for: a «Загружаю…» in between must fail the test.
+    for (let i = 0; i < 8; i++) {
+      expect(await sidebar.locator('[data-state="loading"]').count()).toBe(0)
+      expect(await sessions.count()).toBe(1)
+      await win.waitForTimeout(250)
+    }
+  } finally {
+    await app.close()
+  }
+})
+
+test('история в боковой панели: «Начать заново» перечитывает её, как закрытие чата', async () => {
+  // The first read fails; nothing but the restart asks again.
+  const { app, win } = await launchQclod({
+    env: {
+      QCLOD_FAKE_HISTORY: HISTORY,
+      QCLOD_FAKE_FAIL: '{"projects:history":"нет доступа"}',
+      QCLOD_FAKE_FAIL_TIMES: '{"projects:history":1}'
+    }
+  })
+  try {
+    const err = win.locator('[data-testid="sidebar"] [data-state="error"]')
+    await expect(err).toBeVisible({ timeout: 15000 })
+    await win.keyboard.press('Control+K')
+    await win.locator('[data-testid="action-query"]').fill('перезапустить')
+    await win.keyboard.press('Enter')
+    await expect(win.locator('[data-testid="sidebar-session"]')).toHaveCount(1, { timeout: 15000 })
     await expect(err).toHaveCount(0)
   } finally {
     await app.close()

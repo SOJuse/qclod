@@ -7,6 +7,7 @@ import { MAX_PANES, buildSidebar, chatOrder, nextPanes } from '../chat/sidebarMo
 import { SplitView } from './SplitView'
 import { dropOnPane, type DropPayload, type DropWhere } from './paneOps'
 import { openAndPlace } from './dropSession'
+import { restartChat } from './restartChat'
 import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { Sidebar } from '../components/sidebar/Sidebar'
 import { ChatPane, type PanelRequest } from '../components/ChatPane'
@@ -398,13 +399,9 @@ export function App(): JSX.Element {
 
   const restartSession = useCallback((): void => {
     const id = useAppStore.getState().activeTabId
-    if (!id) return
-    // The new session's panel replaces the old one's whole.
-    void window.qclod
-      .restartTab(id)
-      .then(() => window.qclod.panel(id))
-      .then((snapshot) => setPanelSnapshot(id, snapshot))
-  }, [setPanelSnapshot])
+    // A new session, its own panel, and the project's history read again.
+    if (id) void restartChat(id)
+  }, [])
 
   /** The one place every shortcut and every Ctrl+K row ends up. */
   const runAction = useCallback(

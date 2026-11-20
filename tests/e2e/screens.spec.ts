@@ -626,4 +626,22 @@ test.describe('снимки для владельца', () => {
       await expect(win.locator('[data-testid="status-context"]')).toBeVisible({ timeout: 15000 })
     })
   })
+  test('28 сплит из двух, вопрос в одной', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'qclod-final-dir-'))
+    profiles.push(folder)
+    const script = {
+      steps: [],
+      nextTurn: [{ kind: 'askQuestion', question: 'Какой вариант панели?', options: ['Справа', 'Снизу'] }]
+    }
+    await take('28-сплит-вопрос', { script, env: { QCLOD_PICK_FOLDER: folder }, size: { width: 1400, height: 800 } }, async (win) => {
+      await win.locator('[data-testid="tab-new"]').click()
+      await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+      await win.locator('[data-testid="toggle-split"]').click()
+      const right = win.locator('[data-testid="chat-pane"]').last()
+      await right.locator('[data-testid="composer-input"]').click()
+      await win.keyboard.type('спроси меня')
+      await win.keyboard.press('Enter')
+      await expect(right.locator('[data-testid="pinned-card"] [data-testid="question-card"]')).toBeVisible({ timeout: 15000 })
+    })
+  })
 })

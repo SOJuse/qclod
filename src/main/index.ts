@@ -303,6 +303,12 @@ app.whenReady().then(async () => {
     confirmAutoAllow: () => confirmAutoAllow(mainWindow),
     onClosed: (id) => broker.clearSession(id)
   })
+  // e2e asks whether a chat still holds its agent session (stage2.spec.ts).
+  // Only the e2e build has it (buildFlags.d.ts).
+  if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_FAKE_SDK']) {
+    ;(globalThis as { __qclodHasSession?: (id: TabId) => boolean }).__qclodHasSession = (id) =>
+      manager.get(id) !== undefined
+  }
 
   // Under the fixture the past conversations come from the environment too,
   // so a history test never touches anyone's real session files: a session

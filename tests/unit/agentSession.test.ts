@@ -252,6 +252,38 @@ describe('AgentSession', () => {
     expect(resolveAgent).toHaveBeenCalledTimes(2)
   })
 
+  test('минуты «авто-да» из настроек доходят до сессии через менеджер', async () => {
+    let minutes = 15
+    const manager = new AgentSessionManager({
+      getAgentPath: () => 'claude',
+      askPermission: async () => ({ behavior: 'deny' as const }),
+      confirmAutoAllow: async () => true,
+      autoAnswerMinutes: () => minutes,
+      createDriver: () => createFakeSdk({ steps: [] }) as unknown as AgentDriver
+    })
+    const shown = (items: RibbonItem[]): string =>
+      items
+        .filter((i) => i.kind === 'notice')
+        .map((i) => (i as { text: string }).text)
+        .join('\n')
+
+    const first = manager.create('t1', 'C:/проект', {})
+    const rec = watch(first)
+    await first.start()
+    await first.setPermissionMode('autoAllow')
+    expect(shown(rec.items)).toContain('не ответите за 15 мин')
+    await manager.close('t1')
+
+    // Read when the line is shown: a changed setting reaches the next session.
+    minutes = 30
+    const second = manager.create('t1', 'C:/проект', {})
+    const seen = watch(second)
+    await second.start()
+    await second.setPermissionMode('autoAllow')
+    expect(shown(seen.items)).toContain('не ответите за 30 мин')
+    await manager.close('t1')
+  })
+
   test('setPermissionMode доходит до SDK', async () => {
     const { session, driver } = makeSession({ steps: [] })
     const rec = watch(session)

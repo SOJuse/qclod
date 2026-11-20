@@ -11,6 +11,8 @@ export interface AgentSessionManagerOptions {
   confirmBypass?: () => Promise<boolean>
   confirmAutoAllow?: () => Promise<boolean>
   disposeTimeoutMs?: number
+  /** The «авто-да» timer's minutes from the settings, read when its line is shown. */
+  autoAnswerMinutes?: () => number
   /**
    * A tab's session was closed: «Начать заново», «Закрыть чат», a restart
    * after a crash, or the app quitting. What was allowed «до конца сессии»
@@ -46,6 +48,7 @@ export class AgentSessionManager {
       askPermission: this.options.askPermission,
       ...(this.options.confirmBypass ? { confirmBypass: this.options.confirmBypass } : {}),
       ...(this.options.confirmAutoAllow ? { confirmAutoAllow: this.options.confirmAutoAllow } : {}),
+      ...(this.options.autoAnswerMinutes ? { autoAnswerMinutes: this.options.autoAnswerMinutes } : {}),
       ...(this.options.disposeTimeoutMs === undefined
         ? {}
         : { disposeTimeoutMs: this.options.disposeTimeoutMs }),

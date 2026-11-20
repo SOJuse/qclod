@@ -323,6 +323,14 @@ if (gotLock) void app.whenReady().then(async () => {
   )
   keepAwake.onChange(() => tray?.rebuild())
 
+  // The «авто-да» timer, read on every use so the setting applies to new cards
+  // at once. e2e shortens it to milliseconds and takes the jitter out
+  // (buildFlags.d.ts); the ribbon line and the core both read this one.
+  const autoAnswerMs = (): number => {
+    const seam = __QCLOD_TEST_SEAMS__ ? Number(process.env['QCLOD_AUTO_ANSWER_MS']) : 0
+    return seam > 0 ? seam : settings.autoAnswerMinutes * 60_000
+  }
+
   // One autonomy core per tab (autonomy/autonomyHost.ts). The controller does
   // not exist yet, so the host reaches it through these.
   const autonomy = new AutonomyHost({
@@ -333,11 +341,7 @@ if (gotLock) void app.whenReady().then(async () => {
       setAutonomyRecord: (id, record) => controller.setAutonomyRecord(id, record)
     },
     manager: { get: (id) => manager.get(id) },
-    // e2e shortens the timer to milliseconds and takes the jitter out (buildFlags.d.ts).
-    autoAnswerMs: () => {
-      const seam = __QCLOD_TEST_SEAMS__ ? Number(process.env['QCLOD_AUTO_ANSWER_MS']) : 0
-      return seam > 0 ? seam : settings.autoAnswerMinutes * 60_000
-    },
+    autoAnswerMs,
     alert: (id, text) => {
       const tab = controller.list().find((t) => t.id === id)
       if (!tab || offScreen) return
@@ -391,6 +395,8 @@ if (gotLock) void app.whenReady().then(async () => {
       ),
     confirmBypass: () => confirmBypass(mainWindow),
     confirmAutoAllow: () => confirmAutoAllow(mainWindow),
+    // The same length the core counts down; under the e2e seam a fraction.
+    autoAnswerMinutes: () => autoAnswerMs() / 60_000,
     onClosed: (id) => broker.clearSession(id)
   })
   // e2e asks whether a chat still holds its agent session (stage2.spec.ts).

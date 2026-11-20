@@ -97,6 +97,8 @@ export class AutonomyCore {
   // crashes
   private crashes: number[] = []
   private continueOnUp = false
+  /** The person wrote while no process was up: their message, not «продолжай», carries on. */
+  private personWhileDown = false
   private gaveUp: AutonomyView['gaveUp'] = null
 
   // limits
@@ -174,6 +176,8 @@ export class AutonomyCore {
         break
       }
       case 'personActed':
+        this.continueOnUp = false
+        if (!this.alive) this.personWhileDown = true
         this.continuesWithoutPerson = 0
         this.gaveUp = null
         this.endLimitWait()
@@ -311,8 +315,11 @@ export class AutonomyCore {
 
     const crashContinue = this.continueOnUp
     this.continueOnUp = false
-    // The person's own messages handed over to the new process say more than «продолжай».
-    if (carried > 0) {
+    const spoke = this.personWhileDown
+    this.personWhileDown = false
+    // The person's own messages handed over to the new process say more than
+    // «продолжай» — and so does one written while it was starting.
+    if (carried > 0 || spoke) {
       if (restoring) this.restoreLimitWait()
       return
     }

@@ -38,6 +38,8 @@ export interface AutonomyHooks {
   sessionAdopted(id: TabId, session: AgentSession): void
   /** Once per new session, after it started and was handed what it was owed. */
   sessionUp(id: TabId, session: AgentSession, carried: number): void
+  /** The person wrote while the tab's session was being swapped: no session heard it. */
+  personActed?(id: TabId): void
 }
 
 export interface TabControllerDeps {
@@ -510,6 +512,7 @@ export class TabController {
       if (held.length >= MAX_QUEUED) return false
       held.push(input)
       this.held.set(id, held)
+      this.deps.autonomy?.personActed?.(id)
       return true
     }
     return this.deps.manager.get(id)?.send(input) ?? false

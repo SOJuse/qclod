@@ -2075,6 +2075,27 @@ describe('TabController: раскладка этапа 2 (layout.json)', () => {
     expect(calls).toEqual(['adopted a', 'up a 0'])
   })
 
+  test('хуки автономии: сообщение, задержанное на время замены сессии, — тоже действие человека', async () => {
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {} }])
+    const acted: string[] = []
+    const harness = makeController({
+      autonomy: {
+        tabAdded: () => undefined,
+        tabClosed: () => undefined,
+        sessionAdopted: () => undefined,
+        sessionUp: () => undefined,
+        personActed: (id) => acted.push(id)
+      }
+    })
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    const swapping = harness.controller.restart('a')
+    expect(harness.controller.send('a', { text: 'пока меняется', attachments: [] })).toBe(true)
+    expect(acted).toEqual(['a'])
+    await swapping
+    await harness.controller.whenSettled()
+  })
+
   test('restore: папка активного чата в панели удалена — без сбоя, агента нет, панели и ширины целы', async () => {
     const gone = join(store, 'удалённая')
     mkdirSync(gone)

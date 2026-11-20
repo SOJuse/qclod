@@ -131,6 +131,12 @@ export class AutonomyHost implements AutonomyHooks {
     entry.core.handle({ type: 'processUp', carried })
   }
 
+  /** A message of the person's that no session has heard yet (held while the session is swapped). */
+  personActed(id: TabId): void {
+    if (this.frozen) return
+    this.entries.get(id)?.core.handle({ type: 'personActed' })
+  }
+
   // ------------------------------------------------------------ the window
 
   hold(tabId: TabId, cardId: string): void {

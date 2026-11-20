@@ -90,6 +90,29 @@ describe('AutonomyCore: падения', () => {
     expect(h.commands()).toEqual([{ type: 'restartProcess' }])
   })
 
+  test('сообщение человека, пока процесс поднимается, заменяет «продолжай» — и после падения, и при восстановлении', () => {
+    const h = harness()
+    h.core.handle({ type: 'processUp', carried: 0 })
+    h.core.handle({ type: 'status', status: 'busy' })
+    // Said while the process was up: a crash later still carries on.
+    h.core.handle({ type: 'personActed' })
+    h.core.handle({ type: 'processDied', cause: 'crash' })
+    h.core.handle({ type: 'processUp', carried: 0 })
+    expect(continues(h)).toHaveLength(1)
+    h.core.handle({ type: 'status', status: 'busy' })
+    h.core.handle({ type: 'processDied', cause: 'crash' })
+    // Typed while the new process starts (held in its queue, so not carried).
+    h.core.handle({ type: 'personActed' })
+    h.core.handle({ type: 'processUp', carried: 0 })
+    expect(continues(h)).toHaveLength(1)
+
+    const r = harness({ record: { working: true } })
+    r.core.handle({ type: 'personActed' })
+    r.core.handle({ type: 'processUp', carried: 0 })
+    expect(continues(r)).toEqual([])
+    expect(r.notices().map((n) => n.notice.kind)).not.toContain('restoreContinue')
+  })
+
   test('четвёртое падение за 10 минут: нет restartProcess, crashGaveUp с alert', () => {
     const h = harness()
     h.core.handle({ type: 'processUp', carried: 0 })

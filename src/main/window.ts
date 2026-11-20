@@ -109,6 +109,9 @@ export function watchRenderer(
   }
 
   contents.on('render-process-gone', (_e, details) => {
+    // A hang timer left armed would kill the page that is about to load.
+    if (hangTimer) clearTimeout(hangTimer)
+    hangTimer = null
     if (details.reason === 'clean-exit') return
     note(`render-process-gone: ${details.reason}`)
     reload('render-process-gone')

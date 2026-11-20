@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { APP_ID } from '../shared/appId'
 import { createMainWindow, hardenWebContents, offScreen, RENDERER_ENTRY, watchRenderer } from './window'
 import { ErrorLog } from './system/errorLog'
+import { ReportThrottle } from './system/reportThrottle'
 import { registerBaseIpc } from './ipc'
 import { registerAgentIpc } from './agentIpc'
 import { withFault } from './testSeams/ipcFaults'
@@ -130,10 +131,23 @@ app.whenReady().then(async () => {
       at: Date.now()
     })
   })
-  ipcMain.on(CHANNELS.rendererError, (_e, raw: unknown) => {
+  // A repeating or hostile sender must not push the first, most useful error
+  // out of the log (system/reportThrottle.ts).
+  const reportGate = new ReportThrottle()
+  ipcMain.on(CHANNELS.rendererError, (e, raw: unknown) => {
     const report = sanitizeErrorReport(raw)
     if (!report) return
     const stack = [report.stack, report.componentStack].filter(Boolean).join('\n')
+    const verdict = reportGate.check(e.sender.id, [report.scope, report.message, stack].join('\n'))
+    if (!verdict.admit) return
+    if (verdict.dropped > 0) {
+      errorLog.write({
+        source: 'renderer',
+        scope: report.scope,
+        message: `${verdict.dropped} отчётов об ошибках пропущено`,
+        at: Date.now()
+      })
+    }
     errorLog.write({
       source: 'renderer',
       scope: report.scope,

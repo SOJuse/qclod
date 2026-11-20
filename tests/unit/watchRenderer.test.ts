@@ -74,6 +74,16 @@ describe('watchRenderer', () => {
     expect(contents.reload).toHaveBeenCalledTimes(1)
   })
 
+  test('a crash while unresponsive disarms the hang timer: the new page is not killed', () => {
+    contents.emit('unresponsive')
+    vi.advanceTimersByTime(5000)
+    gone('oom')
+    expect(contents.reload).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(15000)
+    expect(contents.forcefullyCrashRenderer).not.toHaveBeenCalled()
+    expect(contents.reload).toHaveBeenCalledTimes(1)
+  })
+
   test('responsive in time cancels it', () => {
     contents.emit('unresponsive')
     vi.advanceTimersByTime(10000)

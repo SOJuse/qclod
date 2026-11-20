@@ -1,5 +1,6 @@
 import { Columns2, TriangleAlert, History, Minus, Settings, Square, X } from 'lucide-react'
 import { hint } from '../app/shortcuts'
+import markUrl from '../assets/mark.svg'
 import { CHROME_ICON_SIZE } from '../ui/icons'
 import { TabStrip } from './TabStrip'
 import type { HotkeyRegistration, TabId, TabState } from '../../shared/types'
@@ -32,7 +33,7 @@ export function TitleBar({
 }: Props): JSX.Element {
   return (
     <header className="title-bar" data-testid="title-bar">
-      <span className="title-bar-mark" aria-hidden />
+      <img className="title-bar-mark" src={markUrl} alt="" />
       <TabStrip
         tabs={tabs}
         activeTabId={activeTabId}
@@ -134,7 +135,7 @@ function WindowButtons(): JSX.Element {
 export function SetupTitleBar(): JSX.Element {
   return (
     <header className="title-bar" data-testid="setup-title-bar">
-      <span className="title-bar-mark" aria-hidden />
+      <img className="title-bar-mark" src={markUrl} alt="" />
       <div className="title-bar-spacer" />
       <div className="window-controls">
         <WindowButtons />

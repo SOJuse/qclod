@@ -7,9 +7,16 @@
       content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:"
     />
     <title>Qclod</title>
+    <link rel="stylesheet" href="./styles/tokens.css" />
+    <link rel="stylesheet" href="./styles/boot.css" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot" data-testid="boot" role="status" aria-label="Qclod запускается">
+        <img src="./assets/mark.svg" width="72" height="72" alt="" />
+        <span class="boot-name">Qclod</span>
+      </div>
+    </div>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>

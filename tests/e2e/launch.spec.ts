@@ -4,6 +4,9 @@ test('окно открывается, представляется и пока�
   const app = await electron.launch({ args: ['.'] })
   const win = await app.firstWindow()
 
+  // React's first render replaces the loading screen.
+  await expect(win.locator('[data-testid="app-root"]')).toBeVisible()
+  await expect(win.locator('[data-testid="boot"]')).toHaveCount(0)
   await expect(win.locator('[data-testid="title-bar"]')).toBeVisible()
   await expect(win).toHaveTitle(/Qclod/)
   // A window with no tab has nothing to do; there is always one.

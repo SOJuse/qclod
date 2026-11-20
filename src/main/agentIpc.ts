@@ -1,7 +1,8 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFileSync } from 'node:fs'
 import { CHANNELS } from '../shared/channels'
-import { DEFAULT_LAYOUT, EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
+import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
+import { projectKey } from '../shared/projects'
 import type {
   EffortLevel,
   LaunchOverrides,
@@ -18,7 +19,8 @@ import { MAX_PER_CALL, type PathResolver } from './files/pathResolver'
 import { openInEditor, openPath, revealPath } from './files/fileActions'
 import { pasteMediaType, pasteRealPath } from './files/imagePaste'
 import { prepareImage } from './files/prepareImage'
-import type { TabController } from './tabs/TabController'
+import type { TabController, TabHistory } from './tabs/TabController'
+import type { LayoutStore } from './store/layoutStore'
 import { EMPTY_PANEL } from './agent/panelData'
 import { withFault } from './testSeams/ipcFaults'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
@@ -27,6 +29,7 @@ import {
   sanitizeAnswer,
   sanitizeQuestionAnswers,
   sanitizeInput,
+  sanitizeLayoutPatch,
   sanitizeOverrides,
   sanitizePlanDecision,
   sanitizeTabPatch
@@ -47,6 +50,10 @@ export interface AgentIpcDeps {
   userData: string
   /** Opens Claude Code in a console in this folder. */
   openTerminal: (cwd: string) => void
+  /** userData/layout.json, shared with the controller. */
+  layout: LayoutStore
+  /** Past conversations of a folder, for a project in the sidebar. */
+  history: Pick<TabHistory, 'list'>
 }
 
 function isString(value: unknown): value is string {
@@ -303,13 +310,61 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     manager.get(id)?.answerPlan(requestId, decision.approve)
   })
 
-  // — этап 2: заглушки до задач 2 и 9. Their arguments (cwd, sessionId, title,
-  // and hostId for этап 6) are checked there, where they are used.
-  ipcMain.handle(CHANNELS.layoutGet, (): LayoutState => DEFAULT_LAYOUT)
-  ipcMain.handle(CHANNELS.layoutSet, (): LayoutState => DEFAULT_LAYOUT)
-  ipcMain.handle(CHANNELS.projectForget, (): LayoutState => DEFAULT_LAYOUT)
-  ipcMain.handle(CHANNELS.projectHistory, (): SessionSummary[] => [])
-  ipcMain.handle(CHANNELS.projectOpenSession, (): TabState | null => null)
+  // — этап 2: проекты и раскладка.
+  const { layout } = deps
+
+  /**
+   * The folder a project request may act on, as main knows it: a project's
+   * first spelling (П13), or the folder of an open chat. Anything else — a
+   * folder the window made up — is null. A folder on another machine
+   * (`hostId`) is none until этап 6 can reach it.
+   */
+  const knownFolder = (cwd: unknown, hostId: unknown): string | null => {
+    if (!isString(cwd) || cwd === '') return null
+    if (hostId !== undefined && hostId !== '') return null
+    const key = projectKey(cwd)
+    const project = layout.get().projects.find((p) => !p.hostId && projectKey(p.cwd) === key)
+    if (project) return project.cwd
+    return controller.list().find((tab) => projectKey(tab.cwd) === key)?.cwd ?? null
+  }
+
+  ipcMain.handle(CHANNELS.layoutGet, (): LayoutState => layout.get())
+
+  // The panes go first: the widths in the same patch are for the new count.
+  ipcMain.handle(CHANNELS.layoutSet, async (_e, given: unknown): Promise<LayoutState> => {
+    const { panes, ...rest } = sanitizeLayoutPatch(given)
+    const starting = panes ? controller.setPanes(panes) : undefined
+    layout.patch(rest)
+    await starting
+    return layout.get()
+  })
+
+  // A project with open chats stays: nothing changes.
+  ipcMain.handle(CHANNELS.projectForget, (_e, cwd: unknown, hostId: unknown): LayoutState => {
+    if (!isString(cwd) || cwd === '' || (hostId !== undefined && !isString(hostId))) return layout.get()
+    const open = controller.list().map((tab) => projectKey(tab.cwd))
+    layout.forgetProject(cwd, open, hostId === '' ? undefined : hostId)
+    return layout.get()
+  })
+
+  ipcMain.handle(
+    CHANNELS.projectHistory,
+    async (_e, cwd: unknown, hostId: unknown): Promise<SessionSummary[]> => {
+      const folder = knownFolder(cwd, hostId)
+      return folder === null ? [] : deps.history.list(folder)
+    }
+  )
+
+  ipcMain.handle(
+    CHANNELS.projectOpenSession,
+    (_e, cwd: unknown, sessionId: unknown, title: unknown, hostId: unknown): TabState | null => {
+      if (!isString(sessionId) || sessionId === '') return null
+      const folder = knownFolder(cwd, hostId)
+      if (folder === null) return null
+      return controller.openSession(folder, sessionId, isString(title) ? title : undefined)
+    }
+  )
+
   ipcMain.handle(CHANNELS.rendererRetry, (): void => undefined)
   ipcMain.handle(CHANNELS.logsOpen, (): void => undefined)
 

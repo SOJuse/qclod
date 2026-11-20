@@ -10,6 +10,7 @@ import { registerBaseIpc } from './ipc'
 import { registerAgentIpc } from './agentIpc'
 import { withFault } from './testSeams/ipcFaults'
 import { loadSettings, saveSettings } from './store/settingsStore'
+import { LayoutStore } from './store/layoutStore'
 import { HotkeyRegistrar } from './hotkey/globalHotkey'
 import { createTray } from './tray'
 import { CHANNELS } from '../shared/channels'
@@ -298,9 +299,14 @@ app.whenReady().then(async () => {
     return process.env['CLAUDE_CONFIG_DIR'] ? loadTranscript(sessionId, cwd) : []
   }
 
+  // userData/layout.json: the split, the active chat, the projects. The
+  // controller and the IPC share it; every change reaches the window.
+  const layout = new LayoutStore(userData, (l) => send(CHANNELS.layoutChanged, l))
+
   const controller = new TabController({
     manager,
     storeDir: userData,
+    layout,
     defaultCwd: pickDefaultCwd(app.isPackaged, process.cwd(), homedir()),
     // «По умолчанию» in settings means exactly that: a new tab starts with it.
     getDefaults: () => ({ ...settings.defaults }),
@@ -359,6 +365,8 @@ app.whenReady().then(async () => {
     controller,
     manager,
     broker,
+    layout,
+    history,
     resolver: new PathResolver(),
     getEditorCommand: () => settings.editorCommand,
     userData,

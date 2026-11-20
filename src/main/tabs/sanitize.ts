@@ -5,6 +5,7 @@ import {
   type Attachment,
   type EffortLevel,
   type LaunchOverrides,
+  type LayoutPatch,
   type PermissionAnswer,
   type PermissionMode,
   type PlanDecision,
@@ -304,6 +305,57 @@ export function sanitizeAnswer(value: unknown): PermissionAnswer {
   const message = behavior === 'deny' ? personText(answer['message'], MAX_NOTE) : undefined
   if (message !== undefined) out.message = message
   return out
+}
+
+/** A split holds at most this many chats side by side. */
+const MAX_PANES = 4
+/** A tab id is a UUID; no id is this long. */
+const MAX_PANE_ID = 200
+/** No folder path is this long; a longer string is not worth a project lookup. */
+const MAX_LAYOUT_CWD = 4096
+
+/**
+ * What the window may change in the layout: the split's chats (ids, each
+ * once, at most four) and their widths (shares above zero, at most four), the
+ * sidebar, and one project's folding. Which chats are active and which
+ * folders are projects are main's to say, so they never come from here.
+ * Whether the ids are live chats is checked where they are used.
+ */
+export function sanitizeLayoutPatch(value: unknown): LayoutPatch {
+  if (!isPlainObject(value)) return {}
+  const patch: LayoutPatch = {}
+
+  const panes = value['panes']
+  if (Array.isArray(panes)) {
+    const kept: string[] = []
+    for (const id of panes) {
+      if (kept.length >= MAX_PANES) break
+      if (!isString(id) || id === '' || id.length > MAX_PANE_ID || kept.includes(id)) continue
+      kept.push(id)
+    }
+    patch.panes = kept
+  }
+
+  const widths = value['paneWidths']
+  if (Array.isArray(widths)) {
+    const kept: number[] = []
+    for (const w of widths) {
+      if (kept.length >= MAX_PANES) break
+      if (typeof w === 'number' && Number.isFinite(w) && w > 0) kept.push(w)
+    }
+    patch.paneWidths = kept
+  }
+
+  if (typeof value['sidebarCollapsed'] === 'boolean') patch.sidebarCollapsed = value['sidebarCollapsed']
+
+  const folding = value['projectCollapsed']
+  if (isPlainObject(folding)) {
+    const { cwd, collapsed } = folding
+    if (isString(cwd) && cwd !== '' && cwd.length <= MAX_LAYOUT_CWD && typeof collapsed === 'boolean') {
+      patch.projectCollapsed = { cwd, collapsed }
+    }
+  }
+  return patch
 }
 
 const MAX_ERROR_TEXT = 20_000

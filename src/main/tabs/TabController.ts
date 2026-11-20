@@ -13,6 +13,7 @@ import type {
   SessionStatus,
   SessionSummary,
   StatusEvent,
+  TabAutonomyRecord,
   TabId,
   TabState,
   UserInput
@@ -21,7 +22,6 @@ import { isDirectory, loadTabs, saveTabs, type LoadedTab } from '../store/tabsSt
 import type { LayoutStore } from '../store/layoutStore'
 import { MAX_QUEUED, seedFromTranscript, type AgentSession, type SessionSeed } from '../agent/AgentSession'
 import { EMPTY_PANEL } from '../agent/panelData'
-import { isRemoteLive } from '../../shared/remote'
 import { classifyStartFailure, LOGIN_NEEDED_TEXT } from '../agent/startFailure'
 import type { AgentSessionManager } from '../agent/AgentSessionManager'
 
@@ -31,8 +31,18 @@ export interface TabHistory {
   transcript: (sessionId: string, cwd: string) => Promise<unknown[]>
 }
 
+/** What the autonomy host (autonomy/autonomyHost.ts) is told about the tabs and their sessions. */
+export interface AutonomyHooks {
+  tabAdded(id: TabId, record: TabAutonomyRecord | undefined): void
+  tabClosed(id: TabId): void
+  sessionAdopted(id: TabId, session: AgentSession): void
+  /** Once per new session, after it started and was handed what it was owed. */
+  sessionUp(id: TabId, session: AgentSession, carried: number): void
+}
+
 export interface TabControllerDeps {
   manager: AgentSessionManager
+  autonomy?: AutonomyHooks
   storeDir: string
   /** userData/layout.json: the split, the active chat, the projects. */
   layout: LayoutStore
@@ -46,6 +56,11 @@ export interface TabControllerDeps {
   onPanel: (event: PanelEvent) => void
   onStatus: (event: StatusEvent) => void
   onCommands: (event: { tabId: TabId; commands: CommandInfo[] }) => void
+}
+
+/** An autonomy record that says anything: a tab with one keeps its process (F13) and tabs.json its record. */
+function isCarryingOn(record: TabAutonomyRecord | undefined): boolean {
+  return record !== undefined && (record.working === true || record.remote === true || record.limitUntil !== undefined)
 }
 
 let lastRibbonRev = 0
@@ -172,10 +187,12 @@ export class TabController {
         title: tab.title,
         overrides: tab.overrides,
         ...(tab.lastSessionId ? { lastSessionId: tab.lastSessionId } : {}),
+        ...(tab.autonomy ? { autonomy: tab.autonomy } : {}),
         status: 'stopped',
         badge: false,
         missingCwd: tab.missingCwd
       })
+      this.deps.autonomy?.tabAdded(tab.id, tab.autonomy)
     }
 
     // A tabs.json from before projects existed: its folders become projects,
@@ -195,7 +212,10 @@ export class TabController {
     // only the active one and those in the split get a process (spec 2.1: an
     // agent starts when its chat is first seen).
     for (const tab of this.tabs) this.track(this.preview(tab.id))
-    const visible = new Set([...(this.activeId ? [this.activeId] : []), ...panes])
+    // A tab that was working, wants Remote Control or waits out a limit has a
+    // process too, seen or not (spec 3.5): its autonomy carries on there.
+    const carrying = this.tabs.filter((tab) => isCarryingOn(tab.autonomy)).map((tab) => tab.id)
+    const visible = new Set([...(this.activeId ? [this.activeId] : []), ...panes, ...carrying])
     for (const id of visible) this.track(this.ensureSession(id))
     return this.list()
   }
@@ -218,6 +238,7 @@ export class TabController {
       missingCwd: !isDirectory(cwd)
     }
     this.tabs.push(tab)
+    this.deps.autonomy?.tabAdded(tab.id, undefined)
     // A chat's folder is a project from then on, and stays one after it closes.
     this.deps.layout.addProject(cwd)
     this.setActiveId(tab.id)
@@ -281,6 +302,7 @@ export class TabController {
     const [closed] = this.tabs.splice(index, 1)
     this.previews.delete(id)
     this.ribbonRevs.delete(id)
+    this.deps.autonomy?.tabClosed(id)
     await this.deps.manager.close(id)
 
     if (this.activeId === id) {
@@ -324,6 +346,41 @@ export class TabController {
     const unsent = this.deps.manager.get(id)?.sentBeforeInit ?? []
     // Resent only into the session this retry starts (`replaceSession`).
     await this.replaceSession(id, () => undefined, unsent)
+  }
+
+  /**
+   * The autonomy core restarts a tab whose process died: the same
+   * conversation, the stored id kept and resumed, as `retry` does. What the
+   * dead session never got to an agent, and its strip, go to the new one.
+   * False when no new session was started here (a swap is already running, the
+   * tab is gone, someone else started it).
+   */
+  async revive(id: TabId): Promise<boolean> {
+    if (this.replacing.has(id)) return false
+    const unsent = this.deps.manager.get(id)?.sentBeforeInit ?? []
+    return this.replaceSession(id, () => undefined, unsent)
+  }
+
+  /** A line in the tab's ribbon from outside its session (the autonomy host). */
+  notice(id: TabId, text: string, tone: 'info' | 'error'): void {
+    // The tab's ribbon is its session's, or — between sessions — its preview's.
+    const builder = this.deps.manager.get(id) ?? this.previews.get(id)?.builder
+    if (builder) this.emitRibbon(id, builder.notice(text, tone))
+  }
+
+  /** The tab's autonomy record, as tabs.json keeps it; written only when it changed. */
+  setAutonomyRecord(id: TabId, record: TabAutonomyRecord): void {
+    const tab = this.tabs.find((t) => t.id === id)
+    if (!tab) return
+    const empty = !isCarryingOn(record)
+    const same = empty
+      ? tab.autonomy === undefined
+      : JSON.stringify(tab.autonomy, Object.keys(tab.autonomy ?? {}).sort()) ===
+        JSON.stringify(record, Object.keys(record).sort())
+    if (same) return
+    if (empty) delete tab.autonomy
+    else tab.autonomy = { ...record }
+    this.persist()
   }
 
   /**
@@ -407,9 +464,13 @@ export class TabController {
       const started = !this.deps.manager.get(id)
       if (started) {
         prepare(tab)
-        await this.startSession(id)
+        // The new session is announced below, once it has what it was owed.
+        await this.startSession(id, false)
       }
-      this.handOver(id, this.deps.manager.get(id), started ? unsent : [], queued)
+      const carried = (started ? unsent.length : 0) + queued.length + (this.held.get(id)?.length ?? 0)
+      const fresh = this.deps.manager.get(id)
+      this.handOver(id, fresh, started ? unsent : [], queued)
+      if (started && fresh) this.deps.autonomy?.sessionUp(id, fresh, carried)
       return started
     } finally {
       this.replacing.delete(id)
@@ -487,7 +548,8 @@ export class TabController {
     await this.startSession(id)
   }
 
-  private async startSession(id: TabId): Promise<void> {
+  /** `announce` false: the caller tells the autonomy host about the session itself (`replaceSession`). */
+  private async startSession(id: TabId, announce = true): Promise<void> {
     const tab = this.tabs.find((t) => t.id === id)
     if (!tab) return
     // A folder that is gone cannot host an agent; the tab stays, flagged, so
@@ -517,6 +579,8 @@ export class TabController {
     else await session.start()
 
     this.rememberSession(id, session)
+    // Not a session that recovery has already replaced: that one is dead.
+    if (announce && this.deps.manager.get(id) === session) this.deps.autonomy?.sessionUp(id, session, 0)
   }
 
   /**
@@ -662,8 +726,10 @@ export class TabController {
           : `Сессия не запустилась: ${reason}`
       this.emitRibbon(id, fresh.notice(said))
       await fresh.start()
+      const carried = unsent.length + queued.length + (this.held.get(id)?.length ?? 0)
       this.handOver(id, fresh, unsent, queued)
       this.rememberSession(id, fresh)
+      this.deps.autonomy?.sessionUp(id, fresh, carried)
     } finally {
       this.replacing.delete(id)
       this.held.delete(id)
@@ -686,19 +752,12 @@ export class TabController {
    * old one's cost and limits on screen. Its revision outranks them.
    */
   private adopt(id: TabId, session: AgentSession): void {
-    // Judged before the new session's state replaces the tab's.
-    const hadBridge = isRemoteLive(this.tabs.find((t) => t.id === id)?.remote)
     this.wire(id, session)
     this.emitWholePanel(id, session.panelSnapshot())
     this.patch(id, { remote: session.remote })
-    // A new process starts with Remote Control off; say so rather than let
-    // the phone's link die without a word.
-    if (hadBridge) {
-      this.emitRibbon(
-        id,
-        session.notice('Remote Control выключен: сессия перезапущена. Включите снова, если нужно.')
-      )
-    }
+    // A new process starts with Remote Control off. Whether it is turned on
+    // again, and what the ribbon says about it, is the autonomy core's.
+    this.deps.autonomy?.sessionAdopted(id, session)
   }
 
   private wire(id: TabId, session: AgentSession): void {
@@ -811,7 +870,8 @@ export class TabController {
         cwd: tab.cwd,
         title: tab.title,
         overrides: tab.overrides,
-        ...(tab.lastSessionId ? { lastSessionId: tab.lastSessionId } : {})
+        ...(tab.lastSessionId ? { lastSessionId: tab.lastSessionId } : {}),
+        ...(tab.autonomy ? { autonomy: tab.autonomy } : {})
       }))
     )
   }

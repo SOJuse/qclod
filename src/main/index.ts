@@ -47,7 +47,7 @@ import { loadTranscript } from './agent/transcript'
 import { TabController } from './tabs/TabController'
 import { pickDefaultCwd } from './tabs/defaultCwd'
 import { mergeDefaults, sanitizeErrorReport } from './tabs/sanitize'
-import { notifyIfNeeded, shouldRaiseWindowForPermission } from './notifications'
+import { alertNotification, notifyIfNeeded, shouldRaiseWindowForPermission } from './notifications'
 import { RendererOutbox } from './rendererOutbox'
 import { PathResolver } from './files/pathResolver'
 import { cleanupPasteDir } from './files/imagePaste'
@@ -55,12 +55,12 @@ import { createUpdateSource, UpdateFlow } from './update/updater'
 import { openAgentTerminal, startVoiceTyping } from './system/console'
 import { locateAgent } from './setup/findAgent'
 import {
-  awakeNeeded,
   electronBlocker,
   executionStateHelper,
   KeepAwake,
   USE_EXECUTION_STATE_HELPER
 } from './system/keepAwake'
+import { AutonomyHost } from './autonomy/autonomyHost'
 import { applyOpenAtLogin } from './system/loginItem'
 import { claimSingleInstance } from './system/singleInstance'
 import { QuitReason } from './system/quitReason'
@@ -229,7 +229,7 @@ if (gotLock) void app.whenReady().then(async () => {
   }
   syncLoginItem()
   // Why Qclod ends: a session end or an update restart leaves the tabs marked
-  // as working for the next start (system/quitReason.ts); task 8 reads it.
+  // as working for the next start (system/quitReason.ts); before-quit hands it to the host.
   const quitReason = new QuitReason()
   powerMonitor.on('shutdown', () => quitReason.markInterrupted())
 
@@ -322,9 +322,39 @@ if (gotLock) void app.whenReady().then(async () => {
         ]
   )
   keepAwake.onChange(() => tray?.rebuild())
-  // Fed from the tab statuses; the autonomy host (task 8) adds the limit waits.
-  const refreshAwake = (): void =>
-    keepAwake.set(awakeNeeded(controller.list().map((t) => t.status), []))
+
+  // One autonomy core per tab (autonomy/autonomyHost.ts). The controller does
+  // not exist yet, so the host reaches it through these.
+  const autonomy = new AutonomyHost({
+    controller: {
+      list: () => controller.list(),
+      revive: (id) => controller.revive(id),
+      notice: (id, text, tone) => controller.notice(id, text, tone),
+      setAutonomyRecord: (id, record) => controller.setAutonomyRecord(id, record)
+    },
+    manager: { get: (id) => manager.get(id) },
+    // e2e shortens the timer to milliseconds and takes the jitter out (buildFlags.d.ts).
+    autoAnswerMs: () => {
+      const seam = __QCLOD_TEST_SEAMS__ ? Number(process.env['QCLOD_AUTO_ANSWER_MS']) : 0
+      return seam > 0 ? seam : settings.autoAnswerMinutes * 60_000
+    },
+    alert: (id, text) => {
+      const tab = controller.list().find((t) => t.id === id)
+      if (!tab || offScreen) return
+      alertNotification({
+        settings,
+        title: tab.title,
+        body: text,
+        onActivate: () => {
+          showWindow()
+          send(CHANNELS.activateTab, id)
+        }
+      })
+    },
+    onAwakeChange: (needed) => keepAwake.set(needed),
+    ...(__QCLOD_TEST_SEAMS__ && process.env['QCLOD_AUTONOMY_NO_JITTER'] === '1' ? { random: () => 0 } : {})
+  })
+  powerMonitor.on('resume', () => autonomy.systemResumed())
 
   // The question is put in the tab's own ribbon and answered from there.
   // A window that is gone cannot answer, so the broker denies rather than
@@ -401,8 +431,9 @@ if (gotLock) void app.whenReady().then(async () => {
   // controller and the IPC share it; every change reaches the window.
   const layout = new LayoutStore(userData, (l) => send(CHANNELS.layoutChanged, l))
 
-  const controller = new TabController({
+  const controller: TabController = new TabController({
     manager,
+    autonomy,
     storeDir: userData,
     layout,
     defaultCwd: pickDefaultCwd(app.isPackaged, process.cwd(), homedir()),
@@ -416,7 +447,6 @@ if (gotLock) void app.whenReady().then(async () => {
       send(CHANNELS.tabsChanged, tabs)
       tray?.rebuild()
       tray?.refresh()
-      refreshAwake()
     },
     onRibbon: (event) => outbox.ribbon(event),
     onPanel: (event) => send(CHANNELS.panelChanged, event),
@@ -424,7 +454,6 @@ if (gotLock) void app.whenReady().then(async () => {
     onStatus: (event) => {
       send(CHANNELS.statusChanged, event)
       tray?.refresh()
-      refreshAwake()
       const tab = controller.list().find((t) => t.id === event.tabId)
       // Nor does it show toasts.
       if (!tab || offScreen) return
@@ -473,6 +502,7 @@ if (gotLock) void app.whenReady().then(async () => {
     history,
     resolver: new PathResolver(),
     getEditorCommand: () => settings.editorCommand,
+    autonomy,
     userData,
     openTerminal: (cwd) => {
       // e2e records the call instead of opening a console (buildFlags.d.ts).
@@ -594,6 +624,8 @@ if (gotLock) void app.whenReady().then(async () => {
     quitting = true
     event.preventDefault()
     hotkey.release()
+    // Before the sessions go down: their ending is no crash and no idle to write down.
+    autonomy.quitting(quitReason.deliberate)
     broker.cancelAll()
     void controller.disposeAll().finally(() => app.quit())
   })

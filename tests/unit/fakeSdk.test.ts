@@ -157,6 +157,44 @@ describe('createFakeSdk', () => {
     }
   })
 
+  test('limitHit: rejected, assistant с error rate_limit, result is_error — в этом порядке', async () => {
+    const before = Math.floor(Date.now() / 1000)
+    const driver = createFakeSdk({ steps: [{ kind: 'limitHit', resetsInMs: 3_600_000, type: 'seven_day' }] })
+    const got = await collect(driver)
+    const order = got
+      .map((m) => (m['type'] === 'system' ? null : (m['type'] as string)))
+      .filter((t): t is string => t !== null && ['rate_limit_event', 'assistant', 'result'].includes(t))
+    // The window-state event of the init comes first and is 'allowed'; the rejection follows.
+    const rejected = got.findIndex(
+      (m) => m['type'] === 'rate_limit_event' && (m['rate_limit_info'] as Record<string, unknown>)['status'] === 'rejected'
+    )
+    const assistantAt = got.findIndex((m) => m['type'] === 'assistant' && m['error'] === 'rate_limit')
+    const resultAt = got.findIndex((m) => m['type'] === 'result')
+    expect(order.length).toBeGreaterThan(2)
+    expect(rejected).toBeGreaterThan(-1)
+    expect(rejected).toBeLessThan(assistantAt)
+    expect(assistantAt).toBeLessThan(resultAt)
+    const info = got[rejected]!['rate_limit_info'] as Record<string, unknown>
+    expect(info['rateLimitType']).toBe('seven_day')
+    expect(info['resetsAt'] as number).toBeGreaterThanOrEqual(before + 3599)
+    const result = got[resultAt]!
+    expect(result['is_error']).toBe(true)
+    expect(String(result['result'])).toContain("You've hit your session limit")
+  })
+
+  test('limitHit times 1: второй ход проходит', async () => {
+    const driver = createFakeSdk({
+      steps: [],
+      nextTurn: [{ kind: 'limitHit', resetsInMs: 1000, times: 1 }, { kind: 'text', text: 'дальше' }]
+    })
+    driver.send({ text: 'раз', attachments: [] })
+    driver.send({ text: 'два', attachments: [] })
+    const got = await collect(driver, 2)
+    const results = got.filter((m) => m['type'] === 'result')
+    expect(results.map((r) => r['is_error'])).toEqual([true, false])
+    expect(got.filter((m) => m['error'] === 'rate_limit')).toHaveLength(1)
+  })
+
   test('crash с times без QCLOD_USER_DATA падает всегда, как раньше', async () => {
     vi.stubEnv('QCLOD_USER_DATA', '')
     try {

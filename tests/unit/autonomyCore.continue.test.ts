@@ -316,6 +316,15 @@ describe('AutonomyCore: восстановление', () => {
     expect(h.notices()).toHaveLength(1)
   })
 
+  test('восстановление: idle до первого processUp не стирает working — «продолжай» всё равно уходит', () => {
+    const h = harness({ record: { working: true } })
+    h.core.handle({ type: 'status', status: 'starting' })
+    h.core.handle({ type: 'status', status: 'idle' })
+    expect(h.persists()).toEqual([])
+    h.core.handle({ type: 'processUp', carried: 0 })
+    expect(h.commands()).toEqual([{ type: 'sendContinue', reason: 'restore' }])
+  })
+
   test('восстановление: перенесённые сообщения человека заменяют «продолжай»', () => {
     const h = harness({ record: { working: true } })
     h.core.handle({ type: 'processUp', carried: 1 })

@@ -30,6 +30,7 @@
  *   finish?:'completed'|'failed'|null}} BackgroundBashStep
  * @typedef {{kind:'compact', preTokens:number, postTokens:number, trigger?:'auto'|'manual'}} CompactStep
  * @typedef {{kind:'crash', message:string, times?:number, beforeInit?:boolean}} CrashStep
+ * @typedef {{kind:'limitHit', type?:'five_hour'|'seven_day', resetsInMs:number, times?:number}} LimitHitStep
  * @typedef {{kind:'reportInput'}} ReportInputStep
  * @typedef {{kind:'remoteAnswer', name:string, input?:object, decision:'allow'|'deny', afterMs?:number}} RemoteAnswerStep
  */
@@ -810,6 +811,32 @@ export function createFakeSdk(script = {}) {
           }
           break
 
+        // The subscription limit, as the SDK's types and errors document it (not
+        // seen on a live session): rejected, the assistant's error, and a result
+        // with is_error — the last one is made when the turn ends.
+        case 'limitHit': {
+          limitPlays += 1
+          if (step.times !== undefined && limitPlays > step.times) break
+          const resetsAt = Date.now() + step.resetsInMs
+          const text = `You've hit your session limit · resets ${new Date(resetsAt).toISOString()}`
+          yield {
+            type: 'rate_limit_event',
+            uuid: randomUUID(),
+            session_id: sessionId,
+            rate_limit_info: {
+              status: 'rejected',
+              resetsAt: Math.floor(resetsAt / 1000),
+              rateLimitType: step.type ?? 'five_hour'
+            }
+          }
+          yield {
+            ...assistant([{ type: 'text', text }]),
+            error: 'rate_limit'
+          }
+          turn.limitText = text
+          break
+        }
+
         case 'crash':
           // A beforeInit crash was settled before the turn began.
           if (step.beforeInit || !crashes(step, crashing)) break
@@ -847,6 +874,8 @@ export function createFakeSdk(script = {}) {
   const pending = []
   /** The turn being played, or null between turns: `{ starter, folded, aborted }`. */
   let turn = null
+  /** How many times a `limitHit` step has come up in this session, for its `times`. */
+  let limitPlays = 0
   let phoneCancelTimer = null
 
   function lifecycleFrame(stateName, commandUuid) {
@@ -1049,7 +1078,7 @@ export function createFakeSdk(script = {}) {
       type: 'result',
       ...(ended.aborted
         ? { subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_tools' }
-        : { subtype: 'success', is_error: false }),
+        : { subtype: 'success', is_error: ended.limitText !== undefined }),
       uuid: randomUUID(),
       session_id: sessionId,
       num_turns: 1,
@@ -1061,7 +1090,7 @@ export function createFakeSdk(script = {}) {
         cache_creation_input_tokens: 1400,
         cache_read_input_tokens: 44022
       },
-      ...(ended.aborted ? {} : { result: 'done' }),
+      ...(ended.aborted ? {} : { result: ended.limitText ?? 'done' }),
       ...(uuids.length > 0 ? { user_message_uuids: uuids } : {}),
       queued_turn_count: inbox.length
     }

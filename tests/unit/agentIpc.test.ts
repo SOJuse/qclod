@@ -30,6 +30,7 @@ const models: string[] = []
 const remoteCalls: Array<[boolean, string | undefined]> = []
 const resolved: string[][] = []
 const queueCalls: Array<[string, string]> = []
+const autonomyCalls: unknown[][] = []
 let cancelAnswer: UserInput | null = null
 let sendNowAnswer = false
 
@@ -41,7 +42,7 @@ beforeEach(() => {
   handlers.clear()
   mode = 'default'
   sendAnswer = true
-  for (const list of [sent, overrides, defaults, models, resolved, remoteCalls, queueCalls]) list.length = 0
+  for (const list of [sent, overrides, defaults, models, resolved, remoteCalls, queueCalls, autonomyCalls]) list.length = 0
   cancelAnswer = null
   sendNowAnswer = false
   const session = {
@@ -88,8 +89,45 @@ beforeEach(() => {
       forget: () => undefined
     },
     getEditorCommand: () => '',
+    autonomy: {
+      hold: (...args: unknown[]) => autonomyCalls.push(['hold', ...args]),
+      answerNow: (...args: unknown[]) => autonomyCalls.push(['answerNow', ...args]),
+      remoteWanted: (...args: unknown[]) => autonomyCalls.push(['remoteWanted', ...args])
+    },
     userData: USER_DATA
   } as unknown as AgentIpcDeps)
+})
+
+describe('autonomy:* каналы', () => {
+  test('autonomyHold и autonomyAnswerNow отвергают не-строки, длинные id и чужие вкладки', () => {
+    for (const [channel, name] of [
+      [CHANNELS.autonomyHold, 'hold'],
+      [CHANNELS.autonomyAnswerNow, 'answerNow']
+    ] as const) {
+      call(channel, 't1', 'card-1')
+      expect(autonomyCalls.pop()).toEqual([name, 't1', 'card-1'])
+
+      call(channel, 42, 'card-1')
+      call(channel, 't1', { id: 'x' })
+      call(channel, 't1', 'c'.repeat(201))
+      call(channel, 't'.repeat(201), 'card-1')
+      call(channel, 'чужая', 'card-1')
+      expect(autonomyCalls).toEqual([])
+    }
+  })
+
+  test('agentRemote сообщает remoteWanted после setRemote', async () => {
+    await call(CHANNELS.agentRemote, 't1', true)
+    expect(remoteCalls).toEqual([[true, 'проект']])
+    expect(autonomyCalls).toEqual([['remoteWanted', 't1', true]])
+    await call(CHANNELS.agentRemote, 't1', false)
+    expect(autonomyCalls.at(-1)).toEqual(['remoteWanted', 't1', false])
+    // A bad call tells nobody.
+    autonomyCalls.length = 0
+    await call(CHANNELS.agentRemote, 't1', 'да')
+    await call(CHANNELS.agentRemote, 'чужая', true)
+    expect(autonomyCalls).toEqual([])
+  })
 })
 
 describe('agent:* каналы', () => {

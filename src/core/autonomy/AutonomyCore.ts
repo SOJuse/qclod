@@ -259,8 +259,10 @@ export class AutonomyCore {
       this.setRecord({ working: true })
     } else if (status === 'idle') {
       this.lastWork = status
-      // Waiting out a limit is still work to carry on after a restart.
-      if (!this.limitWait) this.setRecord({ working: undefined })
+      // Waiting out a limit is still work to carry on after a restart. And a
+      // process that is only now coming up on a restore says idle before the
+      // first processUp: that is no end of the work being restored.
+      if (!this.limitWait && !this.restore) this.setRecord({ working: undefined })
     }
   }
 

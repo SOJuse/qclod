@@ -21,6 +21,7 @@ import { pasteMediaType, pasteRealPath } from './files/imagePaste'
 import { prepareImage } from './files/prepareImage'
 import type { TabController, TabHistory } from './tabs/TabController'
 import type { LayoutStore } from './store/layoutStore'
+import type { AutonomyHost } from './autonomy/autonomyHost'
 import { EMPTY_PANEL } from './agent/panelData'
 import { withFault } from './testSeams/ipcFaults'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
@@ -55,6 +56,8 @@ export interface AgentIpcDeps {
   layout: LayoutStore
   /** Past conversations of a folder, for a project in the sidebar. */
   history: Pick<TabHistory, 'list'>
+  /** The per-tab autonomy cores (stage 3). */
+  autonomy?: Pick<AutonomyHost, 'hold' | 'answerNow' | 'remoteWanted'>
 }
 
 function isString(value: unknown): value is string {
@@ -236,6 +239,8 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     // The session name the phone shows is the tab's title.
     const title = controller.list().find((tab) => tab.id === id)?.title
     await session.setRemote(enabled, title)
+    // The person's own switch is what the core keeps on (decision 9).
+    deps.autonomy?.remoteWanted(id, enabled)
   })
 
   ipcMain.handle(CHANNELS.agentCommands, async (_e, id: unknown) => {
@@ -373,9 +378,19 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   )
 
 
-  // — stage 3: stubs until task 8 hands both to the tab's AutonomyHost.
-  ipcMain.handle(CHANNELS.autonomyHold, (): void => undefined)
-  ipcMain.handle(CHANNELS.autonomyAnswerNow, (): void => undefined)
+  // The timer of a question or plan card: stop it, or answer now. Only a known
+  // tab and short strings reach the host.
+  const autonomyCall = (id: unknown, cardId: unknown, run: (id: TabId, cardId: string) => void | undefined): void => {
+    if (!isString(id) || !isString(cardId) || id.length > 200 || cardId.length > 200) return
+    if (!controller.list().some((tab) => tab.id === id)) return
+    run(id, cardId)
+  }
+  ipcMain.handle(CHANNELS.autonomyHold, (_e, id: unknown, cardId: unknown): void =>
+    autonomyCall(id, cardId, (t, c) => deps.autonomy?.hold(t, c))
+  )
+  ipcMain.handle(CHANNELS.autonomyAnswerNow, (_e, id: unknown, cardId: unknown): void =>
+    autonomyCall(id, cardId, (t, c) => deps.autonomy?.answerNow(t, c))
+  )
 
   ipcMain.handle(CHANNELS.permissionRules, () => withFault(CHANNELS.permissionRules, () => broker.rules()))
 

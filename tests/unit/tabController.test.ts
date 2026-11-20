@@ -126,6 +126,7 @@ function makeController(
     freshFailsOnSend?: (cwd: string) => string | undefined
     /** Permission questions go to `broker` instead of being denied. */
     brokered?: boolean
+    autonomy?: import('../../src/main/tabs/TabController').AutonomyHooks
   } = {}
 ): Harness {
   const changed: TabState[][] = []
@@ -213,6 +214,7 @@ function makeController(
   const layout = new LayoutStore(store, () => undefined)
   const controller = new TabController({
     manager,
+    ...(options.autonomy ? { autonomy: options.autonomy } : {}),
     storeDir: store,
     layout,
     defaultCwd: projectA,
@@ -579,7 +581,10 @@ describe('TabController', () => {
     expect(raw).not.toContain('session_fake0001')
   })
 
-  test('перезапуск гасит значок и оставляет заметку', async () => {
+  // Rewritten on purpose (stage 3, decision 9): the controller no longer says
+  // «Remote Control выключен: сессия перезапущена» — whether Remote Control comes
+  // back, and what the ribbon says, is AutonomyCore's (autonomyHost.test.ts).
+  test('перезапуск гасит значок; заметку об этом контроллер больше не пишет', async () => {
     const { controller, manager, ribbon } = makeController()
     await controller.restore()
     await controller.whenSettled()
@@ -597,7 +602,7 @@ describe('TabController', () => {
         e.tabId === id &&
         e.changes.some((c) => c.kind === 'append' && c.item.kind === 'notice' && c.item.text === text)
     )
-    expect(told).toBe(true)
+    expect(told).toBe(false)
   })
 
   test('изменения ленты уходят наружу с номером вкладки', async () => {
@@ -1987,6 +1992,87 @@ describe('TabController: раскладка этапа 2 (layout.json)', () => {
 
     expect([...started].sort()).toEqual(['a', 'b'])
     expect(harness.manager.get('c')).toBeUndefined()
+  })
+
+  // Rewritten on purpose (stage 3, cross-check F13): a record of autonomy is a
+  // third reason to start a tab's process at restore, seen or not.
+  test('restore: третья вкладка без записи автономности — процесса нет, с working, remote или limitUntil — есть', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} },
+      { id: 'c', cwd: projectB, title: 'C', overrides: {} },
+      { id: 'd', cwd: projectB, title: 'D', overrides: {}, autonomy: { working: true } },
+      { id: 'e', cwd: projectB, title: 'E', overrides: {}, autonomy: { remote: true } },
+      { id: 'f', cwd: projectB, title: 'F', overrides: {}, autonomy: { limitUntil: Date.now() + 60_000 } }
+    ])
+    writeStoredLayout({ panes: ['a', 'b'], active: 'a', paneWidths: [0.5, 0.5] })
+    const harness = makeController()
+    const started = startedFor(harness)
+
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+
+    expect([...started].sort()).toEqual(['a', 'b', 'd', 'e', 'f'])
+    expect(harness.manager.get('c')).toBeUndefined()
+  })
+
+  test('setAutonomyRecord пишет в tabs.json только при изменении, пустая запись стирается', async () => {
+    const harness = makeController()
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    const id = harness.controller.list()[0]!.id
+    const file = join(store, TABS_FILE)
+    const read = (): Array<Record<string, unknown>> => JSON.parse(readFileSync(file, 'utf8'))
+
+    harness.controller.setAutonomyRecord(id, { working: true })
+    expect(read()[0]!['autonomy']).toEqual({ working: true })
+    // The same record again: the file is not touched.
+    writeFileSync(file, 'sentinel', 'utf8')
+    harness.controller.setAutonomyRecord(id, { working: true })
+    expect(readFileSync(file, 'utf8')).toBe('sentinel')
+    harness.controller.setAutonomyRecord(id, {})
+    expect(read()[0]).not.toHaveProperty('autonomy')
+  })
+
+  test('notice пишет строку в ленту вкладки; revive открывает ту же переписку заново', async () => {
+    const harness = makeController()
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    const id = harness.controller.list()[0]!.id
+    await harness.speak(id)
+    const sessionId = harness.controller.sessionIdOf(id)
+
+    harness.controller.notice(id, 'сказано снаружи', 'error')
+    const said = harness.ribbon.some(
+      (e) => e.tabId === id && e.changes.some((c) => c.kind === 'append' && c.item.kind === 'notice' && c.item.text === 'сказано снаружи')
+    )
+    expect(said).toBe(true)
+
+    expect(await harness.controller.revive(id)).toBe(true)
+    await harness.controller.whenSettled()
+    expect(harness.resumedWith.at(-1)).toBe(sessionId)
+  })
+
+  test('хуки автономии: tabAdded при restore и create, sessionAdopted и sessionUp — по разу на сессию, tabClosed', async () => {
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, autonomy: { remote: true } }])
+    const calls: string[] = []
+    const harness = makeController({
+      autonomy: {
+        tabAdded: (id, record) => calls.push(`added ${id} ${JSON.stringify(record)}`),
+        tabClosed: (id) => calls.push(`closed ${id}`),
+        sessionAdopted: (id) => calls.push(`adopted ${id}`),
+        sessionUp: (id, _s, carried) => calls.push(`up ${id} ${carried}`)
+      }
+    })
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    expect(calls).toEqual(['added a {"remote":true}', 'adopted a', 'up a 0'])
+
+    calls.length = 0
+    await harness.controller.restart('a')
+    await harness.controller.whenSettled()
+    // One new session: one adoption, one «up» — not two from startSession and the swap.
+    expect(calls).toEqual(['adopted a', 'up a 0'])
   })
 
   test('restore: папка активного чата в панели удалена — без сбоя, агента нет, панели и ширины целы', async () => {

@@ -51,6 +51,12 @@ export type FakeStep =
    * `beforeInit`: thrown before the turn's system/init and echo.
    */
   | { kind: 'crash'; message: string; times?: number; beforeInit?: boolean }
+  /**
+   * The subscription limit: rate_limit_event rejected (resetsAt in resetsInMs), an
+   * assistant message with error 'rate_limit', and a result with is_error at the
+   * end of the turn. `times`: only the first N times it comes up in a session.
+   */
+  | { kind: 'limitHit'; type?: 'five_hour' | 'seven_day'; resetsInMs: number; times?: number }
   /** Says «картинок: N; типы: …; байт: M» about the images of the last send. */
   | { kind: 'reportInput' }
   /** A question answered on the phone: its signal aborts after afterMs (default 50), then `decision` rules. */

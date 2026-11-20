@@ -134,7 +134,7 @@ function makeRig(
       tabAdded: (id, record) => host.tabAdded(id, record),
       tabClosed: (id) => host.tabClosed(id),
       sessionAdopted: (id, session) => host.sessionAdopted(id, session),
-      sessionUp: (id, session, carried) => host.sessionUp(id, session, carried)
+      sessionUp: (id, session, carried, clean) => host.sessionUp(id, session, carried, clean)
     },
     storeDir: store,
     layout,

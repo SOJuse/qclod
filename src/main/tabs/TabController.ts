@@ -36,8 +36,11 @@ export interface AutonomyHooks {
   tabAdded(id: TabId, record: TabAutonomyRecord | undefined): void
   tabClosed(id: TabId): void
   sessionAdopted(id: TabId, session: AgentSession): void
-  /** Once per new session, after it started and was handed what it was owed. */
-  sessionUp(id: TabId, session: AgentSession, carried: number): void
+  /**
+   * Once per new session, after it started and was handed what it was owed.
+   * clean — a fresh conversation in place of a resume that would not open.
+   */
+  sessionUp(id: TabId, session: AgentSession, carried: number, clean?: boolean): void
   /** The person wrote while the tab's session was being swapped: no session heard it. */
   personActed?(id: TabId): void
 }
@@ -464,15 +467,18 @@ export class TabController {
       // into a session started here: one someone else gave the tab was sent
       // its own messages.
       const started = !this.deps.manager.get(id)
+      let created: AgentSession | undefined
       if (started) {
         prepare(tab)
         // The new session is announced below, once it has what it was owed.
-        await this.startSession(id, false)
+        created = await this.startSession(id, false)
       }
       const carried = (started ? unsent.length : 0) + queued.length + (this.held.get(id)?.length ?? 0)
       const fresh = this.deps.manager.get(id)
       this.handOver(id, fresh, started ? unsent : [], queued)
-      if (started && fresh) this.deps.autonomy?.sessionUp(id, fresh, carried)
+      // A resume that died while starting was replaced by a clean session in
+      // there (recoverFromDeadSession), which announced that one itself.
+      if (started && fresh && fresh === created) this.deps.autonomy?.sessionUp(id, fresh, carried)
       return started
     } finally {
       this.replacing.delete(id)
@@ -551,14 +557,17 @@ export class TabController {
     await this.startSession(id)
   }
 
-  /** `announce` false: the caller tells the autonomy host about the session itself (`replaceSession`). */
-  private async startSession(id: TabId, announce = true): Promise<void> {
+  /**
+   * `announce` false: the caller tells the autonomy host about the session
+   * itself (`replaceSession`). The session made here, if one was.
+   */
+  private async startSession(id: TabId, announce = true): Promise<AgentSession | undefined> {
     const tab = this.tabs.find((t) => t.id === id)
-    if (!tab) return
+    if (!tab) return undefined
     // A folder that is gone cannot host an agent; the tab stays, flagged, so
     // the user can see what happened and pick a new folder.
-    if (tab.missingCwd) return
-    if (this.deps.manager.get(id)) return
+    if (tab.missingCwd) return undefined
+    if (this.deps.manager.get(id)) return undefined
 
     // The conversation is already on screen from the record; the session
     // carries on from that same ribbon, so nothing is drawn twice and new
@@ -566,7 +575,7 @@ export class TabController {
     // the preview, not the agent.
     const seed = await this.preview(id).catch(() => null)
     // Closed, or started by another call, while the record was read.
-    if (!this.tabs.includes(tab) || this.deps.manager.get(id)) return
+    if (!this.tabs.includes(tab) || this.deps.manager.get(id)) return undefined
 
     const session = this.deps.manager.create(
       id,
@@ -584,6 +593,7 @@ export class TabController {
     this.rememberSession(id, session)
     // Not a session that recovery has already replaced: that one is dead.
     if (announce && this.deps.manager.get(id) === session) this.deps.autonomy?.sessionUp(id, session, 0)
+    return session
   }
 
   /**
@@ -732,7 +742,7 @@ export class TabController {
       const carried = unsent.length + queued.length + (this.held.get(id)?.length ?? 0)
       this.handOver(id, fresh, unsent, queued)
       this.rememberSession(id, fresh)
-      this.deps.autonomy?.sessionUp(id, fresh, carried)
+      this.deps.autonomy?.sessionUp(id, fresh, carried, true)
     } finally {
       this.replacing.delete(id)
       this.held.delete(id)

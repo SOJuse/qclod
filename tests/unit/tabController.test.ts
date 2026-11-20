@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 import { TabController } from '../../src/main/tabs/TabController'
 import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
+import { AgentSession } from '../../src/main/agent/AgentSession'
 import { PermissionBroker } from '../../src/main/agent/permissions'
 import type { AgentDriver } from '../../src/main/agent/driver'
 import { toPermissionContext } from '../../src/main/agent/permissionContext'
@@ -2073,6 +2074,45 @@ describe('TabController: раскладка этапа 2 (layout.json)', () => {
     await harness.controller.whenSettled()
     // One new session: one adoption, one «up» — not two from startSession and the swap.
     expect(calls).toEqual(['adopted a', 'up a 0'])
+  })
+
+  test('хуки автономии: resume при замене умер, пока стартовал, — чистая сессия объявлена один раз и как чистая', async () => {
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+    // start() comes back only once the resume has died: the controller recovers
+    // inside startSession, before replaceSession gets to announce anything.
+    const start = AgentSession.prototype.start
+    const spy = vi.spyOn(AgentSession.prototype, 'start').mockImplementation(async function (
+      this: AgentSession,
+      resumeId?: string
+    ) {
+      await start.call(this, resumeId)
+      if (resumeId) await vi.waitFor(() => expect(this.status).toBe('error'))
+    })
+    const ups: Array<{ session: AgentSession; carried: number; clean: boolean }> = []
+    const harness = makeController({
+      resumeFails: true,
+      autonomy: {
+        tabAdded: () => undefined,
+        tabClosed: () => undefined,
+        sessionAdopted: () => undefined,
+        sessionUp: (_id, session, carried, clean) => ups.push({ session, carried, clean: clean === true })
+      }
+    })
+    try {
+      await harness.controller.restore()
+      await harness.controller.whenSettled()
+      ups.length = 0
+
+      // The stored id is still the dead one: a crash restart resumes it again.
+      await harness.controller.revive('a')
+      await harness.controller.whenSettled()
+      expect(ups).toHaveLength(1)
+      expect(ups[0]!.session).toBe(harness.manager.get('a'))
+      // No «продолжай» into a conversation that is not the one it carried on (decision 12).
+      expect(ups[0]!.clean).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   test('хуки автономии: сообщение, задержанное на время замены сессии, — тоже действие человека', async () => {

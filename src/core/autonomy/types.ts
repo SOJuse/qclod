@@ -35,8 +35,12 @@ export type AutonomyInput =
   | { type: 'answerNow'; cardId: string }
   /** A message or an answer from a person, here or on the phone. */
   | { type: 'personActed' }
-  /** A new process is up; carried — the person's messages handed over to it. */
-  | { type: 'processUp'; carried: number }
+  /**
+   * A new process is up; carried — the person's messages handed over to it.
+   * clean — a fresh conversation in place of one that would not open: no
+   * «продолжай» goes there, it has nothing to carry on (decision 12).
+   */
+  | { type: 'processUp'; carried: number; clean?: boolean }
   | { type: 'processDied'; cause: 'crash' | 'login' }
   | { type: 'remote'; info: RemoteInfo }
   /** The person's own Remote Control switch. */

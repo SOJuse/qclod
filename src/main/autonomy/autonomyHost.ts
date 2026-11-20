@@ -123,12 +123,12 @@ export class AutonomyHost implements AutonomyHooks {
     this.refreshAwake()
   }
 
-  sessionUp(id: TabId, session: AgentSession, carried: number): void {
+  sessionUp(id: TabId, session: AgentSession, carried: number, clean = false): void {
     const entry = this.entries.get(id)
     if (!entry || this.frozen || this.deps.manager.get(id) !== session) return
     // A session starts in the mode of its tab without saying so (it is told only of changes): read now.
     entry.core.handle({ type: 'mode', mode: session.panelSnapshot().data.permissionMode })
-    entry.core.handle({ type: 'processUp', carried })
+    entry.core.handle({ type: 'processUp', carried, ...(clean ? { clean } : {}) })
   }
 
   /** A message of the person's that no session has heard yet (held while the session is swapped). */

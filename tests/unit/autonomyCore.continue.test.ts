@@ -354,6 +354,22 @@ describe('AutonomyCore: восстановление', () => {
     expect(h.commands()).toEqual([])
   })
 
+  test('чистая сессия вместо неоткрывшейся переписки: «продолжай» нет ни после падения, ни при восстановлении', () => {
+    const r = harness({ record: { working: true, limitUntil: 10 * HOUR } })
+    r.core.handle({ type: 'processUp', carried: 0, clean: true })
+    expect(continues(r)).toEqual([])
+    r.clock.advance(24 * HOUR)
+    expect(continues(r)).toEqual([])
+    expect(r.core.record.limitUntil).toBeUndefined()
+
+    const h = harness()
+    h.core.handle({ type: 'processUp', carried: 0 })
+    h.core.handle({ type: 'status', status: 'busy' })
+    h.core.handle({ type: 'processDied', cause: 'crash' })
+    h.core.handle({ type: 'processUp', carried: 0, clean: true })
+    expect(continues(h)).toEqual([])
+  })
+
   test('без working восстановления нет', () => {
     const h = harness({ record: { remote: true } })
     h.core.handle({ type: 'processUp', carried: 0 })

@@ -183,7 +183,7 @@ export class AutonomyCore {
         this.endLimitWait()
         break
       case 'processUp':
-        this.onProcessUp(input.carried)
+        this.onProcessUp(input.carried, input.clean === true)
         break
       case 'processDied':
         this.onProcessDied(input.cause)
@@ -295,7 +295,7 @@ export class AutonomyCore {
     this.continueOnUp = willContinue
   }
 
-  private onProcessUp(carried: number): void {
+  private onProcessUp(carried: number, clean: boolean): void {
     const first = !this.seenUp
     this.seenUp = true
     this.alive = true
@@ -321,6 +321,11 @@ export class AutonomyCore {
     // «продолжай» — and so does one written while it was starting.
     if (carried > 0 || spoke) {
       if (restoring) this.restoreLimitWait()
+      return
+    }
+    // Not the conversation that was being carried on: nothing to continue, nor to wait for.
+    if (clean) {
+      if (restoring) this.setRecord({ limitUntil: undefined })
       return
     }
 

@@ -133,6 +133,7 @@ test('«Открыть в редакторе» есть только с зада
 
   // The setting, typed on the settings screen.
   await win.locator('[data-testid="open-settings"]').click()
+  await win.locator('[data-testid="settings-nav-agent"]').click()
   const field = win.locator('[data-testid="setting-editorCommand"]')
   await expect(field).toHaveAttribute('placeholder', 'code -g {path}:{line}')
   await field.fill('code -g {path}:{line}')

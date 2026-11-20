@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,11 +6,13 @@ import { saveImageBuffer } from '@main/files/imagePaste'
 import { DEFAULT_LAYOUT, type AppSettings } from '@shared/types'
 import { CHANNELS } from '@shared/channels'
 import { registerAgentIpc, type AgentIpcDeps } from '@main/agentIpc'
+import { LayoutStore } from '@main/store/layoutStore'
 import {
   mergeDefaults,
   sanitizeAnswer,
   sanitizeDefaults,
   sanitizeInput,
+  sanitizeLayoutPatch,
   sanitizeOverrides,
   sanitizePlanDecision,
   sanitizeQuestionAnswers,
@@ -304,12 +306,59 @@ describe('sanitizePlanDecision', () => {
   })
 })
 
+describe('sanitizeLayoutPatch', () => {
+  test('панели — строки до 200 знаков, без повторов, не больше 4', () => {
+    expect(sanitizeLayoutPatch({ panes: ['a', 'a', 1, 'b', 'c', 'd', 'e'] })).toEqual({
+      panes: ['a', 'b', 'c', 'd']
+    })
+    expect(sanitizeLayoutPatch({ panes: ['', 'x'.repeat(201), 'x'.repeat(200)] })).toEqual({
+      panes: ['x'.repeat(200)]
+    })
+    expect(sanitizeLayoutPatch({ panes: [] })).toEqual({ panes: [] })
+    expect(sanitizeLayoutPatch({ panes: 'a' })).toEqual({})
+  })
+
+  test('ширины — конечные числа больше нуля, не больше 4', () => {
+    expect(sanitizeLayoutPatch({ paneWidths: [NaN, -1, 0.5] })).toEqual({ paneWidths: [0.5] })
+    expect(sanitizeLayoutPatch({ paneWidths: [Infinity, 0, '1', 1, 2, 3, 4, 5] })).toEqual({
+      paneWidths: [1, 2, 3, 4]
+    })
+    expect(sanitizeLayoutPatch({ paneWidths: 0.5 })).toEqual({})
+  })
+
+  test('projectCollapsed без строки cwd отброшен', () => {
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: 1, collapsed: true } })).toEqual({})
+    expect(sanitizeLayoutPatch({ projectCollapsed: { collapsed: true } })).toEqual({})
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: '', collapsed: true } })).toEqual({})
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: 'C:\\p', collapsed: 'да' } })).toEqual({})
+    expect(sanitizeLayoutPatch({ projectCollapsed: 'C:\\p' })).toEqual({})
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: 'C:\\p', collapsed: true, hostId: 'x' } })).toEqual({
+      projectCollapsed: { cwd: 'C:\\p', collapsed: true }
+    })
+  })
+
+  test('боковая панель — только boolean; чужие ключи и мусор отброшены', () => {
+    expect(sanitizeLayoutPatch({ sidebarCollapsed: true, active: 'a', projects: [] })).toEqual({
+      sidebarCollapsed: true
+    })
+    expect(sanitizeLayoutPatch({ sidebarCollapsed: 'yes' })).toEqual({})
+    for (const garbage of [null, undefined, 5, 'x', [1]]) expect(sanitizeLayoutPatch(garbage)).toEqual({})
+  })
+})
+
 describe('этап 2: обработчики-заглушки в main', () => {
   const plans: Array<[string, unknown]> = []
   const questions: Array<[string, Record<string, string>, Record<string, string> | undefined]> = []
 
+  const layoutDirs: string[] = []
+  afterEach(() => {
+    for (const dir of layoutDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
   function register(): void {
     handlers.clear()
+    const layoutDir = mkdtempSync(join(tmpdir(), 'qclod-ipc-layout-'))
+    layoutDirs.push(layoutDir)
     plans.length = 0
     questions.length = 0
     const session = {
@@ -326,9 +375,11 @@ describe('этап 2: обработчики-заглушки в main', () => {
     }
     registerAgentIpc({
       getWindow: () => null,
-      controller: { list: () => [] },
+      controller: { list: () => [], setPanes: async () => undefined },
       manager: { get: (id: string) => (id === 't1' ? session : undefined) },
       broker: { cancelTab: () => undefined },
+      layout: new LayoutStore(layoutDir, () => undefined),
+      history: { list: async () => [] },
       rememberDefault: () => undefined,
       resolver: { forget: () => undefined },
       getEditorCommand: () => '',
@@ -371,10 +422,9 @@ describe('этап 2: обработчики-заглушки в main', () => {
     ])
   })
 
-  test('раскладка и проекты до задач 2 и 9 отвечают значениями по умолчанию', async () => {
+  test('раскладка и проекты: пустая раскладка и неизвестные папки — значения по умолчанию', async () => {
     register()
     expect(await call(CHANNELS.layoutGet)).toEqual(DEFAULT_LAYOUT)
-    expect(await call(CHANNELS.layoutSet, { sidebarCollapsed: true })).toEqual(DEFAULT_LAYOUT)
     expect(await call(CHANNELS.projectForget, 'C:\\p')).toEqual(DEFAULT_LAYOUT)
     expect(await call(CHANNELS.projectHistory, 'C:\\p')).toEqual([])
     expect(await call(CHANNELS.projectOpenSession, 'C:\\p', 's1')).toBeNull()
@@ -382,8 +432,10 @@ describe('этап 2: обработчики-заглушки в main', () => {
     expect(await call(CHANNELS.projectHistory, '/home/u/p', 'srv1')).toEqual([])
     expect(await call(CHANNELS.projectOpenSession, '/home/u/p', 's1', undefined, 'srv1')).toBeNull()
     expect(await call(CHANNELS.projectForget, '/home/u/p', 'srv1')).toEqual(DEFAULT_LAYOUT)
-    expect(await call(CHANNELS.rendererRetry)).toBeUndefined()
-    expect(await call(CHANNELS.logsOpen)).toBeUndefined()
+    expect(await call(CHANNELS.layoutSet, { sidebarCollapsed: true })).toEqual({
+      ...DEFAULT_LAYOUT,
+      sidebarCollapsed: true
+    })
     expect(DEFAULT_LAYOUT).toEqual({
       panes: [],
       active: null,

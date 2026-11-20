@@ -27,6 +27,7 @@ describe('проверка релизной сборки на тестовые �
       '__qclodLoginOpens',
       '__qclodRealAgentStarts',
       '__qclodUpdateRestarts',
+      '__qclodHasSession',
       'Тестовая сборка не запускает',
       // The renderer's pane-throw seam, by the error it throws.
       'e2e: render error in a pane'

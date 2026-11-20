@@ -2,11 +2,11 @@ import { basename } from 'node:path'
 import { expect, test } from 'vitest'
 import { cssRules } from './cssTokens'
 
-// The sheets (settings, history, palette), the setup screen, the empty tab and the shared controls.
+// The sheets (settings, palette), the setup screen, the empty tab and the shared controls.
+// The history sheet is gone: past conversations live in the sidebar (stage 2, decision 4).
 const SCREENS = [
   'controls.css',
   'SettingsScreen.css',
-  'HistoryScreen.css',
   'ActionPalette.css',
   'SetupScreen.css',
   'EmptyTab.css'
@@ -42,4 +42,13 @@ test('модальные окна не рисуют лист и кнопки с�
     .filter((r) => /box-shadow:\s*var\(--shadow-modal\)|background:\s*var\(--backdrop\)/.test(r.body))
     .map((r) => `${basename(r.file)}: ${r.selector}`)
   expect(own).toEqual([])
+})
+
+// A section's own button is spaced by its own class; a bare `.btn` rule would also reach
+// the delete cross of a permission rule and the «Повторить» of a notice.
+test('экран настроек не задаёт отступ всем кнопкам подряд', () => {
+  const broad = rules
+    .filter((r) => basename(r.file) === 'SettingsScreen.css' && /\.btn$/.test(r.selector) && /margin/.test(r.body))
+    .map((r) => r.selector)
+  expect(broad.filter((s) => !s.startsWith('.settings-rules'))).toEqual([])
 })

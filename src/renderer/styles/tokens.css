@@ -134,6 +134,10 @@
   --pane-min-w: 320px;
   --panel-w: 280px;
   --prose-max-w: 72ch;
+  /* A pane's header line and its small buttons; the floating input's inner padding. */
+  --chat-header-h: 34px;
+  --chat-header-button: 24px;
+  --dock-pad: var(--space-2);
 
   --rule-category: 2px;
   /* An opened tool card's output block scrolls past this height until «Показать всё». */

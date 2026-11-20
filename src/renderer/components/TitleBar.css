@@ -1,8 +1,8 @@
 .title-bar {
+  position: relative;
   display: flex;
   align-items: stretch;
   height: var(--titlebar-height);
-  padding-left: 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   /* The bar itself drags the window; interactive parts opt out below. */
@@ -11,11 +11,9 @@
 
 .title-bar-mark {
   align-self: center;
-  width: 9px;
-  height: 9px;
-  margin-right: 10px;
-  border-radius: var(--radius-hair);
-  background: var(--accent);
+  width: 20px;
+  height: 20px;
+  margin-right: 8px;
 }
 
 .title-bar-spacer {
@@ -23,127 +21,36 @@
   min-width: 12px;
 }
 
-/* ---- tabs ---- */
-
-.tab-strip {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -webkit-app-region: no-drag;
+/* The sidebar's button sits at the window's left edge, as the window's own buttons sit at its right. */
+.title-bar-sidebar {
+  margin-right: var(--space-2);
 }
 
-.tab-strip::-webkit-scrollbar {
-  display: none;
+.title-bar-name {
+  align-self: center;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
 }
 
-.tab {
-  position: relative;
+/* The active chat's title, in the middle of the window whatever stands either side of it. */
+.title-bar-title {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 40%;
   display: flex;
   align-items: center;
-  gap: 7px;
-  max-width: 190px;
-  padding: 0 6px 0 10px;
-  /* The 2px top rule is the whole "which tab am I on" signal; transparent until active. */
-  border-top: 2px solid transparent;
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-size: var(--text-sm);
-  white-space: nowrap;
-  cursor: default;
-  transition:
-    color var(--dur-fast) var(--ease),
-    background var(--dur-fast) var(--ease);
-}
-
-.tab:hover {
-  color: var(--text-dim);
-  background: var(--surface);
-}
-
-.tab.is-active {
-  color: var(--text);
-  background: var(--surface);
-  border-top-color: var(--accent);
-}
-
-.tab-title {
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
+  pointer-events: none;
 }
 
-.tab-status {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-faint);
-  flex: 0 0 auto;
-}
-
-.tab-status.is-busy {
-  background: var(--accent);
-  animation: tab-pulse 1.4s var(--ease) infinite;
-}
-
-.tab-status.is-waiting {
-  background: var(--status-warn);
-}
-
-.tab-status.is-idle {
-  background: var(--status-ok);
-}
-
-.tab-status.is-error,
-.tab-status.is-exited {
-  background: var(--status-critical);
-}
-
-/* Status guessed from output silence rather than hooks — say so quietly. */
-.tab-status.is-degraded {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px currentColor;
-  color: var(--text-dim);
-}
-
-@keyframes tab-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-/* Remote Control: a small phone after the title, in the bridge's colour. */
-.tab-remote {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-}
-
-.tab-remote[data-state='on'] {
-  color: var(--status-ok);
-}
-
-.tab-remote[data-state='connecting'],
-.tab-remote[data-state='reconnecting'] {
-  color: var(--status-warn);
-}
-
-.tab-remote[data-state='failed'] {
-  color: var(--status-critical);
-}
-
-.tab-badge {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
-.tab-close,
-.tab-new,
 .window-button {
   display: flex;
   align-items: center;
@@ -159,47 +66,10 @@
     background var(--dur-fast) var(--ease);
 }
 
-/* The strip scrolls and the window buttons touch the top of the screen, so a
-   ring drawn outside would be cut off: here it goes inside the button. */
-.tab-close:focus-visible,
-.tab-new:focus-visible,
+/* The window buttons touch the top of the screen, so a ring drawn outside
+   would be cut off: here it goes inside the button. */
 .window-button:focus-visible {
   outline-offset: var(--focus-offset-inset);
-}
-
-/* A close button reached by Tab shows even on a tab that is not active. */
-.tab-close:focus-visible {
-  opacity: 1;
-}
-
-.tab-close {
-  width: 18px;
-  height: 18px;
-  border-radius: var(--radius-hair);
-  opacity: 0;
-}
-
-.tab:hover .tab-close,
-.tab.is-active .tab-close {
-  opacity: 1;
-}
-
-.tab-close:hover {
-  background: color-mix(in srgb, var(--status-critical) 18%, var(--bg));
-  color: var(--status-critical);
-}
-
-.tab-new {
-  align-self: center;
-  width: 24px;
-  height: 24px;
-  margin-left: 4px;
-  border-radius: var(--radius-sm);
-}
-
-.tab-new:hover {
-  background: var(--hover-fill);
-  color: var(--text);
 }
 
 /* ---- window controls ---- */

@@ -17,6 +17,7 @@
   scrollbar-color: var(--border) transparent;
 }
 
+/* D10: the conversation's column, the width of the floating input under it. */
 .ribbon-row {
   max-width: var(--content-max-w);
   margin: 0 auto;

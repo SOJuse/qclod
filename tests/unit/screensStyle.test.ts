@@ -43,3 +43,12 @@ test('модальные окна не рисуют лист и кнопки с�
     .map((r) => `${basename(r.file)}: ${r.selector}`)
   expect(own).toEqual([])
 })
+
+// A section's own button is spaced by its own class; a bare `.btn` rule would also reach
+// the delete cross of a permission rule and the «Повторить» of a notice.
+test('экран настроек не задаёт отступ всем кнопкам подряд', () => {
+  const broad = rules
+    .filter((r) => basename(r.file) === 'SettingsScreen.css' && /\.btn$/.test(r.selector) && /margin/.test(r.body))
+    .map((r) => r.selector)
+  expect(broad.filter((s) => !s.startsWith('.settings-rules'))).toEqual([])
+})

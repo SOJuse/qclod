@@ -7,7 +7,7 @@ export function AboutSection({ version }: SettingsSectionProps): JSX.Element {
       <p className="settings-version">{version ? `Qclod ${version}` : 'Qclod'} · обновления ставятся вручную</p>
       <button
         type="button"
-        className="btn btn-sm"
+        className="btn btn-sm settings-about-button"
         data-testid="open-logs"
         onClick={() => {
           window.qclod.openLogs().catch(() => undefined)

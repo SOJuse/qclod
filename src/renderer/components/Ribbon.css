@@ -42,6 +42,12 @@
   line-height: var(--leading-prose);
 }
 
+/* A long Russian text takes its spaces from Inter's Cyrillic file as well
+   (styles/longText.css): the same glyphs, a fraction of the layout time. */
+.row-user-text.is-cyrillic {
+  font-family: var(--font-long-cyrillic);
+}
+
 /* When it was sent, by the system clock: one quiet line under the text. */
 .row-user-time {
   margin-top: var(--space-1);

@@ -12,6 +12,7 @@ import type {
   PermissionAnswer,
   PersistedTab,
   PreparedImage,
+  RendererErrorReport,
   ResolvedPath,
   RibbonEvent,
   RibbonSnapshot,
@@ -35,6 +36,15 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
  * bridge, so the renderer can only reach what is listed here.
  */
 const api = {
+  /**
+   * e2e only (QCLOD_E2E_THROW_IN_PANE): false in a release build. Chromium on
+   * Windows lowercases switch names, so the renderer sees
+   * `--qclod_e2e_throw_in_pane`; the match ignores case.
+   */
+  throwInPane: __QCLOD_TEST_SEAMS__
+    ? process.argv.some((arg) => arg.toUpperCase() === '--QCLOD_E2E_THROW_IN_PANE')
+    : false,
+
   appVersion: (): Promise<string> => ipcRenderer.invoke(CHANNELS.appVersion),
 
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke(CHANNELS.settingsGet),
@@ -57,8 +67,11 @@ const api = {
     ipcRenderer.invoke(CHANNELS.agentSend, id, input),
   /** Stops the turn; resolves with the messages that were waiting to be sent. */
   interrupt: (id: TabId): Promise<UserInput[]> => ipcRenderer.invoke(CHANNELS.agentInterrupt, id),
-  cancelQueued: (tabId: TabId, id: string): Promise<boolean> =>
+  /** The cancelled message, or null when it has already reached the agent or is gone. */
+  cancelQueued: (tabId: TabId, id: string): Promise<UserInput | null> =>
     ipcRenderer.invoke(CHANNELS.agentQueueCancel, tabId, id),
+  sendQueuedNow: (tabId: TabId, id: string): Promise<boolean> =>
+    ipcRenderer.invoke(CHANNELS.agentQueueSendNow, tabId, id),
   setPermissionMode: (id: TabId, mode: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.agentPermissionMode, id, mode),
   setModel: (id: TabId, model: string): Promise<void> =>
@@ -142,6 +155,8 @@ const api = {
   closeWindow: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowClose),
   zoom: (step: 'in' | 'out' | 'reset'): Promise<void> => ipcRenderer.invoke(CHANNELS.windowZoom, step),
   reloadWindow: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowReload),
+  /** Fire-and-forget: an error the window caught in itself, for the log. */
+  reportError: (report: RendererErrorReport): void => ipcRenderer.send(CHANNELS.rendererError, report),
 
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke(CHANNELS.openExternal, url),
 

@@ -27,6 +27,9 @@ const defaults: LaunchOverrides[] = []
 const models: string[] = []
 const remoteCalls: Array<[boolean, string | undefined]> = []
 const resolved: string[][] = []
+const queueCalls: Array<[string, string]> = []
+let cancelAnswer: UserInput | null = null
+let sendNowAnswer = false
 
 function call(channel: string, ...args: unknown[]): unknown {
   return handlers.get(channel)!({}, ...args)
@@ -36,7 +39,9 @@ beforeEach(() => {
   handlers.clear()
   mode = 'default'
   sendAnswer = true
-  for (const list of [sent, overrides, defaults, models, resolved, remoteCalls]) list.length = 0
+  for (const list of [sent, overrides, defaults, models, resolved, remoteCalls, queueCalls]) list.length = 0
+  cancelAnswer = null
+  sendNowAnswer = false
   const session = {
     get panel() {
       return { permissionMode: mode }
@@ -49,6 +54,14 @@ beforeEach(() => {
     },
     setRemote: async (enabled: boolean, name?: string) => {
       remoteCalls.push([enabled, name])
+    },
+    cancelQueued: async (queuedId: string) => {
+      queueCalls.push(['cancel', queuedId])
+      return cancelAnswer
+    },
+    sendQueuedNow: async (queuedId: string) => {
+      queueCalls.push(['now', queuedId])
+      return sendNowAnswer
     }
   }
   registerAgentIpc({
@@ -112,6 +125,37 @@ describe('agent:* каналы', () => {
     expect(remoteCalls).toEqual([])
     await call(CHANNELS.agentRemote, 't1', true)
     expect(remoteCalls).toEqual([[true, 'проект']])
+  })
+
+  test('agentQueueCancel принимает только строки и отдаёт, что вернула сессия', async () => {
+    expect(await call(CHANNELS.agentQueueCancel, 't1', 42)).toBeNull()
+    expect(await call(CHANNELS.agentQueueCancel, 1, 'q1')).toBeNull()
+    expect(await call(CHANNELS.agentQueueCancel, 't1', { id: 'q1' })).toBeNull()
+    expect(await call(CHANNELS.agentQueueCancel, 'нет-такой', 'q1')).toBeNull()
+    expect(queueCalls).toEqual([])
+
+    expect(await call(CHANNELS.agentQueueCancel, 't1', 'q1')).toBeNull()
+    cancelAnswer = { text: 'два', attachments: [] }
+    expect(await call(CHANNELS.agentQueueCancel, 't1', 'q2')).toEqual({ text: 'два', attachments: [] })
+    expect(queueCalls).toEqual([
+      ['cancel', 'q1'],
+      ['cancel', 'q2']
+    ])
+  })
+
+  test('agentQueueSendNow принимает только строки и отдаёт, что вернула сессия', async () => {
+    expect(await call(CHANNELS.agentQueueSendNow, 't1', 42)).toBe(false)
+    expect(await call(CHANNELS.agentQueueSendNow, null, 'q1')).toBe(false)
+    expect(await call(CHANNELS.agentQueueSendNow, 'нет-такой', 'q1')).toBe(false)
+    expect(queueCalls).toEqual([])
+
+    expect(await call(CHANNELS.agentQueueSendNow, 't1', 'q1')).toBe(false)
+    sendNowAnswer = true
+    expect(await call(CHANNELS.agentQueueSendNow, 't1', 'q2')).toBe(true)
+    expect(queueCalls).toEqual([
+      ['now', 'q1'],
+      ['now', 'q2']
+    ])
   })
 
   test('огромный список путей обрезается до разбора', async () => {

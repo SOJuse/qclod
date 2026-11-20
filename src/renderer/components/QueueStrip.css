@@ -44,7 +44,7 @@
   color: var(--text-faint);
 }
 
-.queue-cancel {
+.queue-action {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -57,7 +57,24 @@
   cursor: pointer;
 }
 
-.queue-cancel:hover {
+.queue-action:hover:not(:disabled) {
   color: var(--text);
   background: var(--hover-fill);
+}
+
+.queue-action:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.queue-spinner {
+  animation: queue-spin 0.9s linear infinite;
+}
+
+@keyframes queue-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .queue-spinner { animation: none; }
 }

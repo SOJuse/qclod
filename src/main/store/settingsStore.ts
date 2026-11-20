@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AppSettings } from '../../shared/types'
-import { sanitizeDefaults, sanitizeEditorCommand } from '../tabs/sanitize'
+import { sanitizeDefaults, sanitizeEditorCommand, sanitizeSettingsFields } from '../tabs/sanitize'
 
 export const SETTINGS_FILE = 'settings.json'
 
@@ -47,7 +47,8 @@ export function loadSettings(dir: string): AppSettings {
   const stored = parsed as Partial<AppSettings>
   return {
     ...DEFAULT_SETTINGS,
-    ...stored,
+    // A hand-edited or older file: only known fields of the right type count.
+    ...sanitizeSettingsFields(stored),
     editorCommand: sanitizeEditorCommand(stored.editorCommand) ?? DEFAULT_SETTINGS.editorCommand,
     defaults: { ...DEFAULT_SETTINGS.defaults, ...sanitizeDefaults(stored.defaults) }
   }

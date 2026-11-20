@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
-import { createSdkDriver } from '../../src/main/agent/sdkDriver'
+import { createSdkDriver, toSdkMessage } from '../../src/main/agent/sdkDriver'
 import type { DriverOptions } from '../../src/main/agent/driver'
 import type { ToolPermissionContext } from '../../src/main/agent/permissionContext'
 import { toPermissionContext } from '../../src/main/agent/permissionContext'
@@ -476,5 +476,68 @@ describe('sdkDriver: Remote Control', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('toSdkMessage: uuid, приоритет, источник', () => {
+  test('с opts: uuid, priority, origin human и timestamp', () => {
+    const m = toSdkMessage({ text: 'a', attachments: [] }, { uuid: 'u1', priority: 'now' })
+    expect(m['uuid']).toBe('u1')
+    expect(m['priority']).toBe('now')
+    expect(m['origin']).toEqual({ kind: 'human' })
+    expect(typeof m['timestamp']).toBe('string')
+    expect(Number.isNaN(Date.parse(m['timestamp'] as string))).toBe(false)
+  })
+
+  test('без opts: нет uuid и priority, origin есть', () => {
+    const m = toSdkMessage({ text: 'a', attachments: [] })
+    expect('uuid' in m).toBe(false)
+    expect('priority' in m).toBe(false)
+    expect(m['origin']).toEqual({ kind: 'human' })
+  })
+})
+
+describe('sdkDriver: отмена и квитанция прерывания', () => {
+  test('cancelQueued без cancelAsyncMessage даёт null', async () => {
+    mockQuery()
+    const driver = await createSdkDriver(allowAll())
+    expect(await driver.cancelQueued('u1')).toBeNull()
+    await driver.dispose()
+  })
+
+  test('cancelQueued отдаёт ответ cancelAsyncMessage', async () => {
+    const cancelAsyncMessage = vi.fn(async () => true)
+    mockQuery({ cancelAsyncMessage })
+    const driver = await createSdkDriver(allowAll())
+    expect(await driver.cancelQueued('u1')).toBe(true)
+    expect(cancelAsyncMessage).toHaveBeenCalledWith('u1')
+    await driver.dispose()
+  })
+
+  test('interrupt({cancelQueued}) передаёт флаг и переводит ответ', async () => {
+    const interrupt = vi.fn(async () => ({ still_queued: ['a'], cancelled: ['b'] }))
+    mockQuery({ interrupt })
+    const driver = await createSdkDriver(allowAll())
+    expect(await driver.interrupt({ cancelQueued: true })).toEqual({
+      stillQueued: ['a'],
+      cancelled: ['b']
+    })
+    expect(interrupt).toHaveBeenCalledWith({ cancelQueued: true })
+    await driver.dispose()
+  })
+
+  test('interrupt: старый CLI без ответа — undefined; квитанция без cancelled — без поля', async () => {
+    mockQuery()
+    const driver = await createSdkDriver(allowAll())
+    expect(await driver.interrupt()).toBeUndefined()
+    await driver.dispose()
+
+    // interrupt_receipt_v1 without interrupt_cancel_queued_v1: not the same as «none cancelled».
+    mockQuery({ interrupt: async () => ({ still_queued: ['a'] }) })
+    const d2 = await createSdkDriver(allowAll())
+    const receipt = await d2.interrupt({ cancelQueued: true })
+    expect(receipt).toEqual({ stillQueued: ['a'] })
+    expect(receipt).not.toHaveProperty('cancelled')
+    await d2.dispose()
   })
 })

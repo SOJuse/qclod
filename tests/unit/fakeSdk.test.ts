@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
+import { createFakeSdk, type FakeStep } from '../fixtures/fake-sdk/index.mjs'
 
 /**
  * One turn's worth of messages. The stream does not end after an answer — a
@@ -1182,5 +1182,306 @@ describe('createFakeSdk: Remote Control', () => {
     })
     expect(kinds(await collect(d))).toContain('permission_denied')
     expect(d.executedTools).not.toContain('Bash')
+  })
+})
+
+type Frame = Record<string, unknown>
+
+/** Reads one stream across several calls, so a test can send between frames. */
+function reader(driver: { messages: AsyncIterable<Frame> }) {
+  const it = driver.messages[Symbol.asyncIterator]()
+  return {
+    async next(): Promise<Frame> {
+      const r = await it.next()
+      if (r.done) throw new Error('stream ended')
+      return r.value
+    },
+    /** Frames up to and including the first one that `stop` accepts. */
+    async until(stop: (m: Frame) => boolean): Promise<Frame[]> {
+      const out: Frame[] = []
+      for (;;) {
+        const m = await this.next()
+        out.push(m)
+        if (stop(m)) return out
+      }
+    }
+  }
+}
+
+const isType = (type: string) => (m: Frame) => m['type'] === type
+const lifecycleOf = (frames: Frame[]) =>
+  frames
+    .filter(isType('command_lifecycle'))
+    .map((m) => `${String(m['state'])}:${String(m['command_uuid'])}`)
+const shape = (frames: Frame[]) =>
+  frames.map((m) =>
+    m['type'] === 'command_lifecycle'
+      ? `${String(m['state'])}:${String(m['command_uuid'])}`
+      : `${String(m['type'])}${m['subtype'] ? '/' + String(m['subtype']) : ''}`
+  )
+const said = (text: string) => ({ text, attachments: [] })
+const frameIs = (state: string, uuid: string) => (m: Frame) =>
+  m['state'] === state && m['command_uuid'] === uuid
+
+describe('createFakeSdk: очередь команд CLI', () => {
+  const three: FakeStep[] = [
+    { kind: 'text', text: 'раз' },
+    { kind: 'text', text: 'два' },
+    { kind: 'text', text: 'три' }
+  ]
+
+  test('сообщение во время хода: queued, затем started до result, completed перед result', async () => {
+    const driver = createFakeSdk({ steps: [], turns: [three] })
+    const r = reader(driver)
+    driver.send(said('A'), { uuid: 'A' })
+    const head = await r.until(isType('assistant'))
+    driver.send(said('B'), { uuid: 'B' })
+    const tail = await r.until(frameIs('completed', 'A'))
+    expect(shape(head)).toEqual([
+      'queued:A',
+      'started:A',
+      'system/init',
+      'rate_limit_event',
+      'user',
+      'assistant'
+    ])
+    // No echo for the folded message; its completed comes before the result,
+    // the starter's after it.
+    expect(shape(tail)).toEqual([
+      'queued:B',
+      'started:B',
+      'assistant',
+      'assistant',
+      'completed:B',
+      'result/success',
+      'completed:A'
+    ])
+    const result = tail.find(isType('result'))!
+    expect(result['user_message_uuids']).toEqual(['A', 'B'])
+    expect(result['queued_turn_count']).toBe(0)
+    expect(driver.folded).toEqual(['B'])
+    const frame = tail[0]!
+    expect(frame['session_id']).toEqual(expect.any(String))
+    expect(frame['uuid']).toEqual(expect.any(String))
+    expect(frame['uuid']).not.toBe('B')
+  })
+
+  test('влитое сообщение получает ответ в том же ходе, сразу после started (05a §1)', async () => {
+    const driver = createFakeSdk({ steps: [], turns: [three, [{ kind: 'text', text: 'бэ' }]] })
+    const r = reader(driver)
+    driver.send(said('A'), { uuid: 'A' })
+    await r.until(isType('assistant'))
+    driver.send(said('B'), { uuid: 'B' })
+    const tail = await r.until(frameIs('completed', 'A'))
+    const texts = tail
+      .filter(isType('assistant'))
+      .map((m) => (m['message'] as { content: Array<{ text?: string }> }).content[0]?.text)
+    expect(shape(tail)).toEqual([
+      'queued:B',
+      'started:B',
+      'assistant',
+      'assistant',
+      'assistant',
+      'completed:B',
+      'result/success',
+      'completed:A'
+    ])
+    // The answer to B comes at the boundary where B was taken, then A's turn goes on.
+    expect(texts).toEqual(['бэ', 'два', 'три'])
+    expect(tail.filter(isType('result'))).toHaveLength(1)
+    expect(tail.find(isType('result'))!['user_message_uuids']).toEqual(['A', 'B'])
+  })
+
+  test('send без хода: queued и started до init, ход, result, completed после него', async () => {
+    const driver = createFakeSdk({ steps: [], turns: [[{ kind: 'text', text: 'ок' }]] })
+    const r = reader(driver)
+    driver.send(said('A'), { uuid: 'A' })
+    const got = await r.until(frameIs('completed', 'A'))
+    expect(shape(got)).toEqual([
+      'queued:A',
+      'started:A',
+      'system/init',
+      'rate_limit_event',
+      'user',
+      'assistant',
+      'result/success',
+      'completed:A'
+    ])
+  })
+
+  test('init несёт claude_code_version и capabilities', async () => {
+    const driver = createFakeSdk({ steps: [], turns: [[]] })
+    driver.send(said('A'))
+    const init = (await collect(driver))[0] as Record<string, unknown>
+    expect(init['claude_code_version']).toBe('2.1.317')
+    expect(init['capabilities']).toEqual([
+      'interrupt_receipt_v1',
+      'interrupt_cancel_queued_v1',
+      'interrupt_send_now_v1',
+      'msg_lifecycle_v1'
+    ])
+    const old = createFakeSdk({ steps: [], turns: [[]], lifecycle: false })
+    old.send(said('A'))
+    const oldInit = (await collect(old))[0] as Record<string, unknown>
+    expect(oldInit['claude_code_version']).toBe('2.1.200')
+    expect(oldInit).not.toHaveProperty('capabilities')
+  })
+
+  test('cancelAsyncMessage до started — true и cancelled; после — false', async () => {
+    const driver = createFakeSdk({ steps: [], turns: [three] })
+    const r = reader(driver)
+    driver.send(said('A'), { uuid: 'A' })
+    await r.until(isType('assistant'))
+    driver.send(said('B'), { uuid: 'B' })
+    driver.send(said('C'), { uuid: 'C' })
+    await expect(driver.cancelAsyncMessage('B')).resolves.toBe(true)
+    await expect(driver.cancelAsyncMessage('B')).resolves.toBe(false)
+    const tail = await r.until(frameIs('completed', 'A'))
+    expect(lifecycleOf(tail)).toEqual([
+      'queued:B',
+      'queued:C',
+      'cancelled:B',
+      'started:C',
+      'completed:C',
+      'completed:A'
+    ])
+    // C was taken into the turn: too late to cancel.
+    await expect(driver.cancelQueued('C')).resolves.toBe(false)
+    await expect(driver.cancelQueued('nobody')).resolves.toBe(false)
+    expect(driver.folded).toEqual(['C'])
+  })
+
+  test('interrupt cancelQueued возвращает uuid всех из очереди', async () => {
+    const driver = createFakeSdk({ steps: [], turns: [three] })
+    const r = reader(driver)
+    driver.send(said('A'), { uuid: 'A' })
+    await r.until(isType('assistant'))
+    driver.send(said('B'), { uuid: 'B' })
+    driver.send(said('C'), { uuid: 'C' })
+    await expect(driver.interrupt({ cancelQueued: true })).resolves.toEqual({
+      stillQueued: [],
+      cancelled: ['B', 'C']
+    })
+    const tail = await r.until(frameIs('cancelled', 'A'))
+    expect(shape(tail)).toEqual([
+      'queued:B',
+      'queued:C',
+      'cancelled:B',
+      'cancelled:C',
+      'result/error_during_execution',
+      'cancelled:A'
+    ])
+    const result = tail.find(isType('result'))!
+    expect(result['subtype']).toBe('error_during_execution')
+    expect(result['is_error']).toBe(true)
+    expect(result['terminal_reason']).toBe('aborted_tools')
+    expect(result['user_message_uuids']).toEqual(['A'])
+    expect(driver.folded).toEqual([])
+  })
+
+  test('interrupt без флага: очередь остаётся в квитанции и выполнится после прерывания', async () => {
+    const driver = createFakeSdk({
+      steps: [],
+      turns: [three, [{ kind: 'text', text: 'потом' }]]
+    })
+    const r = reader(driver)
+    driver.send(said('A'), { uuid: 'A' })
+    await r.until(isType('assistant'))
+    driver.send(said('B'), { uuid: 'B' })
+    await expect(driver.interrupt()).resolves.toEqual({ stillQueued: ['B'], cancelled: [] })
+    const tail = await r.until(frameIs('completed', 'B'))
+    expect(shape(tail)).toEqual([
+      'queued:B',
+      'result/error_during_execution',
+      'cancelled:A',
+      'started:B',
+      'user',
+      'assistant',
+      'result/success',
+      'completed:B'
+    ])
+    expect(tail.find(isType('result'))!['queued_turn_count']).toBe(1)
+  })
+
+  test('cancelQueuedOnInterrupt false: квитанция без cancelled, флаг не слышен, очередь выполнится', async () => {
+    const driver = createFakeSdk({
+      steps: [],
+      turns: [three, [{ kind: 'text', text: 'потом' }]],
+      cancelQueuedOnInterrupt: false
+    })
+    const r = reader(driver)
+    driver.send(said('A'), { uuid: 'A' })
+    const head = await r.until(isType('assistant'))
+    const init = head.find((m) => m['type'] === 'system' && m['subtype'] === 'init')!
+    expect(init['capabilities']).not.toContain('interrupt_cancel_queued_v1')
+    expect(init['capabilities']).toContain('interrupt_receipt_v1')
+    driver.send(said('B'), { uuid: 'B' })
+    const receipt = await driver.interrupt({ cancelQueued: true })
+    expect(receipt).toEqual({ stillQueued: ['B'] })
+    expect(receipt).not.toHaveProperty('cancelled')
+    const tail = await r.until(frameIs('completed', 'B'))
+    expect(shape(tail)).toContain('started:B')
+  })
+
+  test('priority now прерывает ход и начинает новый', async () => {
+    const driver = createFakeSdk({
+      steps: [],
+      turns: [three, [{ kind: 'text', text: 'срочно' }]]
+    })
+    const r = reader(driver)
+    driver.send(said('A'), { uuid: 'A' })
+    await r.until(isType('assistant'))
+    driver.send(said('N'), { uuid: 'N', priority: 'now' })
+    const tail = await r.until(frameIs('completed', 'N'))
+    expect(shape(tail)).toEqual([
+      'queued:N',
+      'result/error_during_execution',
+      'cancelled:A',
+      'started:N',
+      'user',
+      'assistant',
+      'result/success',
+      'completed:N'
+    ])
+    const [first, second] = tail.filter(isType('result'))
+    expect(first!['subtype']).toBe('error_during_execution')
+    expect(first!['queued_turn_count']).toBe(1)
+    expect(second!['subtype']).toBe('success')
+    expect(second!['queued_turn_count']).toBe(0)
+  })
+
+  test('lifecycle false: кадров нет, cancelQueued даёт null, сообщение всё равно вливается', async () => {
+    const driver = createFakeSdk({ steps: [], turns: [three], lifecycle: false })
+    const r = reader(driver)
+    driver.send(said('A'), { uuid: 'A' })
+    const head = await r.until(isType('assistant'))
+    driver.send(said('B'), { uuid: 'B' })
+    await expect(driver.cancelQueued('B')).resolves.toBeNull()
+    await expect(driver.cancelAsyncMessage('B')).resolves.toBeNull()
+    const tail = await r.until(isType('result'))
+    expect([...head, ...tail].some(isType('command_lifecycle'))).toBe(false)
+    expect(tail.find(isType('result'))!['subtype']).toBe('success')
+    expect(driver.folded).toEqual(['B'])
+  })
+
+  test('lifecycle false: interrupt не отдаёт квитанции', async () => {
+    const driver = createFakeSdk({ steps: [], turns: [three], lifecycle: false })
+    await expect(driver.interrupt({ cancelQueued: true })).resolves.toBeUndefined()
+  })
+
+  test('phoneCancel: кадр cancelled с чужим uuid', async () => {
+    const driver = createFakeSdk({
+      steps: [],
+      turns: [
+        [
+          { kind: 'text', text: 'а' },
+          { kind: 'tool', name: 'Bash', input: {}, pauseMs: 60 }
+        ]
+      ],
+      phoneCancel: { afterMs: 10, uuid: 'phone-1' }
+    })
+    driver.send(said('A'), { uuid: 'A' })
+    const got = await collect(driver)
+    expect(lifecycleOf(got)).toContain('cancelled:phone-1')
   })
 })

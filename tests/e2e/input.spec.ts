@@ -356,7 +356,7 @@ test('пока агент отвечает, Enter ставит сообщени�
     await sendWhileBusy(win, 'сделай фичу', 'и потом закоммить')
 
     const queued = win.locator('[data-testid="queue-item"]')
-    await expect(queued).toHaveText('В очереди: «и потом закоммить»')
+    await expect(queued).toHaveText('Дойдёт после текущего шага: «и потом закоммить»')
     await expect(win.locator('[data-testid="queue-cancel"]')).toHaveAttribute('title', 'Убрать из очереди')
     // Not said yet: no bubble for it while it waits.
     await expect(userBubbles(win)).toHaveCount(1)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUp, Image as ImageIcon, ImageOff, Mic, Paperclip, Square, X } from 'lucide-react'
 import type {
   Attachment,
@@ -34,6 +34,7 @@ import {
   type SlashOutcome,
   type SlashStep
 } from '../input/slash'
+import { longFieldClasses } from '../ui/longText'
 import { InlineMenu, type InlineMenuItem } from './InlineMenu'
 import { SlashMenu } from './SlashMenu'
 import './Composer.css'
@@ -81,6 +82,9 @@ interface Props {
   onPickFiles: () => void
   /** main has answered for a pasted image: its bounded copy, or an error. */
   onImagePrepared: (file: File, patch: Pick<PendingImage, 'prepared' | 'error'>) => void
+  /** A long draft held back after the window froze and was reloaded (state/heldDrafts.ts). */
+  heldDraft?: boolean
+  onInsertHeldDraft?: () => void
 }
 
 const MAX_MATCHES = 8
@@ -134,6 +138,22 @@ export function DeadStrip({
 }
 
 /**
+ * Above the field after the watchdog reloaded a frozen window: the long draft
+ * was kept but not put back, in case it is what froze it. «Вставить» puts it
+ * back.
+ */
+export function HeldDraftStrip({ onInsert }: { onInsert: () => void }): JSX.Element {
+  return (
+    <div className="composer-held" data-testid="composer-held" role="status">
+      <span>Окно зависло на длинном тексте. Черновик сохранён — вставить его снова?</span>
+      <button type="button" className="is-primary" data-testid="composer-held-insert" onClick={onInsert}>
+        Вставить
+      </button>
+    </div>
+  )
+}
+
+/**
  * The one input line.
  *
  * v1 had two — ours and the CLI's own — and the user's verdict on that was
@@ -172,7 +192,9 @@ export function Composer({
   canRetry = false,
   onRetry,
   onPickFiles,
-  onImagePrepared
+  onImagePrepared,
+  heldDraft = false,
+  onInsertHeldDraft
 }: Props): JSX.Element {
   const field = useRef<HTMLTextAreaElement | null>(null)
   const histories = useRef(new Map<string, InputHistory>())
@@ -250,7 +272,8 @@ export function Composer({
     const el = field.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 260)}px`
+    // Plus the sideways scrollbar a long unwrapped paragraph has (Composer.css .is-long).
+    el.style.height = `${Math.min(el.scrollHeight + el.offsetHeight - el.clientHeight, 260)}px`
     // Placed before the next keystroke can land: a frame later, fast typing
     // has already gone in at the old spot.
     if (pendingCaret.current !== null) {
@@ -502,6 +525,7 @@ export function Composer({
   }
 
   const busy = status === 'busy' || status === 'waiting'
+  const fieldClass = useMemo(() => ['composer-input', 'ring-on-parent', ...longFieldClasses(draft)].join(' '), [draft])
 
   return (
     <div
@@ -516,6 +540,15 @@ export function Composer({
       }}
     >
       {dead && <DeadStrip canRetry={canRetry} onRetry={onRetry} onRestart={onRestart} />}
+
+      {heldDraft && onInsertHeldDraft && (
+        <HeldDraftStrip
+          onInsert={() => {
+            onInsertHeldDraft()
+            field.current?.focus()
+          }}
+        />
+      )}
 
       {attachments.length > 0 && (
         <div className="composer-chips" data-testid="composer-chips">
@@ -612,7 +645,7 @@ export function Composer({
 
         <textarea
           ref={field}
-          className="composer-input ring-on-parent"
+          className={fieldClass}
           data-testid="composer-input"
           data-composer-input=""
           aria-autocomplete="list"
@@ -635,11 +668,20 @@ export function Composer({
           onKeyDown={onKeyDown}
           onPaste={(ev) => {
             const items = attachmentsFromClipboard(ev.clipboardData, window.qclod.pathForFile)
-            if (items.length === 0) return
-            // A file copied in Explorer pastes nothing as text; it is an
-            // attachment, and the paste itself must not also insert a name.
-            ev.preventDefault()
-            addAttachments(items)
+            if (items.length > 0) {
+              // A file copied in Explorer pastes nothing as text; it is an
+              // attachment, and the paste itself must not also insert a name.
+              ev.preventDefault()
+              addAttachments(items)
+              return
+            }
+            // The browser lays the field out as part of the paste itself,
+            // before React hears of it: a paragraph that will be too long to
+            // wrap is unwrapped now, or that one layout freezes the window.
+            const el = ev.currentTarget
+            const pasted = ev.clipboardData.getData('text/plain')
+            const after = draft.slice(0, el.selectionStart) + pasted + draft.slice(el.selectionEnd)
+            el.classList.add(...longFieldClasses(after))
           }}
         />
 

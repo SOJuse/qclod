@@ -100,6 +100,8 @@
   /* Fonts come from @fontsource-variable packages imported in main.tsx (cyrillic subsets included).
      Inter: prose and interface. Geist Mono: only code, paths, commands, output, shortcuts. */
   --font-ui: 'Inter Variable', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  /* Long Russian text in the field and the bubble (styles/longText.css, ui/longText.ts). */
+  --font-long-cyrillic: 'Inter Long Cyrillic', var(--font-ui);
   --font-mono: 'Geist Mono Variable', 'Cascadia Mono', Consolas, ui-monospace, monospace;
 
   /* Six steps, no more. Prose in the ribbon is lg; the interface is md. */

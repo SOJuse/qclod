@@ -11,6 +11,7 @@ import {
   sanitizeInput,
   sanitizeOverrides,
   sanitizeQuestionAnswers,
+  sanitizeSettingsFields,
   sanitizeTabPatch
 } from '@main/tabs/sanitize'
 
@@ -249,6 +250,45 @@ describe('mergeDefaults', () => {
   test('патч без defaults оставляет умолчания как были', () => {
     expect(mergeDefaults(base, { soundEnabled: false }).defaults).toEqual(base.defaults)
   })
+
+  test('settingsSet: неизвестные ключи и чужие типы не сохраняются', () => {
+    const next = mergeDefaults(base, {
+      agentPath: 42,
+      globalHotkey: { a: 1 },
+      closeToTray: 'да',
+      panelOpen: 1,
+      notificationsEnabled: false,
+      evil: 'x'
+    } as never)
+    expect(next).toEqual({ ...base, notificationsEnabled: false })
+    expect('evil' in next).toBe(false)
+  })
+
+  test('settingsSet: путь к агенту — строка разумной длины без нулевого байта', () => {
+    expect(mergeDefaults(base, { agentPath: 'C:\\tools\\claude.exe' }).agentPath).toBe('C:\\tools\\claude.exe')
+    expect(mergeDefaults(base, { agentPath: 'a'.repeat(5000) }).agentPath).toBe(base.agentPath)
+    expect(mergeDefaults(base, { agentPath: 'claude\0.exe' }).agentPath).toBe(base.agentPath)
+  })
+
+  test('settingsSet: мусор вместо объекта ничего не меняет', () => {
+    expect(mergeDefaults(base, null as never)).toEqual(base)
+    expect(mergeDefaults(base, 'строка' as never)).toEqual(base)
+  })
+})
+
+describe('sanitizeSettingsFields', () => {
+  test('оставляет только известные поля своего типа', () => {
+    expect(
+      sanitizeSettingsFields({
+        agentPath: 'claude',
+        globalHotkey: 'Control+Shift+Space',
+        soundEnabled: true,
+        defaults: { model: 'x' },
+        editorCommand: 'code -g {path}',
+        junk: true
+      })
+    ).toEqual({ agentPath: 'claude', globalHotkey: 'Control+Shift+Space', soundEnabled: true })
+  })
 })
 
 describe('sanitizeInput: вставленные картинки', () => {
@@ -282,5 +322,23 @@ describe('sanitizeInput: вставленные картинки', () => {
     } finally {
       rmSync(userData, { recursive: true, force: true })
     }
+  })
+})
+
+describe('sanitizeErrorReport', () => {
+  test('garbage gives null', async () => {
+    const { sanitizeErrorReport } = await import('@main/tabs/sanitize')
+    for (const v of [null, undefined, 5, 'x', [], {}, { scope: 'nope', message: 'm' }, { scope: 'app' }, { scope: 'app', message: 3 }]) {
+      expect(sanitizeErrorReport(v)).toBeNull()
+    }
+  })
+
+  test('a good report passes and long strings are cut to 20 000', async () => {
+    const { sanitizeErrorReport } = await import('@main/tabs/sanitize')
+    const long = 'a'.repeat(30000)
+    const cut = 'a'.repeat(20000)
+    const r = sanitizeErrorReport({ scope: 'pane', message: long, stack: long, componentStack: long, extra: 1 })
+    expect(r).toEqual({ scope: 'pane', message: cut, stack: cut, componentStack: cut })
+    expect(sanitizeErrorReport({ scope: 'window', message: 'm', stack: 4 })).toEqual({ scope: 'window', message: 'm' })
   })
 })

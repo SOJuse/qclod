@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Brain, Image as ImageIcon, Smartphone } from 'lucide-react'
 import { clockTime, seconds } from '../../shared/format'
 import type { Attachment, RibbonItem as Item } from '../../shared/types'
@@ -9,6 +9,7 @@ import { NO_STEPS, SubagentCard } from './SubagentCard'
 import { ToolCard } from './ToolCard'
 import { Markdown } from '../markdown/Markdown'
 import { ERROR_ICON } from '../ui/icons'
+import { PIECE, mostlyCyrillic, textPieces } from '../ui/longText'
 
 interface Props {
   item: Item
@@ -149,6 +150,22 @@ function OpenableImage({
 }
 
 /**
+ * What the person wrote, whole. A long text goes in pieces, each its own text
+ * node, so that one long paragraph is not laid out in quadratic time
+ * (ui/longText.ts); a long Russian one takes Inter's Cyrillic file for its
+ * spaces too (styles/longText.css). It reads, wraps and copies as one.
+ */
+function UserText({ text }: { text: string }): JSX.Element {
+  const pieces = useMemo(() => (text.length > PIECE ? textPieces(text) : null), [text])
+  const cyrillic = useMemo(() => pieces !== null && mostlyCyrillic(text), [pieces, text])
+  return (
+    <div className={cyrillic ? 'row-user-text is-cyrillic' : 'row-user-text'}>
+      {pieces ? pieces.map((piece, i) => <span key={i}>{piece}</span>) : text}
+    </div>
+  )
+}
+
+/**
  * One row of the conversation.
  *
  * Reports its own height so the ribbon can place the rows above and below it
@@ -199,7 +216,7 @@ export function RibbonRow({
                 с телефона
               </div>
             )}
-            <div className="row-user-text">{item.text}</div>
+            <UserText text={item.text} />
             {item.at !== undefined && (
               <div
                 className="row-user-time"

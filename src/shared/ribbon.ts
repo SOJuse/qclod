@@ -296,7 +296,7 @@ export class RibbonBuilder {
    * Text already shown because the user just typed it. The CLI echoes every
    * message back, and the echo must not become a second copy of it on screen.
    */
-  private readonly pendingEchoes: string[] = []
+  private readonly pendingEchoes: Array<{ text: string; uuid?: string }> = []
   private seq = 0
   /** When the message before the current one arrived: a thinking block that comes whole took that long. */
   private previousEventAt: number | undefined
@@ -328,11 +328,43 @@ export class RibbonBuilder {
    * The user's own message, when it is not coming back from the SDK as an echo
    * — a replayed history entry arrives as a `user` message instead.
    */
-  addUser(text: string, attachments: Attachment[] = [], echoKey = text): RibbonChange[] {
+  addUser(
+    text: string,
+    attachments: Attachment[] = [],
+    echoKey: string | null = text,
+    uuid?: string
+  ): RibbonChange[] {
     // What is shown and what will be echoed are not always the same string:
     // an attached file reaches the agent as an @-mention appended to the text.
-    this.pendingEchoes.push(echoKey)
+    // null: no echo is coming (a message the CLI folded into a turn).
+    if (echoKey !== null) this.expectEcho(echoKey, uuid)
     return [this.append({ kind: 'user', id: this.nextId(), text, attachments, at: this.now() })]
+  }
+
+  /**
+   * An echo to swallow when it comes. With the uuid the message went under,
+   * the expectation ends at the result of the turn that carried it: CLI
+   * 2.1.317 echoes nothing, and a stale one would swallow the same words
+   * typed later — on the phone, say.
+   */
+  expectEcho(text: string, uuid?: string): void {
+    this.pendingEchoes.push(uuid ? { text, uuid } : { text })
+  }
+
+  /** Nothing more comes back from a process that is gone. */
+  forgetEchoes(): void {
+    this.pendingEchoes.length = 0
+  }
+
+  /** The turn is over: an echo of what it carried that has not come will not. */
+  private expireEchoes(message: Record<string, unknown>): void {
+    const carried = message['user_message_uuids']
+    if (!Array.isArray(carried)) return
+    const done = new Set(carried.filter((u): u is string => typeof u === 'string'))
+    for (let i = this.pendingEchoes.length - 1; i >= 0; i -= 1) {
+      const uuid = this.pendingEchoes[i]!.uuid
+      if (uuid !== undefined && done.has(uuid)) this.pendingEchoes.splice(i, 1)
+    }
   }
 
   /**
@@ -451,6 +483,7 @@ export class RibbonBuilder {
       case 'system':
         return this.onSystem(message)
       case 'result':
+        this.expireEchoes(message)
         return [...this.closeOpenBlocks(), ...this.onResult(message)]
       case 'permission_denied':
         return [
@@ -1067,7 +1100,7 @@ export class RibbonBuilder {
 
   /** True when this text is the echo of a message we have already shown. */
   private consumeEcho(text: string): boolean {
-    const at = this.pendingEchoes.indexOf(text)
+    const at = this.pendingEchoes.findIndex((e) => e.text === text)
     if (at === -1) return false
     this.pendingEchoes.splice(at, 1)
     return true

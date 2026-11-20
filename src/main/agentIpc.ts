@@ -149,10 +149,25 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     return (await manager.get(id)?.interrupt()) ?? []
   })
 
-  ipcMain.handle(CHANNELS.agentQueueCancel, (_e, id: unknown, queuedId: unknown): boolean => {
-    if (!isString(id) || !isString(queuedId)) return false
-    return manager.get(id)?.cancelQueued(queuedId) ?? false
-  })
+  // «Отменить» and «Изменить» on the strip: the message taken back, for the
+  // input field — an image without the bytes its copy on disk stands for —
+  // or null when the agent had read it already or it is gone.
+  ipcMain.handle(
+    CHANNELS.agentQueueCancel,
+    async (_e, id: unknown, queuedId: unknown): Promise<UserInput | null> => {
+      if (!isString(id) || !isString(queuedId)) return null
+      return (await manager.get(id)?.cancelQueued(queuedId)) ?? null
+    }
+  )
+
+  // «Отправить сейчас»: false when there was nothing to hurry.
+  ipcMain.handle(
+    CHANNELS.agentQueueSendNow,
+    async (_e, id: unknown, queuedId: unknown): Promise<boolean> => {
+      if (!isString(id) || !isString(queuedId)) return false
+      return (await manager.get(id)?.sendQueuedNow(queuedId)) ?? false
+    }
+  )
 
   // The mode decides whether the agent asks at all, so an unknown string must
   // never reach the session: it would be rejected deep inside the SDK, far

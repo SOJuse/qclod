@@ -1,7 +1,11 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu } from 'electron'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { APP_ID } from '../shared/appId'
-import { createMainWindow, hardenWebContents, offScreen, RENDERER_ENTRY } from './window'
+import { AFTER_HANG, RELOAD_PARAM } from '../shared/reloadReason'
+import { createMainWindow, hardenWebContents, offScreen, RENDERER_ENTRY, watchRenderer } from './window'
+import { ErrorLog, type ErrorEntry } from './system/errorLog'
+import { ReportThrottle } from './system/reportThrottle'
 import { registerBaseIpc } from './ipc'
 import { registerAgentIpc } from './agentIpc'
 import { withFault } from './testSeams/ipcFaults'
@@ -17,7 +21,7 @@ import { SessionHistory } from './agent/sessionHistory'
 import { loadTranscript } from './agent/transcript'
 import { TabController } from './tabs/TabController'
 import { pickDefaultCwd } from './tabs/defaultCwd'
-import { mergeDefaults } from './tabs/sanitize'
+import { mergeDefaults, sanitizeErrorReport } from './tabs/sanitize'
 import { notifyIfNeeded, shouldRaiseWindowForPermission } from './notifications'
 import { RendererOutbox } from './rendererOutbox'
 import { PathResolver } from './files/pathResolver'
@@ -85,10 +89,24 @@ async function confirmAutoAllow(win: BrowserWindow | null): Promise<boolean> {
 }
 let quitting = false
 
-function loadRenderer(win: BrowserWindow): void {
+/** `afterHang`: the watchdog killed the hung page; the new one is told so (shared/reloadReason.ts). */
+function loadRenderer(win: BrowserWindow, afterHang = false): void {
+  const query: Record<string, string> = afterHang ? { [RELOAD_PARAM]: AFTER_HANG } : {}
   const devServer = process.env['ELECTRON_RENDERER_URL']
-  if (devServer) void win.loadURL(devServer)
-  else void win.loadFile(RENDERER_ENTRY)
+  if (devServer) {
+    const url = new URL(devServer)
+    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value)
+    void win.loadURL(url.toString())
+  } else void win.loadFile(RENDERER_ENTRY, afterHang ? { query } : undefined)
+}
+
+/**
+ * The renderer watchdog for this window (window.ts). e2e only: QCLOD_HANG_MS
+ * shortens the wait before a hung page is killed.
+ */
+function watchWindow(win: BrowserWindow, log: (e: ErrorEntry) => void): void {
+  const hangMs = __QCLOD_TEST_SEAMS__ ? Number(process.env['QCLOD_HANG_MS']) || undefined : undefined
+  watchRenderer(win.webContents, { log, hangMs, reloadAfterHang: () => loadRenderer(win, true) })
 }
 
 // Tests point the app at a throwaway profile so runs cannot affect each other
@@ -116,6 +134,55 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
+
+  // What broke, for whoever has to find out why (system/errorLog.ts). Errors
+  // the main process throws are written down as well as printed.
+  const errorLog = new ErrorLog(join(userData, 'logs'))
+  process.on('uncaughtExceptionMonitor', (err) => {
+    errorLog.write({
+      source: 'main',
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+      at: Date.now()
+    })
+  })
+  // A promise nobody caught. Electron only warns about it and the app goes
+  // on, as it still does: listening only quiets the warning, so it is
+  // printed here, and written down.
+  process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled promise rejection in main:', reason)
+    errorLog.write({
+      source: 'main',
+      message: reason instanceof Error ? reason.message : String(reason),
+      stack: reason instanceof Error ? reason.stack : undefined,
+      at: Date.now()
+    })
+  })
+  // A repeating or hostile sender must not push the first, most useful error
+  // out of the log (system/reportThrottle.ts).
+  const reportGate = new ReportThrottle()
+  ipcMain.on(CHANNELS.rendererError, (e, raw: unknown) => {
+    const report = sanitizeErrorReport(raw)
+    if (!report) return
+    const stack = [report.stack, report.componentStack].filter(Boolean).join('\n')
+    const verdict = reportGate.check(e.sender.id, [report.scope, report.message, stack].join('\n'))
+    if (!verdict.admit) return
+    if (verdict.dropped > 0) {
+      errorLog.write({
+        source: 'renderer',
+        scope: report.scope,
+        message: `${verdict.dropped} отчётов об ошибках пропущено`,
+        at: Date.now()
+      })
+    }
+    errorLog.write({
+      source: 'renderer',
+      scope: report.scope,
+      message: report.message,
+      stack: stack || undefined,
+      at: Date.now()
+    })
+  })
   // Old screenshots go before new ones are added, and again every hour: the
   // app may stay open in the tray for weeks.
   cleanupPasteDir(userData)
@@ -345,6 +412,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.updateRestart, () => updates?.restart() ?? false)
 
   mainWindow = createMainWindow()
+  watchWindow(mainWindow, (e) => errorLog.write(e))
   loadRenderer(mainWindow)
 
   const tray = headless
@@ -389,6 +457,7 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createMainWindow()
+      watchWindow(mainWindow, (e) => errorLog.write(e))
       loadRenderer(mainWindow)
     }
   })

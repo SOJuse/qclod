@@ -23,6 +23,7 @@ export const CHANNELS = Object.freeze({
   agentSend: 'agent:send',
   agentInterrupt: 'agent:interrupt',
   agentQueueCancel: 'agent:queueCancel',
+  agentQueueSendNow: 'agent:queueSendNow',
   agentPermissionMode: 'agent:permissionMode',
   agentModel: 'agent:model',
   agentEffort: 'agent:effort',
@@ -68,6 +69,9 @@ export const CHANNELS = Object.freeze({
   updateGet: 'update:get',
   updateRestart: 'update:restart',
 
+  // renderer -> main (send, no answer)
+  rendererError: 'renderer:error',
+
   // main -> renderer (events)
   ribbonChanged: 'ribbon:changed',
   panelChanged: 'panel:changed',
@@ -98,6 +102,7 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.agentSend,
   CHANNELS.agentInterrupt,
   CHANNELS.agentQueueCancel,
+  CHANNELS.agentQueueSendNow,
   CHANNELS.agentPermissionMode,
   CHANNELS.agentModel,
   CHANNELS.agentEffort,
@@ -150,3 +155,6 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.setupLoginProgress,
   CHANNELS.updateChanged
 ])
+
+/** Fire-and-forget: the renderer sends, nothing comes back. */
+export const SEND_CHANNELS: readonly ChannelName[] = Object.freeze([CHANNELS.rendererError])

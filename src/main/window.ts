@@ -2,6 +2,7 @@ import { BrowserWindow, shell, type BrowserWindowConstructorOptions, type WebCon
 import { join } from 'node:path'
 import { WINDOW_BG } from '../shared/theme'
 import { isSafeExternalUrl, makeNavigationGuard } from './security'
+import type { ErrorEntry } from './system/errorLog'
 
 export const RENDERER_ENTRY = join(__dirname, '../renderer/index.html')
 
@@ -30,6 +31,10 @@ export function mainWindowOptions(): BrowserWindowConstructorOptions {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // e2e only: tells the preload to make the first pane throw.
+      ...(__QCLOD_TEST_SEAMS__ && process.env['QCLOD_E2E_THROW_IN_PANE'] === '1'
+        ? { additionalArguments: ['--QCLOD_E2E_THROW_IN_PANE'] }
+        : {}),
       // Off screen the page would count as hidden and stall its timers.
       ...(offScreen ? { backgroundThrottling: false } : {})
     }
@@ -70,5 +75,69 @@ export function hardenWebContents(contents: WebContents): void {
 
   contents.on('will-attach-webview', (e) => {
     e.preventDefault()
+  })
+}
+
+const RELOAD_WINDOW_MS = 60_000
+const MAX_RELOADS = 3
+
+/**
+ * A renderer that dies or hangs must not leave the window grey. A crash is
+ * logged and the page reloaded, at most three times a minute so a page that
+ * crashes on load cannot loop. A hang is logged and given `hangMs` to come
+ * back before the renderer is killed; the reload then comes from the crash,
+ * through `reloadAfterHang` if given: the page it loads is told why, so a
+ * draft that froze it is not put straight back into the field (task 9b).
+ */
+export function watchRenderer(
+  contents: Pick<WebContents, 'on' | 'reload' | 'forcefullyCrashRenderer'>,
+  opts: { log: (e: ErrorEntry) => void; now?: () => number; hangMs?: number; reloadAfterHang?: () => void }
+): void {
+  const now = opts.now ?? Date.now
+  const hangMs = opts.hangMs ?? 15_000
+  let reloads: number[] = []
+  let hangTimer: ReturnType<typeof setTimeout> | null = null
+  /** Set while the crash we forced on a hung page is on its way. */
+  let killedForHang = false
+
+  const note = (message: string): void => opts.log({ source: 'main', scope: 'window', message, at: now() })
+  const reload = (why: string, afterHang: boolean): void => {
+    const t = now()
+    reloads = reloads.filter((r) => t - r < RELOAD_WINDOW_MS)
+    if (reloads.length >= MAX_RELOADS) {
+      note(`${why}: not reloading, ${MAX_RELOADS} reloads in the last minute already`)
+      return
+    }
+    reloads.push(t)
+    if (afterHang && opts.reloadAfterHang) opts.reloadAfterHang()
+    else contents.reload()
+  }
+
+  contents.on('render-process-gone', (_e, details) => {
+    // A hang timer left armed would kill the page that is about to load.
+    if (hangTimer) clearTimeout(hangTimer)
+    hangTimer = null
+    const afterHang = killedForHang
+    killedForHang = false
+    if (details.reason === 'clean-exit') return
+    note(`render-process-gone: ${details.reason}`)
+    reload('render-process-gone', afterHang)
+  })
+
+  contents.on('unresponsive', () => {
+    note('renderer unresponsive')
+    if (hangTimer) clearTimeout(hangTimer)
+    hangTimer = setTimeout(() => {
+      hangTimer = null
+      note(`renderer still unresponsive after ${hangMs} ms: forcing a restart`)
+      // The crash raises render-process-gone, which logs it and reloads once.
+      killedForHang = true
+      contents.forcefullyCrashRenderer()
+    }, hangMs)
+  })
+
+  contents.on('responsive', () => {
+    if (hangTimer) clearTimeout(hangTimer)
+    hangTimer = null
   })
 }

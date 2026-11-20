@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { CHANNELS, INVOKE_CHANNELS, EVENT_CHANNELS } from '@shared/channels'
+import { CHANNELS, INVOKE_CHANNELS, EVENT_CHANNELS, SEND_CHANNELS } from '@shared/channels'
 
 describe('ipc channel contract', () => {
   test('все имена каналов уникальны', () => {
@@ -12,7 +12,7 @@ describe('ipc channel contract', () => {
   })
 
   test('каждый канал отнесён либо к invoke, либо к event', () => {
-    const classified = new Set<string>([...INVOKE_CHANNELS, ...EVENT_CHANNELS])
+    const classified = new Set<string>([...INVOKE_CHANNELS, ...EVENT_CHANNELS, ...SEND_CHANNELS])
     for (const name of Object.values(CHANNELS)) expect(classified.has(name)).toBe(true)
     expect(classified.size).toBe(Object.values(CHANNELS).length)
   })
@@ -20,6 +20,11 @@ describe('ipc channel contract', () => {
   test('invoke и event каналы не пересекаются', () => {
     const events = new Set<string>(EVENT_CHANNELS)
     for (const name of INVOKE_CHANNELS) expect(events.has(name)).toBe(false)
+  })
+
+  test('«отправить сейчас» из очереди — invoke-канал agent:queueSendNow', () => {
+    expect(CHANNELS.agentQueueSendNow).toBe('agent:queueSendNow')
+    expect(INVOKE_CHANNELS).toContain('agent:queueSendNow')
   })
 
   test('Remote Control — invoke-канал agent:remote', () => {
@@ -58,6 +63,12 @@ describe('ipc channel contract', () => {
     expect(INVOKE_CHANNELS).toContain('update:get')
     expect(INVOKE_CHANNELS).toContain('update:restart')
     expect(EVENT_CHANNELS).toContain('update:changed')
+  })
+
+  test('отчёт об ошибке окна — send-канал renderer:error, не invoke', () => {
+    expect(CHANNELS.rendererError).toBe('renderer:error')
+    expect(SEND_CHANNELS).toContain('renderer:error')
+    expect(INVOKE_CHANNELS).not.toContain('renderer:error')
   })
 
   test('терминальных каналов v1 больше нет', () => {

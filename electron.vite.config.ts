@@ -19,12 +19,16 @@ export default defineConfig(({ mode }) => {
       plugins: [externalizeDepsPlugin()],
       define,
       build: {
+        // Minified in a release, so its comments — which name the seams it
+        // reads in the e2e build — do not ship (npm run check:seams).
+        minify: mode === 'production',
         rollupOptions: { input: { index: resolve(__dirname, 'src/preload/index.ts') } }
       }
     },
     renderer: {
       root: resolve(__dirname, 'src/renderer'),
       plugins: [react()],
+      define,
       build: {
         rollupOptions: { input: { index: resolve(__dirname, 'src/renderer/index.html') } }
       }

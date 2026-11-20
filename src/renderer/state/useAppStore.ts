@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { PendingAttachment } from '../input/attachments'
 import { UI_KEY, loadUi, serializeUi } from './uiPersist'
+import { startHeldDrafts } from './heldDrafts'
 import type {
   AppSettings,
   CommandInfo,
@@ -100,6 +101,32 @@ function forgetClosed(state: AppState, tabs: TabState[]): Partial<AppState> {
   return next as Partial<AppState>
 }
 
+/** How many panes a window can hold. */
+export const MAX_PANES = 4
+
+/**
+ * The panes and the active tab once the tab list changed: a pane whose tab was
+ * closed stops being a pane, and the active one is replaced by its neighbour.
+ */
+function paneStateAfter(
+  state: Pick<AppState, 'paneTabIds' | 'activeTabId'>,
+  tabs: TabState[]
+): { paneTabIds: TabId[]; activeTabId: TabId } {
+  const alive = (id: TabId): boolean => tabs.some((t) => t.id === id)
+  const paneTabIds = state.paneTabIds.filter(alive)
+  let activeTabId = state.activeTabId
+  if (!alive(activeTabId)) {
+    const was = state.paneTabIds.indexOf(activeTabId)
+    const near = was === -1 ? paneTabIds[0] : paneTabIds[Math.min(was, paneTabIds.length - 1)]
+    activeTabId = near ?? tabs[0]?.id ?? ''
+  }
+  if (activeTabId && !paneTabIds.includes(activeTabId)) paneTabIds.unshift(activeTabId)
+  const next = paneTabIds.slice(0, MAX_PANES)
+  // The same panes keep the same array: effects and storage writes key on it.
+  const same = next.length === state.paneTabIds.length && next.every((id, i) => id === state.paneTabIds[i])
+  return { paneTabIds: same ? state.paneTabIds : next, activeTabId }
+}
+
 export const EMPTY_PANEL: PanelData = Object.freeze({
   context: null,
   cost: null,
@@ -117,8 +144,8 @@ export const EMPTY_PANEL: PanelData = Object.freeze({
 interface AppState {
   settings: AppSettings | null
   activeTabId: TabId
-  /** The conversation shown beside the active one, when the view is split. */
-  splitTabId: TabId | null
+  /** The panes left to right; one of them is always the active tab. [] while there are no tabs. */
+  paneTabIds: TabId[]
   tabs: TabState[]
   /** Ids of tabs that were closed: late events and answers for them are dropped. */
   closedTabs: ReadonlySet<TabId>
@@ -148,7 +175,10 @@ interface AppState {
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
   setActiveTabId: (id: TabId) => void
-  setSplitTabId: (id: TabId | null) => void
+  /** Sets the panes: no duplicates or closed tabs, at most MAX_PANES. */
+  setPanes: (ids: TabId[]) => void
+  /** Makes a pane the active one without moving any pane. */
+  focusPane: (id: TabId) => void
   setTabs: (tabs: TabState[]) => void
   setRibbon: (id: TabId, snapshot: RibbonSnapshot) => void
   applyRibbon: (id: TabId, changes: RibbonChange[], rev: number) => void
@@ -216,11 +246,13 @@ function ui(): Storage | null {
 
 /** What the window held before it was reloaded; a tab that is gone is dropped by setTabs. */
 const restored = loadUi(ui())
+/** After the watchdog's reload a long draft is held back, not put into the field (heldDrafts.ts). */
+const restoredDrafts = startHeldDrafts(restored.draftByTab, ui())
 
 export const useAppStore = create<AppState>((set) => ({
   settings: null,
   activeTabId: restored.activeTabId,
-  splitTabId: restored.splitTabId,
+  paneTabIds: restored.paneTabIds,
   tabs: [],
   closedTabs: new Set(),
   ribbonByTab: {},
@@ -229,7 +261,7 @@ export const useAppStore = create<AppState>((set) => ({
   panelByTab: {},
   panelRevByTab: {},
   busySinceByTab: {},
-  draftByTab: restored.draftByTab,
+  draftByTab: restoredDrafts,
   attachmentsByTab: restored.attachmentsByTab,
   fileIndexByTab: {},
   commandsByTab: {},
@@ -239,8 +271,20 @@ export const useAppStore = create<AppState>((set) => ({
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
     set((state) => (state.settings ? { settings: { ...state.settings, ...patch } } : state)),
-  setActiveTabId: (activeTabId) => set({ activeTabId }),
-  setSplitTabId: (splitTabId) => set({ splitTabId }),
+  setActiveTabId: (activeTabId) =>
+    set((state) => {
+      // A tab from outside the panes takes the place of the active pane.
+      if (state.paneTabIds.length === 0 || state.paneTabIds.includes(activeTabId)) return { activeTabId }
+      const at = Math.max(0, state.paneTabIds.indexOf(state.activeTabId))
+      return { activeTabId, paneTabIds: state.paneTabIds.map((id, i) => (i === at ? activeTabId : id)) }
+    }),
+  setPanes: (ids) =>
+    set((state) => {
+      const paneTabIds = [...new Set(ids)].filter((id) => !state.closedTabs.has(id)).slice(0, MAX_PANES)
+      const activeTabId = paneTabIds.includes(state.activeTabId) ? state.activeTabId : (paneTabIds[0] ?? state.activeTabId)
+      return { paneTabIds, activeTabId }
+    }),
+  focusPane: (id) => set((state) => (state.paneTabIds.includes(id) ? { activeTabId: id } : state)),
 
   setTabs: (tabs) =>
     set((state) => ({
@@ -256,12 +300,7 @@ export const useAppStore = create<AppState>((set) => ({
         if (working) acc[tab.id] = wasWorking ? (state.busySinceByTab[tab.id] ?? Date.now()) : Date.now()
         return acc
       }, {}),
-      // Keep a valid selection if the active tab went away.
-      activeTabId: tabs.some((t) => t.id === state.activeTabId)
-        ? state.activeTabId
-        : (tabs[0]?.id ?? ''),
-      // A pane whose tab was closed stops being a pane.
-      splitTabId: tabs.some((t) => t.id === state.splitTabId) ? state.splitTabId : null
+      ...paneStateAfter(state, tabs)
     })),
 
   // The snapshot is the whole ribbon at its revision: it replaces whatever
@@ -360,7 +399,7 @@ useAppStore.subscribe((state, before) => {
   if (
     state.draftByTab === before.draftByTab &&
     state.attachmentsByTab === before.attachmentsByTab &&
-    state.splitTabId === before.splitTabId &&
+    state.paneTabIds === before.paneTabIds &&
     state.activeTabId === before.activeTabId
   ) {
     return

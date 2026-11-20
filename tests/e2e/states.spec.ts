@@ -313,3 +313,25 @@ test('установка не удалась — журнал виден и мо
     await app.close()
   }
 })
+
+test('ошибка отрисовки панели не гасит окно — вторая панель живая', async () => {
+  const other = mkdtempSync(join(tmpdir(), 'qclod-boundary-'))
+  const { app, win } = await launchQclod({
+    env: { QCLOD_E2E_THROW_IN_PANE: '1', QCLOD_PICK_FOLDER: other }
+  })
+  try {
+    await win.locator('[data-testid="tab-new"]').click()
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+    await win.locator('[data-testid="toggle-split"]').click()
+
+    // The first pane threw while drawing; only it is replaced.
+    await expect(win.getByRole('button', { name: 'Перезагрузить панель' })).toBeVisible()
+    await expect(win.getByText('В этой панели что-то сломалось')).toBeVisible()
+    // The other pane of the split is alive.
+    await expect(win.locator('[data-testid="chat-pane"]')).toHaveCount(1)
+    await expect(win.locator('[data-testid="chat-pane"] [data-testid="composer-input"]')).toBeVisible()
+  } finally {
+    await app.close()
+    rmSync(other, { recursive: true, force: true })
+  }
+})

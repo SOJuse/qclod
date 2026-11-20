@@ -287,9 +287,12 @@ test('палитра Ctrl+K: ничего не нашлось', async () => {
   const { app, win } = await launchQclod()
   try {
     await win.keyboard.press('Control+K')
-    await win.locator('[data-testid="action-query"]').fill('zzzz')
+    // Not Latin: the palette searches the folder's files too, and their paths are Latin.
+    await win.locator('[data-testid="action-query"]').fill('щщщщ')
     const empty = win.locator('[data-testid="action-palette"] [data-state="empty"]')
-    await expect(empty).toContainText('Такого действия нет')
+    // One search over everything now (task 7), so not «Такого действия нет».
+    await expect(empty).toContainText('Ничего не нашлось')
+    await expect(win.locator('[data-testid="action-item"]')).toHaveCount(0)
     await shot(win, '09-palette-empty')
   } finally {
     await app.close()

@@ -139,7 +139,7 @@ test('Ctrl+B прячет боковую панель, кнопка в заго�
   }
 })
 
-test('Ctrl+K открывает палитру действий; «настр» + Enter открывает настройки', async () => {
+test('Ctrl+K открывает поиск по всему; «настр» + Enter открывает настройки', async () => {
   const { app, profile, folder } = await launch({ steps: [] })
   try {
     const win = await app.firstWindow()
@@ -148,9 +148,20 @@ test('Ctrl+K открывает палитру действий; «настр» 
     await win.keyboard.press('Control+k')
     const palette = win.locator('[data-testid="action-palette"]')
     await expect(palette).toBeVisible()
-    await expect(win.locator('[data-testid="action-query"]')).toBeFocused()
-    // 17: «Показать или скрыть боковую панель» (Ctrl+B) joined the list.
-    await expect(win.locator('[data-testid="action-item"]')).toHaveCount(17)
+    const query = win.locator('[data-testid="action-query"]')
+    await expect(query).toBeFocused()
+    await expect(query).toHaveAttribute('placeholder', 'Чат, проект, файл или команда')
+    // Task 7: not the 17 actions any more — the open chats, then the first eight commands, each under its heading.
+    await expect(palette.locator('[data-testid="action-item"][data-section="chats"]')).toHaveCount(1)
+    await expect(palette.locator('[data-testid="action-item"][data-section="commands"]')).toHaveCount(8)
+    await expect(palette.locator('[data-testid="palette-section"]').first()).toHaveText('Чаты')
+    await expect(palette.locator('[data-testid="palette-section"]').last()).toHaveText('Команды')
+
+    // «>» keeps it to the commands.
+    await query.fill('>')
+    await expect(palette.locator('[data-testid="action-item"]:not([data-section="commands"])')).toHaveCount(0)
+    await expect(palette.locator('[data-testid="action-item"]')).toHaveCount(8)
+    await query.fill('')
 
     // Esc closes it and the cursor goes back to the input.
     await win.keyboard.press('Escape')

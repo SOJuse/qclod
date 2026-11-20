@@ -1,4 +1,4 @@
-/* Ctrl+K: the sheet (ui/controls.css) at its narrowest — one field over one list. */
+/* Ctrl+K: the sheet (ui/controls.css) at its narrowest — one field over one list, in sections. */
 
 .action-palette-backdrop {
   z-index: 50;
@@ -13,12 +13,33 @@
   box-shadow: var(--focus-ring), var(--shadow-modal);
 }
 
-.action-palette-query {
+/* The field, with the chip of the one section it is kept to (Ctrl+H) before it. */
+.palette-field {
+  display: flex;
   flex: none;
-  margin: 0;
-  padding: var(--space-3) var(--space-4);
-  border: none;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-4);
   border-bottom: 1px solid var(--border);
+}
+
+.palette-scope {
+  flex: none;
+  padding: var(--gap-hair) var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.action-palette-query {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-3) 0;
+  border: none;
   background: transparent;
   color: var(--text);
   font-size: var(--text-lg);
@@ -29,7 +50,7 @@
 }
 
 .action-palette-list {
-  max-height: calc(var(--menu-row-h) * 8 + var(--space-1) * 2);
+  max-height: calc(var(--menu-row-h) * 14 + var(--space-1) * 2);
   margin: 0;
   padding: var(--space-1);
   list-style: none;
@@ -37,10 +58,21 @@
   scrollbar-color: var(--border-strong) transparent;
 }
 
+/* A section's heading: small and dim, it names the rows under it and is never chosen. */
+.palette-section {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  cursor: default;
+}
+
+.palette-section:first-child {
+  padding-top: var(--space-1);
+}
+
 .action-palette-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
   height: var(--menu-row-h);
   padding: 0 var(--space-3);
@@ -58,8 +90,28 @@
   color: var(--text);
 }
 
+.action-palette-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The project, folder or date: after the title, giving way to it when space is short. */
+.action-palette-hint {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .action-palette-keys {
   flex: 0 0 auto;
+  margin-left: auto;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--text-dim);

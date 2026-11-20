@@ -780,14 +780,18 @@ export class AgentSession {
 
   private sendNow(input: UserInput, uuid: string): void {
     if (!this.driver) return
-    const text = this.showUser(input)
+    const text = this.showUser(input, composeText(input), uuid)
     this.deliver({ ...input, text }, uuid)
   }
 
-  /** Into the turn under way, on a CLI that keeps no account of it: shown at once, no new turn. */
+  /**
+   * Into the turn under way, on a CLI that keeps no account of it: shown at
+   * once, no new turn. Its echo is still expected — such a CLI may run it as
+   * a turn of its own, and echo it — until the result that carried it.
+   */
   private foldNow(input: UserInput, uuid: string): void {
     if (!this.driver) return
-    const text = this.showUser(input)
+    const text = this.showUser(input, composeText(input), uuid)
     this.transmit({ ...input, text }, { uuid })
   }
 
@@ -809,18 +813,22 @@ export class AgentSession {
 
   /**
    * The user's bubble. Returns the text as the agent gets it: composed once,
-   * here. The ribbon shows what the user typed with their files as chips; the
-   * agent — and therefore the echo that comes back — gets the composed
-   * version, which is what the dedup must match.
+   * by the caller. The ribbon shows what the user typed with their files as
+   * chips; the agent — and therefore the echo that comes back — gets the
+   * composed version, which is what the dedup must match. `echoOf` is the
+   * uuid it went under, so the expectation ends with the turn that carried
+   * it (ruling R10); null — no echo is coming at all.
    */
-  private showUser(input: UserInput, composed = composeText(input)): string {
+  private showUser(input: UserInput, composed: string, echoOf: string | null): string {
     // The ribbon shows an image by its thumbnail, or by its copy on disk when
     // there is none (a large GIF or WebP); the full bytes (up to ~5 MB of
     // base64) would otherwise ride along in every snapshot.
     const shown = input.attachments.map((a) =>
       a.kind === 'image' && (a.thumbnail || a.path) ? { ...a, dataBase64: '' } : a
     )
-    this.emit(this.builder.addUser(input.text, shown, composed))
+    this.emit(
+      this.builder.addUser(input.text, shown, echoOf === null ? null : composed, echoOf ?? undefined)
+    )
     return composed
   }
 
@@ -839,7 +847,10 @@ export class AgentSession {
    * bubble, and the echo it brings back is matched to the first one.
    */
   resend(sent: UserInput): void {
-    this.deliver(sent, randomUUID())
+    const uuid = randomUUID()
+    // The dead process's expectations went with it; this one is for the new turn.
+    this.builder.expectEcho(sent.text, uuid)
+    this.deliver(sent, uuid)
   }
 
   private deliver(sent: UserInput, uuid: string): void {
@@ -1051,9 +1062,13 @@ export class AgentSession {
    * starts one.
    */
   private onRead(entry: OutboxEntry): void {
-    this.showUser(entry.input, entry.composed)
+    // Folded into a turn under way, it is never echoed (probe 05a): no
+    // expectation that could swallow the same words typed later (ruling R10).
+    // One that starts a turn of its own may be, until that turn's result.
+    const folded = this.turnRunning && !this.heldByQueue
+    this.showUser(entry.input, entry.composed, folded ? null : entry.uuid)
     if (this.session === null) this.unintroduced.push({ ...entry.input, text: entry.composed })
-    if (this.turnRunning && !this.heldByQueue) return
+    if (folded) return
     this.turn += 1
     this.turnRunning = true
     this.heldByQueue = false
@@ -1320,6 +1335,9 @@ export class AgentSession {
   async dispose(): Promise<void> {
     this.disposed = true
     this.turnRunning = false
+    // This process echoes nothing more. Done before anything is awaited: the
+    // ribbon goes on in a successor, which keeps expectations of its own.
+    this.builder.forgetEchoes()
     // The strip is dropped with the session by design: a closed tab's
     // messages have nowhere to go. A swap takes it first (`takeQueue`).
     this.stopMcpPolling()
@@ -1767,6 +1785,8 @@ export class AgentSession {
     const text = err instanceof Error ? err.message : String(err)
     const dead = this.driver
     this.driver = null
+    // No echo comes from a dead process; a resend expects its own (`resend`).
+    this.builder.forgetEchoes()
     // The strip stays, unread, for the session taking this one's place
     // (`takeQueue`); nothing on it can be hurried any more.
     if (this.outbox.size > 0) this.emitQueue()

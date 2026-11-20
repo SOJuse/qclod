@@ -2395,6 +2395,68 @@ describe('AgentSession: очередь сообщений в CLI', () => {
     expect(session.status).toBe('idle')
     await session.dispose()
   })
+
+  test('влитое в ход сообщение не съедает такое же с телефона после result', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'продолжай', attachments: [] })
+    await vi.waitFor(() => expect(driver.folded).toHaveLength(1), { timeout: 3000 })
+    await settle(session)
+    expect(bubbles(rec.items)).toEqual(['раз', 'продолжай'])
+
+    // Typed again, on the phone: a message of its own, not the echo of the folded one.
+    session.handle(phoneEcho('продолжай'))
+    expect(bubbles(rec.items)).toEqual(['раз', 'продолжай', 'продолжай'])
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('ожидание эха у начавшего ход сообщения пропадает с его result', async () => {
+    // CLI 2.1.317 echoes nothing, not even the message that starts a turn.
+    let end!: () => void
+    const ended = new Promise<void>((resolve) => (end = resolve))
+    const uuids: Array<string | undefined> = []
+    const driver = {
+      messages: (async function* () {
+        await ended
+      })(),
+      send: (_input: unknown, opts?: SendOptions) => uuids.push(opts?.uuid),
+      cancelQueued: async () => null,
+      interrupt: async () => undefined,
+      setPermissionMode: async () => undefined,
+      supportedCommands: async () => [],
+      mcpServerStatus: async () => [],
+      getContextUsage: async () => ({ totalTokens: 0, maxTokens: 1, percentage: 0, categories: [] }),
+      supportedModels: async () => [],
+      setModel: async () => undefined,
+      setEffort: async () => undefined,
+      planLimits: async () => null,
+      taskOutput: async () => null,
+      stopTask: async () => undefined,
+      remoteAvailability: async () => ({ available: true }),
+      dispose: async () => end()
+    } as unknown as AgentDriver
+    const { session } = makeSession({}, { createDriver: () => driver })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'продолжай', attachments: [] })
+    session.handle({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      session_id: 'тихая',
+      user_message_uuids: [uuids[0]],
+      queued_turn_count: 0
+    })
+    expect(session.status).toBe('idle')
+
+    session.handle(phoneEcho('продолжай'))
+    expect(bubbles(rec.items)).toEqual(['продолжай', 'продолжай'])
+    await session.dispose()
+  })
 })
 
 /** Lets queued background work (availability, bridge messages) land. */

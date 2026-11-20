@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PanelCollector, readProjectSettings } from '../../src/main/agent/panelData'
+import { NO_AUTONOMY, type AutonomyView } from '../../src/shared/types'
 
 function init(extra: Record<string, unknown> = {}): unknown {
   return {
@@ -438,5 +439,22 @@ describe('PanelCollector: панель из записи разговора', ()
     const fresh = new PanelCollector()
     expect(fresh.rev).toBeGreaterThan(old.rev)
     expect(fresh.snapshot.rev).toBe(fresh.rev)
+  })
+})
+
+describe('PanelCollector: автономность', () => {
+  test('setAutonomy кладёт вид в панель и повышает rev', () => {
+    const collector = new PanelCollector()
+    expect(collector.data.autonomy).toEqual(NO_AUTONOMY)
+    const before = collector.rev
+    const view: AutonomyView = {
+      timers: [{ cardId: 'toolu_1', kind: 'question', deadline: 1000, label: 'Qclod выберет «Да»' }],
+      limitWait: null,
+      gaveUp: null
+    }
+    const patch = collector.setAutonomy(view)
+    expect(patch).toEqual({ autonomy: view })
+    expect(collector.data.autonomy).toEqual(view)
+    expect(collector.rev).toBeGreaterThan(before)
   })
 })

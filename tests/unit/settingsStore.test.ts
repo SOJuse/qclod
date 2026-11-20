@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, SETTINGS_FILE } from '@main/store/settingsStore'
-import { mergeDefaults } from '@main/tabs/sanitize'
+import { mergeDefaults, sanitizeSettingsFields } from '@main/tabs/sanitize'
 import type { AppSettings } from '@shared/types'
 
 function freshDir(): string {
@@ -83,8 +83,40 @@ describe('settingsStore', () => {
     closeToTray: false,
     panelOpen: false,
     editorCommand: 'code -g {path}:{line}',
+    autoAnswerMinutes: 12,
+    openAtLogin: false,
     defaults: { permissionMode: 'plan', model: 'm' }
   }
+
+  test('по умолчанию autoAnswerMinutes 5 и openAtLogin true', () => {
+    expect(DEFAULT_SETTINGS.autoAnswerMinutes).toBe(5)
+    expect(DEFAULT_SETTINGS.openAtLogin).toBe(true)
+    const dir = freshDir()
+    const loaded = loadSettings(dir)
+    expect(loaded.autoAnswerMinutes).toBe(5)
+    expect(loaded.openAtLogin).toBe(true)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('autoAnswerMinutes 0, 61, 2.5 и "5" отбрасываются', () => {
+    const base = { ...DEFAULT_SETTINGS, defaults: { ...DEFAULT_SETTINGS.defaults } }
+    for (const bad of [0, 61, 2.5, '5', -3, null]) {
+      expect(sanitizeSettingsFields({ autoAnswerMinutes: bad }), String(bad)).toEqual({})
+      expect(mergeDefaults(base, { autoAnswerMinutes: bad } as never).autoAnswerMinutes).toBe(5)
+      const dir = freshDir()
+      writeFileSync(join(dir, SETTINGS_FILE), JSON.stringify({ autoAnswerMinutes: bad }), 'utf8')
+      expect(loadSettings(dir).autoAnswerMinutes, String(bad)).toBe(5)
+      rmSync(dir, { recursive: true, force: true })
+    }
+    expect(sanitizeSettingsFields({ autoAnswerMinutes: 1 })).toEqual({ autoAnswerMinutes: 1 })
+    expect(sanitizeSettingsFields({ autoAnswerMinutes: 60 })).toEqual({ autoAnswerMinutes: 60 })
+  })
+
+  test('openAtLogin — только boolean', () => {
+    expect(sanitizeSettingsFields({ openAtLogin: false })).toEqual({ openAtLogin: false })
+    expect(sanitizeSettingsFields({ openAtLogin: 'false' })).toEqual({})
+    expect(sanitizeSettingsFields({ openAtLogin: 0 })).toEqual({})
+  })
 
   test('каждое поле DEFAULT_SETTINGS переживает сохранение и чтение', () => {
     const keys = Object.keys(DEFAULT_SETTINGS) as Array<keyof AppSettings>

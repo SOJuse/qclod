@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { PendingAttachment } from '../input/attachments'
 import { UI_KEY, loadUi, serializeUi } from './uiPersist'
 import { startHeldDrafts } from './heldDrafts'
+import { NO_AUTONOMY } from '../../shared/types'
 import type {
   AppSettings,
   CommandInfo,
@@ -138,7 +139,8 @@ export const EMPTY_PANEL: PanelData = Object.freeze({
   mcp: [],
   projectSettings: null,
   queue: [],
-  backgroundTasks: []
+  backgroundTasks: [],
+  autonomy: NO_AUTONOMY
 })
 
 interface AppState {

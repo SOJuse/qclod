@@ -212,7 +212,15 @@ const api = {
     ipcRenderer.invoke(CHANNELS.projectForget, cwd, hostId),
   /** The window that would not start: try it again. */
   retryRenderer: (): Promise<void> => ipcRenderer.invoke(CHANNELS.rendererRetry),
-  openLogs: (): Promise<void> => ipcRenderer.invoke(CHANNELS.logsOpen)
+  openLogs: (): Promise<void> => ipcRenderer.invoke(CHANNELS.logsOpen),
+
+  // — stage 3: autonomy
+  /** «Остановить таймер», or the person started answering: no auto-answer for this card. */
+  autonomyHold: (tabId: string, cardId: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.autonomyHold, tabId, cardId),
+  /** «Ответить сейчас»: what the running timer would do, done at once. */
+  autonomyAnswerNow: (tabId: string, cardId: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.autonomyAnswerNow, tabId, cardId)
 }
 
 export type QclodApi = typeof api

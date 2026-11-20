@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { PersistedTab } from '../../shared/types'
-import { sanitizeOverrides } from '../tabs/sanitize'
+import type { PersistedTab, TabAutonomyRecord } from '../../shared/types'
+import { sanitizeAutonomyRecord, sanitizeOverrides } from '../tabs/sanitize'
 
 export const TABS_FILE = 'tabs.json'
 
@@ -20,7 +20,8 @@ export function isDirectory(path: string): boolean {
 
 /**
  * Only what the spec says survives a restart: working directory, title, launch
- * overrides and the id of the conversation the tab was last in.
+ * overrides, the id of the conversation the tab was last in, and its autonomy
+ * record (stage 3: was it working, is Remote Control wanted, a limit waited out).
  *
  * The id is a pointer, not content: the messages themselves live where the CLI
  * already keeps them, and Qclod never writes a word of the conversation to
@@ -33,7 +34,8 @@ export function saveTabs(dir: string, tabs: PersistedTab[]): void {
     cwd: tab.cwd,
     title: tab.title,
     overrides: sanitizeOverrides(tab.overrides),
-    ...(typeof tab.lastSessionId === 'string' ? { lastSessionId: tab.lastSessionId } : {})
+    ...(typeof tab.lastSessionId === 'string' ? { lastSessionId: tab.lastSessionId } : {}),
+    ...autonomyField(tab.autonomy)
   }))
   writeFileSync(join(dir, TABS_FILE), JSON.stringify(minimal, null, 2), 'utf8')
 }
@@ -60,8 +62,15 @@ export function loadTabs(dir: string): LoadedTab[] {
       ...(typeof record['lastSessionId'] === 'string'
         ? { lastSessionId: record['lastSessionId'] }
         : {}),
+      ...autonomyField(record['autonomy']),
       missingCwd: !isDirectory(record['cwd'])
     })
   }
   return tabs
+}
+
+/** The autonomy record as a spread: nothing at all when there is none to keep. */
+function autonomyField(value: unknown): { autonomy?: TabAutonomyRecord } {
+  const autonomy = sanitizeAutonomyRecord(value)
+  return autonomy === undefined ? {} : { autonomy }
 }

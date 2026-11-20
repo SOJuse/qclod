@@ -420,6 +420,8 @@ describe('mergeDefaults', () => {
     closeToTray: true,
     panelOpen: true,
     editorCommand: '',
+    autoAnswerMinutes: 5,
+    openAtLogin: true,
     defaults: { permissionMode: 'acceptEdits' }
   }
 

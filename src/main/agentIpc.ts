@@ -313,6 +313,10 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   ipcMain.handle(CHANNELS.rendererRetry, (): void => undefined)
   ipcMain.handle(CHANNELS.logsOpen, (): void => undefined)
 
+  // — stage 3: stubs until task 8 hands both to the tab's AutonomyHost.
+  ipcMain.handle(CHANNELS.autonomyHold, (): void => undefined)
+  ipcMain.handle(CHANNELS.autonomyAnswerNow, (): void => undefined)
+
   ipcMain.handle(CHANNELS.permissionRules, () => withFault(CHANNELS.permissionRules, () => broker.rules()))
 
   ipcMain.handle(CHANNELS.permissionRuleDelete, (_e, ruleId: unknown) => {

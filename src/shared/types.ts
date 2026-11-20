@@ -119,6 +119,8 @@ export type RibbonItem =
       remote?: true
       /** When it was sent, ms since the epoch; absent in a record that has no time. */
       at?: number
+      /** Sent by Qclod itself («продолжай» after a crash, a limit or a restore), not by the person. */
+      auto?: true
     })
   /** The agent finished a turn: when, and how long the turn took. */
   | (RibbonBase & { kind: 'turnEnd'; at: number; durationMs?: number; failed?: true })
@@ -314,6 +316,38 @@ export interface PanelData {
   queue: QueuedMessage[]
   /** Background shells and the like, newest first; subagents have their own cards. */
   backgroundTasks: BackgroundTask[]
+  /** What Qclod is about to do by itself: answer timers, a limit wait, giving up (stage 3). */
+  autonomy: AutonomyView
+}
+
+// ----------------------------------------------------- stage 3: autonomy
+
+/** One running auto-answer countdown, for PinnedCard's `autoAnswer` prop. */
+export interface AutoAnswerTimer {
+  /** The question's toolUseId or the plan's requestId — the card's own id. */
+  cardId: string
+  kind: 'question' | 'plan'
+  /** epoch ms */
+  deadline: number
+  /** What Qclod will do: «Qclod выберет «Да»», «Qclod одобрит план». */
+  label: string
+}
+
+export interface AutonomyView {
+  timers: AutoAnswerTimer[]
+  /** Waiting out a usage limit; continueAt — when «продолжай» goes. */
+  limitWait: { resetsAt: number | null; continueAt: number; weekly: boolean } | null
+  /** Qclod stopped carrying on by itself; cleared by the person's next message. */
+  gaveUp: 'crashes' | 'limits' | null
+}
+
+export const NO_AUTONOMY: AutonomyView = { timers: [], limitWait: null, gaveUp: null }
+
+/** What tabs.json keeps for autonomy; absent fields mean «нет». */
+export interface TabAutonomyRecord {
+  working?: true
+  remote?: true
+  limitUntil?: number
 }
 
 /**
@@ -375,6 +409,8 @@ export interface PersistedTab {
   overrides: LaunchOverrides
   /** Lets the tab pick its conversation back up after a restart (spec 6.9). */
   lastSessionId?: string
+  /** Whether it was working, Remote Control wanted, a limit waited out (stage 3). */
+  autonomy?: TabAutonomyRecord
 }
 
 export interface TabState extends PersistedTab {
@@ -502,6 +538,10 @@ export interface AppSettings {
    * means no editor, and the path menu has no such item.
    */
   editorCommand: string
+  /** «Авто-да»: minutes before Qclod answers a question or a plan by itself, 1…60. */
+  autoAnswerMinutes: number
+  /** Start Qclod when Windows starts (an installed build only). */
+  openAtLogin: boolean
   defaults: LaunchOverrides
 }
 

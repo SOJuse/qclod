@@ -94,7 +94,12 @@ export const CHANNELS = Object.freeze({
   rendererRetry: 'window:rendererRetry',
   logsOpen: 'logs:open',
   // main -> renderer (event)
-  layoutChanged: 'layout:changed'
+  layoutChanged: 'layout:changed',
+
+  // stage 3: autonomy
+  // renderer -> main (invoke)
+  autonomyHold: 'autonomy:hold',
+  autonomyAnswerNow: 'autonomy:answerNow'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -160,7 +165,10 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.projectOpenSession,
   CHANNELS.projectForget,
   CHANNELS.rendererRetry,
-  CHANNELS.logsOpen
+  CHANNELS.logsOpen,
+  // stage 3: autonomy
+  CHANNELS.autonomyHold,
+  CHANNELS.autonomyAnswerNow
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([

@@ -164,3 +164,48 @@ describe('tabsStore: усилие', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 })
+
+describe('tabsStore: автономность', () => {
+  test('autonomy сохраняется и читается', () => {
+    const dir = freshDir()
+    try {
+      saveTabs(dir, [
+        tab({ id: 'a', autonomy: { working: true, remote: true, limitUntil: 1_800_000_000_000 } }),
+        tab({ id: 'b', autonomy: { remote: true } }),
+        tab({ id: 'c' })
+      ])
+      const [a, b, c] = loadTabs(dir)
+      expect(a!.autonomy).toEqual({ working: true, remote: true, limitUntil: 1_800_000_000_000 })
+      expect(b!.autonomy).toEqual({ remote: true })
+      expect(c!.autonomy).toBeUndefined()
+      // An empty record is no record: nothing is written for it.
+      saveTabs(dir, [tab({ id: 'd', autonomy: {} })])
+      const raw = JSON.parse(readFileSync(join(dir, TABS_FILE), 'utf8')) as Array<Record<string, unknown>>
+      expect(raw[0]).not.toHaveProperty('autonomy')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('мусор в autonomy (working: "да", limitUntil: -1) отбрасывается, вкладка остаётся', () => {
+    const dir = freshDir()
+    try {
+      const entries = [
+        { id: 'a', cwd: dir, title: 'A', overrides: {}, autonomy: { working: 'да', limitUntil: -1 } },
+        { id: 'b', cwd: dir, title: 'B', overrides: {}, autonomy: { working: false, remote: 1, limitUntil: 'x' } },
+        { id: 'c', cwd: dir, title: 'C', overrides: {}, autonomy: 'всё' },
+        { id: 'd', cwd: dir, title: 'D', overrides: {}, autonomy: { working: true, limitUntil: 'INF' } }
+      ]
+      // JSON has no Infinity, but 1e400 parses to it.
+      writeFileSync(join(dir, TABS_FILE), JSON.stringify(entries).replace('"INF"', '1e400'), 'utf8')
+      const tabs = loadTabs(dir)
+      expect(tabs.map((t) => t.id)).toEqual(['a', 'b', 'c', 'd'])
+      expect(tabs[0]!.autonomy).toBeUndefined()
+      expect(tabs[1]!.autonomy).toBeUndefined()
+      expect(tabs[2]!.autonomy).toBeUndefined()
+      expect(tabs[3]!.autonomy).toEqual({ working: true })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

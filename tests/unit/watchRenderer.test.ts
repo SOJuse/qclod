@@ -54,13 +54,23 @@ describe('watchRenderer', () => {
     expect(contents.reload).toHaveBeenCalledTimes(4)
   })
 
-  test('unresponsive with no recovery crashes the renderer and reloads', () => {
+  test('unresponsive with no recovery crashes the renderer; the crash event brings the one reload', () => {
+    contents.forcefullyCrashRenderer.mockImplementation(() => gone('crashed'))
     contents.emit('unresponsive')
     expect(log).toHaveLength(1)
     vi.advanceTimersByTime(14999)
     expect(contents.forcefullyCrashRenderer).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
     expect(contents.forcefullyCrashRenderer).toHaveBeenCalledTimes(1)
+    expect(contents.reload).toHaveBeenCalledTimes(1)
+  })
+
+  test('the hang path itself does not reload before the crash event arrives', () => {
+    contents.emit('unresponsive')
+    vi.advanceTimersByTime(15000)
+    expect(contents.forcefullyCrashRenderer).toHaveBeenCalledTimes(1)
+    expect(contents.reload).not.toHaveBeenCalled()
+    gone('crashed')
     expect(contents.reload).toHaveBeenCalledTimes(1)
   })
 

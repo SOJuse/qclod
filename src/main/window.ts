@@ -85,7 +85,7 @@ const MAX_RELOADS = 3
  * A renderer that dies or hangs must not leave the window grey. A crash is
  * logged and the page reloaded, at most three times a minute so a page that
  * crashes on load cannot loop. A hang is logged and given `hangMs` to come
- * back before the renderer is killed and the page reloaded.
+ * back before the renderer is killed; the reload then comes from the crash.
  */
 export function watchRenderer(
   contents: Pick<WebContents, 'on' | 'reload' | 'forcefullyCrashRenderer'>,
@@ -120,8 +120,8 @@ export function watchRenderer(
     hangTimer = setTimeout(() => {
       hangTimer = null
       note(`renderer still unresponsive after ${hangMs} ms: forcing a restart`)
+      // The crash raises render-process-gone, which logs it and reloads once.
       contents.forcefullyCrashRenderer()
-      reload('unresponsive')
     }, hangMs)
   })
 

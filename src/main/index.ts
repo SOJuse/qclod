@@ -6,6 +6,7 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
+  powerMonitor,
   powerSaveBlocker,
   shell
 } from 'electron'
@@ -60,6 +61,9 @@ import {
   KeepAwake,
   USE_EXECUTION_STATE_HELPER
 } from './system/keepAwake'
+import { applyOpenAtLogin } from './system/loginItem'
+import { claimSingleInstance } from './system/singleInstance'
+import { QuitReason } from './system/quitReason'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -187,6 +191,17 @@ if (userDataOverride) app.setPath('userData', userDataOverride)
 // thrown before the app is ready is the one nobody would otherwise see.
 const errorLog = new ErrorLog(join(app.getPath('userData'), 'logs'))
 installMainErrorHandlers(process, (e) => errorLog.write(e))
+
+// One Qclod per profile (system/singleInstance.ts). A second one only raises the
+// window of the first and quits; it must start nothing, so everything below that
+// needs the app ready is behind gotLock. The first one may still be starting when
+// the second arrives: the raise waits for the window.
+let onSecondInstance: (() => void) | null = null
+let secondPending = false
+const gotLock = claimSingleInstance(app, () => {
+  if (onSecondInstance) onSecondInstance()
+  else secondPending = true
+})
 // The tray keeps the app alive after its window closes, which a headless test
 // run cannot shut down cleanly.
 const headless = process.env['QCLOD_HEADLESS'] === '1'
@@ -202,11 +217,20 @@ app.on('web-contents-created', (_e, contents) => {
   hardenWebContents(contents)
 })
 
-app.whenReady().then(async () => {
+if (gotLock) void app.whenReady().then(async () => {
   // No default menu: its accelerators (Close Window, Reload) would fight ours.
   Menu.setApplicationMenu(null)
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
+  // Start at login: an installed build only, and never from an e2e run.
+  const syncLoginItem = (): void => {
+    if (!__QCLOD_TEST_SEAMS__) applyOpenAtLogin(app, settings.openAtLogin)
+  }
+  syncLoginItem()
+  // Why Qclod ends: a session end or an update restart leaves the tabs marked
+  // as working for the next start (system/quitReason.ts); task 8 reads it.
+  const quitReason = new QuitReason()
+  powerMonitor.on('shutdown', () => quitReason.markInterrupted())
 
   // A repeating or hostile sender must not push the first, most useful error
   // out of the log (system/reportThrottle.ts).
@@ -422,9 +446,11 @@ app.whenReady().then(async () => {
     getSettings: () => settings,
     setSettings: (patch) => {
       const previousHotkey = settings.globalHotkey
+      const previousLogin = settings.openAtLogin
       settings = mergeDefaults(settings, patch)
       saveSettings(userData, settings)
       if (settings.globalHotkey !== previousHotkey) hotkey.apply(settings.globalHotkey)
+      if (settings.openAtLogin !== previousLogin) syncLoginItem()
       return settings
     },
     // Tabs that stopped for want of a login carry on by themselves.
@@ -494,11 +520,18 @@ app.whenReady().then(async () => {
       })
     : null
   ipcMain.handle(CHANNELS.updateGet, () => updates?.state ?? { kind: 'idle' })
-  ipcMain.handle(CHANNELS.updateRestart, () => updates?.restart() ?? false)
+  ipcMain.handle(CHANNELS.updateRestart, () => {
+    const ready = updates?.state.kind === 'ready'
+    if (ready) quitReason.markInterrupted()
+    return updates?.restart() ?? false
+  })
 
   mainWindow = createMainWindow()
   watchWindow(mainWindow, (e) => errorLog.write(e))
+  mainWindow.on('session-end', () => quitReason.markInterrupted())
   loadRenderer(mainWindow)
+  onSecondInstance = showWindow
+  if (secondPending) showWindow()
 
   // The static page's ways out. The retry starts the count of reloads afresh.
   registerFallbackIpc({

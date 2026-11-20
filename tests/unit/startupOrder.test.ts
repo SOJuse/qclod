@@ -14,7 +14,7 @@ const ORDER: Array<{ mark: string; optional: boolean; stage: string }> = [
   { mark: 'runAskpassClient(', optional: true, stage: '6' },
   { mark: "app.setPath('userData'", optional: false, stage: '1' },
   { mark: 'installMainErrorHandlers(', optional: false, stage: '2' },
-  { mark: 'claimSingleInstance(', optional: true, stage: '3' },
+  { mark: 'claimSingleInstance(', optional: false, stage: '3' },
   { mark: 'appendSwitch(', optional: true, stage: '5' },
   { mark: 'app.whenReady(', optional: false, stage: '-' }
 ]

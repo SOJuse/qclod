@@ -179,12 +179,15 @@ test('разрешение, на которое ответили с телефо
     await input.fill('запусти тесты')
     await input.press('Enter')
 
-    const card = win.locator('[data-testid="permission-card"]')
+    const card = win.locator('[data-testid="pinned-card"] [data-testid="permission-card"]')
     await expect(card).toBeVisible({ timeout: 15000 })
     await expect(win.locator('[data-testid="permission-allow"]')).toBeVisible()
-    await expect(card).toContainText('ответили с телефона или claude.ai', { timeout: 10000 })
+    // Answered there: it leaves the pinned strip, and the ribbon says where it was answered.
+    const summary = win.locator('[data-testid="card-summary"]')
+    await expect(summary).toContainText('Ответили с телефона: Bash · npm test', { timeout: 10000 })
+    await expect(win.locator('[data-testid="pinned-card"]')).toHaveCount(0)
     await expect(win.locator('[data-testid="permission-allow"]')).toHaveCount(0)
-    await expect(card).not.toContainText('отклонено')
+    await expect(summary).not.toContainText('Запрещено')
   } finally {
     await close(app, profile)
   }

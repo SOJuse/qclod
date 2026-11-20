@@ -14,7 +14,9 @@ export type ComposerKeyAction =
   /** Only ever resolved for the permission card while it has focus (ruling C16). */
   | 'permissionAllow'
   | 'permissionAllowAll'
-  | 'permissionDeny'
+  | 'permissionAllowSession'
+  /** «Запретить» asks why first: the reason field opens, its Enter sends (decision 8). */
+  | 'permissionReason'
   | 'submit'
   | 'newline'
   | 'historyPrev'
@@ -35,8 +37,8 @@ export interface ComposerContext {
   caretOnLastLine: boolean
   /**
    * The keys of a permission card are being resolved. Set by the card while IT
-   * has focus, never by the input line: a reply that starts with «ф» (KeyA on
-   * the Russian layout) must not grant a blanket permission (ruling C16).
+   * has focus, never by the input line: a reply that starts with «1» or «2»
+   * must not grant a permission (ruling C16).
    */
   pendingPermission?: boolean
 }
@@ -57,6 +59,14 @@ type Rule = (ev: KeyLike, ctx: ComposerContext) => ComposerKeyAction | undefined
 
 /** Editing shortcuts the field must never intercept. */
 const NATIVE_KEYS = new Set(['v', 'z', 'y', 'a', 'x', 'c'])
+
+/** A permission card's digits, as in Claude Code CLI (decision 8). Digits do not move with the layout. */
+const PERMISSION_DIGITS = new Map<string, ComposerKeyAction>([
+  ['1', 'permissionAllow'],
+  ['2', 'permissionAllowAll'],
+  ['3', 'permissionAllowSession'],
+  ['4', 'permissionReason']
+])
 
 /**
  * The precedence table, as an ordered list. The order IS the priority: the
@@ -81,11 +91,12 @@ const RULES: Rule[] = [
   (ev, ctx) => {
     if (ev.key !== 'Escape') return undefined
     if (ctx.popupOpen) return 'closePopup'
-    return ctx.pendingPermission ? 'permissionDeny' : 'interrupt'
+    return ctx.pendingPermission ? 'permissionReason' : 'interrupt'
   },
 
-  // A permission card with focus: Enter allows, A allows all of the kind. Only
-  // on an empty field without attachments — with text, Enter is a send.
+  // A permission card with focus: Enter and 1 allow, 2 allows all of the kind,
+  // 3 until the session ends, 4 asks why first. Only on an empty field without
+  // attachments — with text, Enter is a send and a digit is typed.
   (ev, ctx) =>
     ctx.pendingPermission &&
     ev.key === 'Enter' &&
@@ -100,9 +111,8 @@ const RULES: Rule[] = [
     !ev.ctrlKey &&
     !ev.altKey &&
     !ev.metaKey &&
-    !ev.shiftKey &&
-    physicalKey(ev) === 'a'
-      ? 'permissionAllowAll'
+    !ev.shiftKey
+      ? PERMISSION_DIGITS.get(physicalKey(ev))
       : undefined,
 
   // Native editing. The field is a plain textarea and the browser does these

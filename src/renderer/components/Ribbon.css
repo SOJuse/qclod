@@ -217,35 +217,7 @@
   color: var(--text-dim);
 }
 
-/* ------------------------------------------------------------ permissions */
-
-.row-permission {
-  margin: 10px 0;
-  padding: 11px 13px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface-raised));
-}
-
-.row-permission-head {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  margin-bottom: 9px;
-}
-
-.row-permission-target {
-  color: var(--text-dim);
-  font-size: var(--text-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.row-permission-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+/* -------------------------------------------------------------- questions */
 
 .row-question-options button {
   padding: 5px 12px;
@@ -260,24 +232,6 @@
 .row-question-options button:not(:disabled):hover {
   border-color: var(--accent);
 }
-
-/* The card spans the ribbon, which clips sideways: its ring goes inside.
-   Its buttons take the global ring as it is. */
-.row-permission:focus-visible {
-  outline-offset: var(--focus-offset-inset);
-}
-
-.row-permission-done {
-  font-size: var(--text-sm);
-  color: var(--text-dim);
-}
-
-.row-permission.is-denied {
-  border-color: var(--critical-border);
-  background: var(--critical-fill);
-}
-
-/* -------------------------------------------------------------- questions */
 
 .row-question {
   margin: 10px 0;

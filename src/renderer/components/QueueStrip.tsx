@@ -31,7 +31,7 @@ export function QueueStrip({ queue, onSendNow, onCancel, onEdit }: Props): JSX.E
         return (
           <li key={item.id} className="queue-item" data-testid="queue-item">
             {cancelling ? (
-              <Loader2 size={14} className="queue-spinner" data-testid="queue-spinner" aria-hidden="true" />
+              <Loader2 size={14} className="queue-spinner" data-testid="queue-spinner" role="status" aria-label="Отменяю…" />
             ) : (
               <Clock size={14} aria-hidden="true" />
             )}

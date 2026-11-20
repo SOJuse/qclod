@@ -202,15 +202,36 @@ describe('ожидающее разрешение', () => {
     ).toBe('newline')
   })
 
-  test('A (на русской раскладке «ф») — разрешить всё такое', () => {
-    expect(
-      resolveComposerKey(key({ key: 'ф', code: 'KeyA' }), ctx({ pendingPermission: true }))
-    ).toBe('permissionAllowAll')
+  test('1 — разрешить, 2 — всё такое, 3 — до конца сессии, 4 — открыть поле причины', () => {
+    const on = ctx({ pendingPermission: true })
+    expect(resolveComposerKey(key({ key: '1', code: 'Digit1' }), on)).toBe('permissionAllow')
+    expect(resolveComposerKey(key({ key: '2', code: 'Digit2' }), on)).toBe('permissionAllowAll')
+    expect(resolveComposerKey(key({ key: '3', code: 'Digit3' }), on)).toBe('permissionAllowSession')
+    expect(resolveComposerKey(key({ key: '4', code: 'Digit4' }), on)).toBe('permissionReason')
   })
 
-  test('A с текстом в поле — просто буква', () => {
+  test('цифры с цифрового блока — те же ответы', () => {
     expect(
-      resolveComposerKey(key({ key: 'ф', code: 'KeyA' }), ctx({ text: 'п', pendingPermission: true }))
+      resolveComposerKey(key({ key: '3', code: 'Numpad3' }), ctx({ pendingPermission: true }))
+    ).toBe('permissionAllowSession')
+  })
+
+  test('цифра с текстом в поле — просто цифра', () => {
+    expect(
+      resolveComposerKey(key({ key: '2', code: 'Digit2' }), ctx({ text: 'п', pendingPermission: true }))
+    ).toBe('insert')
+  })
+
+  test('цифра с Shift, Ctrl или Alt ничего не разрешает', () => {
+    const on = ctx({ pendingPermission: true })
+    expect(resolveComposerKey(key({ key: '!', code: 'Digit1', shiftKey: true }), on)).toBe('insert')
+    expect(resolveComposerKey(key({ key: '2', code: 'Digit2', ctrlKey: true }), on)).toBe('insert')
+    expect(resolveComposerKey(key({ key: '3', code: 'Digit3', altKey: true }), on)).toBe('insert')
+  })
+
+  test('A больше ничего не разрешает (решение 8)', () => {
+    expect(
+      resolveComposerKey(key({ key: 'ф', code: 'KeyA' }), ctx({ pendingPermission: true }))
     ).toBe('insert')
   })
 
@@ -220,13 +241,13 @@ describe('ожидающее разрешение', () => {
     ).toBe('native')
   })
 
-  test('A без ожидающего разрешения — просто буква', () => {
-    expect(resolveComposerKey(key({ key: 'a', code: 'KeyA' }), ctx())).toBe('insert')
+  test('цифра без ожидающего разрешения — просто цифра', () => {
+    expect(resolveComposerKey(key({ key: '1', code: 'Digit1' }), ctx())).toBe('insert')
   })
 
-  test('Esc при ожидающем разрешении — отклонить, а не прервать', () => {
+  test('Esc при ожидающем разрешении — открыть поле причины, а не прервать и не отказать сразу', () => {
     expect(resolveComposerKey(key({ key: 'Escape' }), ctx({ pendingPermission: true }))).toBe(
-      'permissionDeny'
+      'permissionReason'
     )
   })
 

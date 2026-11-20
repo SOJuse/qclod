@@ -43,6 +43,14 @@ describe('QueueStrip', () => {
     expect(html).toContain('queue-spinner')
   })
 
+  test('cancelling: the spinner says so to a screen reader', () => {
+    const html = render([msg({ state: 'cancelling' })])
+    const status = html.match(/<[a-z]+[^>]*role="status"[^>]*>/)?.[0] ?? ''
+    expect(status).toContain('aria-label="Отменяю…"')
+    expect(status).not.toContain('aria-hidden')
+    expect(render([msg()])).not.toContain('role="status"')
+  })
+
   test('captions for queued and waiting', () => {
     expect(render([msg()])).toContain('Дойдёт после текущего шага: «и потом закоммить»')
     expect(render([msg({ state: 'waiting' })])).toContain(

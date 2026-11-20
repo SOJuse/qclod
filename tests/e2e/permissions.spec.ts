@@ -55,7 +55,7 @@ async function close(app: ElectronApplication, profile: string): Promise<void> {
   rmSync(profile, { recursive: true, force: true })
 }
 
-test('запрос разрешения появляется в ленте на месте будущей карточки', async () => {
+test('запрос разрешения закреплён над полем ввода, а не в ленте', async () => {
   const { app, profile } = await launch({
     steps: [
       { kind: 'text', text: 'сейчас запущу тесты' },
@@ -64,16 +64,20 @@ test('запрос разрешения появляется в ленте на 
   }, false)
   try {
     const win = await app.firstWindow()
-    const card = win.locator('[data-testid="permission-card"]')
+    const pinned = win.locator('[data-testid="pinned-card"]')
+    const card = pinned.locator('[data-testid="permission-card"]')
 
     await expect(card).toBeVisible({ timeout: 15000 })
+    await expect(pinned).toHaveAttribute('data-kind', 'permission')
+    await expect(pinned).toContainText('Разрешение')
     await expect(card).toContainText('Bash')
     await expect(card).toContainText('npm test')
 
-    // In the stream, after what the agent said — not in a modal over it.
-    const order = await win.locator('[data-testid^="ribbon-"]').allTextContents()
-    expect(order[0]).toContain('сейчас запущу тесты')
-    expect(order[1]).toContain('npm test')
+    // Pinned above the input, not a row in the stream; what the agent said stays there.
+    const ribbon = win.locator('[data-testid="ribbon"]')
+    await expect(ribbon).toContainText('сейчас запущу тесты')
+    await expect(ribbon).not.toContainText('npm test')
+    await expect(ribbon.locator('[data-testid="permission-card"]')).toHaveCount(0)
   } finally {
     await close(app, profile)
   }
@@ -94,7 +98,7 @@ test('«разрешить» пропускает инструмент и он �
   }
 })
 
-test('«отклонить» отменяет инструмент и агент продолжает', async () => {
+test('«Запретить» открывает поле причины, «Запретить» у поля отменяет инструмент и агент продолжает', async () => {
   const { app, profile } = await launch({
     steps: [
       { kind: 'askPermission', name: 'Bash', input: { command: 'rm -rf /' } },
@@ -104,6 +108,10 @@ test('«отклонить» отменяет инструмент и агент
   try {
     const win = await app.firstWindow()
     await win.locator('[data-testid="permission-deny"]').click({ timeout: 15000 })
+    // Not refused yet: first the person may say why.
+    await expect(win.locator('[data-testid="permission-deny-reason"]')).toBeFocused()
+    await expect(win.locator('[data-testid="card-summary"]')).toHaveCount(0)
+    await win.locator('[data-testid="permission-deny-send"]').click()
 
     await expect(win.locator('[data-testid="card-summary"]')).toContainText('Запрещено: Bash · rm -rf /')
     await expect(win.locator('[data-testid="ribbon"]')).toContainText('хорошо, не буду', {
@@ -249,7 +257,7 @@ test('Enter разрешает, инструмент выполняется', as
   }
 })
 
-test('Esc отклоняет', async () => {
+test('Esc открывает поле причины, Enter в нём запрещает', async () => {
   const { app, profile } = await launch({
     steps: [
       { kind: 'askPermission', name: 'Bash', input: { command: 'rm -rf /' } },
@@ -263,6 +271,10 @@ test('Esc отклоняет', async () => {
 
     await armed(win)
     await win.keyboard.press('Escape')
+    // Esc no longer refuses at once (П19): the reason field opens.
+    await expect(win.locator('[data-testid="permission-deny-reason"]')).toBeFocused()
+    await expect(win.locator('[data-testid="card-summary"]')).toHaveCount(0)
+    await win.keyboard.press('Enter')
 
     await expect(win.locator('[data-testid="card-summary"]')).toContainText('Запрещено: Bash · rm -rf /')
     await expect(win.locator('[data-testid="ribbon"]')).toContainText('хорошо, не буду', {
@@ -273,7 +285,7 @@ test('Esc отклоняет', async () => {
   }
 })
 
-test('A разрешает всё такое — второй такой же не спрашивается', async () => {
+test('2 разрешает всё такое — второй такой же не спрашивается', async () => {
   const { app, profile } = await launch({
     steps: [
       { kind: 'askPermission', name: 'Read', input: { file_path: 'C:/проект/auth.ts' } },
@@ -284,9 +296,8 @@ test('A разрешает всё такое — второй такой же н
     const win = await app.firstWindow()
     await expect(win.locator('[data-testid="permission-card"]')).toBeFocused({ timeout: 15000 })
 
-    // The physical key: it is «ф» on the Russian layout.
     await armed(win)
-    await win.keyboard.press('KeyA')
+    await win.keyboard.press('Digit2')
 
     await expect(win.locator('[data-testid="tool-group"]')).toContainText('Прочитал 2 файла', { timeout: 15000 })
     // The answered permission rides inside the folded run.
@@ -298,7 +309,57 @@ test('A разрешает всё такое — второй такой же н
   }
 })
 
-test('в поле ввода A и Enter ничего не разрешают', async () => {
+test('«Разрешить до конца сессии» — второй такой же вызов в том же чате идёт без карточки', async () => {
+  const { app, profile } = await launch({
+    steps: [
+      { kind: 'askPermission', name: 'Read', input: { file_path: 'C:/проект/auth.ts' } },
+      { kind: 'askPermission', name: 'Read', input: { file_path: 'C:/проект/auth.ts' } },
+      { kind: 'text', text: 'прочитал' }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="permission-allow-session"]').click({ timeout: 15000 })
+
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText('прочитал', { timeout: 15000 })
+    await expect(win.locator('[data-testid="tool-group"]')).toContainText('Прочитал 2 файла')
+    // Asked once: nothing is pinned, and one answered card rides inside the run.
+    await expect(win.locator('[data-testid="pinned-card"]')).toHaveCount(0)
+    await win.locator('[data-testid="tool-group-toggle"]').click()
+    await expect(win.locator('[data-testid="card-summary"]')).toHaveCount(1)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('отказ с причиной — агент получает текст причины', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'git push origin main' }, echo: true }]
+  })
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('[data-testid="permission-card"]')).toBeFocused({ timeout: 15000 })
+    await armed(win)
+    await win.keyboard.press('Digit4')
+    const reason = win.locator('[data-testid="permission-deny-reason"]')
+    await expect(reason).toBeFocused()
+    await expect(reason).toHaveAttribute('placeholder', 'Почему нет / что сделать вместо (необязательно)')
+    // A digit in the field is text, not an answer.
+    await win.keyboard.type('не трогай main, сделай 1 ветку')
+    await win.keyboard.press('Enter')
+
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('Запрещено: Bash · git push origin main')
+    // What the agent itself received: main's explicit refusal (S2-R1) with the reason in it.
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText(
+      /Получено: \{"message":"[^"]*Причина: не трогай main, сделай 1 ветку\./,
+      { timeout: 15000 }
+    )
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('в поле ввода цифра и Enter ничего не разрешают', async () => {
   const { app, profile } = await launch({
     steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
   })
@@ -307,10 +368,10 @@ test('в поле ввода A и Enter ничего не разрешают', a
     const card = win.locator('[data-testid="permission-card"]')
     await expect(card).toBeFocused({ timeout: 15000 })
 
-    // Back to the input line with a click, then a reply that starts with «ф».
+    // Back to the input line with a click, then a reply that starts with «2».
     const input = win.locator('[data-testid="composer-input"]')
     await input.click()
-    await win.keyboard.press('KeyA')
+    await win.keyboard.press('Digit2')
     await win.keyboard.press('Enter')
     await expect(input).toBeFocused()
     await expect(card).toContainText('npm test')
@@ -358,7 +419,7 @@ test('карточка не прячется под полем ввода', asyn
   }
 })
 
-test('«Разрешить» — главная кнопка, «Отклонить» — опасная', async () => {
+test('«Разрешить» — главная кнопка, «Запретить» — опасная, на кнопках цифры', async () => {
   const { app, profile } = await launch({
     steps: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]
   })
@@ -371,9 +432,10 @@ test('«Разрешить» — главная кнопка, «Отклонит
     await expect(win.locator('[data-testid="permission-allow-all"]')).not.toHaveClass(
       /btn-primary|btn-danger/
     )
-    await expect(win.locator('[data-testid="permission-allow"] kbd')).toHaveText('Enter')
-    await expect(win.locator('[data-testid="permission-allow-all"] kbd')).toHaveText('A')
-    await expect(win.locator('[data-testid="permission-deny"] kbd')).toHaveText('Esc')
+    await expect(win.locator('[data-testid="permission-allow"] kbd')).toHaveText('1')
+    await expect(win.locator('[data-testid="permission-allow-all"] kbd')).toHaveText('2')
+    await expect(win.locator('[data-testid="permission-allow-session"] kbd')).toHaveText('3')
+    await expect(win.locator('[data-testid="permission-deny"] kbd')).toHaveText('4')
     await expect(win.locator('[data-testid="permission-deny"]')).toHaveAttribute('title', /Esc/)
   } finally {
     await close(app, profile)
@@ -432,7 +494,7 @@ test('запрос в соседней панели не уводит фокус
   }
 })
 
-test('A в первые 400 мс после появления карточки ничего не делает, потом разрешает всё такое', async () => {
+test('2 в первые 400 мс после появления карточки ничего не делает, потом разрешает всё такое', async () => {
   const { app, profile } = await launch({
     steps: [
       { kind: 'askPermission', name: 'Read', input: { file_path: 'C:/проект/auth.ts' } },
@@ -451,7 +513,7 @@ test('A в первые 400 мс после появления карточки 
           const tick = (): void => {
             const c = document.querySelector('[data-testid="permission-card"]')
             if (c && document.activeElement === c) {
-              c.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyA', key: 'a', bubbles: true, cancelable: true }))
+              c.dispatchEvent(new KeyboardEvent('keydown', { code: 'Digit2', key: '2', bubbles: true, cancelable: true }))
               resolve()
             } else requestAnimationFrame(tick)
           }
@@ -463,7 +525,7 @@ test('A в первые 400 мс после появления карточки 
 
     // Armed: a fresh press answers.
     await armed(win)
-    await win.keyboard.press('KeyA')
+    await win.keyboard.press('Digit2')
     await expect(win.locator('[data-testid="tool-group"]')).toContainText('Прочитал 2 файла', { timeout: 15000 })
   } finally {
     await close(app, profile)

@@ -7,7 +7,6 @@ import type { RowModel } from '../chat/groupRows'
 import { CardSummary } from './cards/CardSummary'
 import { ThinkingRow } from './ThinkingRow'
 import { ToolGroup } from './ToolGroup'
-import { PermissionCard } from './PermissionCard'
 import { PlanCard } from './PlanCard'
 import { QuestionCard } from './QuestionCard'
 import { NO_STEPS, SubagentCard } from './SubagentCard'
@@ -27,8 +26,6 @@ interface Props {
   /** The tab's folder: where its commands run. */
   cwd: string
   tabId: string
-  /** The permission the keys answer, if any. */
-  activePermissionId?: string | null
   onMeasure: (id: string, height: number) => void
   /** How the cards answer the agent. */
   answers: CardAnswers
@@ -206,7 +203,6 @@ export function RibbonRow({
   byParent,
   cwd,
   tabId,
-  activePermissionId = null,
   onMeasure,
   answers
 }: Props): JSX.Element {
@@ -309,21 +305,8 @@ export function RibbonRow({
         )
 
       case 'permission':
-        if (item.state !== 'pending') return <CardSummary item={item} tabId={tabId} />
-        return (
-          <PermissionCard
-            item={item}
-            active={item.id === activePermissionId}
-            onAnswer={(requestId, behavior, remember) =>
-              answers.permission(
-                requestId,
-                behavior === 'allow'
-                  ? { behavior: 'allow', scope: remember ? 'always' : 'once' }
-                  : { behavior: 'deny' }
-              )
-            }
-          />
-        )
+        // An open one is pinned above the input (PinnedCards) and never a row.
+        return <CardSummary item={item} tabId={tabId} />
 
       case 'question':
         if (item.answers !== null || item.elsewhere) return <CardSummary item={item} tabId={tabId} />

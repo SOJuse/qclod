@@ -5,7 +5,6 @@ import type { CardAnswers } from '../chat/cardAnswers'
 import { childrenByParent } from '../chat/children'
 import { groupRows } from '../chat/groupRows'
 import { isPinnedCard, isStaleQuestion } from '../chat/openCards'
-import { oldestPendingPermission } from '../chat/pendingPermission'
 import { RibbonRow } from './RibbonItem'
 import './Ribbon.css'
 
@@ -69,7 +68,6 @@ export function Ribbon({
     [items]
   )
   const byParent = useMemo(() => childrenByParent(items), [items])
-  const pendingId = useMemo(() => oldestPendingPermission(items)?.id ?? null, [items])
 
   const offsets: number[] = []
   let total = 0
@@ -124,12 +122,6 @@ export function Ribbon({
     stickToBottom.current = true
   }, [])
 
-  // A question that appears is never left out of sight above or below: the
-  // ribbon follows the bottom again, where it will be drawn.
-  useLayoutEffect(() => {
-    if (pendingId !== null) stickToBottom.current = true
-  }, [pendingId])
-
   useLayoutEffect(() => {
     const el = viewport.current
     if (!el || !stickToBottom.current) return
@@ -150,7 +142,6 @@ export function Ribbon({
             byParent={byParent}
             cwd={cwd}
             tabId={tabId}
-            activePermissionId={pendingId}
             onMeasure={measure}
             answers={answers}
           />

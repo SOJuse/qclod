@@ -1,5 +1,10 @@
+import { useMemo } from 'react'
+import { plural } from '../../../shared/format'
 import type { RibbonItem, TabId } from '../../../shared/types'
 import type { CardAnswers } from '../../chat/cardAnswers'
+import { PINNED_KINDS, cardIdOf, openCards } from '../../chat/openCards'
+import { PermissionCard } from './PermissionCard'
+import { PinnedCard } from './PinnedCard'
 import type { AutoAnswerView, OpenCard } from './types'
 
 export interface PinnedCardsProps {
@@ -10,7 +15,54 @@ export interface PinnedCardsProps {
   autoAnswerFor?: (card: OpenCard) => AutoAnswerView | undefined
 }
 
-/** The open card pinned above the input. Its body comes with задача 11; until then nothing is drawn. */
-export function PinnedCards(_props: PinnedCardsProps): JSX.Element | null {
-  return null
+const TITLE: Record<OpenCard['kind'], string> = {
+  permission: 'Разрешение',
+  question: 'Вопрос',
+  plan: 'План'
+}
+
+/** The card's own body. Questions and plans come with their own cards (tasks 12, 13; П2). */
+function body(card: OpenCard, answers: CardAnswers): JSX.Element | null {
+  switch (card.kind) {
+    case 'permission':
+      return <PermissionCard item={card.item} answers={answers} focused />
+    default:
+      return null
+  }
+}
+
+/**
+ * What waits for the person, pinned above the input: one card at a time, the
+ * oldest first, a subagent's own ones too (decision 6), and how many more wait
+ * behind it. Answering one brings up the next.
+ */
+export function PinnedCards({ tabId, items, answers, autoAnswerFor }: PinnedCardsProps): JSX.Element | null {
+  const cards = useMemo(
+    () => openCards(items, tabId).filter((card) => PINNED_KINDS.has(card.kind)),
+    [items, tabId]
+  )
+  const card = cards[0]
+  if (!card) return null
+  const id = cardIdOf(card)
+  const auto = autoAnswerFor?.(card)
+  const more = cards.length - 1
+  return (
+    <div className="pinned-cards" data-testid="pinned-cards">
+      <PinnedCard
+        key={id}
+        kind={card.kind}
+        title={TITLE[card.kind]}
+        cardId={id}
+        {...(card.fromAgent !== undefined ? { from: card.fromAgent } : {})}
+        {...(auto ? { autoAnswer: auto } : {})}
+      >
+        {body(card, answers)}
+      </PinnedCard>
+      {more > 0 && (
+        <div className="pinned-more" data-testid="pinned-more">
+          Ещё {more} {plural(more, 'ждёт', 'ждут', 'ждут')} ответа
+        </div>
+      )}
+    </div>
+  )
 }

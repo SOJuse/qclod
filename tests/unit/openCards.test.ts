@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PINNED_KINDS, cardIdOf, isOpenCard, isStaleQuestion, openCards } from '../../src/renderer/chat/openCards'
+import { PINNED_KINDS, cardIdOf, isOpenCard, isPinnedCard, isStaleQuestion, openCards } from '../../src/renderer/chat/openCards'
 import type { RibbonItem } from '../../src/shared/types'
 
 const perm = (id: string, extra: Partial<Extract<RibbonItem, { kind: 'permission' }>> = {}): RibbonItem => ({
@@ -75,7 +75,9 @@ describe('openCards', () => {
     expect(cardIdOf(l!)).toBe('tu-l')
   })
 
-  it('пока карточки не в закреплённой плашке, из ленты не уходят (П2)', () => {
-    expect(PINNED_KINDS.size).toBe(0)
+  it('в закреплённой плашке пока только разрешения; вопросы и планы остаются в ленте (П2)', () => {
+    expect([...PINNED_KINDS]).toEqual(['permission'])
+    const items = [perm('p'), question('q'), plan('l'), perm('done', { state: 'allowed' })]
+    expect(items.map((item) => isPinnedCard(item, items))).toEqual([true, false, false, false])
   })
 })

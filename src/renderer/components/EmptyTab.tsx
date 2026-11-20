@@ -42,7 +42,7 @@ export function EmptyTab({ tabId, cwd, onOpenSession }: Props): JSX.Element {
   const tips: Array<{ keys: string; text: string }> = [
     { keys: '/', text: 'команды' },
     { keys: '@', text: 'файлы' },
-    { keys: keysOf('actions'), text: 'действия' },
+    { keys: keysOf('actions'), text: 'поиск' },
     { keys: keysOf('cycleMode'), text: 'режим разрешений' }
   ]
 

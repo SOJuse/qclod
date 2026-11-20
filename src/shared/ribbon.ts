@@ -332,13 +332,24 @@ export class RibbonBuilder {
     text: string,
     attachments: Attachment[] = [],
     echoKey: string | null = text,
-    uuid?: string
+    uuid?: string,
+    opts: { auto?: boolean } = {}
   ): RibbonChange[] {
     // What is shown and what will be echoed are not always the same string:
     // an attached file reaches the agent as an @-mention appended to the text.
     // null: no echo is coming (a message the CLI folded into a turn).
     if (echoKey !== null) this.expectEcho(echoKey, uuid)
-    return [this.append({ kind: 'user', id: this.nextId(), text, attachments, at: this.now() })]
+    // `auto`: sent by Qclod itself («продолжай»), not by the person.
+    return [
+      this.append({
+        kind: 'user',
+        id: this.nextId(),
+        text,
+        attachments,
+        at: this.now(),
+        ...(opts.auto ? { auto: true as const } : {})
+      })
+    ]
   }
 
   /**
@@ -398,12 +409,14 @@ export class RibbonBuilder {
   resolvePlan(
     requestId: string,
     state: 'approved' | 'rejected' | 'elsewhere',
-    extra: { comment?: string; edited?: true; plan?: string; sentBack?: true } = {}
+    extra: { comment?: string; edited?: true; plan?: string; sentBack?: true; auto?: boolean } = {}
   ): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'plan' && i.requestId === requestId)
     if (!item || item.kind !== 'plan') return []
     const patch: Partial<Extract<RibbonItem, { kind: 'plan' }>> = { state }
     if (extra.comment) patch.comment = extra.comment
+    // Decided by Qclod's timer in «авто-да», not by the person.
+    if (extra.auto) patch.auto = true
     if (extra.sentBack && state === 'rejected') patch.sentBack = true
     if (extra.edited && extra.plan !== undefined) {
       patch.text = extra.plan
@@ -437,7 +450,7 @@ export class RibbonBuilder {
   answerQuestion(
     toolUseId: string,
     answers: Record<string, string>,
-    extra: { notes?: Record<string, string> } = {}
+    extra: { notes?: Record<string, string>; auto?: boolean } = {}
   ): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)
     if (!item || item.kind !== 'question') return []
@@ -445,6 +458,8 @@ export class RibbonBuilder {
     // taking this ribbon over) is built from the items, not from the events.
     const patch: Partial<Extract<RibbonItem, { kind: 'question' }>> = { answers }
     if (extra.notes && Object.keys(extra.notes).length > 0) patch.notes = extra.notes
+    // Answered by Qclod's timer in «авто-да», not by the person.
+    if (extra.auto) patch.auto = true
     Object.assign(item, patch)
     return [this.update(item.id, patch)]
   }

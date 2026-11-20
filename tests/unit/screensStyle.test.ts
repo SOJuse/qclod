@@ -7,7 +7,7 @@ import { cssRules } from './cssTokens'
 const SCREENS = [
   'controls.css',
   'SettingsScreen.css',
-  'ActionPalette.css',
+  'CommandPalette.css',
   'SetupScreen.css',
   'EmptyTab.css'
 ]

@@ -1,19 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { EnvironmentReport, HotkeyRegistration, SessionSummary } from '../../shared/types'
-import { projectKey } from '../../shared/projects'
 import { useAppStore } from '../state/useAppStore'
 import { startLayoutSync } from '../state/layoutSync'
 import { MAX_PANES, buildSidebar, chatOrder, nextPanes } from '../chat/sidebarModel'
 import { SplitView } from './SplitView'
 import { dropOnPane, type DropPayload, type DropWhere } from './paneOps'
 import { openAndPlace } from './dropSession'
+import { restartChat } from './restartChat'
 import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { Sidebar } from '../components/sidebar/Sidebar'
 import { ChatPane, type PanelRequest } from '../components/ChatPane'
 import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
-import { ActionPalette } from '../components/ActionPalette'
+import { CommandPalette } from '../components/CommandPalette'
+import { historyToLoad } from '../palette/history'
+import { withMention } from '../palette/files'
+import { withCommand } from '../palette/commands'
+import type { PaletteContext, PaletteRunner, PaletteSection } from '../palette/types'
+import { withLocalCommands } from '../../shared/commandFilter'
 import { UpdateBanner } from '../components/UpdateBanner'
 import { compactNow } from '../input/slash'
 import { reasonOf } from '../ui/StateView'
@@ -61,7 +66,8 @@ export function App(): JSX.Element {
    * «Начать работу», so finishing step 2 is seen rather than skipped past.
    */
   const [setupNeeded, setSetupNeeded] = useState(false)
-  const [paletteOpen, setPaletteOpen] = useState(false)
+  /** Ctrl+K, open: kept to one section or not; `n` tells one opening from the next. */
+  const [palette, setPalette] = useState<{ scope?: PaletteSection; n: number } | null>(null)
   /** Ctrl+W was pressed once on a working tab; a second press within 3 s closes it. */
   const [closeGuardTab, setCloseGuardTab] = useState<string | null>(null)
   const closeGuardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -194,6 +200,7 @@ export function App(): JSX.Element {
   const tabs = useAppStore((s) => s.tabs)
   const activeTabId = useAppStore((s) => s.activeTabId)
   const fileIndexByTab = useAppStore((s) => s.fileIndexByTab)
+  const commandsByTab = useAppStore((s) => s.commandsByTab)
   const panelByTab = useAppStore((s) => s.panelByTab)
   const layout = useAppStore((s) => s.layout)
   const historyByProject = useAppStore((s) => s.historyByProject)
@@ -288,19 +295,22 @@ export function App(): JSX.Element {
   )
 
   /**
-   * Ctrl+H and /resume: the active chat's project is shown open, with its past
-   * conversations. (Task 7 moves this to Ctrl+K's history section.)
+   * Ctrl+K: the search over everything; Ctrl+H and /resume: the same kept to
+   * the past conversations. Opening reads the history of the projects nobody
+   * asked about yet. Ctrl+K on an open palette closes it; Ctrl+H there opens it
+   * afresh, kept to the past ones (the chip may have been taken off meanwhile).
    */
-  const showActiveProject = useCallback((): void => {
+  const togglePalette = useCallback((scope?: PaletteSection): void => {
+    const was = paletteRef.current
+    if (was && scope === undefined) {
+      setFocusToken((n) => n + 1)
+      return setPalette(null)
+    }
     const state = useAppStore.getState()
-    const tab = state.tabs.find((t) => t.id === state.activeTabId)
-    if (!tab) return
-    if (state.layout.sidebarCollapsed) void window.qclod.setLayout({ sidebarCollapsed: false })
-    const key = projectKey(tab.cwd)
-    const entry = state.layout.projects.find((p) => projectKey(p.cwd, p.hostId) === key)
-    if (entry?.collapsed) toggleProject(entry.cwd, false)
-    else loadProjectHistory(tab.cwd)
-  }, [toggleProject, loadProjectHistory])
+    const sidebarNow = buildSidebar(state.tabs, state.layout.projects, state.historyByProject)
+    for (const cwd of historyToLoad(sidebarNow)) state.loadProjectHistory(cwd)
+    setPalette({ ...(scope === undefined ? {} : { scope }), n: (was?.n ?? 0) + 1 })
+  }, [])
 
   /** Shift+Tab walks the everyday modes; «без проверок» is not on the ring. */
   const cycleMode = useCallback((): void => {
@@ -398,24 +408,23 @@ export function App(): JSX.Element {
 
   const restartSession = useCallback((): void => {
     const id = useAppStore.getState().activeTabId
-    if (!id) return
-    // The new session's panel replaces the old one's whole.
-    void window.qclod
-      .restartTab(id)
-      .then(() => window.qclod.panel(id))
-      .then((snapshot) => setPanelSnapshot(id, snapshot))
-  }, [setPanelSnapshot])
+    // A new session, its own panel, and the project's history read again.
+    if (id) void restartChat(id)
+  }, [])
 
-  /** The one place every shortcut and every Ctrl+K row ends up. */
+  /**
+   * The one place every shortcut and every Ctrl+K row ends up. `at` is Ctrl+1…9's
+   * index, or the object of an action a later stage adds (a server's id, этап 6).
+   */
   const runAction = useCallback(
-    (id: AppActionId, index?: number): void => {
+    (id: AppActionId, at?: number | string): void => {
       const state = useAppStore.getState()
       // The sidebar's order, top to bottom: what the person sees.
       const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject))
-      const at = order.indexOf(state.activeTabId)
+      const here = order.indexOf(state.activeTabId)
       const step = (delta: number): void => {
-        if (order.length < 2 || at < 0) return
-        activate(order[(at + delta + order.length) % order.length]!)
+        if (order.length < 2 || here < 0) return
+        activate(order[(here + delta + order.length) % order.length]!)
       }
       switch (id) {
         case 'newTab':
@@ -427,17 +436,16 @@ export function App(): JSX.Element {
         case 'prevTab':
           return step(-1)
         case 'tabAt': {
-          const target = tabAtTarget(order, index)
+          const target = tabAtTarget(order, typeof at === 'number' ? at : undefined)
           if (target) activate(target)
           return
         }
         case 'actions':
-          if (paletteRef.current) setFocusToken((n) => n + 1)
-          return setPaletteOpen((open) => !open)
+          return togglePalette()
         case 'settings':
           return setSettingsOpen(true)
         case 'history':
-          return showActiveProject()
+          return togglePalette('history')
         case 'togglePanel':
           return togglePanel()
         case 'toggleSidebar':
@@ -461,15 +469,56 @@ export function App(): JSX.Element {
           return void window.qclod.reloadWindow()
       }
     },
-    [activate, newChat, closeActiveTab, showActiveProject, togglePanel, toggleSidebar, toggleSplit, restartSession, cycleMode]
+    [activate, newChat, closeActiveTab, togglePalette, togglePanel, toggleSidebar, toggleSplit, restartSession, cycleMode]
+  )
+
+  /** What a Ctrl+K row does; the palette has closed by then, and focus goes back to the input. */
+  const paletteRun = useMemo((): PaletteRunner => {
+    const intoDraft = (edit: (draft: string) => string): void => {
+      const state = useAppStore.getState()
+      if (state.activeTabId) state.setDraft(state.activeTabId, edit(state.draftByTab[state.activeTabId] ?? ''))
+    }
+    const focused =
+      <A extends unknown[]>(fn: (...args: A) => void) =>
+      (...args: A): void => {
+        focusComposer()
+        fn(...args)
+      }
+    return {
+      activateChat: focused(activate),
+      openProject: focused((cwd: string) => newChat(cwd)),
+      openSession: focused(openPast),
+      insertMention: focused((path: string) => intoDraft((draft) => withMention(draft, path))),
+      insertCommand: focused((name: string) => intoDraft((draft) => withCommand(draft, name))),
+      runAction: focused((id: AppActionId, arg?: string) => runAction(id, arg)),
+      openLayer: (layer) => {
+        const state = useAppStore.getState()
+        if (state.activeTabId) state.setPaneLayer(state.activeTabId, layer)
+      },
+      loadHistory: (cwd) => loadProjectHistory(cwd)
+    }
+  }, [activate, newChat, openPast, runAction, focusComposer, loadProjectHistory])
+
+  /** What Ctrl+K searches, live while it is open: a history read that lands shows at once. */
+  const paletteCtx = useMemo(
+    (): PaletteContext | null =>
+      palette && {
+        sidebar,
+        activeTabId,
+        files: fileIndexByTab[activeTabId] ?? [],
+        filesPending: fileIndexByTab[activeTabId] === undefined,
+        commands: withLocalCommands(commandsByTab[activeTabId] ?? []),
+        run: paletteRun
+      },
+    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, paletteRun]
   )
 
   // Window-level shortcuts, by physical key. The handler is registered once and
   // reads the latest runAction through a ref.
   const runRef = useRef(runAction)
   runRef.current = runAction
-  const paletteRef = useRef(paletteOpen)
-  paletteRef.current = paletteOpen
+  const paletteRef = useRef(palette)
+  paletteRef.current = palette
   useEffect(() => {
     const onKey = (ev: KeyboardEvent): void => {
       const hit = resolveAppShortcut(ev)
@@ -478,8 +527,8 @@ export function App(): JSX.Element {
       ev.preventDefault()
       // A held Ctrl+R must not reload again and again.
       if (hit.id === 'reload' && ev.repeat) return
-      // With the palette open only Ctrl+K (to close it) runs.
-      if (paletteRef.current && hit.id !== 'actions') return
+      // With the palette open only Ctrl+K (to close it) and Ctrl+H (its history) run.
+      if (paletteRef.current && hit.id !== 'actions' && hit.id !== 'history') return
       runRef.current(hit.id, hit.index)
     }
     window.addEventListener('keydown', onKey)
@@ -630,7 +679,7 @@ export function App(): JSX.Element {
                 // Clicking a pane makes it the one everything acts on, in place.
                 onFocus={() => focusPane(id)}
                 onCycleMode={cycleMode}
-                onOpenHistory={showActiveProject}
+                onOpenHistory={() => togglePalette('history')}
                 onOpenSession={openSession}
                 panelRequest={panelRequest}
                 ribbonError={ribbonErrors[id] ?? null}
@@ -648,14 +697,12 @@ export function App(): JSX.Element {
           onFocus={focusPane}
         />
       </div>
-      {paletteOpen && (
-        <ActionPalette
-          onRun={(id) => {
-            setPaletteOpen(false)
-            setFocusToken((n) => n + 1)
-            runAction(id)
-          }}
-          onClose={() => setPaletteOpen(false)}
+      {palette && paletteCtx && (
+        <CommandPalette
+          key={palette.n}
+          ctx={paletteCtx}
+          {...(palette.scope === undefined ? {} : { initialScope: palette.scope })}
+          onClose={() => setPalette(null)}
           onFocusLost={focusComposer}
         />
       )}

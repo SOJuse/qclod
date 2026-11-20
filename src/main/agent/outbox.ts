@@ -17,6 +17,8 @@ export interface OutboxEntry {
    * so its `cancelled` frame is the answer, not a turn that swallowed it.
    */
   requestedCancel: boolean
+  /** Sent by Qclod itself («продолжай»): its bubble is marked «авто» when the agent reads it. */
+  auto?: true
 }
 
 /** What the strip above the input shows: the user's messages the agent has not read yet. */

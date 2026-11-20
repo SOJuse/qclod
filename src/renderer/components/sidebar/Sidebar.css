@@ -394,6 +394,18 @@
   color: var(--text-dim);
 }
 
+/* A fast answer does not flash «Загружаю…»: it fades in once the wait is long
+   enough to notice, as the state views do (StateView.css). */
+.sidebar-note[data-state='loading'] {
+  animation: sidebar-note-in var(--dur) var(--ease) 150ms both;
+}
+
+@keyframes sidebar-note-in {
+  from {
+    opacity: 0;
+  }
+}
+
 .sidebar-note-why {
   color: var(--text-faint);
   overflow-wrap: anywhere;

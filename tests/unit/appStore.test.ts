@@ -583,3 +583,86 @@ describe('useAppStore: слой поверх ленты', () => {
     expect('a' in useAppStore.getState().layerByTab).toBe(false)
   })
 })
+
+describe('useAppStore: прошлые разговоры проекта (S2-R18)', () => {
+  const s = (id: string, updatedAt: number) => ({ id, title: id, firstMessage: '', updatedAt })
+
+  test('перечитывание не стирает прежний список: он стоит до ответа', async () => {
+    let answer: ((items: unknown[]) => void) | null = null
+    vi.stubGlobal('window', {
+      qclod: { projectHistory: () => new Promise((resolve) => (answer = resolve)) }
+    })
+    try {
+      const store = useAppStore.getState()
+      store.loadProjectHistory('C:\\P')
+      expect(useAppStore.getState().historyByProject['c:\\p']).toBe('loading')
+      answer!([s('old', 1)])
+      await vi.waitFor(() => expect(useAppStore.getState().historyByProject['c:\\p']).toEqual({ items: [s('old', 1)] }))
+
+      store.loadProjectHistory('c:/p/', true)
+      // The list stays while it is read again; only a mark says a read is under way.
+      expect(useAppStore.getState().historyByProject['c:\\p']).toEqual({ items: [s('old', 1)], reading: true })
+      answer!([s('new', 2), s('old', 1)])
+      await vi.waitFor(() =>
+        expect(useAppStore.getState().historyByProject['c:\\p']).toEqual({ items: [s('new', 2), s('old', 1)] })
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  test('перечитывание, попрошенное во время чтения, не теряется: ещё одно чтение после ответа', async () => {
+    const answers: Array<(items: unknown[]) => void> = []
+    vi.stubGlobal('window', {
+      qclod: { projectHistory: () => new Promise((resolve) => answers.push(resolve)) }
+    })
+    try {
+      const store = useAppStore.getState()
+      store.loadProjectHistory('C:\\P')
+      // A chat closed meanwhile: its session is not in the answer already on its way.
+      store.loadProjectHistory('C:\\P', true)
+      store.loadProjectHistory('c:/p', true)
+      expect(answers).toHaveLength(1)
+      answers[0]!([])
+      await vi.waitFor(() => expect(answers).toHaveLength(2))
+      answers[1]!([s('closed', 1)])
+      await vi.waitFor(() =>
+        expect(useAppStore.getState().historyByProject['c:\\p']).toEqual({ items: [s('closed', 1)] })
+      )
+      // Asked twice meanwhile, read once more — not once per ask.
+      await Promise.resolve()
+      expect(answers).toHaveLength(2)
+
+      // Without force, a read under way is simply waited for.
+      store.loadProjectHistory('C:\\P', true)
+      store.loadProjectHistory('C:\\P')
+      answers[2]!([s('closed', 1)])
+      await vi.waitFor(() =>
+        expect(useAppStore.getState().historyByProject['c:\\p']).toEqual({ items: [s('closed', 1)] })
+      )
+      expect(answers).toHaveLength(3)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  test('ошибка перечитывается без force, и после неё список снова приходит', async () => {
+    let fail = true
+    vi.stubGlobal('window', {
+      qclod: { projectHistory: async () => (fail ? Promise.reject(new Error('нет доступа')) : [s('a', 1)]) }
+    })
+    try {
+      const store = useAppStore.getState()
+      store.loadProjectHistory('C:\\P')
+      await vi.waitFor(() =>
+        expect(useAppStore.getState().historyByProject['c:\\p']).toEqual({ items: [], error: 'нет доступа' })
+      )
+      fail = false
+      store.loadProjectHistory('C:\\P')
+      expect(useAppStore.getState().historyByProject['c:\\p']).toBe('loading')
+      await vi.waitFor(() => expect(useAppStore.getState().historyByProject['c:\\p']).toEqual({ items: [s('a', 1)] }))
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test } from 'vitest'
+import { FALLBACK_TEXT, fallbackTextFor } from '../../src/shared/fallbackReason'
 
 const html = readFileSync(resolve(__dirname, '../../src/renderer/fallback.html'), 'utf8')
 const css = readFileSync(resolve(__dirname, '../../src/renderer/styles/fallback.css'), 'utf8')
@@ -11,11 +12,18 @@ test('the page names the three ways out by test id and exact text', () => {
   expect(html).toMatch(/data-testid="fallback-close"[^>]*>\s*Закрыть окно\s*</)
 })
 
-test('heading and explanation are the agreed words', () => {
+test('the heading is the agreed words; the page alone says the neutral thing', () => {
   expect(html).toContain('Окно Qclod не запускается')
-  expect(html).toContain(
-    'Окно трижды перезагрузилось и снова упало. Агенты в чатах продолжают работать — с ними ничего не случилось.'
-  )
+  expect(html).toContain(FALLBACK_TEXT.unknown)
+})
+
+test('the paragraph follows the reason main passes, all four ways', () => {
+  const KEEP = 'Агенты в чатах продолжают работать — с ними ничего не случилось.'
+  expect(fallbackTextFor('?reason=crashes')).toBe('Окно трижды перезагрузилось и снова упало. ' + KEEP)
+  expect(fallbackTextFor('?reason=load')).toBe('Окно не удалось загрузить. ' + KEEP)
+  expect(fallbackTextFor('?reason=mount')).toBe('Окно не открылось за 15 секунд. ' + KEEP)
+  expect(fallbackTextFor('')).toBe('Окно не запускается. ' + KEEP)
+  expect(fallbackTextFor('?reason=<b>x</b>')).toBe(FALLBACK_TEXT.unknown)
 })
 
 test('no inline script: every <script> only has a src', () => {

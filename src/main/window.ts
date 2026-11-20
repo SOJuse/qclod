@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { WINDOW_BG } from '../shared/theme'
 import { isSafeExternalUrl, makeNavigationGuard } from './security'
 import type { ErrorEntry } from './system/errorLog'
+import type { FallbackReason } from '../shared/fallbackReason'
 
 export const RENDERER_ENTRY = join(__dirname, '../renderer/index.html')
 /** The static page for a window that will not start: no React, no renderer bundle (fallback.html). */
@@ -101,7 +102,7 @@ export function watchRenderer(
     now?: () => number
     hangMs?: number
     reloadAfterHang?: () => void
-    onGiveUp?: () => void
+    onGiveUp?: (reason: FallbackReason) => void
   }
 ): { reset(): void } {
   const now = opts.now ?? Date.now
@@ -113,10 +114,10 @@ export function watchRenderer(
   let gaveUp = false
 
   const note = (message: string): void => opts.log({ source: 'main', scope: 'window', message, at: now() })
-  const giveUp = (): void => {
+  const giveUp = (reason: FallbackReason): void => {
     if (gaveUp) return
     gaveUp = true
-    opts.onGiveUp?.()
+    opts.onGiveUp?.(reason)
   }
   const disarmHang = (): void => {
     if (hangTimer) clearTimeout(hangTimer)
@@ -127,7 +128,7 @@ export function watchRenderer(
     reloads = reloads.filter((r) => t - r < RELOAD_WINDOW_MS)
     if (reloads.length >= MAX_RELOADS) {
       note(`${why}: not reloading, ${MAX_RELOADS} reloads in the last minute already; giving up`)
-      giveUp()
+      giveUp('crashes')
       return
     }
     reloads.push(t)
@@ -150,7 +151,7 @@ export function watchRenderer(
   contents.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
     if (!isMainFrame || code === -3) return
     note(`did-fail-load: ${description} (${code}) ${url}; giving up`)
-    giveUp()
+    giveUp('load')
   })
 
   contents.on('unresponsive', () => {
@@ -199,7 +200,7 @@ const BOOT_STILL_SHOWN = `document.querySelector('[data-testid="boot"]') !== nul
  */
 export function watchMount(
   contents: Pick<WebContents, 'on' | 'executeJavaScript'>,
-  opts: { log: (e: ErrorEntry) => void; ms?: number; onGiveUp: () => void }
+  opts: { log: (e: ErrorEntry) => void; ms?: number; onGiveUp: (reason: FallbackReason) => void }
 ): void {
   const ms = opts.ms ?? MOUNT_MS
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -214,7 +215,7 @@ export function watchMount(
       message: `the window did not mount within ${ms} ms; giving up`,
       at: Date.now()
     })
-    opts.onGiveUp()
+    opts.onGiveUp('mount')
   }
 
   contents.on('did-start-navigation', (_e, _url, isInPlace, isMainFrame) => {

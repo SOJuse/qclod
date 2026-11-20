@@ -152,6 +152,7 @@ describe('watchRenderer: giving up', () => {
     }
     expect(contents.reload).toHaveBeenCalledTimes(3)
     expect(onGiveUp).toHaveBeenCalledTimes(1)
+    expect(onGiveUp).toHaveBeenCalledWith('crashes')
     expect(log.at(-1)!.message).toContain('giving up')
   })
 
@@ -188,6 +189,7 @@ describe('watchRenderer: giving up', () => {
   test('the main page failing to load gives up at once', () => {
     failLoad(-6)
     expect(onGiveUp).toHaveBeenCalledTimes(1)
+    expect(onGiveUp).toHaveBeenCalledWith('load')
     expect(log[0]!.message).toContain('did-fail-load')
   })
 
@@ -219,6 +221,7 @@ describe('watchMount', () => {
     expect(giveUp).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     expect(giveUp).toHaveBeenCalledTimes(1)
+    expect(giveUp).toHaveBeenCalledWith('mount')
     expect(log[0]!.message).toContain('did not mount')
   })
 

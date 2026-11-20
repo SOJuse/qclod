@@ -380,6 +380,7 @@ test('окно упало четыре раза: заглушка со спос�
     expect(await inPageOf(app, present('fallback-logs'))).toBe(true)
     expect(await inPageOf(app, present('fallback-close'))).toBe(true)
     expect(await inPageOf(app, `document.querySelector('h1').textContent`)).toBe('Окно Qclod не запускается')
+    expect(await inPageOf(app, `document.querySelector('.fb-text').textContent`)).toContain('Окно трижды перезагрузилось и снова упало.')
     // The page is the static one: nothing of the app is in it.
     expect(await inPageOf(app, present('app-root'))).toBe(false)
     await shotFromMain(app, '17-fallback')
@@ -414,6 +415,8 @@ test('сборка окна не загрузилась: после ожидан
       .toBe(true)
     await expect.poll(() => inPageOf(app, present('fallback-retry')), { timeout: 20_000 }).toBe(true)
     expect(readFileSync(join(profile, 'logs', 'qclod.log'), 'utf8')).toContain('did not mount')
+    // It says what happened: the window did not open, not that it crashed three times.
+    expect(await inPageOf(app, `document.querySelector('.fb-text').textContent`)).toContain('Окно не открылось за 15 секунд.')
 
     // The bundle is back: «Попробовать снова» loads the window.
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.session.webRequest.onBeforeRequest(null))

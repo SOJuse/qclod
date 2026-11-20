@@ -14,6 +14,8 @@ import {
 } from './window'
 import { ErrorLog, type ErrorEntry } from './system/errorLog'
 import { installMainErrorHandlers } from './system/mainErrors'
+import { registerFallbackIpc } from './fallbackIpc'
+import { FALLBACK_PARAM, type FallbackReason } from '../shared/fallbackReason'
 import { ReportThrottle } from './system/reportThrottle'
 import { registerBaseIpc } from './ipc'
 import { registerAgentIpc } from './agentIpc'
@@ -115,11 +117,14 @@ function loadRenderer(win: BrowserWindow, afterHang = false): void {
  * so it does not depend on the bundle that failed. The dev server serves it
  * from the renderer root; a build has it next to index.html.
  */
-function loadFallback(win: BrowserWindow): void {
+function loadFallback(win: BrowserWindow, reason: FallbackReason): void {
   if (win.isDestroyed()) return
   const devServer = process.env['ELECTRON_RENDERER_URL']
-  if (devServer) void win.loadURL(new URL('fallback.html', devServer.endsWith('/') ? devServer : devServer + '/').toString())
-  else void win.loadFile(FALLBACK_ENTRY)
+  if (devServer) {
+    const url = new URL('fallback.html', devServer.endsWith('/') ? devServer : devServer + '/')
+    url.searchParams.set(FALLBACK_PARAM, reason)
+    void win.loadURL(url.toString())
+  } else void win.loadFile(FALLBACK_ENTRY, { query: { [FALLBACK_PARAM]: reason } })
 }
 
 /** The watchdog of the current window; «Попробовать снова» clears its reload count. */
@@ -134,7 +139,7 @@ let rendererWatch: { reset(): void } | null = null
 function watchWindow(win: BrowserWindow, log: (e: ErrorEntry) => void): void {
   const hangMs = __QCLOD_TEST_SEAMS__ ? Number(process.env['QCLOD_HANG_MS']) || undefined : undefined
   const mountMs = __QCLOD_TEST_SEAMS__ ? Number(process.env['QCLOD_MOUNT_MS']) || undefined : undefined
-  const onGiveUp = (): void => loadFallback(win)
+  const onGiveUp = (reason: FallbackReason): void => loadFallback(win, reason)
   rendererWatch = watchRenderer(win.webContents, {
     log,
     hangMs,
@@ -444,13 +449,14 @@ app.whenReady().then(async () => {
   loadRenderer(mainWindow)
 
   // The static page's ways out. The retry starts the count of reloads afresh.
-  ipcMain.handle(CHANNELS.rendererRetry, () => {
-    rendererWatch?.reset()
-    if (mainWindow && !mainWindow.isDestroyed()) loadRenderer(mainWindow)
-  })
-  ipcMain.handle(CHANNELS.logsOpen, async () => {
-    const failure = await shell.openPath(join(userData, 'logs'))
-    if (failure) throw new Error(failure)
+  registerFallbackIpc({
+    ipcMain,
+    openPath: (path) => shell.openPath(path),
+    userData,
+    resetWatch: () => rendererWatch?.reset(),
+    reload: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) loadRenderer(mainWindow)
+    }
   })
 
   // The glyph's tone follows the taskbar, not the apps' theme (decision 13):

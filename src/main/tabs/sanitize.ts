@@ -10,6 +10,7 @@ import {
   type PermissionMode,
   type PlanDecision,
   type RendererErrorReport,
+  type TabAutonomyRecord,
   type TabState,
   type UserInput
 } from '../../shared/types'
@@ -85,7 +86,16 @@ export function sanitizeEditorCommand(value: unknown): string | undefined {
 const MAX_AGENT_PATH = 4096
 /** No accelerator is this long. */
 const MAX_HOTKEY = 100
-const BOOLEAN_SETTINGS = ['notificationsEnabled', 'soundEnabled', 'closeToTray', 'panelOpen'] as const
+const BOOLEAN_SETTINGS = [
+  'notificationsEnabled',
+  'soundEnabled',
+  'closeToTray',
+  'panelOpen',
+  'openAtLogin'
+] as const
+/** «Авто-да» waits at least a minute and at most an hour before answering by itself. */
+const AUTO_ANSWER_MINUTES_MIN = 1
+const AUTO_ANSWER_MINUTES_MAX = 60
 
 /**
  * The plain fields of a settings patch, each of its own type, and nothing
@@ -106,7 +116,31 @@ export function sanitizeSettingsFields(
   for (const key of BOOLEAN_SETTINGS) {
     if (typeof value[key] === 'boolean') out[key] = value[key] as boolean
   }
+  const minutes = value['autoAnswerMinutes']
+  if (
+    typeof minutes === 'number' &&
+    Number.isInteger(minutes) &&
+    minutes >= AUTO_ANSWER_MINUTES_MIN &&
+    minutes <= AUTO_ANSWER_MINUTES_MAX
+  ) {
+    out.autoAnswerMinutes = minutes
+  }
   return out
+}
+
+/**
+ * A tab's autonomy record as tabs.json keeps it: `working` and `remote` only
+ * as a literal true, `limitUntil` only as a finite time after the epoch.
+ * Anything else is dropped; a record with nothing left is none.
+ */
+export function sanitizeAutonomyRecord(value: unknown): TabAutonomyRecord | undefined {
+  if (!isPlainObject(value)) return undefined
+  const out: TabAutonomyRecord = {}
+  if (value['working'] === true) out.working = true
+  if (value['remote'] === true) out.remote = true
+  const until = value['limitUntil']
+  if (typeof until === 'number' && Number.isFinite(until) && until > 0) out.limitUntil = until
+  return Object.keys(out).length === 0 ? undefined : out
 }
 
 /**

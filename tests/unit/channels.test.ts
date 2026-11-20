@@ -90,6 +90,13 @@ describe('ipc channel contract', () => {
     expect(INVOKE_CHANNELS).not.toContain('layout:changed')
   })
 
+  test('этап 3: autonomy:hold и autonomy:answerNow — invoke-каналы', () => {
+    expect(CHANNELS.autonomyHold).toBe('autonomy:hold')
+    expect(CHANNELS.autonomyAnswerNow).toBe('autonomy:answerNow')
+    expect(INVOKE_CHANNELS).toContain('autonomy:hold')
+    expect(INVOKE_CHANNELS).toContain('autonomy:answerNow')
+  })
+
   test('терминальных каналов v1 больше нет', () => {
     // The pty is gone; a channel that outlives its feature is a trap for the
     // next reader.

@@ -4,7 +4,7 @@ import { UI_KEY, loadUi, serializeUi } from './uiPersist'
 import { startHeldDrafts } from './heldDrafts'
 import { MAX_PANES, nextPanes, type ProjectHistory } from '../chat/sidebarModel'
 import { projectKey } from '../../shared/projects'
-import { DEFAULT_LAYOUT, type LayoutState } from '../../shared/types'
+import { DEFAULT_LAYOUT, NO_AUTONOMY, type LayoutState } from '../../shared/types'
 import type { PanelOverride } from '../app/panelVisibility'
 import type {
   AppSettings,
@@ -194,7 +194,8 @@ export const EMPTY_PANEL: PanelData = Object.freeze({
   mcp: [],
   projectSettings: null,
   queue: [],
-  backgroundTasks: []
+  backgroundTasks: [],
+  autonomy: NO_AUTONOMY
 })
 
 interface AppState {

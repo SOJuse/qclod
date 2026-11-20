@@ -16,12 +16,18 @@ export const HELD_KEY = 'qclod.held'
 
 type Drafts = Record<string, string>
 
-/** Drafts longer than LONG_DRAFT move from `drafts` to `held`, after whatever was held there already. */
+/**
+ * Drafts longer than LONG_DRAFT move from `drafts` to `held`, after whatever
+ * was held there already. A draft the held one already ends with is the stale
+ * copy in the window's saved state (nothing changed since the last hang
+ * reload, so qclod.ui was not rewritten): it is not added a second time.
+ */
 export function holdLongDrafts(drafts: Drafts, held: Drafts): { drafts: Drafts; held: Drafts } {
   const keep: Drafts = {}
   const out: Drafts = { ...held }
   for (const [id, text] of Object.entries(drafts)) {
     if (text.length <= LONG_DRAFT) keep[id] = text
+    else if (out[id]?.endsWith(text)) continue
     else out[id] = out[id] ? `${out[id]}\n\n${text}` : text
   }
   return { drafts: keep, held: out }

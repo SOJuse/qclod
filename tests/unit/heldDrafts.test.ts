@@ -63,3 +63,15 @@ describe('restoreDrafts: Ctrl+R before the field changed', () => {
     expect(restoreDrafts({ a: long }, storage, '').drafts).toEqual({})
   })
 })
+
+describe('restoreDrafts: the watchdog reloads twice before anything changes', () => {
+  test('устаревшая копия в qclod.ui не размножает отложенный черновик', () => {
+    const storage = memory()
+    // qclod.ui still holds the long draft after the first hang reload: nothing changed since.
+    restoreDrafts({ a: long }, storage, '?reloaded=hang')
+    const second = restoreDrafts({ a: long }, storage, '?reloaded=hang')
+    expect(second.held).toEqual({ a: long })
+    expect(restoreDrafts({ a: long }, storage, '?reloaded=hang').held).toEqual({ a: long })
+    expect(loadHeld(storage)).toEqual({ a: long })
+  })
+})

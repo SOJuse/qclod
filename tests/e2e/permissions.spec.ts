@@ -165,7 +165,14 @@ test('вопрос агента показывает варианты и отв�
     await expect(card).toContainText('Какой вариант панели?')
     await expect(card.locator('[data-testid="question-option"]')).toHaveCount(2)
 
+    // A click only chooses (П17): the answer goes with «Ответить».
     await card.locator('[data-testid="question-option"]', { hasText: 'Справа' }).click()
+    await expect(card.locator('[data-testid="question-option"]', { hasText: 'Справа' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    await expect(win.locator('[data-testid="card-summary"]')).toHaveCount(0)
+    await card.locator('[data-testid="question-submit"]').click()
 
     // The answered card is one line with the choice, and the agent got it.
     await expect(win.locator('[data-testid="card-summary"]')).toContainText('Ответ: Вопрос — Справа')
@@ -195,9 +202,16 @@ test('вопрос из двух частей: выбрал оба вариан�
     const card = win.locator('[data-testid="question-card"]')
     await expect(card).toBeVisible({ timeout: 15000 })
 
+    // One question at a time: the first has «Дальше», the last «Ответить».
+    await expect(card.locator('[data-testid="question-progress"]')).toHaveText('Вопрос 1 из 2')
+    const next = card.locator('[data-testid="question-next"]')
     const submit = card.locator('[data-testid="question-submit"]')
-    await expect(submit).toBeDisabled()
+    await expect(submit).toHaveCount(0)
+    await expect(next).toBeDisabled()
     await card.locator('[data-testid="question-option"]', { hasText: 'Справа' }).click()
+    await expect(next).toBeEnabled()
+    await next.click()
+    await expect(card.locator('[data-testid="question-progress"]')).toHaveText('Вопрос 2 из 2')
     // One question still open: the card does not answer by itself.
     await expect(submit).toBeDisabled()
     await card.locator('[data-testid="question-option"]', { hasText: 'Красный' }).click()
@@ -210,6 +224,76 @@ test('вопрос из двух частей: выбрал оба вариан�
     await expect(ribbon).toContainText('Получено: "Где?"="Справа", "Цвет?"="Красный"', {
       timeout: 15000
     })
+  } finally {
+    await close(app, profile)
+  }
+})
+
+/** A question with a comment on the chosen option; `version` decides how main passes the comment on. */
+async function commentOnOption(version: string | undefined): Promise<string> {
+  const { app, profile } = await launch({
+    ...(version !== undefined ? { init: { claudeCodeVersion: version } } : {}),
+    steps: [{ kind: 'askQuestion', question: 'Где панель?', options: ['Слева', 'Справа'], echo: true }]
+  })
+  try {
+    const win = await app.firstWindow()
+    const card = win.locator('[data-testid="question-card"]')
+    await expect(card).toBeVisible({ timeout: 15000 })
+    // Keys on the card: 2 chooses, then the comment goes in the field under the options.
+    await expect(card).toBeFocused()
+    await armed(win)
+    await win.keyboard.press('2')
+    await expect(card.locator('[data-testid="question-option"]', { hasText: 'Справа' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    const own = card.locator('[data-testid="question-own"]')
+    await expect(own).toHaveAttribute('placeholder', 'Комментарий к «Справа» (необязательно)')
+    await own.click()
+    await win.keyboard.type('но узкую, 1 колонка')
+    await win.keyboard.press('Enter')
+
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('Ответ: Вопрос — Справа (но узкую, 1 колонка)')
+    const got = win.locator('[data-testid="ribbon"]').getByText(/Получено:/)
+    await expect(got).toBeVisible({ timeout: 15000 })
+    return (await got.textContent()) ?? ''
+  } finally {
+    await close(app, profile)
+  }
+}
+
+test('вариант и комментарий: CLI с annotations получает комментарий в annotations', async () => {
+  const got = await commentOnOption(undefined)
+  expect(got).toContain('"answers":{"Где панель?":"Справа"}')
+  expect(got).toContain('"annotations":{"Где панель?":{"notes":"но узкую, 1 колонка"}}')
+})
+
+test('вариант и комментарий: старый CLI получает «Вариант — комментарий»', async () => {
+  const got = await commentOnOption('2.1.200')
+  expect(got).toContain('"answers":{"Где панель?":"Справа — но узкую, 1 колонка"}')
+  expect(got).not.toContain('annotations')
+})
+
+test('свой ответ: без выбора текст поля — это ответ', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'askQuestion', question: 'Где панель?', options: ['Слева', 'Справа'], echo: true }]
+  })
+  try {
+    const win = await app.firstWindow()
+    const card = win.locator('[data-testid="question-card"]')
+    await expect(card).toBeVisible({ timeout: 15000 })
+    const own = card.locator('[data-testid="question-own"]')
+    await expect(own).toHaveAttribute('placeholder', 'Свой ответ…')
+    await own.click()
+    // Digits in the field are text, not options.
+    await win.keyboard.type('посередине, 2 ряда')
+    await expect(card.locator('[data-testid="question-option"][aria-pressed="true"]')).toHaveCount(0)
+    await win.keyboard.press('Enter')
+
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('Ответ: Вопрос — посередине, 2 ряда')
+    const got = win.locator('[data-testid="ribbon"]').getByText(/Получено:/)
+    await expect(got).toContainText('"answers":{"Где панель?":"посередине, 2 ряда"}', { timeout: 15000 })
+    await expect(got).not.toContainText('annotations')
   } finally {
     await close(app, profile)
   }

@@ -5,10 +5,10 @@ import type { OpenCard } from '../components/cards/types'
  * Kinds of card that have a place in the pinned strip above the input. A card
  * leaves the ribbon only when its kind is here; until then the old card in
  * the ribbon stays the one place it can be answered. Each task that renders a
- * kind in the strip adds it (П2: permissions now; questions and plans with
- * their own cards).
+ * kind in the strip adds it (П2: permissions and questions now; plans with
+ * their own card).
  */
-export const PINNED_KINDS: ReadonlySet<OpenCard['kind']> = new Set<OpenCard['kind']>(['permission'])
+export const PINNED_KINDS: ReadonlySet<OpenCard['kind']> = new Set<OpenCard['kind']>(['permission', 'question'])
 
 type CardItem = Extract<RibbonItem, { kind: 'permission' | 'question' | 'plan' }>
 

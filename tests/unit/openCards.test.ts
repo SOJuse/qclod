@@ -75,9 +75,14 @@ describe('openCards', () => {
     expect(cardIdOf(l!)).toBe('tu-l')
   })
 
-  it('в закреплённой плашке пока только разрешения; вопросы и планы остаются в ленте (П2)', () => {
-    expect([...PINNED_KINDS]).toEqual(['permission'])
+  it('в закреплённой плашке разрешения и вопросы; планы пока остаются в ленте (П2)', () => {
+    expect([...PINNED_KINDS]).toEqual(['permission', 'question'])
     const items = [perm('p'), question('q'), plan('l'), perm('done', { state: 'allowed' })]
-    expect(items.map((item) => isPinnedCard(item, items))).toEqual([true, false, false, false])
+    expect(items.map((item) => isPinnedCard(item, items))).toEqual([true, true, false, false])
+  })
+
+  it('вопрос, от которого разговор ушёл, в плашку не попадает', () => {
+    const items = [question('q'), user('u')]
+    expect(isPinnedCard(items[0]!, items)).toBe(false)
   })
 })

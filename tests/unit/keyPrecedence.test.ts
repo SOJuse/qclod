@@ -270,3 +270,29 @@ describe('ожидающее разрешение', () => {
     ).toBe('native')
   })
 })
+
+describe('открытый вопрос', () => {
+  test('1–9 на карточке вопроса выбирают, Enter — дальше', () => {
+    const on = ctx({ pendingQuestion: true })
+    for (const digit of ['1', '5', '9']) {
+      expect(resolveComposerKey(key({ key: digit, code: `Digit${digit}` }), on)).toBe('questionPick')
+    }
+    expect(resolveComposerKey(key({ key: '4', code: 'Numpad4' }), on)).toBe('questionPick')
+    expect(resolveComposerKey(key({ key: 'Enter' }), on)).toBe('questionNext')
+  })
+
+  test('0, Shift+Enter и цифра с модификатором — не ответ', () => {
+    const on = ctx({ pendingQuestion: true })
+    expect(resolveComposerKey(key({ key: '0', code: 'Digit0' }), on)).toBe('insert')
+    expect(resolveComposerKey(key({ key: 'Enter', shiftKey: true }), on)).toBe('newline')
+    expect(resolveComposerKey(key({ key: '2', code: 'Digit2', ctrlKey: true }), on)).toBe('insert')
+  })
+
+  test('поле ввода чата вопроса не знает: цифра и Enter — его', () => {
+    expect(resolveComposerKey(key({ key: '1', code: 'Digit1' }), ctx({ text: 'а' }))).toBe('insert')
+    expect(resolveComposerKey(key({ key: 'Enter' }), ctx({ text: '12' }))).toBe('submit')
+    expect(
+      resolveComposerKey(key({ key: '1', code: 'Digit1' }), ctx({ text: 'а', pendingQuestion: true }))
+    ).toBe('insert')
+  })
+})

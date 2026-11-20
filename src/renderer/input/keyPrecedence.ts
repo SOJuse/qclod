@@ -17,6 +17,10 @@ export type ComposerKeyAction =
   | 'permissionAllowSession'
   /** «Запретить» asks why first: the reason field opens, its Enter sends (decision 8). */
   | 'permissionReason'
+  /** Only ever resolved for the question card while it has focus: 1–9 choose (`physicalKey` says which). */
+  | 'questionPick'
+  /** The question card with focus: on to the next question, or send on the last. */
+  | 'questionNext'
   | 'submit'
   | 'newline'
   | 'historyPrev'
@@ -41,6 +45,11 @@ export interface ComposerContext {
    * must not grant a permission (ruling C16).
    */
   pendingPermission?: boolean
+  /**
+   * The keys of a question card are being resolved. Set by the card while IT
+   * has focus, never by the input line, as with permissions.
+   */
+  pendingQuestion?: boolean
 }
 
 export interface KeyLike extends PhysicalKeyEvent {
@@ -67,6 +76,9 @@ const PERMISSION_DIGITS = new Map<string, ComposerKeyAction>([
   ['3', 'permissionAllowSession'],
   ['4', 'permissionReason']
 ])
+
+/** A question card's digits: its options' numbers. */
+const QUESTION_DIGIT = /^[1-9]$/
 
 /**
  * The precedence table, as an ordered list. The order IS the priority: the
@@ -113,6 +125,23 @@ const RULES: Rule[] = [
     !ev.metaKey &&
     !ev.shiftKey
       ? PERMISSION_DIGITS.get(physicalKey(ev))
+      : undefined,
+
+  // A question card with focus: 1–9 choose an option, Enter goes on. With
+  // text, as above, they are the text's.
+  (ev, ctx) =>
+    ctx.pendingQuestion && ev.key === 'Enter' && !ev.shiftKey && ctx.text === '' && !ctx.hasAttachments
+      ? 'questionNext'
+      : undefined,
+  (ev, ctx) =>
+    ctx.pendingQuestion &&
+    ctx.text === '' &&
+    !ev.ctrlKey &&
+    !ev.altKey &&
+    !ev.metaKey &&
+    !ev.shiftKey &&
+    QUESTION_DIGIT.test(physicalKey(ev))
+      ? 'questionPick'
       : undefined,
 
   // Native editing. The field is a plain textarea and the browser does these

@@ -8,7 +8,7 @@ import { CardSummary } from './cards/CardSummary'
 import { ThinkingRow } from './ThinkingRow'
 import { ToolGroup } from './ToolGroup'
 import { PlanCard } from './PlanCard'
-import { QuestionCard } from './QuestionCard'
+import { QuestionCard } from './cards/QuestionCard'
 import { NO_STEPS, SubagentCard } from './SubagentCard'
 import { ToolCard } from './ToolCard'
 import { Markdown } from '../markdown/Markdown'
@@ -167,10 +167,10 @@ function UserText({ text }: { text: string }): JSX.Element {
 /** A question nobody answered before the talk moved on: one line, the old card behind a click. */
 function StaleQuestion({
   item,
-  onAnswer
+  answers
 }: {
   item: Extract<Item, { kind: 'question' }>
-  onAnswer: (toolUseId: string, answers: Record<string, string>) => void
+  answers: CardAnswers
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   return (
@@ -184,7 +184,7 @@ function StaleQuestion({
       >
         <span className="card-summary-text">Вопрос остался без ответа</span>
       </button>
-      {open && <QuestionCard item={item} onAnswer={onAnswer} />}
+      {open && <QuestionCard item={item} answers={answers} focused />}
     </div>
   )
 }
@@ -310,13 +310,9 @@ export function RibbonRow({
 
       case 'question':
         if (item.answers !== null || item.elsewhere) return <CardSummary item={item} tabId={tabId} />
-        if (stale) return <StaleQuestion item={item} onAnswer={(id, given) => answers.question(id, given, {})} />
-        return (
-          <QuestionCard
-            item={item}
-            onAnswer={(toolUseId, given) => answers.question(toolUseId, given, {})}
-          />
-        )
+        if (stale) return <StaleQuestion item={item} answers={answers} />
+        // An open one is pinned above the input (PinnedCards) and never a row.
+        return <></>
 
       case 'compaction':
         return (

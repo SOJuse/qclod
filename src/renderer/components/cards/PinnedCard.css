@@ -118,7 +118,8 @@
   min-width: 0;
 }
 
-.permission-card-reason-count {
+/* TextLimit's count, beside any card's field near its limit. */
+.card-text-count {
   flex: none;
   color: var(--text-faint);
   font-size: var(--text-xs);

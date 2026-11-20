@@ -261,3 +261,94 @@ describe('две открытые карточки, человек печата�
     expect(document.activeElement).toBe(card)
   })
 })
+
+const ask = (id: string, question: string): RibbonItem => ({
+  id,
+  kind: 'question',
+  toolUseId: `tu-${id}`,
+  questions: [
+    { question, header: 'Тема', options: [{ label: 'Да', description: '' }, { label: 'Нет', description: '' }], multiSelect: false }
+  ],
+  answers: null
+})
+
+describe('вопрос в плашке', () => {
+  test('открытый вопрос закреплён над полем ввода: «Вопрос» и карточка вопроса', () => {
+    render([ask('q', 'Продолжать?')])
+    expect(pinned()).toHaveLength(1)
+    expect(pinned()[0]!.dataset.kind).toBe('question')
+    expect(pinned()[0]!.querySelector('header')!.textContent).toBe('Вопрос')
+    expect(pinned()[0]!.querySelector('[data-testid="question-card"]')!.textContent).toContain('Продолжать?')
+  })
+
+  test('вопрос и разрешение — по очереди ленты', () => {
+    render([ask('q', 'Продолжать?'), perm('p', 'npm test')])
+    expect(pinned()[0]!.dataset.kind).toBe('question')
+    expect(host.querySelector('[data-testid="pinned-more"]')?.textContent).toBe('Ещё 1 ждёт ответа')
+  })
+
+  test('autoAnswer показывается и у вопроса', () => {
+    render([ask('q', 'Продолжать?')], {
+      autoAnswerFor: (card) =>
+        card.kind === 'question'
+          ? { deadline: Date.now() + 65_000, label: 'Отвечу «Да»', onAnswerNow() {}, onStop() {} }
+          : undefined
+    })
+    expect(host.querySelector('[data-testid="auto-answer"]')?.textContent).toContain('Отвечу «Да» через')
+  })
+})
+
+// Review Focus 3 for a question: the same as for a permission.
+describe('открытый вопрос, человек печатает в поле ввода', () => {
+  function windowInFront(): void {
+    now -= FOCUS_BEFORE_MS * 5
+    window.dispatchEvent(new Event('focus'))
+    now += FOCUS_BEFORE_MS * 5
+  }
+
+  test('цифры и Enter в непустом поле ввода не отвечают вопросу, плашка не крадёт фокус', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    windowInFront()
+    const answers = fakeAnswers()
+    const first = perm('rq1', 'первый')
+    const second = ask('rq2', 'Продолжать?')
+    render([], { answers })
+    act(() => input().focus())
+    input().value = '12'
+    render([first, second], { answers })
+    afterEffects()
+    now += ARM_MS + 100
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="permission-allow"]')!.click())
+
+    now += FOCUS_BEFORE_MS * 2
+    render([{ ...first, state: 'allowed' } as RibbonItem, second], { answers })
+    afterEffects()
+    expect(pinned()[0]!.dataset.kind).toBe('question')
+    expect(document.activeElement).toBe(input())
+    now += ARM_MS + 100
+    for (const [key, code] of [['1', 'Digit1'], ['2', 'Digit2'], ['Enter', 'Enter'], ['Escape', 'Escape']] as const) {
+      press(input(), key, code)
+    }
+    expect(answers.question).not.toHaveBeenCalled()
+    const options = [...host.querySelectorAll('[data-testid="question-option"]')]
+    expect(options.map((o) => o.getAttribute('aria-pressed'))).toEqual(['false', 'false'])
+    expect(document.activeElement).toBe(input())
+  })
+
+  test('с пустым полем вопрос берёт фокус, и его цифры работают (без этого тест выше ничего не доказывает)', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    windowInFront()
+    const answers = fakeAnswers()
+    render([], { answers })
+    act(() => input().focus())
+    input().value = ''
+    render([ask('rq3', 'Продолжать?')], { answers })
+    afterEffects()
+    const card = host.querySelector<HTMLElement>('[data-testid="question-card"]')!
+    expect(document.activeElement).toBe(card)
+    now += ARM_MS + 100
+    press(card, '2', 'Digit2')
+    press(card, 'Enter', 'Enter')
+    expect(answers.question).toHaveBeenCalledWith('tu-rq3', { 'Продолжать?': 'Нет' }, {})
+  })
+})

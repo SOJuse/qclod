@@ -217,80 +217,6 @@
   color: var(--text-dim);
 }
 
-/* -------------------------------------------------------------- questions */
-
-.row-question-options button {
-  padding: 5px 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-
-.row-question-options button:not(:disabled):hover {
-  border-color: var(--accent);
-}
-
-.row-question {
-  margin: 10px 0;
-  padding: 11px 13px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-raised);
-}
-
-.row-question-text {
-  margin-bottom: 9px;
-}
-
-.row-question-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.row-question-block + .row-question-block {
-  margin-top: var(--space-3);
-}
-
-.row-question-options button {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--gap-hair);
-  text-align: left;
-}
-
-.row-question-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.row-question-desc {
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-}
-
-.row-question-options button.is-chosen {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* Its look is .btn .btn-primary (ui/controls.css). */
-.row-question-submit {
-  margin-top: var(--space-3);
-}
-
-.row-question-done {
-  margin-top: var(--space-3);
-  font-size: var(--text-sm);
-  line-height: var(--leading);
-  color: var(--text-dim);
-}
-
 /* ------------------------------------------------------- compaction, notes */
 
 .row-compaction {
@@ -514,6 +440,16 @@
 .card-summary-text {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* A question the talk moved past, opened: the card, framed, under its line. */
+.card-summary.is-stale .question-card {
+  margin: var(--space-1) 0 var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text);
 }
 
 .card-summary-plan {

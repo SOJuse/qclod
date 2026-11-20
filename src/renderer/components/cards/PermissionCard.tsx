@@ -3,12 +3,8 @@ import { Check, CheckCheck, Clock, SendHorizontal, X } from 'lucide-react'
 import type { CardAnswers, PermissionChoice } from '../../chat/cardAnswers'
 import { createKeyGuard, heldKeys } from '../../chat/permissionKeyGuard'
 import { resolveComposerKey } from '../../input/keyPrecedence'
+import { CARD_TEXT_MAX, TextCount } from './TextLimit'
 import type { PermissionItem } from './types'
-
-/** main drops a longer reason whole (S2-R4), so the field never takes more. */
-export const REASON_MAX = 2000
-/** From here on the field says how much room is left. */
-const REASON_COUNT_FROM = 1800
 
 interface Props {
   item: PermissionItem
@@ -213,16 +209,12 @@ export function PermissionCard({ item, answers, focused }: Props): JSX.Element {
             data-testid="permission-deny-reason"
             aria-label="Причина отказа"
             placeholder="Почему нет / что сделать вместо (необязательно)"
-            maxLength={REASON_MAX}
+            maxLength={CARD_TEXT_MAX}
             value={reason}
             onChange={(ev) => setReason(ev.target.value)}
             onKeyDown={onReasonKeyDown}
           />
-          {reason.length >= REASON_COUNT_FROM && (
-            <span className="permission-card-reason-count" data-testid="permission-deny-count">
-              {reason.length} / {REASON_MAX}
-            </span>
-          )}
+          <TextCount length={reason.length} testId="permission-deny-count" />
           <button
             type="button"
             className="btn btn-danger"

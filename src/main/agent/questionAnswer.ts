@@ -90,7 +90,7 @@ export interface AskedQuestion {
   labels: string[]
 }
 
-/** Several choices of one question come as one text (QuestionCard's joiner). */
+/** Several choices of one question come as one text (the joiner of renderer/chat/questionSteps.ts). */
 const JOINER = ', '
 
 /** The questions of an AskUserQuestion input, with their option labels. */

@@ -5,6 +5,7 @@ import type { CardAnswers } from '../../chat/cardAnswers'
 import { PINNED_KINDS, cardIdOf, openCards } from '../../chat/openCards'
 import { PermissionCard } from './PermissionCard'
 import { PinnedCard } from './PinnedCard'
+import { QuestionCard } from './QuestionCard'
 import type { AutoAnswerView, OpenCard } from './types'
 
 export interface PinnedCardsProps {
@@ -21,11 +22,13 @@ const TITLE: Record<OpenCard['kind'], string> = {
   plan: 'План'
 }
 
-/** The card's own body. Questions and plans come with their own cards (tasks 12, 13; П2). */
+/** The card's own body. Plans come with their own card (task 13; П2). */
 function body(card: OpenCard, answers: CardAnswers): JSX.Element | null {
   switch (card.kind) {
     case 'permission':
       return <PermissionCard item={card.item} answers={answers} focused />
+    case 'question':
+      return <QuestionCard item={card.item} answers={answers} focused />
     default:
       return null
   }

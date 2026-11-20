@@ -186,8 +186,18 @@ export type RibbonItem =
       state: 'pending' | 'approved' | 'rejected' | 'elsewhere'
       /** What the user said with the decision. */
       comment?: string
-      /** The user edited the plan before approving it; `text` is the edited plan. */
+      /**
+       * The user edited the plan; `text` is the edited plan. With `approved` it
+       * runs as edited; with `rejected` it was sent back for the agent to
+       * propose again (a CLI older than 2.1.317, ruling S2-R8).
+       */
       edited?: true
+      /**
+       * With `rejected`: the user approved it with an edit or a comment, and a
+       * CLI older than 2.1.317 had it sent back for rework instead (S2-R8) —
+       * not a refusal, though the agent reads one.
+       */
+      sentBack?: true
       auto?: true
     })
   | (RibbonBase & {

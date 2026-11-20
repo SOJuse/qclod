@@ -109,7 +109,7 @@ const SCREENS: Screen[] = [
     script: { steps: [], turns: [[{ kind: 'text', text: 'сейчас запущу тесты' }, { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }]] },
     open: async (win) => {
       await send(win, 'прогони тесты')
-      await expect(win.locator('[data-testid="permission-allow"]')).toBeVisible({ timeout: 15000 })
+      await expect(win.locator('[data-testid="pinned-card"] [data-testid="permission-allow"]')).toBeVisible({ timeout: 15000 })
     }
   },
   {
@@ -497,7 +497,7 @@ test.describe('снимки для владельца', () => {
     }
     await take('13-разрешение', { script }, async (win) => {
       await send(win, 'прогони тесты')
-      const allow = win.locator('[data-testid="permission-allow"]')
+      const allow = win.locator('[data-testid="pinned-card"] [data-testid="permission-allow"]')
       await expect(allow).toBeVisible({ timeout: 15000 })
       await allow.focus()
       await expect(allow).toBeFocused()

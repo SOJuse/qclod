@@ -519,7 +519,7 @@ describe('AgentSession: план', () => {
 
     await session.start()
     await settle(session)
-    await session.answerPlan('нет-такого-плана', true)
+    await session.answerPlan('нет-такого-плана', { approve: true })
 
     expect(rec.changes.filter((c) => c.kind === 'update')).toHaveLength(0)
   })
@@ -1136,7 +1136,7 @@ describe('AgentSession: стоп во время вопроса', () => {
     expect(plan.state).toBe('rejected')
 
     // Approving a plan the agent no longer waits on changes nothing.
-    await session.answerPlan(plan.requestId, true)
+    await session.answerPlan(plan.requestId, { approve: true })
     await tick()
 
     expect(session.status).toBe('idle')
@@ -3184,6 +3184,512 @@ describe('AgentSession: итоговое ревью этапа 2', () => {
     await vi.waitFor(() => expect(session.status).toBe('error'))
     expect(session.send({ text: 'два', attachments: [] })).toBe(false)
     expect(sent).toHaveLength(1)
+    await session.dispose()
+  })
+})
+
+describe('AgentSession: ответы на карточки', () => {
+  function planSession(plan: string, script: FakeScript = {}): ReturnType<typeof makeSession> {
+    return makeSession(
+      { ...script, init: { permissionMode: 'plan', ...script.init }, steps: [{ kind: 'plan', plan }] },
+      { overrides: { permissionMode: 'plan' } }
+    )
+  }
+
+  async function openPlan(session: AgentSession, rec: Recorder): Promise<{ requestId: string }> {
+    await session.start()
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    return rec.items.find((i) => i.kind === 'plan') as { requestId: string }
+  }
+
+  test('отклонить план с комментарием', async () => {
+    const { session, driver } = planSession('1. всё переписать')
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: false, comment: 'сначала тесты' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'deny',
+      message: 'сначала тесты'
+    })
+    const item = rec.items.find((i) => i.kind === 'plan')
+    expect(item).toMatchObject({
+      state: 'rejected',
+      comment: 'сначала тесты',
+      text: '1. всё переписать'
+    })
+    // Refused, not sent back for rework.
+    expect(item).not.toHaveProperty('sentBack')
+    expect(session.panel.permissionMode).toBe('plan')
+  })
+
+  test('отклонить план без комментария — отказ без своего текста', async () => {
+    const { session, driver } = planSession('1. шаг')
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: false })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'deny' })
+    expect(rec.items.find((i) => i.kind === 'plan')).not.toHaveProperty('comment')
+  })
+
+  test('одобрить с правкой', async () => {
+    const { session, driver } = planSession('1. всё переписать')
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, plan: '1. поправить одну функцию' })
+    await settle(session)
+
+    const answer = driver.permissionLog.at(-1)!
+    expect(answer.behavior).toBe('allow')
+    expect(answer.updatedInput).toEqual({ plan: '1. поправить одну функцию' })
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
+      state: 'approved',
+      text: '1. поправить одну функцию',
+      edited: true
+    })
+    expect(rec.changes).toContainEqual(
+      expect.objectContaining({
+        kind: 'update',
+        patch: { state: 'approved', text: '1. поправить одну функцию', edited: true }
+      })
+    )
+    expect(session.panel.permissionMode).toBe('acceptEdits')
+    expect(driver.permissionMode).toBe('acceptEdits')
+    // The edit went with the tool's answer, not as a message.
+    expect(driver.sent).toEqual([])
+  })
+
+  test('пустая правка — обычное одобрение', async () => {
+    for (const edit of ['   ', '1. шаг']) {
+      const { session, driver } = planSession('1. шаг')
+      const rec = watch(session)
+      const plan = await openPlan(session, rec)
+
+      await session.answerPlan(plan.requestId, { approve: true, plan: edit })
+      await settle(session)
+
+      expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'allow' })
+      const item = rec.items.find((i) => i.kind === 'plan')
+      expect(item).toMatchObject({ state: 'approved', text: '1. шаг' })
+      expect(item).not.toHaveProperty('edited')
+      expect(session.panel.permissionMode).toBe('acceptEdits')
+      expect(driver.sent).toEqual([])
+    }
+  })
+
+  // S2-R8.2: on a CLI that carries updatedInput.plan, the comment goes under the plan.
+  test('новый CLI: комментарий одобрения — под планом в updatedInput.plan, без сообщения', async () => {
+    const { session, driver } = planSession('1. шаг')
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, comment: 'и потом прогони тесты' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'allow',
+      updatedInput: { plan: '1. шаг\n\nКомментарий пользователя: и потом прогони тесты' }
+    })
+    const item = rec.items.find((i) => i.kind === 'plan')
+    expect(item).toMatchObject({ state: 'approved', text: '1. шаг', comment: 'и потом прогони тесты' })
+    expect(item).not.toHaveProperty('edited')
+    expect(session.panel.permissionMode).toBe('acceptEdits')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('новый CLI: правка и комментарий — правленый план с комментарием под ним', async () => {
+    const { session, driver } = planSession('1. всё переписать')
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, {
+      approve: true,
+      plan: '1. поправить одну функцию',
+      comment: 'без миграций'
+    })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)!.updatedInput).toEqual({
+      plan: '1. поправить одну функцию\n\nКомментарий пользователя: без миграций'
+    })
+    // The card shows the plan as edited; the comment stands beside it.
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
+      state: 'approved',
+      text: '1. поправить одну функцию',
+      edited: true,
+      comment: 'без миграций'
+    })
+    expect(driver.sent).toEqual([])
+  })
+
+  // S2-R8.1: an older CLI gets the plan sent back, and plan mode stays.
+  const OLD_CLI: FakeScript = { init: { claudeCodeVersion: '2.1.300' } }
+
+  test('старый CLI: правка плана — ExitPlanMode отклонён с правкой, режим остаётся «план»', async () => {
+    const { session, driver } = planSession('1. всё переписать', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, plan: '1. поправить одну функцию' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'deny',
+      message:
+        'Пользователь поправил план. Не начинай работу — предложи этот вариант снова через ExitPlanMode:\n' +
+        '1. поправить одну функцию'
+    })
+    expect(driver.executedTools).not.toContain('ExitPlanMode')
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
+      state: 'rejected',
+      text: '1. поправить одну функцию',
+      edited: true,
+      sentBack: true
+    })
+    expect(session.panel.permissionMode).toBe('plan')
+    expect(driver.permissionMode).toBe('plan')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('старый CLI: правка и комментарий — оба в отказе', async () => {
+    const { session, driver } = planSession('1. всё переписать', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, {
+      approve: true,
+      plan: '1. поправить одну функцию',
+      comment: 'без миграций'
+    })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'deny',
+      message:
+        'Пользователь поправил план. Не начинай работу — предложи этот вариант снова через ExitPlanMode:\n' +
+        '1. поправить одну функцию\n\nКомментарий пользователя: без миграций'
+    })
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
+      state: 'rejected',
+      text: '1. поправить одну функцию',
+      edited: true,
+      comment: 'без миграций',
+      sentBack: true
+    })
+    expect(session.panel.permissionMode).toBe('plan')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('старый CLI: комментарий без правки — план отправлен на доработку с комментарием', async () => {
+    const { session, driver } = planSession('1. шаг', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, comment: 'и потом прогони тесты' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'deny',
+      message:
+        'Пользователь одобрит план с учётом комментария. Не начинай работу — учти комментарий и предложи ' +
+        'план снова через ExitPlanMode.\n\nКомментарий: и потом прогони тесты'
+    })
+    const item = rec.items.find((i) => i.kind === 'plan')
+    // Sent back, not refused: the ribbon says so, though the agent reads a refusal.
+    expect(item).toMatchObject({ state: 'rejected', text: '1. шаг', comment: 'и потом прогони тесты', sentBack: true })
+    expect(item).not.toHaveProperty('edited')
+    expect(session.panel.permissionMode).toBe('plan')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('старый CLI: одобрение без правки и комментария — обычное одобрение', async () => {
+    const { session, driver } = planSession('1. шаг', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, plan: '1. шаг' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'allow' })
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({ state: 'approved', text: '1. шаг' })
+    expect(rec.items.find((i) => i.kind === 'plan')).not.toHaveProperty('sentBack')
+    expect(session.panel.permissionMode).toBe('acceptEdits')
+  })
+
+  test('старый CLI: отклонение с комментарием — отказ, а не доработка', async () => {
+    const { session, driver } = planSession('1. шаг', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: false, comment: 'сначала тесты' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'deny', message: 'сначала тесты' })
+    const item = rec.items.find((i) => i.kind === 'plan')
+    expect(item).toMatchObject({ state: 'rejected', comment: 'сначала тесты' })
+    expect(item).not.toHaveProperty('sentBack')
+  })
+
+  // S2-R8.3: nothing of a plan answer goes as a message, so a full queue loses nothing.
+  test.each([
+    ['2.1.317', 'allow'],
+    ['2.1.300', 'deny']
+  ])('CLI %s: правка и комментарий не уходят сообщением — очереди нечего терять', async (version, behavior) => {
+    const { session, driver } = planSession('1. шаг', { init: { claudeCodeVersion: version } })
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, plan: '1. другой шаг', comment: 'коротко' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)!.behavior).toBe(behavior)
+    expect(driver.sent).toEqual([])
+    expect(session.panel.queue).toEqual([])
+    expect(rec.items.filter((i) => i.kind === 'notice')).toEqual([])
+    // Whatever reached the agent carries the edit and the comment.
+    const carried = JSON.stringify(driver.permissionLog.at(-1))
+    expect(carried).toContain('1. другой шаг')
+    expect(carried).toContain('коротко')
+  })
+
+  // S2-R8.4: a closed session asks nobody, so no «до конца сессии» rule can outlive it.
+  test.each(['2.1.317', '2.1.300'])('CLI %s: закрытая сессия отказывает сразу и никого не спрашивает', async (version) => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session } = brokeredSession(
+      broker,
+      sessions,
+      { init: { claudeCodeVersion: version }, steps: [{ kind: 'text', text: 'ок' }] },
+      { overrides: { permissionMode: 'plan' } }
+    )
+    const rec = watch(session)
+    await session.start()
+    await settle(session)
+    await session.dispose()
+    const before = rec.items.length
+
+    const late = (session as unknown as {
+      onToolPermission: (n: string, i: Record<string, unknown>, o: object) => Promise<{ behavior: string }>
+    }).onToolPermission.bind(session)
+    await expect(late('Bash', { command: 'npm test' }, { toolUseId: 'late-1' })).resolves.toEqual({ behavior: 'deny' })
+    await expect(late('ExitPlanMode', { plan: 'x' }, { toolUseId: 'late-2' })).resolves.toEqual({ behavior: 'deny' })
+    await expect(
+      late('AskUserQuestion', { questions: [{ question: 'Q', options: [{ label: 'A' }] }] }, { toolUseId: 'late-3' })
+    ).resolves.toEqual({ behavior: 'deny' })
+
+    expect(asked).toEqual([])
+    expect(rec.items).toHaveLength(before)
+    // A click meant for a card that never was saves nothing for the tab.
+    broker.answer('late-1', { behavior: 'allow', forSession: true })
+    void broker.request('t1', 'Bash', { command: 'npm test' })
+    expect(asked).toHaveLength(1)
+  })
+
+  test('разрешить до конца сессии', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session, driver } = brokeredSession(broker, sessions, {
+      steps: [
+        { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } },
+        { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }
+      ]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(asked).toHaveLength(1), { timeout: 2000 })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', forSession: true })
+    await settle(session)
+
+    expect(asked).toHaveLength(1)
+    const cards = rec.items.filter((i) => i.kind === 'permission')
+    expect(cards).toHaveLength(1)
+    expect(cards[0]).toMatchObject({ state: 'allowed', scope: 'session' })
+    expect(driver.executedTools).toEqual(['Bash', 'Bash'])
+    await session.dispose()
+  })
+
+  test('разово и навсегда: scope once и always', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session } = brokeredSession(broker, sessions, {
+      steps: [
+        { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } },
+        { kind: 'askPermission', name: 'Read', input: { file_path: 'a.ts' } }
+      ]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(asked).toHaveLength(1), { timeout: 2000 })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow' })
+    await vi.waitFor(() => expect(asked).toHaveLength(2), { timeout: 2000 })
+    broker.answer(asked[1]!.requestId, { behavior: 'allow', remember: true })
+    await settle(session)
+
+    const cards = rec.items.filter((i) => i.kind === 'permission')
+    expect(cards[0]).toMatchObject({ toolName: 'Bash', state: 'allowed', scope: 'once' })
+    expect(cards[1]).toMatchObject({ toolName: 'Read', state: 'allowed', scope: 'always' })
+    await session.dispose()
+  })
+
+  test('отказ с причиной: причина в ленте, агенту — явный запрет с ней', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session, driver } = brokeredSession(broker, sessions, {
+      steps: [
+        { kind: 'askPermission', name: 'Bash', input: { command: 'git push' } },
+        { kind: 'askPermission', name: 'Bash', input: { command: 'git push --force' } }
+      ]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(asked).toHaveLength(1), { timeout: 2000 })
+    broker.answer(asked[0]!.requestId, { behavior: 'deny', message: 'не трогай main' })
+    await vi.waitFor(() => expect(asked).toHaveLength(2), { timeout: 2000 })
+    broker.answer(asked[1]!.requestId, { behavior: 'deny' })
+    await settle(session)
+
+    expect(driver.permissionLog).toEqual([
+      {
+        name: 'Bash',
+        behavior: 'deny',
+        message:
+          'Пользователь запретил этот вызов. Причина: не трогай main. Не выполняй это действие другим ' +
+          'способом и не обходи запрет — спроси пользователя, если нужно.'
+      },
+      {
+        name: 'Bash',
+        behavior: 'deny',
+        message:
+          'Пользователь запретил этот вызов. Не выполняй это действие другим способом и не обходи запрет — ' +
+          'спроси пользователя, если нужно.'
+      }
+    ])
+    const cards = rec.items.filter((i) => i.kind === 'permission')
+    expect(cards[0]).toMatchObject({ state: 'denied', reason: 'не трогай main' })
+    expect(cards[0]).not.toHaveProperty('scope')
+    expect(cards[1]).toMatchObject({ state: 'denied' })
+    expect(cards[1]).not.toHaveProperty('reason')
+    await session.dispose()
+  })
+
+  function questionSession(script: FakeScript = {}): ReturnType<typeof makeSession> {
+    return makeSession({
+      ...script,
+      steps: [
+        {
+          kind: 'askQuestion',
+          questions: [
+            { question: 'Язык?', options: ['Go', 'Rust'] },
+            { question: 'Что ещё?', options: ['Тесты', 'Доки', 'CI'], multiSelect: true }
+          ]
+        },
+        { kind: 'text', text: 'принял' }
+      ]
+    })
+  }
+
+  async function openQuestion(session: AgentSession, rec: Recorder): Promise<string> {
+    await session.start()
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    return (rec.items.find((i) => i.kind === 'question') as { toolUseId: string }).toolUseId
+  }
+
+  test('заметка к варианту: новый CLI — в annotations, ответ как есть', async () => {
+    const { session, driver } = questionSession()
+    const rec = watch(session)
+    const id = await openQuestion(session, rec)
+
+    session.answerQuestion(
+      id,
+      { 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' },
+      { 'Язык?': 'только без generics', 'Что ещё?': 'по минимуму' }
+    )
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('принял'), { timeout: 2000 })
+    await settle(session)
+
+    const answer = driver.permissionLog.at(-1)!
+    expect(answer.updatedInput?.['answers']).toEqual({ 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' })
+    expect(answer.updatedInput?.['annotations']).toEqual({
+      'Язык?': { notes: 'только без generics' },
+      'Что ещё?': { notes: 'по минимуму' }
+    })
+    expect(rec.items.find((i) => i.kind === 'question')).toMatchObject({
+      answers: { 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' },
+      notes: { 'Язык?': 'только без generics', 'Что ещё?': 'по минимуму' }
+    })
+  })
+
+  test('заметка к варианту: старый CLI — «Вариант — комментарий» в самом ответе', async () => {
+    const { session, driver } = questionSession({ init: { claudeCodeVersion: '2.1.200' } })
+    const rec = watch(session)
+    const id = await openQuestion(session, rec)
+
+    session.answerQuestion(
+      id,
+      { 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' },
+      { 'Язык?': 'только без generics', 'Что ещё?': 'по минимуму' }
+    )
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('принял'), { timeout: 2000 })
+    await settle(session)
+
+    expect(driver.questionAnswers).toEqual([
+      { 'Язык?': 'Go — только без generics', 'Что ещё?': 'Тесты, CI — по минимуму' }
+    ])
+    expect(driver.permissionLog.at(-1)!.updatedInput).not.toHaveProperty('annotations')
+    // The ribbon keeps the labels as they are, and the notes beside them.
+    expect(rec.items.find((i) => i.kind === 'question')).toMatchObject({
+      answers: { 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' },
+      notes: { 'Язык?': 'только без generics', 'Что ещё?': 'по минимуму' }
+    })
+  })
+
+  test('заметка к своему тексту отброшена, к чужому вопросу — тоже', async () => {
+    const { session, driver } = questionSession()
+    const rec = watch(session)
+    const id = await openQuestion(session, rec)
+
+    session.answerQuestion(
+      id,
+      { 'Язык?': 'Zig, пожалуйста', 'Что ещё?': 'Доки' },
+      { 'Язык?': 'заметка', Чужой: 'x' }
+    )
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('принял'), { timeout: 2000 })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)!.updatedInput).not.toHaveProperty('annotations')
+    expect(rec.items.find((i) => i.kind === 'question')).not.toHaveProperty('notes')
+  })
+
+  test('никто не ждёт: заметка уходит в сообщении «Вопрос» — Вариант — комментарий', async () => {
+    const { session, driver } = questionSession({ nextTurn: [{ kind: 'text', text: 'ок' }] })
+    const rec = watch(session)
+    const id = await openQuestion(session, rec)
+    await session.interrupt()
+
+    session.answerQuestion(
+      id,
+      { 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' },
+      { 'Язык?': 'только без generics' }
+    )
+
+    expect(driver.sent.at(-1)?.text).toBe('«Язык?» — Go — только без generics\n«Что ещё?» — Тесты, CI')
+    expect(rec.items.find((i) => i.kind === 'question')).toMatchObject({
+      notes: { 'Язык?': 'только без generics' }
+    })
     await session.dispose()
   })
 })

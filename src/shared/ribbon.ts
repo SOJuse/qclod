@@ -389,18 +389,43 @@ export class RibbonBuilder {
     return [this.append({ kind: 'plan', id: this.nextId(), requestId, text, state: 'pending' })]
   }
 
-  resolvePlan(requestId: string, state: 'approved' | 'rejected' | 'elsewhere'): RibbonChange[] {
+  /**
+   * The plan decided. `comment` is what the user said with it; `edited` with
+   * `plan` — the plan was approved as the user changed it, and the card shows
+   * that text from now on. `sentBack` with `rejected` — it was approved so,
+   * and sent back for rework rather than refused (S2-R8).
+   */
+  resolvePlan(
+    requestId: string,
+    state: 'approved' | 'rejected' | 'elsewhere',
+    extra: { comment?: string; edited?: true; plan?: string; sentBack?: true } = {}
+  ): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'plan' && i.requestId === requestId)
     if (!item || item.kind !== 'plan') return []
-    item.state = state
-    return [this.update(item.id, { state })]
+    const patch: Partial<Extract<RibbonItem, { kind: 'plan' }>> = { state }
+    if (extra.comment) patch.comment = extra.comment
+    if (extra.sentBack && state === 'rejected') patch.sentBack = true
+    if (extra.edited && extra.plan !== undefined) {
+      patch.text = extra.plan
+      patch.edited = true
+    }
+    Object.assign(item, patch)
+    return [this.update(item.id, patch)]
   }
 
-  resolvePermission(requestId: string, state: 'allowed' | 'denied' | 'elsewhere'): RibbonChange[] {
+  /** The permission answered: how it was allowed (`scope`), or why it was denied (`reason`). */
+  resolvePermission(
+    requestId: string,
+    state: 'allowed' | 'denied' | 'elsewhere',
+    extra: { scope?: 'once' | 'always' | 'session'; reason?: string } = {}
+  ): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'permission' && i.requestId === requestId)
     if (!item || item.kind !== 'permission') return []
-    item.state = state
-    return [this.update(item.id, { state })]
+    const patch: Partial<Extract<RibbonItem, { kind: 'permission' }>> = { state }
+    if (extra.scope) patch.scope = extra.scope
+    if (extra.reason) patch.reason = extra.reason
+    Object.assign(item, patch)
+    return [this.update(item.id, patch)]
   }
 
   /** Whether a card for this tool call is already in the ribbon. */
@@ -408,14 +433,20 @@ export class RibbonBuilder {
     return this.byToolUseId.has(toolUseId)
   }
 
-  /** Records the user's answer to a question card. */
-  answerQuestion(toolUseId: string, answers: Record<string, string>): RibbonChange[] {
+  /** Records the user's answer to a question card, with the comments on the chosen options. */
+  answerQuestion(
+    toolUseId: string,
+    answers: Record<string, string>,
+    extra: { notes?: Record<string, string> } = {}
+  ): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)
     if (!item || item.kind !== 'question') return []
     // Kept on the item itself: a snapshot (reload, split pane, a session
     // taking this ribbon over) is built from the items, not from the events.
-    item.answers = answers
-    return [this.update(item.id, { answers })]
+    const patch: Partial<Extract<RibbonItem, { kind: 'question' }>> = { answers }
+    if (extra.notes && Object.keys(extra.notes).length > 0) patch.notes = extra.notes
+    Object.assign(item, patch)
+    return [this.update(item.id, patch)]
   }
 
   /**

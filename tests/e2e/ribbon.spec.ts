@@ -2,6 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication } from '@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { shot } from './helpers/shot'
 
 /**
  * Drives the app against the fake SDK, which is handed its script through the
@@ -90,6 +91,36 @@ test('ошибка инструмента раскрыта сразу и пом�
     await expect(card).toBeVisible({ timeout: 15000 })
     await expect(card).toContainText('тесты упали: 3 из 40')
     await expect(card.locator('.tool-card')).toHaveClass(/is-error/)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('пять Read подряд — одна строка «Прочитал 5 файлов», по клику видны пять карточек', async () => {
+  const { app, profile } = await launch({
+    steps: [
+      { kind: 'text', text: 'гляну, что в проекте' },
+      ...Array.from({ length: 5 }, (_, i) => ({
+        kind: 'tool',
+        name: 'Read',
+        input: { file_path: `C:/проект/файл${i + 1}.ts` },
+        result: 'строка 1'
+      })),
+      { kind: 'text', text: 'всё прочитал' }
+    ]
+  })
+  try {
+    const win = await app.firstWindow()
+    const group = win.locator('[data-testid="tool-group"]')
+    await expect(group).toContainText('Прочитал 5 файлов', { timeout: 15000 })
+    await expect(win.locator('.tool-card')).toHaveCount(0)
+    await expect(group.locator('[data-testid="tool-group-toggle"]')).toHaveAttribute('aria-expanded', 'false')
+    await shot(win, 'ribbon-group-folded')
+
+    await group.locator('[data-testid="tool-group-toggle"]').click()
+    await expect(group.locator('[data-testid="tool-group-toggle"]')).toHaveAttribute('aria-expanded', 'true')
+    await expect(win.locator('.tool-card')).toHaveCount(5)
+    await shot(win, 'ribbon-group-open')
   } finally {
     await close(app, profile)
   }

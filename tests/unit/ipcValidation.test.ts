@@ -276,6 +276,7 @@ describe('sanitizePlanDecision', () => {
     expect(sanitizePlanDecision({ approve: true })).toEqual({ approve: true })
     expect(sanitizePlanDecision({ approve: false })).toEqual({ approve: false })
     expect(sanitizePlanDecision({ approve: 'да' })).toEqual({ approve: false })
+    expect(sanitizePlanDecision({ approve: 'true' })).toEqual({ approve: false })
     for (const garbage of [null, undefined, true, 'approve', [true]]) {
       expect(sanitizePlanDecision(garbage)).toBeNull()
     }
@@ -298,7 +299,7 @@ describe('sanitizePlanDecision', () => {
     // A rejection carries no plan to carry out.
     expect(sanitizePlanDecision({ approve: false, plan: '1. шаг' })).toEqual({ approve: false })
     // Never cut, never dropped quietly: the agent must not run the plan the user had changed.
-    for (const plan of ['п'.repeat(100_001), '', '  \n ', 42, { text: 'x' }, null]) {
+    for (const plan of ['п'.repeat(100_001), 'п'.repeat(200_000), '', '  \n ', 42, { text: 'x' }, null]) {
       expect(sanitizePlanDecision({ approve: true, plan })).toBeNull()
     }
     expect(sanitizePlanDecision({ approve: false, plan: 'п'.repeat(100_001) })).toBeNull()
@@ -346,19 +347,23 @@ describe('sanitizeLayoutPatch', () => {
 })
 
 describe('этап 2: обработчики-заглушки в main', () => {
-  const plans: Array<[string, boolean]> = []
-  const questions: Array<[string, Record<string, string>]> = []
+  const plans: Array<[string, unknown]> = []
+  const questions: Array<[string, Record<string, string>, Record<string, string> | undefined]> = []
 
   function register(): void {
     handlers.clear()
     plans.length = 0
     questions.length = 0
     const session = {
-      answerPlan: async (requestId: string, approve: boolean) => {
-        plans.push([requestId, approve])
+      answerPlan: async (requestId: string, decision: unknown) => {
+        plans.push([requestId, decision])
       },
-      answerQuestion: (toolUseId: string, answers: Record<string, string>) => {
-        questions.push([toolUseId, answers])
+      answerQuestion: (
+        toolUseId: string,
+        answers: Record<string, string>,
+        notes?: Record<string, string>
+      ) => {
+        questions.push([toolUseId, answers, notes])
       }
     }
     registerAgentIpc({
@@ -377,16 +382,16 @@ describe('этап 2: обработчики-заглушки в main', () => {
 
   const call = (channel: string, ...args: unknown[]): unknown => handlers.get(channel)!({}, ...args)
 
-  test('plan:answer переводит решение в approve сессии', async () => {
+  test('plan:answer передаёт сессии проверенное решение целиком', async () => {
     register()
-    await call(CHANNELS.planAnswer, 't1', 'p1', { approve: true, comment: 'ок' })
-    await call(CHANNELS.planAnswer, 't1', 'p2', { approve: false })
+    await call(CHANNELS.planAnswer, 't1', 'p1', { approve: true, comment: ' ок ', plan: '1. шаг', extra: 1 })
+    await call(CHANNELS.planAnswer, 't1', 'p2', { approve: false, comment: 'сначала тесты', plan: '1. шаг' })
     await call(CHANNELS.planAnswer, 't1', 'p3', { approve: 'да' })
     await call(CHANNELS.planAnswer, 't1', 5, { approve: true })
     expect(plans).toEqual([
-      ['p1', true],
-      ['p2', false],
-      ['p3', false]
+      ['p1', { approve: true, comment: 'ок', plan: '1. шаг' }],
+      ['p2', { approve: false, comment: 'сначала тесты' }],
+      ['p3', { approve: false }]
     ])
   })
 
@@ -398,10 +403,16 @@ describe('этап 2: обработчики-заглушки в main', () => {
     expect(plans).toEqual([])
   })
 
-  test('question:answer принимает комментарии четвёртым аргументом', async () => {
+  test('question:answer передаёт сессии проверенные комментарии четвёртым аргументом', async () => {
     register()
-    await call(CHANNELS.questionAnswer, 't1', 'q1', { 'Где?': 'Справа' }, { 'Где?': 'у окна' })
-    expect(questions).toEqual([['q1', { 'Где?': 'Справа' }]])
+    await call(CHANNELS.questionAnswer, 't1', 'q1', { 'Где?': 'Справа' }, { 'Где?': '  у окна ', B: 2 })
+    await call(CHANNELS.questionAnswer, 't1', 'q2', { 'Где?': 'Слева' })
+    await call(CHANNELS.questionAnswer, 't1', 'q3', { 'Где?': 'Слева' }, 'мусор')
+    expect(questions).toEqual([
+      ['q1', { 'Где?': 'Справа' }, { 'Где?': 'у окна' }],
+      ['q2', { 'Где?': 'Слева' }, {}],
+      ['q3', { 'Где?': 'Слева' }, {}]
+    ])
   })
 
   test('раскладка и проекты: пустая раскладка и неизвестные папки — значения по умолчанию', async () => {

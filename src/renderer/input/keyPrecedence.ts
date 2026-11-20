@@ -14,7 +14,19 @@ export type ComposerKeyAction =
   /** Only ever resolved for the permission card while it has focus (ruling C16). */
   | 'permissionAllow'
   | 'permissionAllowAll'
-  | 'permissionDeny'
+  | 'permissionAllowSession'
+  /** «Запретить» asks why first: the reason field opens, its Enter sends (decision 8). */
+  | 'permissionReason'
+  /** Only ever resolved for the question card while it has focus: 1–9 choose (`physicalKey` says which). */
+  | 'questionPick'
+  /** The question card with focus: on to the next question, or send on the last. */
+  | 'questionNext'
+  /** Only ever resolved for the plan card while it has focus: 1 and Enter approve it. */
+  | 'planApprove'
+  /** The plan card with focus, 2: the comment field opens, its Enter sends the refusal. */
+  | 'planReject'
+  /** The plan card with focus, 3: the plan opens for editing. */
+  | 'planEdit'
   | 'submit'
   | 'newline'
   | 'historyPrev'
@@ -35,10 +47,20 @@ export interface ComposerContext {
   caretOnLastLine: boolean
   /**
    * The keys of a permission card are being resolved. Set by the card while IT
-   * has focus, never by the input line: a reply that starts with «ф» (KeyA on
-   * the Russian layout) must not grant a blanket permission (ruling C16).
+   * has focus, never by the input line: a reply that starts with «1» or «2»
+   * must not grant a permission (ruling C16).
    */
   pendingPermission?: boolean
+  /**
+   * The keys of a question card are being resolved. Set by the card while IT
+   * has focus, never by the input line, as with permissions.
+   */
+  pendingQuestion?: boolean
+  /**
+   * The keys of a plan card are being resolved. Set by the card while IT has
+   * focus, never by the input line, as with permissions.
+   */
+  pendingPlan?: boolean
 }
 
 export interface KeyLike extends PhysicalKeyEvent {
@@ -57,6 +79,24 @@ type Rule = (ev: KeyLike, ctx: ComposerContext) => ComposerKeyAction | undefined
 
 /** Editing shortcuts the field must never intercept. */
 const NATIVE_KEYS = new Set(['v', 'z', 'y', 'a', 'x', 'c'])
+
+/** A permission card's digits, as in Claude Code CLI (decision 8). Digits do not move with the layout. */
+const PERMISSION_DIGITS = new Map<string, ComposerKeyAction>([
+  ['1', 'permissionAllow'],
+  ['2', 'permissionAllowAll'],
+  ['3', 'permissionAllowSession'],
+  ['4', 'permissionReason']
+])
+
+/** A plan card's digits — not the permission card's: there is no «всё такое» for a plan. */
+const PLAN_DIGITS = new Map<string, ComposerKeyAction>([
+  ['1', 'planApprove'],
+  ['2', 'planReject'],
+  ['3', 'planEdit']
+])
+
+/** A question card's digits: its options' numbers. */
+const QUESTION_DIGIT = /^[1-9]$/
 
 /**
  * The precedence table, as an ordered list. The order IS the priority: the
@@ -81,11 +121,12 @@ const RULES: Rule[] = [
   (ev, ctx) => {
     if (ev.key !== 'Escape') return undefined
     if (ctx.popupOpen) return 'closePopup'
-    return ctx.pendingPermission ? 'permissionDeny' : 'interrupt'
+    return ctx.pendingPermission ? 'permissionReason' : 'interrupt'
   },
 
-  // A permission card with focus: Enter allows, A allows all of the kind. Only
-  // on an empty field without attachments — with text, Enter is a send.
+  // A permission card with focus: Enter and 1 allow, 2 allows all of the kind,
+  // 3 until the session ends, 4 asks why first. Only on an empty field without
+  // attachments — with text, Enter is a send and a digit is typed.
   (ev, ctx) =>
     ctx.pendingPermission &&
     ev.key === 'Enter' &&
@@ -100,9 +141,36 @@ const RULES: Rule[] = [
     !ev.ctrlKey &&
     !ev.altKey &&
     !ev.metaKey &&
+    !ev.shiftKey
+      ? PERMISSION_DIGITS.get(physicalKey(ev))
+      : undefined,
+
+  // A question card with focus: 1–9 choose an option, Enter goes on. With
+  // text, as above, they are the text's.
+  (ev, ctx) =>
+    ctx.pendingQuestion && ev.key === 'Enter' && !ev.shiftKey && ctx.text === '' && !ctx.hasAttachments
+      ? 'questionNext'
+      : undefined,
+  (ev, ctx) =>
+    ctx.pendingQuestion &&
+    ctx.text === '' &&
+    !ev.ctrlKey &&
+    !ev.altKey &&
+    !ev.metaKey &&
     !ev.shiftKey &&
-    physicalKey(ev) === 'a'
-      ? 'permissionAllowAll'
+    QUESTION_DIGIT.test(physicalKey(ev))
+      ? 'questionPick'
+      : undefined,
+
+  // A plan card with focus: 1 and Enter approve, 2 rejects (with a comment
+  // first), 3 edits. With text, as above, they are the text's.
+  (ev, ctx) =>
+    ctx.pendingPlan && ev.key === 'Enter' && !ev.shiftKey && ctx.text === '' && !ctx.hasAttachments
+      ? 'planApprove'
+      : undefined,
+  (ev, ctx) =>
+    ctx.pendingPlan && ctx.text === '' && !ev.ctrlKey && !ev.altKey && !ev.metaKey && !ev.shiftKey
+      ? PLAN_DIGITS.get(physicalKey(ev))
       : undefined,
 
   // Native editing. The field is a plain textarea and the browser does these

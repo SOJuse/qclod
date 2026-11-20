@@ -1485,3 +1485,110 @@ describe('createFakeSdk: очередь команд CLI', () => {
     expect(lifecycleOf(got)).toContain('cancelled:phone-1')
   })
 })
+
+function agentTexts(messages: Array<Record<string, unknown>>): string[] {
+  return messages
+    .filter((m) => m['type'] === 'assistant')
+    .flatMap((m) => (m['message'] as { content: Array<Record<string, unknown>> }).content)
+    .filter((b) => b['type'] === 'text')
+    .map((b) => String(b['text']))
+}
+
+describe('createFakeSdk: ответы на карточки', () => {
+  test('permissionLog пишет каждый ответ canUseTool', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        { kind: 'askPermission', name: 'Bash', input: { command: 'git push' } },
+        { kind: 'askQuestion', question: 'Какой?', options: ['Справа'] }
+      ],
+      canUseTool: async (name, input): Promise<Answer> =>
+        name === 'Bash'
+          ? { behavior: 'deny', message: 'не трогай main' }
+          : { behavior: 'allow', updatedInput: { ...input, answers: { 'Какой?': 'Справа' } } }
+    })
+    await collect(driver)
+
+    expect(driver.permissionLog).toEqual([
+      { name: 'Bash', behavior: 'deny', message: 'не трогай main' },
+      {
+        name: 'AskUserQuestion',
+        behavior: 'allow',
+        updatedInput: expect.objectContaining({ answers: { 'Какой?': 'Справа' } })
+      }
+    ])
+  })
+
+  test('plan спрашивает ExitPlanMode с планом; одобрили — вызов с исправленным планом', async () => {
+    const asked: Array<[string, Record<string, unknown>]> = []
+    const driver = createFakeSdk({
+      steps: [{ kind: 'plan', plan: '1. шаг' }],
+      canUseTool: async (name, input): Promise<Answer> => {
+        asked.push([name, input])
+        return { behavior: 'allow', updatedInput: { ...input, plan: '1. другой шаг' } }
+      }
+    })
+    const out = await collect(driver)
+
+    expect(asked).toEqual([['ExitPlanMode', { plan: '1. шаг' }]])
+    expect(toolUses(out).map((t) => t.name)).toEqual(['ExitPlanMode'])
+    expect(driver.executedTools).toEqual(['ExitPlanMode'])
+  })
+
+  test('plan: отказ — tool_result с is_error и текстом отказа', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'plan', plan: '1. шаг' }],
+      canUseTool: async () => ({ behavior: 'deny' as const, message: 'сначала тесты' })
+    })
+    const out = await collect(driver)
+
+    const result = toolResults(out)[0]!
+    expect(result['is_error']).toBe(true)
+    expect(String(result['content'])).toContain('сначала тесты')
+    expect(driver.executedTools).toEqual([])
+  })
+
+  test('echo: true у шага плана пишет «Получено:» с plan', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'plan', plan: '1. шаг', echo: true }],
+      canUseTool: async (_name, input): Promise<Answer> => ({
+        behavior: 'allow',
+        updatedInput: { ...input, plan: '1. другой шаг' }
+      })
+    })
+    const out = await collect(driver)
+
+    expect(agentTexts(out)).toEqual([`Получено: ${JSON.stringify({ plan: '1. другой шаг' })}`])
+  })
+
+  test('echo: true у разрешения и вопроса пишет message, answers и annotations', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        { kind: 'askPermission', name: 'Bash', input: { command: 'git push' }, echo: true },
+        { kind: 'askQuestion', question: 'Какой?', options: ['Справа'], echo: true }
+      ],
+      canUseTool: async (name, input): Promise<Answer> =>
+        name === 'Bash'
+          ? { behavior: 'deny', message: 'не трогай main' }
+          : {
+              behavior: 'allow',
+              updatedInput: {
+                ...input,
+                answers: { 'Какой?': 'Справа' },
+                annotations: { 'Какой?': { notes: 'ближе' } }
+              }
+            }
+    })
+    const out = await collect(driver)
+
+    expect(agentTexts(out)).toEqual([
+      `Получено: ${JSON.stringify({ message: 'не трогай main' })}`,
+      `Получено: ${JSON.stringify({ answers: { 'Какой?': 'Справа' }, annotations: { 'Какой?': { notes: 'ближе' } } })}`
+    ])
+  })
+
+  test('init.claudeCodeVersion меняет claude_code_version в system/init', async () => {
+    const driver = createFakeSdk({ steps: [{ kind: 'text', text: 'ок' }], init: { claudeCodeVersion: '2.1.300' } })
+    const out = await collect(driver)
+    expect(out[0]).toMatchObject({ type: 'system', subtype: 'init', claude_code_version: '2.1.300' })
+  })
+})

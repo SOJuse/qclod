@@ -3,7 +3,8 @@ import type { ReactNode } from 'react'
 import type { RibbonItem as Item } from '../../shared/types'
 import type { CardAnswers } from '../chat/cardAnswers'
 import { childrenByParent } from '../chat/children'
-import { oldestPendingPermission } from '../chat/pendingPermission'
+import { groupRows } from '../chat/groupRows'
+import { isPinnedCard, isStaleQuestion } from '../chat/openCards'
 import { RibbonRow } from './RibbonItem'
 import './Ribbon.css'
 
@@ -53,9 +54,20 @@ export function Ribbon({
 
   // Only top-level items are rows; a subagent's own calls live inside its card.
   // Both come from one pass over the ribbon per change, not one per card.
-  const rows = useMemo(() => items.filter((item) => item.parentId === undefined), [items])
+  // A card in the pinned strip is not a row; runs of one kind of call are one.
+  const rows = useMemo(
+    () =>
+      groupRows(
+        items.filter((item) => item.parentId === undefined),
+        (item) => isPinnedCard(item, items)
+      ),
+    [items]
+  )
+  const stale = useMemo(
+    () => new Set(items.filter((item) => isStaleQuestion(item, items)).map((item) => item.id)),
+    [items]
+  )
   const byParent = useMemo(() => childrenByParent(items), [items])
-  const pendingId = useMemo(() => oldestPendingPermission(items)?.id ?? null, [items])
 
   const offsets: number[] = []
   let total = 0
@@ -110,12 +122,6 @@ export function Ribbon({
     stickToBottom.current = true
   }, [])
 
-  // A question that appears is never left out of sight above or below: the
-  // ribbon follows the bottom again, where it will be drawn.
-  useLayoutEffect(() => {
-    if (pendingId !== null) stickToBottom.current = true
-  }, [pendingId])
-
   useLayoutEffect(() => {
     const el = viewport.current
     if (!el || !stickToBottom.current) return
@@ -127,14 +133,15 @@ export function Ribbon({
     <div className="ribbon-wrap">
       <div className="ribbon" data-testid="ribbon" ref={viewport} onScroll={onScroll}>
         <div style={{ height: padTop }} aria-hidden />
-        {visible.map((item) => (
+        {visible.map((row) => (
           <RibbonRow
-            key={item.id}
-            item={item}
+            key={row.id}
+            item={row.kind === 'item' ? row.item : row.items[0]!}
+            {...(row.kind === 'toolGroup' ? { group: row } : {})}
+            stale={row.kind === 'item' && stale.has(row.item.id)}
             byParent={byParent}
             cwd={cwd}
             tabId={tabId}
-            activePermissionId={pendingId}
             onMeasure={measure}
             answers={answers}
           />

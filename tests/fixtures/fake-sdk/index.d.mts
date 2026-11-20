@@ -7,7 +7,8 @@ export type FakeStep =
   | { kind: 'tool'; name: string; input?: object; result?: string; output?: object; pauseMs?: number }
   | { kind: 'toolRunning'; name: string; input?: object }
   | { kind: 'toolError'; name: string; input?: object; error: string; output?: object }
-  | { kind: 'askPermission'; name: string; input?: object }
+  /** `echo`: after the answer the agent says «Получено: <JSON>» with the refusal's message. */
+  | { kind: 'askPermission'; name: string; input?: object; echo?: boolean }
   | { kind: 'askPermissions'; tools: Array<{ name: string; input?: object }> }
   | {
       kind: 'askQuestion'
@@ -17,9 +18,17 @@ export type FakeStep =
       options?: string[]
       /** After the answer, say what the agent received as a text message. */
       echoAnswers?: boolean
+      /** After the answer, «Получено: <JSON>» with the message, answers and annotations. */
+      echo?: boolean
       /** The full form: up to four questions. */
       questions?: Array<{ question: string; header?: string; options: string[]; multiSelect?: boolean }>
     }
+  /**
+   * ExitPlanMode with `plan`: the call, then canUseTool about it. Approved, it runs
+   * with updatedInput.plan if given; refused, an errored tool_result with the message.
+   * `echo`: «Получено: <JSON>» with the message and the plan carried back.
+   */
+  | { kind: 'plan'; plan: string; echo?: boolean }
   | { kind: 'todo'; items: Array<{ content: string; status: string }> }
   | {
       kind: 'subagent'
@@ -160,6 +169,8 @@ export interface FakeScript {
   ) => Promise<FakePermissionAnswer>
   init?: {
     cwd?: string
+    /** system/init's claude_code_version; by default 2.1.317 (2.1.200 with `lifecycle: false`). */
+    claudeCodeVersion?: string
     model?: string
     permissionMode?: string
     mcpServers?: Array<{ name: string; status: string }>
@@ -223,6 +234,13 @@ export interface FakeDriver {
   readonly remoteCalls: Array<{ enabled: boolean; name?: string }>
   readonly sent: Array<{ text: string; attachments: unknown[] }>
   readonly permissionRequests: Array<{ name: string; input: object }>
+  /** Every answer canUseTool gave, in order. */
+  readonly permissionLog: Array<{
+    name: string
+    behavior: 'allow' | 'deny'
+    message?: string
+    updatedInput?: Record<string, unknown>
+  }>
   readonly executedTools: string[]
   /** What each answered AskUserQuestion carried in updatedInput.answers. */
   readonly questionAnswers: Array<Record<string, string>>

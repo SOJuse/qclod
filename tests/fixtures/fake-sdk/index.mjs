@@ -17,9 +17,10 @@
  * @typedef {{kind:'tool', name:string, input?:object, result?:string, output?:object, pauseMs?:number}} ToolStep
  * @typedef {{kind:'toolRunning', name:string, input?:object}} ToolRunningStep
  * @typedef {{kind:'toolError', name:string, input?:object, error:string, output?:object}} ToolErrorStep
- * @typedef {{kind:'askPermission', name:string, input?:object}} AskPermissionStep
+ * @typedef {{kind:'askPermission', name:string, input?:object, echo?:boolean}} AskPermissionStep
  * @typedef {{kind:'askPermissions', tools:Array<{name:string, input?:object}>}} AskPermissionsStep
- * @typedef {{kind:'askQuestion', question?:string, header?:string, options?:string[], questions?:Array<{question:string, header?:string, options:string[], multiSelect?:boolean}>, echoAnswers?:boolean}} AskQuestionStep
+ * @typedef {{kind:'askQuestion', question?:string, header?:string, options?:string[], questions?:Array<{question:string, header?:string, options:string[], multiSelect?:boolean}>, echoAnswers?:boolean, echo?:boolean}} AskQuestionStep
+ * @typedef {{kind:'plan', plan:string, echo?:boolean}} PlanStep
  * @typedef {{kind:'todo', items:Array<{content:string,status:string,activeForm?:string}>}} TodoStep
  * @typedef {{kind:'subagent', name:string, agentType?:string, stats?:{totalTokens?:number, totalDurationMs?:number, totalToolUseCount?:number}, report?:string, steps:Array<object>}} SubagentStep
  * @typedef {{kind:'backgroundAgent', name:string, agentType?:string, agentId?:string, pauseMs?:number,
@@ -197,6 +198,8 @@ export function createFakeSdk(script = {}) {
   const state = {
     sent: [],
     permissionRequests: [],
+    /** Every answer canUseTool gave: `{ name, behavior, message?, updatedInput? }`. */
+    permissionLog: [],
     questionAnswers: [],
     executedTools: [],
     permissionMode: script.init?.permissionMode ?? 'default',
@@ -237,14 +240,38 @@ export function createFakeSdk(script = {}) {
         { once: true }
       )
     })
+    const answered = Promise.resolve(canUseTool(name, input, { toolUseID, signal: controller.signal })).then(
+      (answer) => {
+        state.permissionLog.push({
+          name,
+          behavior: answer.behavior,
+          ...(answer.message !== undefined ? { message: answer.message } : {}),
+          ...(answer.updatedInput !== undefined ? { updatedInput: answer.updatedInput } : {})
+        })
+        return answer
+      }
+    )
     try {
-      return await Promise.race([
-        canUseTool(name, input, { toolUseID, signal: controller.signal }),
-        aborted
-      ])
+      return await Promise.race([answered, aborted])
     } finally {
       openAsks.delete(controller)
     }
+  }
+
+  /**
+   * `echo: true`: what the agent got back, as a text message an end-to-end
+   * test can read — the refusal's message, the answers, the notes, the plan.
+   */
+  function* echo(step, answer) {
+    if (!step.echo) return
+    const updated = answer.updatedInput ?? {}
+    const got = {
+      ...(answer.message !== undefined ? { message: answer.message } : {}),
+      ...(updated.answers !== undefined ? { answers: updated.answers } : {}),
+      ...(updated.annotations !== undefined ? { annotations: updated.annotations } : {}),
+      ...(step.kind === 'plan' && updated.plan !== undefined ? { plan: updated.plan } : {})
+    }
+    yield assistant([{ type: 'text', text: `Получено: ${JSON.stringify(got)}` }])
   }
 
   function toolResult(id, content, isError = false, output = undefined) {
@@ -389,6 +416,27 @@ export function createFakeSdk(script = {}) {
           } else {
             yield permissionDenied(step.name, answer)
           }
+          yield* echo(step, answer)
+          break
+        }
+
+        // Plan mode's end: ExitPlanMode with the plan, asked about like any
+        // tool. An approval runs the call with the plan it carries back
+        // (updatedInput.plan — the user's edit, probe 05b); a refusal is an
+        // errored tool_result with its message, as the CLI returns it.
+        case 'plan': {
+          const id = randomUUID()
+          const input = { plan: step.plan }
+          yield assistant([{ type: 'tool_use', id, name: 'ExitPlanMode', input }])
+          const answer = await ask('ExitPlanMode', input, id)
+          if (answer.behavior === 'allow') {
+            const plan = answer.updatedInput?.plan ?? step.plan
+            state.executedTools.push('ExitPlanMode')
+            yield toolResult(id, `User has approved your plan.\n\n## Approved Plan:\n${plan}`)
+          } else {
+            yield toolResult(id, answer.message ?? 'отклонено', true)
+          }
+          yield* echo(step, answer)
           break
         }
 
@@ -482,6 +530,7 @@ export function createFakeSdk(script = {}) {
           } else {
             yield toolResult(id, answer.message ?? 'отклонено', true)
           }
+          yield* echo(step, answer)
           break
         }
 
@@ -901,7 +950,7 @@ export function createFakeSdk(script = {}) {
       mcp_servers: script.init?.mcpServers ?? [],
       slash_commands: script.init?.slashCommands ?? DEFAULT_COMMANDS.map((c) => c.name),
       tools: ['Read', 'Edit', 'Bash'],
-      claude_code_version: lifecycle ? '2.1.317' : '2.1.200',
+      claude_code_version: script.init?.claudeCodeVersion ?? (lifecycle ? '2.1.317' : '2.1.200'),
       ...(lifecycle
         ? {
             capabilities: [
@@ -1273,6 +1322,9 @@ export function createFakeSdk(script = {}) {
     },
     get permissionRequests() {
       return state.permissionRequests
+    },
+    get permissionLog() {
+      return state.permissionLog
     },
     get executedTools() {
       return state.executedTools

@@ -26,6 +26,11 @@ interface Pending {
  */
 export class PermissionBroker {
   private readonly pending = new Map<string, Pending>()
+  /**
+   * «Разрешить до конца сессии», per chat: kept here only, never on disk, and
+   * dropped when that chat's process ends (`clearSession`).
+   */
+  private readonly sessionRules = new Map<TabId, PermissionRule[]>()
 
   constructor(private readonly options: PermissionBrokerOptions) {}
 
@@ -60,6 +65,10 @@ export class PermissionBroker {
     const decided = matchRule(this.options.loadRules(), toolName, input)
     if (decided) return { behavior: decided }
     if (signal?.aborted) return { behavior: 'deny' }
+    // A saved rule has had its say, so a saved deny wins over this chat's allow.
+    if (matchRule(this.sessionRules.get(tabId) ?? [], toolName, input) === 'allow') {
+      return { behavior: 'allow' }
+    }
     if (auto) return { behavior: 'allow' }
 
     const requestId = knownRequestId ?? randomUUID()
@@ -86,19 +95,35 @@ export class PermissionBroker {
     if (!request) return
     this.pending.delete(requestId)
 
-    if (answer.remember) {
-      const rules = this.options.loadRules()
-      const target = ruleTarget(request.input)
-      rules.push({
-        id: randomUUID(),
-        toolName: request.toolName,
-        ...(target ? { target } : {}),
-        behavior: answer.behavior
-      })
-      this.options.saveRules(rules)
+    const target = ruleTarget(request.input)
+    const rule: PermissionRule = {
+      id: randomUUID(),
+      toolName: request.toolName,
+      ...(target ? { target } : {}),
+      behavior: answer.behavior
+    }
+    // The narrower answer wins: a session's allow is never saved for ever.
+    if (answer.forSession && answer.behavior === 'allow') {
+      this.sessionRules.set(request.tabId, [...(this.sessionRules.get(request.tabId) ?? []), rule])
+    } else if (answer.remember) {
+      this.options.saveRules([...this.options.loadRules(), rule])
     }
 
-    request.resolve({ behavior: answer.behavior })
+    // How it was answered goes on, for the card to show; the input never does.
+    request.resolve({
+      behavior: answer.behavior,
+      ...(answer.forSession && answer.behavior === 'allow'
+        ? { forSession: true as const }
+        : answer.remember
+          ? { remember: true }
+          : {}),
+      ...(answer.message && answer.behavior === 'deny' ? { message: answer.message } : {})
+    })
+  }
+
+  /** The chat's process ended: what was allowed «до конца сессии» is not any more. */
+  clearSession(tabId: TabId): void {
+    this.sessionRules.delete(tabId)
   }
 
   /**
@@ -114,8 +139,12 @@ export class PermissionBroker {
     }
   }
 
-  /** A closed tab's agent is gone; its questions are answered so nothing leaks. */
+  /**
+   * A closed tab's agent is gone; its questions are answered so nothing leaks,
+   * and its session rules go with it.
+   */
   cancelTab(tabId: TabId): void {
+    this.clearSession(tabId)
     for (const [requestId, request] of [...this.pending.entries()]) {
       if (request.tabId !== tabId) continue
       this.pending.delete(requestId)
@@ -124,6 +153,7 @@ export class PermissionBroker {
   }
 
   cancelAll(): void {
+    this.sessionRules.clear()
     for (const [requestId, request] of [...this.pending.entries()]) {
       this.pending.delete(requestId)
       request.resolve({ behavior: 'deny' })

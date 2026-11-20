@@ -40,6 +40,16 @@ describe('createKeyGuard', () => {
     guard.focus(1000, new Set(['Enter']))
     expect(guard.allows('KeyA', 5000)).toBe(true)
   })
+
+  test('цифры под той же охраной: зажатая до появления «3» не отвечает, в первые 400 мс тоже', () => {
+    const guard = createKeyGuard()
+    guard.focus(1000, new Set(['Digit3']))
+    expect(guard.allows('Digit3', 5000)).toBe(false)
+    expect(guard.allows('Digit1', 1000 + ARM_MS - 1)).toBe(false)
+    expect(guard.allows('Digit1', 1000 + ARM_MS)).toBe(true)
+    guard.released('Digit3')
+    expect(guard.allows('Digit3', 5000)).toBe(true)
+  })
 })
 
 describe('focusedLongEnough', () => {

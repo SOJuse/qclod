@@ -108,7 +108,7 @@ test('подтверждение плана переводит в рабочий
     const win = await app.firstWindow()
     await win.locator('[data-testid="plan-approve"]').click({ timeout: 15000 })
 
-    await expect(win.locator('[data-testid="plan-card"]')).toContainText('принят')
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('План принят')
     await expect(win.locator('[data-testid="ribbon"]')).toContainText('приступаю', {
       timeout: 15000
     })
@@ -132,13 +132,67 @@ test('отклонение плана возвращает к обсуждени
   })
   try {
     const win = await app.firstWindow()
+    // «Отклонить» asks what to change first; the refusal goes with the button beside the field.
     await win.locator('[data-testid="plan-reject"]').click({ timeout: 15000 })
+    await expect(win.locator('[data-testid="plan-comment"]')).toBeVisible()
+    await win.locator('[data-testid="plan-reject-send"]').click()
 
-    await expect(win.locator('[data-testid="plan-card"]')).toContainText('отклонён')
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('План отклонён')
     await expect(win.locator('[data-testid="ribbon"]')).toContainText('хорошо, подумаю ещё', {
       timeout: 15000
     })
     await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('отказ с комментарием: агент получает комментарий', async () => {
+  const { app, profile } = await launch({
+    steps: [{ kind: 'plan', plan: PLAN, echo: true }],
+    init: { permissionMode: 'plan' }
+  })
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="plan-reject"]').click({ timeout: 15000 })
+    const comment = win.locator('[data-testid="plan-comment"]')
+    await comment.fill('сначала тесты')
+    await comment.press('Enter')
+
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('План отклонён — «сначала тесты»')
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText('Получено: {"message":"сначала тесты"}', {
+      timeout: 15000
+    })
+    await expect(win.locator('[data-testid="status-mode"]')).toHaveAttribute('data-value', 'plan')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('правка плана: агент получает поправленный план, режим — «принимать правки»', async () => {
+  const EDITED = 'Разобрать auth.ts на два модуля, тесты оставить на месте'
+  const { app, profile } = await launch({
+    steps: [{ kind: 'plan', plan: PLAN, echo: true }],
+    // A CLI known to carry out updatedInput.plan (S2-R8).
+    init: { permissionMode: 'plan', claudeCodeVersion: '2.1.317' }
+  })
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="plan-edit"]').click({ timeout: 15000 })
+    const editor = win.locator('[data-testid="plan-editor"]')
+    await expect(editor).toHaveValue(PLAN)
+    // Unchanged, there is nothing to approve as edited.
+    await expect(win.locator('[data-testid="plan-approve-edited"]')).toBeDisabled()
+    await editor.fill(EDITED)
+    await editor.press('Control+Enter')
+
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('План принят с правками')
+    await expect(win.locator('[data-testid="ribbon"]')).toContainText(`Получено: {"plan":"${EDITED}"}`, {
+      timeout: 15000
+    })
+    await expect(win.locator('[data-testid="status-mode"]')).toHaveAttribute('data-value', 'acceptEdits', {
+      timeout: 15000
+    })
   } finally {
     await close(app, profile)
   }

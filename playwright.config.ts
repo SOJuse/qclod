@@ -12,7 +12,11 @@ process.env['QCLOD_HEADLESS'] = '1'
 // The window opens off screen and never takes focus, so the machine stays
 // usable while the suite runs (src/main/window.ts).
 process.env['QCLOD_E2E_INVISIBLE'] = '1'
-process.env['QCLOD_USER_DATA'] = mkdtempSync(join(tmpdir(), 'qclod-e2e-'))
+// The runner makes it once; its workers load this file again and inherit the
+// runner's environment, so they use the same folder. globalTeardown deletes it
+// when the run ends (Ruling M2).
+process.env['QCLOD_E2E_PROFILE'] ??= mkdtempSync(join(tmpdir(), 'qclod-e2e-'))
+process.env['QCLOD_USER_DATA'] = process.env['QCLOD_E2E_PROFILE']
 
 // The real `claude auth status` is never asked in e2e: by default the agent
 // counts as logged in. A spec overrides it per launch through `env`.
@@ -25,5 +29,6 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: [['list']],
+  globalTeardown: './tests/e2e/helpers/globalTeardown.ts',
   outputDir: './tests/.artifacts'
 })

@@ -33,6 +33,14 @@ describe('findMentionQuery', () => {
     expect(findMentionQuery('@src main', 9)).toBeNull()
   })
 
+  test('курсор, оставшийся за концом очищенного поля, не гоняет цикл по пустоте', () => {
+    // After a 200 000-char draft is sent the caret state still says 200 000.
+    const started = performance.now()
+    for (let i = 0; i < 10; i++) expect(findMentionQuery('', 200_000)).toBeNull()
+    expect(performance.now() - started).toBeLessThan(20)
+    expect(findMentionQuery('@src', 99)).toEqual({ start: 0, query: 'src' })
+  })
+
   test('без @ ничего не находится', () => {
     expect(findMentionQuery('обычный текст', 13)).toBeNull()
   })

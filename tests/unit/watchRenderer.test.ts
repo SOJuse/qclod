@@ -93,3 +93,44 @@ describe('watchRenderer', () => {
     expect(contents.reload).not.toHaveBeenCalled()
   })
 })
+
+describe('watchRenderer: reload after a hang', () => {
+  let afterHang: ReturnType<typeof vi.fn>
+  beforeEach(() => {
+    contents = new Fake()
+    log = []
+    afterHang = vi.fn()
+    watchRenderer(contents as never, { log: (e) => log.push(e), now: () => t, hangMs: 15000, reloadAfterHang: afterHang })
+    contents.forcefullyCrashRenderer.mockImplementation(() => gone('killed'))
+  })
+
+  test('the page killed for hanging comes back through reloadAfterHang, not a plain reload', () => {
+    contents.emit('unresponsive')
+    vi.advanceTimersByTime(15000)
+    expect(afterHang).toHaveBeenCalledTimes(1)
+    expect(contents.reload).not.toHaveBeenCalled()
+  })
+
+  test('a crash of its own is a plain reload', () => {
+    gone('crashed')
+    expect(contents.reload).toHaveBeenCalledTimes(1)
+    expect(afterHang).not.toHaveBeenCalled()
+  })
+
+  test('only the crash we caused counts: the next crash is plain again', () => {
+    contents.emit('unresponsive')
+    vi.advanceTimersByTime(15000)
+    gone('crashed')
+    expect(afterHang).toHaveBeenCalledTimes(1)
+    expect(contents.reload).toHaveBeenCalledTimes(1)
+  })
+
+  test('reloads after a hang count towards the three a minute', () => {
+    for (let i = 0; i < 4; i++) {
+      contents.emit('unresponsive')
+      vi.advanceTimersByTime(15000)
+    }
+    expect(afterHang).toHaveBeenCalledTimes(3)
+    expect(log.at(-1)!.message).toContain('not reloading')
+  })
+})

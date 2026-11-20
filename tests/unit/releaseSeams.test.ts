@@ -21,6 +21,7 @@ describe('проверка релизной сборки на тестовые �
       'QCLOD_FAKE_FAIL',
       'QCLOD_FAKE_FAIL_TIMES',
       'QCLOD_E2E_INVISIBLE',
+      'QCLOD_HANG_MS',
       '__qclodShellLog',
       '__qclodLoginOpens',
       '__qclodRealAgentStarts',

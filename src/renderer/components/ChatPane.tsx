@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import type { SessionSummary, UserInput } from '../../shared/types'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
+import { useHeldDrafts } from '../state/heldDrafts'
 import { compactNow, sendCommand } from '../input/slash'
 import { REMOTE_BLOCK_TEXT, REMOTE_OFF, isRemoteLive } from '../../shared/remote'
 import {
@@ -84,6 +85,14 @@ export function ChatPane({
   const status = tab?.status ?? 'stopped'
   const remote = tab?.remote ?? REMOTE_OFF
   const draft = draftByTab[tabId] ?? ''
+  const heldDraft = useHeldDrafts((s) => s.byTab[tabId] !== undefined)
+
+  /** The draft held back after the window froze goes into the field, before what is typed since. */
+  function insertHeldDraft(): void {
+    const text = useHeldDrafts.getState().take(tabId)
+    if (text === undefined) return
+    setDraft(tabId, draftWithReturned([text], useAppStore.getState().draftByTab[tabId] ?? ''))
+  }
 
   /** The status-line switch and /remote-control: on shows the panel, where the link is. */
   function toggleRemote(): void {
@@ -266,6 +275,8 @@ export function ChatPane({
             .then((snapshot) => useAppStore.getState().setPanelSnapshot(tabId, snapshot))
         }}
         onImagePrepared={applyPrepared}
+        heldDraft={heldDraft}
+        onInsertHeldDraft={insertHeldDraft}
         onPickFiles={() => {
           void window.qclod.pickFiles().then((paths) => {
             if (paths.length === 0) return

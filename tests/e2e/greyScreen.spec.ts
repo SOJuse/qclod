@@ -270,3 +270,177 @@ test('«Стоп» сразу после вставки картинки, пок
     await app.close()
   }
 })
+
+/**
+ * Task 9b: one Russian paragraph of 200 000 characters, no line break — what
+ * froze the window for ~20 s (grey-screen.md). Words are separated by spaces
+ * and punctuation, with a Latin word now and then, as people write.
+ */
+function longParagraph(length: number): string {
+  const words = ['окно', 'зависло', 'после', 'вставки', 'длинного', 'текста,', 'который', 'React', 'рисует', 'целиком', '—', 'и', 'это', 'src/main', 'мешает', 'работать.']
+  let out = ''
+  for (let i = 0; out.length < length; i++) out += words[(i * 7) % words.length] + ' '
+  return out.slice(0, length)
+}
+
+/**
+ * Waits, frame by frame, until `selector`'s text (a field's value) is
+ * `length` long; then one more frame. Returns how long that took in the page,
+ * from the moment the user's `action` (a paste, click or keydown) reached it.
+ */
+async function drawnAfter(win: Page, action: 'paste' | 'click' | 'keydown', selector: string, length: number): Promise<number> {
+  await win.waitForFunction(
+    ([sel, n]) => {
+      const el = document.querySelector(sel)
+      const value = el instanceof HTMLTextAreaElement ? el.value : el?.textContent
+      return value?.length === n
+    },
+    [selector, length] as const,
+    { polling: 'raf', timeout: 120_000 }
+  )
+  return win.evaluate(
+    (name) =>
+      new Promise<number>((resolve) =>
+        requestAnimationFrame(() => {
+          const g = globalThis as { __at?: Record<string, number> }
+          resolve(Math.round(performance.now() - (g.__at?.[name] ?? Number.NaN)))
+        })
+      ),
+    action
+  )
+}
+
+const FIELD = '[data-testid="composer-input"]'
+const BUBBLE = '[data-testid="ribbon-user"] .row-user-text'
+
+/**
+ * Brief 9b, step 2: on this machine each step — Ctrl+V, the click that sends
+ * and draws the bubble, ↑ — is laid out and drawn in under this, counted in
+ * the page from the user's action to the frame that shows it; and no single
+ * stretch of the page's thread is longer. (The test's own side adds the CDP
+ * hops — a 400 KB string each way — and is logged, not bounded.)
+ */
+const LONG_TEXT_MS = 1000
+
+test('длинный русский абзац 200 000 символов без переносов не вешает окно', async () => {
+  test.setTimeout(240_000)
+  const { app, win, profile } = await launchQclod({ script: { steps: [], nextTurn: [{ kind: 'text', text: 'ок' }] } })
+  const ev = watch(win)
+  try {
+    await watchProcess(app)
+    const text = longParagraph(200_000)
+    expect(text).not.toContain('\n')
+    // When each user action reached the page, and the longest the page's
+    // thread was busy at a stretch, from here on.
+    await win.evaluate(() => {
+      const g = globalThis as { __longest?: number; __at?: Record<string, number> }
+      g.__longest = 0
+      g.__at = {}
+      for (const name of ['paste', 'click', 'keydown']) {
+        document.addEventListener(name, () => (g.__at![name] = performance.now()), true)
+      }
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) g.__longest = Math.max(g.__longest ?? 0, e.duration)
+      }).observe({ type: 'longtask' })
+    })
+
+    // Ctrl+V: the text is in the field, laid out and drawn.
+    await input(win).click()
+    let started = Date.now()
+    await pasteText(app, win, text)
+    const pasteMs = await drawnAfter(win, 'paste', FIELD, text.length)
+    const pasteWall = Date.now() - started
+    expect(await input(win).inputValue()).toBe(text)
+
+    // The window answers: focus moves to «Отправить», and its click sends.
+    const send = win.locator('[data-testid="composer-send"]')
+    await send.focus()
+    await expect(send).toBeFocused()
+    started = Date.now()
+    await send.click()
+    const sendMs = await drawnAfter(win, 'click', BUBBLE, text.length)
+    const sendWall = Date.now() - started
+    // Shown whole: what was pasted is what went.
+    expect(await win.locator(BUBBLE).evaluate((el) => el.textContent)).toBe(text)
+    await expect(win.getByText('ок', { exact: true })).toBeVisible({ timeout: 20000 })
+
+    // ↑ puts it back into the field.
+    await input(win).click()
+    started = Date.now()
+    await input(win).press('ArrowUp')
+    const recallMs = await drawnAfter(win, 'keydown', FIELD, text.length)
+    const recallWall = Date.now() - started
+    expect(await input(win).inputValue()).toBe(text)
+
+    const longest = Math.round(await win.evaluate(() => (globalThis as { __longest?: number }).__longest ?? 0))
+    console.log(
+      `[9b] in the page: paste ${pasteMs} ms, send ${sendMs} ms, ↑ ${recallMs} ms; longest task ${longest} ms. ` +
+        `Test side: ${pasteWall} / ${sendWall} / ${recallWall} ms`
+    )
+    expect(pasteMs, 'Ctrl+V to the drawn field, ms').toBeLessThan(LONG_TEXT_MS)
+    expect(sendMs, 'the click to the drawn bubble, ms').toBeLessThan(LONG_TEXT_MS)
+    expect(recallMs, '↑ to the drawn field, ms').toBeLessThan(LONG_TEXT_MS)
+    expect(longest, 'longest busy stretch of the page, ms').toBeLessThan(LONG_TEXT_MS)
+    await expectAlive(app, win, profile, ev)
+  } finally {
+    await app.close()
+  }
+})
+
+/**
+ * Runs `code` in the window's current page through main. After a renderer
+ * crash Playwright's Page is gone for good ("Target crashed"), while the
+ * webContents lives on with the reloaded page.
+ */
+function inPage<T>(app: ElectronApplication, code: string): Promise<T> {
+  return app.evaluate(
+    ({ BrowserWindow }, js) => BrowserWindow.getAllWindows()[0]!.webContents.executeJavaScript(js),
+    code
+  ) as Promise<T>
+}
+
+const FIELD_VALUE = `document.querySelector('[data-testid="composer-input"]')?.value ?? null`
+const STRIP_TEXT = `document.querySelector('[data-testid="composer-held"]')?.textContent ?? null`
+
+test('сторож перезагрузил зависшее окно: длинный черновик не вставляется сам, плашка предлагает его вставить', async () => {
+  test.setTimeout(120_000)
+  // The watchdog kills a hung page 300 ms after `unresponsive` instead of 15 s.
+  const { app, win } = await launchQclod({
+    script: { steps: [], nextTurn: [{ kind: 'text', text: 'ок' }] },
+    env: { QCLOD_HANG_MS: '300' }
+  })
+  try {
+    await watchProcess(app)
+    const draft = longParagraph(30_000)
+    await pasteText(app, win, draft)
+    await expect.poll(() => input(win).inputValue()).toBe(draft)
+
+    // main hears the page hang (Chromium's own `unresponsive`), waits, kills it, reloads it.
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]!.webContents.emit('unresponsive')
+    })
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as { __greyGone?: string[] }).__greyGone ?? []), { timeout: 20_000 })
+      .toContainEqual(expect.stringMatching(/^(crashed|killed):/))
+
+    // The new page starts with an empty field and the strip; the draft is kept.
+    const strip = 'Окно зависло на длинном тексте. Черновик сохранён — вставить его снова?Вставить'
+    await expect.poll(() => inPage(app, STRIP_TEXT).catch(() => null), { timeout: 20_000 }).toBe(strip)
+    expect(await inPage(app, FIELD_VALUE)).toBe('')
+    // It was told why it was loaded, and took the marker off its address.
+    expect(await inPage(app, 'location.search')).toBe('')
+
+    // A plain Ctrl+R does not lose the draft either: the strip comes back.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.reload())
+    await expect.poll(() => inPage(app, STRIP_TEXT).catch(() => null), { timeout: 20_000 }).toBe(strip)
+    expect(await inPage(app, FIELD_VALUE)).toBe('')
+
+    // «Вставить» puts the whole draft back into the field, and the strip goes.
+    await inPage(app, `document.querySelector('[data-testid="composer-held-insert"]').click()`)
+    await expect.poll(() => inPage(app, FIELD_VALUE)).toBe(draft)
+    expect(await inPage(app, STRIP_TEXT)).toBeNull()
+    expect(await inPage(app, `document.activeElement?.dataset.testid ?? null`)).toBe('composer-input')
+  } finally {
+    await app.close()
+  }
+})

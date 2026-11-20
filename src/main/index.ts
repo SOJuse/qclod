@@ -2,8 +2,9 @@ import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu } from 'elect
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { APP_ID } from '../shared/appId'
+import { AFTER_HANG, RELOAD_PARAM } from '../shared/reloadReason'
 import { createMainWindow, hardenWebContents, offScreen, RENDERER_ENTRY, watchRenderer } from './window'
-import { ErrorLog } from './system/errorLog'
+import { ErrorLog, type ErrorEntry } from './system/errorLog'
 import { ReportThrottle } from './system/reportThrottle'
 import { registerBaseIpc } from './ipc'
 import { registerAgentIpc } from './agentIpc'
@@ -88,10 +89,24 @@ async function confirmAutoAllow(win: BrowserWindow | null): Promise<boolean> {
 }
 let quitting = false
 
-function loadRenderer(win: BrowserWindow): void {
+/** `afterHang`: the watchdog killed the hung page; the new one is told so (shared/reloadReason.ts). */
+function loadRenderer(win: BrowserWindow, afterHang = false): void {
+  const query: Record<string, string> = afterHang ? { [RELOAD_PARAM]: AFTER_HANG } : {}
   const devServer = process.env['ELECTRON_RENDERER_URL']
-  if (devServer) void win.loadURL(devServer)
-  else void win.loadFile(RENDERER_ENTRY)
+  if (devServer) {
+    const url = new URL(devServer)
+    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value)
+    void win.loadURL(url.toString())
+  } else void win.loadFile(RENDERER_ENTRY, afterHang ? { query } : undefined)
+}
+
+/**
+ * The renderer watchdog for this window (window.ts). e2e only: QCLOD_HANG_MS
+ * shortens the wait before a hung page is killed.
+ */
+function watchWindow(win: BrowserWindow, log: (e: ErrorEntry) => void): void {
+  const hangMs = __QCLOD_TEST_SEAMS__ ? Number(process.env['QCLOD_HANG_MS']) || undefined : undefined
+  watchRenderer(win.webContents, { log, hangMs, reloadAfterHang: () => loadRenderer(win, true) })
 }
 
 // Tests point the app at a throwaway profile so runs cannot affect each other
@@ -385,7 +400,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.updateRestart, () => updates?.restart() ?? false)
 
   mainWindow = createMainWindow()
-  watchRenderer(mainWindow.webContents, { log: (e) => errorLog.write(e) })
+  watchWindow(mainWindow, (e) => errorLog.write(e))
   loadRenderer(mainWindow)
 
   const tray = headless
@@ -430,7 +445,7 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createMainWindow()
-      watchRenderer(mainWindow.webContents, { log: (e) => errorLog.write(e) })
+      watchWindow(mainWindow, (e) => errorLog.write(e))
       loadRenderer(mainWindow)
     }
   })

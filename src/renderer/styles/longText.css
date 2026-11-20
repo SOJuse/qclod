@@ -1,0 +1,14 @@
+/* Inter's own Cyrillic file from its @fontsource package, here also for the
+   space and the no-break space, which the package's face leaves to the Latin
+   file. A long Russian text set in it (--font-long-cyrillic) keeps its words
+   and spaces in one file: Blink then shapes it in a few runs instead of two
+   per word (ui/longText.ts). The glyphs are Inter's either way; only long
+   text in the field and the bubble uses it, at the regular weight (no
+   font-weight descriptor: the face is the normal one). */
+@font-face {
+  font-family: 'Inter Long Cyrillic';
+  font-style: normal;
+  font-display: swap;
+  src: url(../../../node_modules/@fontsource-variable/inter/files/inter-cyrillic-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0020, U+00A0, U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}

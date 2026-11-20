@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { PendingAttachment } from '../input/attachments'
 import { UI_KEY, loadUi, serializeUi } from './uiPersist'
+import { startHeldDrafts } from './heldDrafts'
 import type {
   AppSettings,
   CommandInfo,
@@ -242,6 +243,8 @@ function ui(): Storage | null {
 
 /** What the window held before it was reloaded; a tab that is gone is dropped by setTabs. */
 const restored = loadUi(ui())
+/** After the watchdog's reload a long draft is held back, not put into the field (heldDrafts.ts). */
+const restoredDrafts = startHeldDrafts(restored.draftByTab, ui())
 
 export const useAppStore = create<AppState>((set) => ({
   settings: null,
@@ -255,7 +258,7 @@ export const useAppStore = create<AppState>((set) => ({
   panelByTab: {},
   panelRevByTab: {},
   busySinceByTab: {},
-  draftByTab: restored.draftByTab,
+  draftByTab: restoredDrafts,
   attachmentsByTab: restored.attachmentsByTab,
   fileIndexByTab: {},
   commandsByTab: {},

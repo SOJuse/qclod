@@ -792,6 +792,8 @@ export function createFakeSdk(script = {}) {
 
   /** false: a CLI without msg_lifecycle_v1 — no frames, no receipt, no cancel. */
   const lifecycle = script.lifecycle !== false
+  /** false: a receipt, but no interrupt_cancel_queued_v1 — the flag is not heard. */
+  const cancelsOnInterrupt = script.cancelQueuedOnInterrupt !== false
   /** Messages sent mid-turn, waiting for the next step boundary: `{ input, uuid }`. */
   const pending = []
   /** The turn being played, or null between turns: `{ starter, folded, aborted }`. */
@@ -904,7 +906,7 @@ export function createFakeSdk(script = {}) {
         ? {
             capabilities: [
               'interrupt_receipt_v1',
-              'interrupt_cancel_queued_v1',
+              ...(cancelsOnInterrupt ? ['interrupt_cancel_queued_v1'] : []),
               'interrupt_send_now_v1',
               'msg_lifecycle_v1'
             ]
@@ -1149,6 +1151,7 @@ export function createFakeSdk(script = {}) {
       abortTurn()
       if (!lifecycle) return undefined
       const waiting = waitingUuids()
+      if (!cancelsOnInterrupt) return { stillQueued: waiting }
       if (!opts?.cancelQueued) return { stillQueued: waiting, cancelled: [] }
       for (const uuid of waiting) cancelAsync(uuid)
       return { stillQueued: [], cancelled: waiting }

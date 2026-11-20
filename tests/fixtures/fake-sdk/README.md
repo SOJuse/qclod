@@ -90,6 +90,7 @@ for await (const message of driver.messages) { /* ... */ }
 | `interrupt()` | ход кончается `result {subtype:'error_during_execution', is_error:true, terminal_reason:'aborted_tools'}`, затем `cancelled` начавшему его; очередь выполнится после. Ответ `{stillQueued: [uuid…], cancelled: []}` |
 | `interrupt({cancelQueued:true})` | каждому из очереди — `cancelled`; ответ `{stillQueued: [], cancelled: [uuid…]}` |
 | `cancelAsyncMessage(uuid)` / `cancelQueued(uuid)` | в очереди — `cancelled` и `true`; иначе `false` |
+| `cancelQueuedOnInterrupt: false` | CLI с `interrupt_receipt_v1`, но без `interrupt_cancel_queued_v1` (в `capabilities` его нет): `interrupt()` не слышит `cancelQueued`, ответ `{stillQueued: [uuid…]}` **без поля `cancelled`**; очередь выполнится после прерывания, если её не снять по одному |
 | `lifecycle: false` | `claude_code_version: '2.1.200'`, без `capabilities`, без кадров; `cancelQueued` и `cancelAsyncMessage` — `null`, `interrupt` — `undefined`; сообщения всё равно вливаются |
 | `phoneCancel: {afterMs, uuid}` | кадр `cancelled` с чужим uuid через `afterMs` после первого `send` с uuid |
 

@@ -526,15 +526,18 @@ describe('sdkDriver: отмена и квитанция прерывания', (
     await driver.dispose()
   })
 
-  test('interrupt: старый CLI без ответа — undefined; cancelled по умолчанию пуст', async () => {
+  test('interrupt: старый CLI без ответа — undefined; квитанция без cancelled — без поля', async () => {
     mockQuery()
     const driver = await createSdkDriver(allowAll())
     expect(await driver.interrupt()).toBeUndefined()
     await driver.dispose()
 
+    // interrupt_receipt_v1 without interrupt_cancel_queued_v1: not the same as «none cancelled».
     mockQuery({ interrupt: async () => ({ still_queued: ['a'] }) })
     const d2 = await createSdkDriver(allowAll())
-    expect(await d2.interrupt()).toEqual({ stillQueued: ['a'], cancelled: [] })
+    const receipt = await d2.interrupt({ cancelQueued: true })
+    expect(receipt).toEqual({ stillQueued: ['a'] })
+    expect(receipt).not.toHaveProperty('cancelled')
     await d2.dispose()
   })
 })

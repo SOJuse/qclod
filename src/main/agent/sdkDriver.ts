@@ -177,7 +177,8 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
     },
 
     // At runtime interrupt() takes { cancelQueued } and answers
-    // { still_queued, cancelled? }; sdk.d.ts types neither. Old CLIs answer nothing.
+    // { still_queued, cancelled? }; sdk.d.ts types neither. Old CLIs answer nothing;
+    // one without interrupt_cancel_queued_v1 answers without `cancelled`.
     async interrupt(opts?: { cancelQueued?: boolean }): Promise<InterruptReceipt | undefined> {
       const raw = await (
         session as unknown as {
@@ -187,7 +188,9 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
         }
       ).interrupt(opts?.cancelQueued ? { cancelQueued: true } : undefined)
       if (!raw || !Array.isArray(raw.still_queued)) return undefined
-      return { stillQueued: raw.still_queued, cancelled: raw.cancelled ?? [] }
+      return Array.isArray(raw.cancelled)
+        ? { stillQueued: raw.still_queued, cancelled: raw.cancelled }
+        : { stillQueued: raw.still_queued }
     },
 
     async setPermissionMode(mode: string): Promise<void> {

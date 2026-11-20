@@ -146,6 +146,11 @@ export interface FakeScript {
   remoteControl?: FakeRemoteControl
   /** false: a CLI without msg_lifecycle_v1 (2.1.200) — no frames, no receipt, cancel gives null. */
   lifecycle?: boolean
+  /**
+   * false: a CLI with interrupt_receipt_v1 but not interrupt_cancel_queued_v1 —
+   * interrupt() ignores `cancelQueued`, its receipt has `stillQueued` and no `cancelled`.
+   */
+  cancelQueuedOnInterrupt?: boolean
   /** A `cancelled` frame for a message that is not ours, `afterMs` after the first send with a uuid. */
   phoneCancel?: { afterMs: number; uuid: string }
   canUseTool?: (
@@ -180,7 +185,7 @@ export interface FakeDriver {
   cancelQueued(uuid: string): Promise<boolean | null>
   /** The SDK's name for what cancelQueued does: true — taken off the queue, false — too late, null — no lifecycle. */
   cancelAsyncMessage(uuid: string): Promise<boolean | null>
-  interrupt(opts?: { cancelQueued?: boolean }): Promise<{ stillQueued: string[]; cancelled: string[] } | undefined>
+  interrupt(opts?: { cancelQueued?: boolean }): Promise<{ stillQueued: string[]; cancelled?: string[] } | undefined>
   setPermissionMode(mode: string): Promise<void>
   supportedCommands(): Promise<
     Array<{ name: string; description: string; argumentHint: string; builtin?: boolean }>

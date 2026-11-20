@@ -1403,6 +1403,26 @@ describe('createFakeSdk: очередь команд CLI', () => {
     expect(tail.find(isType('result'))!['queued_turn_count']).toBe(1)
   })
 
+  test('cancelQueuedOnInterrupt false: квитанция без cancelled, флаг не слышен, очередь выполнится', async () => {
+    const driver = createFakeSdk({
+      steps: [],
+      turns: [three, [{ kind: 'text', text: 'потом' }]],
+      cancelQueuedOnInterrupt: false
+    })
+    const r = reader(driver)
+    driver.send(said('A'), { uuid: 'A' })
+    const head = await r.until(isType('assistant'))
+    const init = head.find((m) => m['type'] === 'system' && m['subtype'] === 'init')!
+    expect(init['capabilities']).not.toContain('interrupt_cancel_queued_v1')
+    expect(init['capabilities']).toContain('interrupt_receipt_v1')
+    driver.send(said('B'), { uuid: 'B' })
+    const receipt = await driver.interrupt({ cancelQueued: true })
+    expect(receipt).toEqual({ stillQueued: ['B'] })
+    expect(receipt).not.toHaveProperty('cancelled')
+    const tail = await r.until(frameIs('completed', 'B'))
+    expect(shape(tail)).toContain('started:B')
+  })
+
   test('priority now прерывает ход и начинает новый', async () => {
     const driver = createFakeSdk({
       steps: [],

@@ -261,8 +261,17 @@ export class AgentSession {
   private queuedTurns = 0
   /** One more every time the outbox is handed over: a cancel answered after that is not ours. */
   private outboxEpoch = 0
-  /** Taken back for «Отправить сейчас»: their `cancelled` frame neither lets the tab go nor counts as unread. */
-  private readonly resending = new Set<string>()
+  /**
+   * Being taken back for «Отправить сейчас», each with the CLI's answer to
+   * come: their `cancelled` frame neither lets the tab go nor counts as
+   * unread. A «Стоп» pressed meanwhile waits for that answer too.
+   */
+  private readonly resending = new Map<
+    string,
+    { entry: OutboxEntry; answer: Promise<boolean | null> }
+  >()
+  /** One more for every «Стоп»: a send-now answered after one is not sent again. */
+  private stops = 0
   /**
    * How many «Стоп» are on their way. Meanwhile a message goes straight to
    * the agent: the queue was handed back when Stop was pressed, and a message
@@ -882,11 +891,23 @@ export class AgentSession {
     const driver = this.driver
     if (!driver) return []
     const stopped = this.turn
+    this.stops += 1
     // What is on the strip now is what Stop hands back. Marked before
     // anything is awaited: their `cancelled` frames can come before the
     // receipt does, and must read as asked for, not as messages a stopped
-    // turn swallowed. One already being taken back answers for itself.
-    const onStrip = this.outbox.pending().filter((e) => !e.requestedCancel)
+    // turn swallowed. One being taken back by «Отменить» answers for itself.
+    // One being taken back for «Отправить сейчас» is not sent again: once the
+    // CLI answers, it goes back with the rest (its `cancelled` frame may have
+    // taken it off the strip already).
+    const resending = [...this.resending.values()]
+    const resent = new Set(resending.map((r) => r.entry))
+    const strip = this.outbox.pending()
+    const onStrip = strip.filter((e) => !e.requestedCancel)
+    // In the strip's order; one already off it goes last.
+    const handing = [
+      ...strip.filter((e) => !e.requestedCancel || resent.has(e)),
+      ...[...resent].filter((e) => !strip.includes(e))
+    ]
     const before = new Map(onStrip.map((e) => [e.uuid, e.state]))
     for (const entry of onStrip) {
       entry.requestedCancel = true
@@ -899,10 +920,19 @@ export class AgentSession {
     let cancelled: Set<string>
     try {
       const receipt = await this.interruptSafely(driver, { cancelQueued: true })
-      // A CLI with no receipt is asked about each message in turn.
-      cancelled = receipt
-        ? new Set(receipt.cancelled)
-        : await this.cancelEach(driver, onStrip)
+      cancelled = new Set(receipt?.cancelled ?? [])
+      // A CLI with no receipt, or one that cannot cancel with it (no
+      // `cancelled` in it, or messages still in `still_queued`), is asked
+      // about each of the rest in turn: left alone, it runs them after Stop.
+      const rest =
+        receipt?.cancelled === undefined
+          ? onStrip
+          : onStrip.filter((e) => !cancelled.has(e.uuid) && receipt.stillQueued.includes(e.uuid))
+      for (const uuid of await this.cancelEach(driver, rest)) cancelled.add(uuid)
+      const answers = await Promise.all(resending.map((r) => r.answer))
+      resending.forEach((r, i) => {
+        if (answers[i] === true) cancelled.add(r.entry.uuid)
+      })
     } finally {
       this.stopsInFlight -= 1
     }
@@ -911,17 +941,18 @@ export class AgentSession {
     // back from a strip that was handed to a successor meanwhile.
     const returned: UserInput[] = []
     if (epoch === this.outboxEpoch) {
-      for (const entry of onStrip) {
+      for (const entry of handing) {
         if (cancelled.has(entry.uuid)) {
           this.outbox.remove(entry.uuid)
           returned.push(withoutCopiedBytes(entry.input))
         } else if (this.outbox.get(entry.uuid) === entry) {
           // The CLI kept it, or the agent read it first: it is as it was.
           entry.requestedCancel = false
-          this.outbox.mark(entry.uuid, before.get(entry.uuid)!)
+          const was = before.get(entry.uuid)
+          if (was) this.outbox.mark(entry.uuid, was)
         }
       }
-      if (onStrip.length > 0) this.emitQueue()
+      if (handing.length > 0) this.emitQueue()
     }
     // A question asked while the interrupt was on its way belongs to the
     // turn being stopped and is refused with it; left open, it would hold a
@@ -976,7 +1007,8 @@ export class AgentSession {
    * «Отправить сейчас»: taken back and sent again with `priority: 'now'`,
    * under a new uuid — the strip shows it as a new entry. A CLI that cannot
    * take it back has it queued already: the turn is stopped, and it goes
-   * first. False when it is not on the strip, or the agent has read it.
+   * first. False when it is not on the strip, the agent has read it, or a
+   * «Стоп» came before the CLI answered (that Stop hands it back).
    */
   async sendQueuedNow(id: string): Promise<boolean> {
     const entry = this.outbox.get(id)
@@ -986,14 +1018,19 @@ export class AgentSession {
     // Its `cancelled` frame is our doing, not a stopped turn's.
     entry.requestedCancel = true
     const epoch = this.outboxEpoch
-    this.resending.add(id)
+    const stops = this.stops
+    const asked = this.cancelSafely(driver, id)
+    this.resending.set(id, { entry, answer: asked })
     let answer: boolean | null
     try {
-      answer = await this.cancelSafely(driver, id)
+      answer = await asked
     } finally {
       this.resending.delete(id)
     }
     if (epoch !== this.outboxEpoch || this.driver !== driver) return false
+    // «Стоп» pressed meanwhile wins: it hands the message back to the input
+    // field, or leaves it as it was — either way it is not sent again.
+    if (this.stops !== stops) return false
     if (answer === true) {
       // Off and on again in one go, so the tab is not let go in between.
       this.outbox.remove(id)

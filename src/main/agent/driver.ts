@@ -65,7 +65,11 @@ export interface SendOptions {
 }
 export interface InterruptReceipt {
   stillQueued: string[]
-  cancelled: string[]
+  /**
+   * Absent — this CLI has a receipt but cannot cancel on interrupt
+   * (no interrupt_cancel_queued_v1): not the same as «nothing cancelled».
+   */
+  cancelled?: string[]
 }
 
 export interface RemoteLink {

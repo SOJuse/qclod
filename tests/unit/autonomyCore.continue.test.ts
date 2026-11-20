@@ -249,6 +249,37 @@ describe('AutonomyCore: лимиты', () => {
     ])
   })
 
+  test('«Стоп» (personActed) посреди хода с rejected: результат с ошибкой ожидания не начинает', () => {
+    const h = harness()
+    h.core.handle({ type: 'processUp', carried: 0 })
+    h.core.handle({ type: 'status', status: 'busy' })
+    sdk(h, rejected(h.clock.now() + HOUR))
+    sdk(h, rateLimitedAnswer())
+    h.core.handle({ type: 'personActed' })
+    sdk(h, result(true))
+    h.core.handle({ type: 'status', status: 'idle' })
+    expect(h.core.view.limitWait).toBeNull()
+    h.clock.advance(3 * HOUR)
+    expect(continues(h)).toEqual([])
+  })
+
+  test('успешный ход между лимитами обнуляет счёт подряд: пять лимитов — пять продолжений', () => {
+    const h = harness()
+    h.core.handle({ type: 'processUp', carried: 0 })
+    for (let i = 0; i < LIMIT_CONTINUES_MAX + 2; i++) {
+      hitLimit(h)
+      h.clock.advance(2 * HOUR)
+      expect(continues(h)).toHaveLength(i + 1)
+      // The «продолжай» turn works for hours before the next limit.
+      h.core.handle({ type: 'status', status: 'busy' })
+      sdk(h, result(false))
+      h.core.handle({ type: 'status', status: 'idle' })
+      h.clock.advance(5 * HOUR)
+    }
+    expect(h.core.view.gaveUp).toBeNull()
+    expect(h.notices().map((n) => n.notice.kind)).not.toContain('limitGaveUp')
+  })
+
   test('четвёртый лимит подряд без человека — limitGaveUp; после personActed снова ждёт', () => {
     const h = harness()
     h.core.handle({ type: 'processUp', carried: 0 })

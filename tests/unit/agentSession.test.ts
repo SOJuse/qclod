@@ -4097,6 +4097,18 @@ describe('AgentSession: автономность', () => {
     }
   })
 
+  test('«Стоп» человека — personActed', async () => {
+    const { session } = makeSession({ steps: [], nextTurn: [{ kind: 'thinking', ms: 1000 }] })
+    const inputs = listen(session)
+    await session.start()
+    session.send({ text: 'работай', attachments: [] })
+    const before = acted(inputs).length
+    await session.interrupt()
+    expect(acted(inputs)).toHaveLength(before + 1)
+    await settle(session)
+    await session.dispose()
+  })
+
   test('пузырь с телефона — personActed', async () => {
     const { session, driver } = makeSession({ steps: [], nextTurn: [{ kind: 'text', text: 'ок' }] })
     const inputs = listen(session)

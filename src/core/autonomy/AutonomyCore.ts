@@ -176,6 +176,8 @@ export class AutonomyCore {
         break
       }
       case 'personActed':
+        // A message, an answer or «Стоп»: how this turn ends is theirs, not a limit to wait out.
+        this.turn = { rejected: null, errored: false }
         this.continueOnUp = false
         if (!this.alive) this.personWhileDown = true
         this.continuesWithoutPerson = 0
@@ -387,6 +389,9 @@ export class AutonomyCore {
         // A rejection the turn still got through (overage) is no limit.
         if (message['is_error'] === true && (rejected !== null || errored)) {
           this.startLimitWait(rejected?.resetsAt ?? null, rejected?.weekly ?? false)
+        } else if (message['is_error'] !== true) {
+          // Work got done: the limits around it are not «in a row» (B16 — no fuses).
+          this.continuesWithoutPerson = 0
         }
         return
       }

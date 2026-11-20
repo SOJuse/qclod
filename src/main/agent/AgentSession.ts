@@ -1001,6 +1001,8 @@ export class AgentSession {
    */
   async interrupt(): Promise<UserInput[]> {
     if (!this.driver) return []
+    // The person's own «Стоп»: a turn they ended is no limit to wait out and carry on after.
+    this.feedAutonomy({ type: 'personActed' })
     const stopped = this.turn
     this.cancelWaits()
     const returned = await this.queue.stop()

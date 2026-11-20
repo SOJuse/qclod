@@ -29,6 +29,7 @@ import {
   sanitizeInput,
   sanitizeOverrides,
   sanitizePlanDecision,
+  sanitizeQuestionNotes,
   sanitizeTabPatch
 } from './tabs/sanitize'
 
@@ -280,27 +281,26 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     broker.answer(requestId, sanitizeAnswer(answer))
   })
 
-  // The fourth argument, the comments on the chosen options, is taken and not
-  // used yet: the session learns of them in задача 9 (sanitizeQuestionNotes).
+  // The fourth argument is the comments on the chosen options; which of them
+  // belong to a chosen option is the session's call, which knows the options.
   ipcMain.handle(
     CHANNELS.questionAnswer,
-    (_e, id: unknown, toolUseId: unknown, answers: unknown, _notes: unknown) => {
+    (_e, id: unknown, toolUseId: unknown, answers: unknown, notes: unknown) => {
       if (!isString(id) || !isString(toolUseId)) return
       const clean = sanitizeQuestionAnswers(answers)
       // Nothing usable is no answer: the card stays open rather than sending an empty one.
       if (Object.keys(clean).length === 0) return
-      manager.get(id)?.answerQuestion(toolUseId, clean)
+      manager.get(id)?.answerQuestion(toolUseId, clean, sanitizeQuestionNotes(notes))
     }
   )
 
-  // The window sends a whole decision; until задача 9 the session hears only
-  // whether it was approved. Anything but a literal true is not an approval,
-  // and an unusable decision is no answer: the card stays open.
+  // Anything but a literal true is not an approval, and an unusable decision
+  // is no answer: the card stays open.
   ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, given: unknown) => {
     if (!isString(id) || !isString(requestId)) return
     const decision = sanitizePlanDecision(given)
     if (decision === null) return
-    manager.get(id)?.answerPlan(requestId, decision.approve)
+    return manager.get(id)?.answerPlan(requestId, decision)
   })
 
   // — этап 2: заглушки до задач 2 и 9. Their arguments (cwd, sessionId, title,

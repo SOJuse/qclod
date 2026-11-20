@@ -268,7 +268,8 @@ app.whenReady().then(async () => {
         request.auto === true
       ),
     confirmBypass: () => confirmBypass(mainWindow),
-    confirmAutoAllow: () => confirmAutoAllow(mainWindow)
+    confirmAutoAllow: () => confirmAutoAllow(mainWindow),
+    onClosed: (id) => broker.clearSession(id)
   })
 
   // Under the fixture the past conversations come from the environment too,

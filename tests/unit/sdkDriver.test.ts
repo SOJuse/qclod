@@ -142,6 +142,31 @@ describe('sdkDriver: canUseTool', () => {
     })
     await driver.dispose()
   })
+
+  test('deny без message — «Отклонено в Qclod», с ним — его текст', async () => {
+    const query = mockQuery()
+    let message: string | undefined
+    const driver = await createSdkDriver(
+      driverOptions(async () => (message === undefined ? { behavior: 'deny' } : { behavior: 'deny', message }))
+    )
+    const context = { toolUseID: 'toolu_4', signal: new AbortController().signal }
+
+    await expect(query.canUseTool('Bash', { command: 'ls' }, context)).resolves.toEqual({
+      behavior: 'deny',
+      message: 'Отклонено в Qclod'
+    })
+    message = 'сначала тесты'
+    await expect(query.canUseTool('Bash', { command: 'ls' }, context)).resolves.toEqual({
+      behavior: 'deny',
+      message: 'сначала тесты'
+    })
+    message = ''
+    await expect(query.canUseTool('Bash', { command: 'ls' }, context)).resolves.toEqual({
+      behavior: 'deny',
+      message: 'Отклонено в Qclod'
+    })
+    await driver.dispose()
+  })
 })
 
 const USAGE = 'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET'

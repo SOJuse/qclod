@@ -11,6 +11,7 @@ import type {
   PanelSnapshot,
   PermissionAnswer,
   PermissionRequest,
+  PlanDecision,
   RemoteInfo,
   RibbonChange,
   RibbonItem,
@@ -32,6 +33,17 @@ import { displayTarget } from './permissionStore'
 import { locateAgent } from '../setup/findAgent'
 import { classifyStartFailure, LOGIN_NEEDED_TEXT } from './startFailure'
 import { sdkPermissionMode } from '../../shared/types'
+import {
+  PLAN_FOLLOW_UP,
+  askedQuestions,
+  denialText,
+  encodeAnswers,
+  encodeQuestionAnswer,
+  notesForChoices,
+  notesModeFor,
+  planEditModeFor,
+  type AskedQuestion
+} from './questionAnswer'
 
 /** How a notice names a mode; the window has its own, longer labels. */
 const MODE_NAMES: Record<string, string> = {
@@ -154,14 +166,9 @@ export function seedFromTranscript(messages: unknown[]): SessionSeed {
   return { builder, collector }
 }
 
-/** The texts of an AskUserQuestion's questions — the keys its answers go under. */
-function questionTexts(input: Record<string, unknown>): string[] {
-  const questions = input['questions']
-  if (!Array.isArray(questions)) return []
-  return questions.flatMap((q: unknown) => {
-    const text = typeof q === 'object' && q !== null ? (q as Record<string, unknown>)['question'] : undefined
-    return typeof text === 'string' ? [text] : []
-  })
+/** How the user allowed a tool, as its card shows it. */
+function scopeOf(answer: PermissionAnswer): 'once' | 'always' | 'session' {
+  return answer.forSession ? 'session' : answer.remember ? 'always' : 'once'
 }
 
 type ChangeListener = (changes: RibbonChange[]) => void
@@ -220,8 +227,10 @@ export class AgentSession {
   >()
   private readonly pendingPlans = new Map<
     string,
-    { resolve: (answer: PermissionAnswer) => void; turn: number }
+    { input: Record<string, unknown>; resolve: (answer: PermissionAnswer) => void; turn: number }
   >()
+  /** `claude_code_version` from system/init: how a card's comments and edits can reach this CLI. */
+  private cliVersion: string | null = null
   /** Permission questions still waiting on the user; aborting one refuses it. */
   private readonly openPermissions = new Map<string, { controller: AbortController; turn: number }>()
   /**
@@ -493,24 +502,36 @@ export class AgentSession {
    * `«Question» — answer` per question, just the answer for a single question —
    * which is what the user would have typed anyway. A stopped question is dropped
    * from `pendingQuestions` the moment it is stopped, so its card lands here.
+   *
+   * `notes` are the user's comments on the chosen options. One goes with an
+   * answer that is a choice (one option or several); an answer in the user's
+   * own words is the comment already. A CLI that reads `annotations` gets them
+   * there, an older one as «Вариант — комментарий» in the answer — and so does
+   * the message.
    */
-  answerQuestion(toolUseId: string, given: Record<string, string>): void {
+  answerQuestion(
+    toolUseId: string,
+    given: Record<string, string>,
+    notes: Record<string, string> = {}
+  ): void {
     const waiting = this.pendingQuestions.get(toolUseId)
     // The window only says which choice goes with which question; what the
     // questions are comes from here. Foreign keys are dropped, and a card
     // with a question left unanswered stays open and the agent stays held.
     const card = this.builder.items.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)
-    const asked = waiting
-      ? questionTexts(waiting.input)
+    const asked: AskedQuestion[] = waiting
+      ? askedQuestions(waiting.input)
       : card && card.kind === 'question'
-        ? card.questions.map((q) => q.question)
+        ? card.questions.map((q) => ({ question: q.question, labels: q.options.map((o) => o.label) }))
         : []
-    if (asked.length === 0 || !asked.every((q) => typeof given[q] === 'string')) return
-    const answers = Object.fromEntries(asked.map((q) => [q, given[q]!]))
-    this.emit(this.builder.answerQuestion(toolUseId, answers))
+    if (asked.length === 0 || !asked.every((q) => typeof given[q.question] === 'string')) return
+    const answers = Object.fromEntries(asked.map((q) => [q.question, given[q.question]!]))
+    const kept = notesForChoices(asked, answers, notes)
+    // The card keeps the labels as they are, and the comments beside them.
+    this.emit(this.builder.answerQuestion(toolUseId, answers, { notes: kept }))
 
     if (!waiting) {
-      const entries = Object.entries(answers)
+      const entries = Object.entries(encodeAnswers(answers, kept, 'inline').answers)
       const text =
         entries.length === 1
           ? entries[0]![1]
@@ -522,7 +543,7 @@ export class AgentSession {
     this.leaveWait()
     waiting.resolve({
       behavior: 'allow',
-      updatedInput: { ...waiting.input, answers }
+      updatedInput: encodeQuestionAnswer(waiting.input, answers, kept, notesModeFor(this.cliVersion))
     })
   }
 
@@ -542,8 +563,14 @@ export class AgentSession {
    *
    * Approving also leaves plan mode, because staying in it would stop the
    * agent from doing the very thing that was just approved.
+   *
+   * A rejection's comment is the refusal the agent reads. An approved plan
+   * the user edited goes as ExitPlanMode's `updatedInput.plan` to a CLI known
+   * to carry it out, and to an older one as a message after a plain approval;
+   * an approval's comment follows as a message too. An edit that is empty or
+   * changes nothing is a plain approval.
    */
-  async answerPlan(requestId: string, approve: boolean): Promise<void> {
+  async answerPlan(requestId: string, decision: PlanDecision): Promise<void> {
     // (4) Nothing is marked answered until there is something to answer: a
     // card with no pending plan behind it must not look settled.
     const waiting = this.pendingPlans.get(requestId)
@@ -551,15 +578,34 @@ export class AgentSession {
     this.pendingPlans.delete(requestId)
     this.leaveWait()
 
-    this.emit(this.builder.resolvePlan(requestId, approve ? 'approved' : 'rejected'))
-    if (!approve) {
-      waiting.resolve({ behavior: 'deny' })
+    const comment = decision.comment || undefined
+    if (!decision.approve) {
+      this.emit(this.builder.resolvePlan(requestId, 'rejected', comment ? { comment } : {}))
+      waiting.resolve(comment ? { behavior: 'deny', message: comment } : { behavior: 'deny' })
       return
     }
 
+    const asked = typeof waiting.input['plan'] === 'string' ? waiting.input['plan'] : ''
+    const plan = decision.plan
+    const edited = plan !== undefined && plan.trim() !== '' && plan !== asked ? plan : undefined
+    this.emit(
+      this.builder.resolvePlan(requestId, 'approved', {
+        ...(comment ? { comment } : {}),
+        ...(edited !== undefined ? { edited: true as const, plan: edited } : {})
+      })
+    )
+
     // The mode must be in place before the tool runs, not racing it.
     await this.setPermissionMode('acceptEdits')
-    waiting.resolve({ behavior: 'allow' })
+    const inInput = edited !== undefined && planEditModeFor(this.cliVersion) === 'updatedInput'
+    waiting.resolve(
+      inInput ? { behavior: 'allow', updatedInput: { ...waiting.input, plan: edited } } : { behavior: 'allow' }
+    )
+    // What the tool's answer did not carry, the agent reads next.
+    const followUp = [edited !== undefined && !inInput ? PLAN_FOLLOW_UP + edited : '', comment ?? '']
+      .filter((part) => part !== '')
+      .join('\n\n')
+    if (followUp) this.send({ text: followUp, attachments: [] })
   }
 
   /** Something Qclod itself needs to say — a crash, a session that would not resume. */
@@ -1589,6 +1635,7 @@ export class AgentSession {
       this.cliQueue = true
       if (this.outbox.size > 0) this.emitQueue()
     }
+    if (typeof m['claude_code_version'] === 'string') this.cliVersion = m['claude_code_version']
     const id = typeof m['session_id'] === 'string' ? m['session_id'] : null
     if (id && id !== this.session) {
       this.session = id
@@ -1663,10 +1710,14 @@ export class AgentSession {
     if (this.mode === 'autoAllow') {
       if (opts.signal?.aborted) return { behavior: 'deny' }
       try {
-        return await ask(
+        const answer = await ask(
           { requestId, tabId: this.options.tabId, toolName, target, input, auto: true },
           opts.signal ?? new AbortController().signal
         )
+        // A saved deny is the user's refusal too, and is read as one.
+        return answer.behavior === 'deny' && !opts.signal?.aborted
+          ? { behavior: 'deny', message: denialText(answer.message) }
+          : answer
       } catch {
         return { behavior: 'deny' }
       }
@@ -1689,6 +1740,7 @@ export class AgentSession {
     this.enterWait()
 
     let answer: PermissionAnswer
+    let failed = false
     try {
       answer = await ask(
         { requestId, tabId: this.options.tabId, toolName, target, input },
@@ -1697,11 +1749,13 @@ export class AgentSession {
     } catch {
       // A gate that failed is not a gate that said yes.
       answer = { behavior: 'deny' }
+      failed = true
     } finally {
       opts.signal?.removeEventListener('abort', cancel)
     }
     // An answer to a question nobody waits on any more is no answer.
-    if (controller.signal.aborted) answer = { behavior: 'deny' }
+    const abandoned = controller.signal.aborted
+    if (abandoned) answer = { behavior: 'deny' }
 
     // Still open unless «Стоп» already closed it — and marked its card.
     if (this.openPermissions.get(requestId) === wait) {
@@ -1713,7 +1767,19 @@ export class AgentSession {
           : answer.behavior === 'allow'
             ? 'allowed'
             : 'denied'
-      this.emit(this.builder.resolvePermission(requestId, state))
+      // The card says how it was allowed, or why it was refused.
+      const extra =
+        state === 'allowed'
+          ? { scope: scopeOf(answer) }
+          : state === 'denied' && answer.message
+            ? { reason: answer.message }
+            : {}
+      this.emit(this.builder.resolvePermission(requestId, state, extra))
+    }
+    // The user's refusal, with their reason, in words the agent cannot take
+    // for a remark: probe 05b saw a bare reason walked around with another tool.
+    if (answer.behavior === 'deny' && !failed && !abandoned) {
+      return { behavior: 'deny', message: denialText(answer.message) }
     }
     return answer
   }
@@ -1748,7 +1814,8 @@ export class AgentSession {
         resolve(answer)
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
-      this.pendingPlans.set(requestId, { resolve: settle, turn: this.turn })
+      // The input is kept: an edited plan goes back as the same call's input.
+      this.pendingPlans.set(requestId, { input, resolve: settle, turn: this.turn })
     })
   }
 

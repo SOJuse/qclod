@@ -5,11 +5,13 @@ import { join } from 'node:path'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 import { TabController } from '../../src/main/tabs/TabController'
 import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
+import { PermissionBroker } from '../../src/main/agent/permissions'
 import type { AgentDriver } from '../../src/main/agent/driver'
+import { toPermissionContext } from '../../src/main/agent/permissionContext'
 import { TABS_FILE } from '../../src/main/store/tabsStore'
 import { EMPTY_PANEL } from '../../src/main/agent/panelData'
 import { LOGIN_NEEDED_TEXT } from '../../src/main/agent/startFailure'
-import type { PanelEvent, RibbonEvent, StatusEvent, TabState } from '../../src/shared/types'
+import type { PanelEvent, PermissionRequest, RibbonEvent, StatusEvent, TabState } from '../../src/shared/types'
 import { readTranscript } from '../../src/main/agent/transcript'
 import { resumedSession, writeTranscript } from '../fixtures/transcript.mjs'
 import { useAppStore } from '../../src/renderer/state/useAppStore'
@@ -45,6 +47,10 @@ interface Harness {
   }>
   /** Every driver whose resume was made to fail, in order. */
   dead: Array<{ readonly sent: unknown[] }>
+  /** The permission broker as the app wires it: cards in the tab, rules cleared when its session closes. */
+  broker: PermissionBroker
+  /** Every question the broker put to the person. */
+  asked: PermissionRequest[]
   /**
    * Sends one message on a tab and waits for the answer. The CLI says nothing
    * — not even its session id — until it is spoken to.
@@ -116,6 +122,8 @@ function makeController(
      * what this returns for its folder; undefined, it works. Read on every start.
      */
     freshFailsOnSend?: (cwd: string) => string | undefined
+    /** Permission questions go to `broker` instead of being denied. */
+    brokered?: boolean
   } = {}
 ): Harness {
   const changed: TabState[][] = []
@@ -130,13 +138,25 @@ function makeController(
     return driver
   }
 
+  const asked: PermissionRequest[] = []
+  const broker = new PermissionBroker({
+    loadRules: () => [],
+    saveRules: () => undefined,
+    ask: (request) => {
+      asked.push(request)
+      manager.get(request.tabId)?.showPermissionCard(request.requestId, request.toolName, request.target)
+    }
+  })
   const manager = new AgentSessionManager({
     getAgentPath: () => 'claude',
     resolveAgent: () => {
       if (options.agentMissing) throw new Error('Агент не найден: claude')
       return 'C:/bin/claude.exe'
     },
-    askPermission: async () => ({ behavior: 'deny' as const }),
+    askPermission: options.brokered
+      ? (r, signal) => broker.request(r.tabId, r.toolName, r.input, r.requestId, signal)
+      : async () => ({ behavior: 'deny' as const }),
+    onClosed: (id) => broker.clearSession(id),
     ...(options.confirmBypass ? { confirmBypass: options.confirmBypass } : {}),
     createDriver: (driverOptions) => {
       resumedWith.push(driverOptions.resume)
@@ -167,7 +187,17 @@ function makeController(
           'firstSend'
         )
       }
-      const driver = createFakeSdk(options.script ?? { steps: [] })
+      const script = options.script ?? { steps: [] }
+      const driver = createFakeSdk(
+        options.brokered
+          ? {
+              ...script,
+              // As the real driver does: the session's gate answers the fixture's questions.
+              canUseTool: (name, input, opts) =>
+                driverOptions.canUseTool(name, input, toPermissionContext(opts))
+            }
+          : script
+      )
       created.push({
         resume: driverOptions.resume,
         permissionMode: driverOptions.permissionMode,
@@ -207,7 +237,7 @@ function makeController(
     await controller.whenSettled()
   }
 
-  return { controller, manager, changed, ribbon, resumedWith, transcriptReads, created, dead, speak }
+  return { controller, manager, changed, ribbon, resumedWith, transcriptReads, created, dead, broker, asked, speak }
 }
 
 function writeStoredTabs(tabs: unknown[]): void {
@@ -496,6 +526,36 @@ describe('TabController', () => {
 
     expect(controller.sessionIdOf(id)).toBeTruthy()
     expect(controller.sessionIdOf(id)).not.toBe(before)
+  })
+
+  test('restart чистит правила сессии', async () => {
+    const { controller, manager, asked, broker, created } = makeController({
+      brokered: true,
+      script: { steps: [], nextTurn: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }] }
+    })
+    await controller.restore()
+    await controller.whenSettled()
+    const id = controller.list()[0]!.id
+
+    manager.get(id)!.send({ text: 'прогони тесты', attachments: [] })
+    await vi.waitFor(() => expect(asked).toHaveLength(1), { timeout: 2000 })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', forSession: true })
+    await controller.whenSettled()
+
+    // The same call again in the same session: no question.
+    manager.get(id)!.send({ text: 'ещё раз', attachments: [] })
+    await controller.whenSettled()
+    expect(asked).toHaveLength(1)
+    expect(created.at(-1)!.driver.executedTools).toEqual(['Bash', 'Bash'])
+
+    // «Начать заново» ends the chat's process, and its session rules with it.
+    await controller.restart(id)
+    await controller.whenSettled()
+    manager.get(id)!.send({ text: 'и снова', attachments: [] })
+    await vi.waitFor(() => expect(asked).toHaveLength(2), { timeout: 2000 })
+    expect(asked[1]).toMatchObject({ tabId: id, toolName: 'Bash' })
+    broker.answer(asked[1]!.requestId, { behavior: 'deny' })
+    await controller.whenSettled()
   })
 
   test('Remote Control доходит до вкладки и не пишется в tabs.json', async () => {

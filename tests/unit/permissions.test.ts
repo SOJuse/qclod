@@ -157,6 +157,106 @@ describe('PermissionBroker', () => {
     expect(broker.rules()).toEqual([])
   })
 
+  test('до конца сессии: второй такой же запрос не спрашивает', async () => {
+    const { broker, asked } = makeBroker()
+
+    const first = broker.request('tab-1', 'Bash', { command: 'npm test' })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', forSession: true })
+    await expect(first).resolves.toEqual({ behavior: 'allow', forSession: true })
+
+    await expect(broker.request('tab-1', 'Bash', { command: 'npm test' })).resolves.toEqual({
+      behavior: 'allow'
+    })
+    expect(asked).toHaveLength(1)
+    // Only that call: another command is asked about as before.
+    void broker.request('tab-1', 'Bash', { command: 'npm run build' })
+    expect(asked).toHaveLength(2)
+  })
+
+  test('правило сессии не действует в другом чате', async () => {
+    const { broker, asked } = makeBroker()
+
+    const first = broker.request('tab-A', 'Bash', { command: 'npm test' })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', forSession: true })
+    await first
+
+    void broker.request('tab-B', 'Bash', { command: 'npm test' })
+    expect(asked).toHaveLength(2)
+    expect(asked[1]).toMatchObject({ tabId: 'tab-B', toolName: 'Bash' })
+  })
+
+  test('правило сессии не пишется на диск', async () => {
+    const { broker, asked, saved } = makeBroker()
+
+    const first = broker.request('tab-1', 'Edit', { file_path: 'a.ts' })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', forSession: true })
+    await first
+
+    expect(saved).toEqual([])
+    expect(broker.rules()).toEqual([])
+  })
+
+  test('clearSession снимает правило', async () => {
+    const { broker, asked } = makeBroker()
+
+    const first = broker.request('tab-1', 'Bash', { command: 'npm test' })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', forSession: true })
+    await first
+
+    broker.clearSession('tab-1')
+    void broker.request('tab-1', 'Bash', { command: 'npm test' })
+    expect(asked).toHaveLength(2)
+  })
+
+  test('закрытие чата (cancelTab) тоже снимает правило сессии', async () => {
+    const { broker, asked } = makeBroker()
+
+    const first = broker.request('tab-1', 'Bash', { command: 'npm test' })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', forSession: true })
+    await first
+
+    broker.cancelTab('tab-1')
+    void broker.request('tab-1', 'Bash', { command: 'npm test' })
+    expect(asked).toHaveLength(2)
+  })
+
+  test('сохранённый запрет побеждает правило сессии', async () => {
+    const { broker, asked, saved } = makeBroker()
+
+    const first = broker.request('tab-1', 'Bash', { command: 'npm test' })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', forSession: true })
+    await first
+
+    // A deny saved afterwards — in settings, or from another chat.
+    const other = broker.request('tab-2', 'Bash', { command: 'npm test' })
+    broker.answer(asked[1]!.requestId, { behavior: 'deny', remember: true })
+    await other
+    expect(saved).toHaveLength(1)
+
+    await expect(broker.request('tab-1', 'Bash', { command: 'npm test' })).resolves.toEqual({
+      behavior: 'deny'
+    })
+    expect(asked).toHaveLength(2)
+  })
+
+  test('отказ несёт причину', async () => {
+    const { broker, asked } = makeBroker()
+
+    const pending = broker.request('tab-1', 'Bash', { command: 'git push' })
+    broker.answer(asked[0]!.requestId, { behavior: 'deny', message: 'не трогай main' })
+
+    await expect(pending).resolves.toEqual({ behavior: 'deny', message: 'не трогай main' })
+  })
+
+  test('remember остаётся в ответе: сессия ставит в ленте «всегда»', async () => {
+    const { broker, asked } = makeBroker()
+
+    const pending = broker.request('tab-1', 'Read', { file_path: 'a.ts' })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', remember: true })
+
+    await expect(pending).resolves.toEqual({ behavior: 'allow', remember: true })
+  })
+
   test('правила перечитываются на каждый запрос', async () => {
     const loadRules = vi.fn(() => [] as PermissionRule[])
     const broker = new PermissionBroker({

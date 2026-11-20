@@ -139,10 +139,12 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
       canUseTool: async (toolName, input, opts) => {
         const answer = await options.canUseTool(toolName, input, toPermissionContext(opts))
         // updatedInput is how an AskUserQuestion answer travels
-        // (AskUserQuestionInput.answers in sdk-tools.d.ts).
+        // (AskUserQuestionInput.answers in sdk-tools.d.ts). A refusal's
+        // message is what the agent reads: the user's reason, put in words
+        // by the session.
         return answer.behavior === 'allow'
           ? { behavior: 'allow', updatedInput: answer.updatedInput ?? input }
-          : { behavior: 'deny', message: 'Отклонено в Qclod' }
+          : { behavior: 'deny', message: answer.message || 'Отклонено в Qclod' }
       }
     }
   })

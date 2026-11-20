@@ -20,8 +20,30 @@ interface Props {
   onRemote: (enabled: boolean) => void
   /** Beside the conversation, or slid out over it in a narrow pane. */
   mode: 'docked' | 'drawer'
+  /** The pane is the active one: a window-wide Esc is its alone. */
+  active: boolean
   /** The drawer asks to close: Esc, or a press outside it. */
   onClose: () => void
+}
+
+/**
+ * Whether an Esc closes this drawer (S2-R23 а). Only the active pane's — the
+ * other halves keep theirs — or the drawer the key was pressed inside. A key
+ * someone already took is left alone: an open list closes first, and Esc in
+ * the input line interrupts the agent (keyPrecedence: `interrupt` takes it).
+ */
+export function drawerTakesEsc({
+  key,
+  defaultPrevented,
+  active,
+  inside
+}: {
+  key: string
+  defaultPrevented: boolean
+  active: boolean
+  inside: boolean
+}): boolean {
+  return key === 'Escape' && !defaultPrevented && (active || inside)
 }
 
 const MCP_LABEL: Record<McpServerInfo['status'], string> = {
@@ -58,15 +80,15 @@ function money(value: number): string {
  * whether to keep going. Subagents are not here: the pane's «Агенты» layer
  * shows them (этап 4).
  */
-export function SidePanel({ data, started, remote, onRemote, mode, onClose }: Props): JSX.Element {
+export function SidePanel({ data, started, remote, onRemote, mode, active, onClose }: Props): JSX.Element {
   const self = useRef<HTMLElement | null>(null)
 
   // A drawer is out of the way at once: Esc, or a press anywhere outside it.
   useEffect(() => {
     if (mode !== 'drawer') return
     const onKey = (ev: KeyboardEvent): void => {
-      // A list open inside the pane keeps its own Esc.
-      if (ev.key === 'Escape' && !ev.defaultPrevented) onClose()
+      const inside = ev.target instanceof Node && self.current?.contains(ev.target) === true
+      if (drawerTakesEsc({ key: ev.key, defaultPrevented: ev.defaultPrevented, active, inside })) onClose()
     }
     const onPress = (ev: PointerEvent): void => {
       const target = ev.target as Element | null
@@ -81,7 +103,7 @@ export function SidePanel({ data, started, remote, onRemote, mode, onClose }: Pr
       window.removeEventListener('keydown', onKey)
       document.removeEventListener('pointerdown', onPress)
     }
-  }, [mode, onClose])
+  }, [mode, active, onClose])
 
   const chosen = data.models.find((m) => m.value === data.model)
   // A bridge that is on, or trying to be, leads the panel: its link and QR are what is wanted then.

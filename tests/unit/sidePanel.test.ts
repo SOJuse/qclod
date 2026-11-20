@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
-import { SidePanel } from '../../src/renderer/components/SidePanel'
+import { SidePanel, drawerTakesEsc } from '../../src/renderer/components/SidePanel'
 import { EMPTY_PANEL } from '../../src/renderer/state/useAppStore'
 import { REMOTE_OFF } from '../../src/shared/remote'
 import type { McpServerInfo, PanelData } from '../../src/shared/types'
@@ -15,6 +15,7 @@ const render = (patch: Partial<PanelData> = {}, mode: 'docked' | 'drawer' = 'doc
       remote: REMOTE_OFF,
       onRemote: noop,
       mode,
+      active: true,
       onClose: noop
     })
   )
@@ -95,4 +96,17 @@ describe('SidePanel', () => {
     // The pane's header holds the one panel button.
     expect(render()).not.toContain('data-testid="panel-close"')
   })
+})
+
+describe('drawerTakesEsc: Esc закрывает только выдвинутую панель активной половины (S2-R23 а)', () => {
+  const esc = { key: 'Escape', defaultPrevented: false }
+  test('активная половина — закрывает; другая половина — нет', () => {
+    expect(drawerTakesEsc({ ...esc, active: true, inside: false })).toBe(true)
+    expect(drawerTakesEsc({ ...esc, active: false, inside: false })).toBe(false)
+  })
+  test('Esc внутри самой панели закрывает её, даже если половина не активна', () =>
+    expect(drawerTakesEsc({ ...esc, active: false, inside: true })).toBe(true))
+  test('Esc, взятый полем ввода (прерывание агента) или открытым списком, панель не трогает', () =>
+    expect(drawerTakesEsc({ key: 'Escape', defaultPrevented: true, active: true, inside: false })).toBe(false))
+  test('другие клавиши — нет', () => expect(drawerTakesEsc({ key: 'Enter', defaultPrevented: false, active: true, inside: true })).toBe(false))
 })

@@ -22,7 +22,7 @@ import { EmptyTab } from './EmptyTab'
 import { PinnedCards } from './cards/PinnedCards'
 import { cardAnswers } from '../chat/cardAnswers'
 import { StateView } from '../ui/StateView'
-import { PANE_PANEL_MIN_WIDTH, nextOverride, panelMode, type PanelOverride } from '../app/panelVisibility'
+import { nextOverride, panelMode, panelToggle, type PanelOverride } from '../app/panelVisibility'
 import { ChatHeader } from './ChatHeader'
 import { PaneLayer } from './PaneLayer'
 import { SidePanel } from './SidePanel'
@@ -129,13 +129,18 @@ export function ChatPane({
 
   /**
    * The pane's width decides how its panel shows (panelVisibility.ts). A
-   * choice made with the button in a narrow pane is this pane's alone and
-   * lasts until the pane crosses the threshold; it is never saved.
+   * choice made with the button is this pane's alone (S2-R23: each half of a
+   * split keeps its own), kept by tab in memory until the pane crosses the
+   * threshold; only a lone wide pane writes the saved setting.
    */
   const paneRef = useRef<HTMLElement | null>(null)
   const [paneWidth, setPaneWidth] = useState(0)
   const widthRef = useRef(0)
-  const [override, setOverride] = useState<PanelOverride>(null)
+  const override = useAppStore((s) => s.panelChoiceByTab[tabId] ?? null)
+  const setOverride = useCallback(
+    (choice: PanelOverride): void => useAppStore.getState().setPanelChoice(tabId, choice),
+    [tabId]
+  )
   useLayoutEffect(() => {
     const el = paneRef.current
     if (!el) return
@@ -145,37 +150,43 @@ export function ChatPane({
       if (after === before) return
       widthRef.current = after
       // The first measure is not a change of shape.
-      if (before > 0) setOverride((was) => nextOverride(was, before, after))
+      if (before > 0) setOverride(nextOverride(useAppStore.getState().panelChoiceByTab[tabId] ?? null, before, after))
       setPaneWidth(after)
     }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [])
+  }, [tabId, setOverride])
   const setting = useAppStore((s) => s.settings?.panelOpen === true)
   const mode = panelMode({ setting, paneWidth, override })
   const shown = mode !== 'hidden'
 
+  /** Opened, the panel shows the whole snapshot, not only what events brought meanwhile. */
+  const refreshPanel = useCallback((): void => {
+    void window.qclod
+      .panel(tabId)
+      .then((snapshot) => useAppStore.getState().setPanelSnapshot(tabId, snapshot))
+      .catch(() => undefined)
+  }, [tabId])
+
   /**
-   * The panel button. In a wide pane it flips the saved setting; in a narrow
-   * one, where the panel folds by itself, it slides it out or back for this
-   * pane only.
+   * The panel button (and Ctrl+\ for the active pane): this pane only. A lone
+   * wide pane also saves it as the default for panes to come (panelToggle).
    */
   const togglePanel = useCallback((): void => {
-    if (widthRef.current < PANE_PANEL_MIN_WIDTH) {
-      setOverride(shown ? 'closed' : 'open')
-    } else {
-      setOverride(null)
-      void window.qclod.setSettings({ panelOpen: !shown }).then((next) => useAppStore.getState().setSettings(next))
+    const next = panelToggle({ shown, paneWidth: widthRef.current, split })
+    setOverride(next.override)
+    if (next.saveSetting !== undefined) {
+      void window.qclod
+        .setSettings({ panelOpen: next.saveSetting })
+        .then((saved) => useAppStore.getState().setSettings(saved))
+        .catch(() => undefined)
     }
-    // Opened, it shows the whole panel, not only what events brought meanwhile.
-    if (!shown) {
-      void window.qclod.panel(tabId).then((snapshot) => useAppStore.getState().setPanelSnapshot(tabId, snapshot))
-    }
-  }, [shown, tabId])
+    if (!shown) refreshPanel()
+  }, [shown, split, setOverride, refreshPanel])
   /** A drawer closed by Esc or a press past it; the pane is narrow, so it simply folds. */
-  const closeDrawer = useCallback((): void => setOverride(null), [])
+  const closeDrawer = useCallback((): void => setOverride(null), [setOverride])
 
   const handledRequest = useRef(panelRequest?.n ?? 0)
   useEffect(() => {
@@ -189,7 +200,11 @@ export function ChatPane({
     if (remote.blocked) return
     const enable = !isRemoteLive(remote)
     void window.qclod.setRemote(tabId, enable)
-    if (enable && !shown) togglePanel()
+    // Out in this pane only, and not saved: the link and the QR are wanted now, here.
+    if (enable && !shown) {
+      setOverride('open')
+      refreshPanel()
+    }
   }
 
   // ------------------------------------------------ the floating input
@@ -342,23 +357,26 @@ export function ChatPane({
               />
             )}
 
-            <PinnedCards tabId={tabId} items={ribbonByTab[tabId] ?? []} answers={answers} />
+            {/* The cards and the queue can grow: they scroll inside the dock, so the input and the status line always show. */}
+            <div className="composer-dock-scroll" data-testid="composer-dock-scroll">
+              <PinnedCards tabId={tabId} items={ribbonByTab[tabId] ?? []} answers={answers} />
 
-            <QueueStrip
-              queue={panel.queue ?? []}
-              // A refused or failed call changes nothing: the strip follows main's queue, not the answer.
-              onSendNow={(id) => void window.qclod.sendQueuedNow(tabId, id).catch(() => undefined)}
-              onCancel={(id) => void window.qclod.cancelQueued(tabId, id).catch(() => undefined)}
-              onEdit={(id) =>
-                void window.qclod
-                  .cancelQueued(tabId, id)
-                  .then((input) => {
-                    // null: it already reached the agent, or is gone — nothing to take back.
-                    if (input) takeBack([input])
-                  })
-                  .catch(() => undefined)
-              }
-            />
+              <QueueStrip
+                queue={panel.queue ?? []}
+                // A refused or failed call changes nothing: the strip follows main's queue, not the answer.
+                onSendNow={(id) => void window.qclod.sendQueuedNow(tabId, id).catch(() => undefined)}
+                onCancel={(id) => void window.qclod.cancelQueued(tabId, id).catch(() => undefined)}
+                onEdit={(id) =>
+                  void window.qclod
+                    .cancelQueued(tabId, id)
+                    .then((input) => {
+                      // null: it already reached the agent, or is gone — nothing to take back.
+                      if (input) takeBack([input])
+                    })
+                    .catch(() => undefined)
+                }
+              />
+            </div>
 
             <Composer
               tabId={tabId}
@@ -442,6 +460,7 @@ export function ChatPane({
           remote={remote}
           onRemote={(enabled) => void window.qclod.setRemote(tabId, enabled)}
           mode={mode}
+          active={focused}
           onClose={closeDrawer}
         />
       )}

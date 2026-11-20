@@ -268,3 +268,64 @@ test('лимит от 80 % — одна плашка, большее из око
     await close(app, profile)
   }
 })
+
+/** Everything that stands above the input at once: todos, the «now» line, the context banner, a queue of three. */
+const FULL_DOCK = {
+  steps: [],
+  contextPercent: 93,
+  turns: [
+    [
+      {
+        kind: 'todo',
+        items: [
+          { content: 'разобрать ленту', status: 'completed', activeForm: 'разбираю ленту' },
+          { content: 'собрать панель', status: 'in_progress', activeForm: 'собираю панель' },
+          { content: 'проверить', status: 'pending', activeForm: 'проверяю' }
+        ]
+      },
+      { kind: 'textStream', pieces: ['думаю ', 'ещё ', 'долго'], pauseMs: 20000 }
+    ]
+  ]
+}
+
+test('S2-R23 (б): в 800×600 док со всем открытым не налезает на шапку, поле и строка статуса видны', async () => {
+  const { app, profile } = await launch(FULL_DOCK)
+  try {
+    const win = await app.firstWindow()
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(800, 600))
+    await send(win, 'сделай фичу')
+    await expect(win.locator('[data-testid="composer-stop"]')).toBeVisible({ timeout: 15000 })
+    for (const text of ['первое в очередь', 'второе в очередь', 'третье в очередь']) await send(win, text)
+    await expect(win.locator('[data-testid="queue-item"]')).toHaveCount(3, { timeout: 15000 })
+    await expect(win.locator('[data-testid="context-banner"]')).toBeVisible()
+    await expect(win.locator('[data-testid="todo-strip"]')).toBeVisible()
+
+    const box = async (sel: string) => (await win.locator(sel).boundingBox())!
+    const fits = async (): Promise<void> => {
+      const header = await box('[data-testid="chat-header"]')
+      const dock = await box('[data-testid="composer-dock"]')
+      const field = await box('.composer-row')
+      const line = await box('[data-testid="status-line"]')
+      const view = await win.evaluate(() => window.innerHeight)
+      // Below the header, and the input and its status line inside the window and the dock.
+      expect(dock.y).toBeGreaterThanOrEqual(header.y + header.height)
+      expect(field.y).toBeGreaterThanOrEqual(dock.y)
+      expect(line.y + line.height).toBeLessThanOrEqual(dock.y + dock.height + 1)
+      expect(line.y + line.height).toBeLessThanOrEqual(view)
+    }
+    await fits()
+
+    // More cards than the pane has room for (этап 2's cards move here): the cards and queue part
+    // scrolls, the dock stays under the header, the input and the status line stay in view.
+    const scroll = win.locator('[data-testid="composer-dock-scroll"]')
+    await scroll.evaluate((el) => {
+      const tall = document.createElement('div')
+      tall.style.height = '900px'
+      el.prepend(tall)
+    })
+    await fits()
+    expect(await scroll.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  } finally {
+    await close(app, profile)
+  }
+})

@@ -9,7 +9,7 @@
  */
 export const PANE_PANEL_MIN_WIDTH = 760
 
-/** A choice made with the panel button for this pane, not saved anywhere. */
+/** A choice made with the panel button for one pane (kept by tab, in memory), not saved anywhere. */
 export type PanelOverride = 'open' | 'closed' | null
 
 export type PanelMode = 'docked' | 'drawer' | 'hidden'
@@ -37,4 +37,23 @@ export function nextOverride(override: PanelOverride, before: number, after: num
   const wasWide = before >= PANE_PANEL_MIN_WIDTH
   const isWide = after >= PANE_PANEL_MIN_WIDTH
   return wasWide === isWide ? override : null
+}
+
+/**
+ * What the panel button does to one pane (S2-R23). Each half of a split keeps
+ * its own choice, in memory; the saved setting changes only when the pane is
+ * the window's one wide pane, and it is then the default for panes to come —
+ * a panel already shown in another half is never touched by it.
+ */
+export function panelToggle({
+  shown,
+  paneWidth,
+  split
+}: {
+  shown: boolean
+  paneWidth: number
+  split: boolean
+}): { override: PanelOverride; saveSetting?: boolean } {
+  if (paneWidth >= PANE_PANEL_MIN_WIDTH && !split) return { override: null, saveSetting: !shown }
+  return { override: shown ? 'closed' : 'open' }
 }

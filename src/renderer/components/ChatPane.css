@@ -40,6 +40,8 @@
   display: flex;
   flex-direction: column;
   width: min(var(--content-max-w), calc(100% - 2 * var(--content-gutter)));
+  /* Never over the pane's header: as tall as the body allows, the same gap above as below. */
+  max-height: calc(100% - 2 * var(--space-3));
   margin: 0 auto;
   padding: var(--dock-pad) var(--dock-pad) var(--space-1);
   border-radius: var(--radius-lg);
@@ -47,11 +49,25 @@
   box-shadow: var(--shadow-menu);
 }
 
-/* Inside the dock every strip takes the dock's width, not the column's again. */
-.chat-pane .composer-dock > * {
+/* Inside the dock every strip takes the dock's width, not the column's again, and keeps its height. */
+.chat-pane .composer-dock > *,
+.chat-pane .composer-dock-scroll > * {
   width: auto;
   margin-left: 0;
   margin-right: 0;
+}
+
+.chat-pane .composer-dock > * {
+  flex-shrink: 0;
+}
+
+/* The cards and the queue give way first: they scroll, the input and the status line stay in view. */
+.chat-pane .composer-dock > .composer-dock-scroll {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 .chat-pane .composer-dock > :last-child {

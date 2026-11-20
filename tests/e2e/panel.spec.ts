@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -363,5 +363,85 @@ test('в сплите у каждой панели своя side-panel с кон
   } finally {
     await close(app, profile)
     rmSync(other, { recursive: true, force: true })
+  }
+})
+
+/** Two chats side by side in a window of this width; the left one active. */
+async function splitOfTwo(width: number) {
+  const other = mkdtempSync(join(tmpdir(), 'qclod-split-'))
+  const { app, profile } = await launch({ steps: [] }, { QCLOD_PICK_FOLDER: other })
+  const win = await app.firstWindow()
+  await win.locator('[data-testid="composer-input"]').first().waitFor({ timeout: 15000 })
+  await app.evaluate(({ BrowserWindow }, w) => BrowserWindow.getAllWindows()[0]!.setSize(w, 900), width)
+  await win.locator('[data-testid="tab-new"]').click()
+  await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+  await win.locator('[data-testid="toggle-split"]').click()
+  const panes = win.locator('[data-testid="chat-pane"]')
+  await expect(panes).toHaveCount(2)
+  await panes.first().locator('[data-testid="chat-header"]').click()
+  await expect(panes.first()).toHaveClass(/is-focused/)
+  const done = async (): Promise<void> => {
+    await close(app, profile)
+    rmSync(other, { recursive: true, force: true })
+  }
+  return { app, win, profile, left: panes.first(), right: panes.last(), done }
+}
+
+test('S2-R23: в широком сплите у каждой половины своя панель — кнопка и Ctrl+\ трогают только свою', async () => {
+  const { win, profile, left, right, done } = await splitOfTwo(1900)
+  try {
+    const leftPanel = left.locator('[data-testid="side-panel"]')
+    const rightPanel = right.locator('[data-testid="side-panel"]')
+    await expect(leftPanel).toHaveAttribute('data-mode', 'docked')
+    await expect(rightPanel).toHaveAttribute('data-mode', 'docked')
+
+    // The button in the left half closes the left panel only.
+    await left.locator('[data-testid="panel-close"]').click()
+    await expect(leftPanel).toHaveCount(0)
+    await expect(rightPanel).toHaveAttribute('data-mode', 'docked')
+
+    // Ctrl+\ acts on the active half only: the right one, then the left one again.
+    await right.locator('[data-testid="chat-header"]').click()
+    await expect(right).toHaveClass(/is-focused/)
+    await win.keyboard.press('Control+Backslash')
+    await expect(rightPanel).toHaveCount(0)
+    await expect(leftPanel).toHaveCount(0)
+    await left.locator('[data-testid="chat-header"]').click()
+    await win.keyboard.press('Control+Backslash')
+    await expect(leftPanel).toHaveAttribute('data-mode', 'docked')
+    await expect(rightPanel).toHaveCount(0)
+
+    // A half's choice is not the saved setting: that stays «open» for panes to come.
+    const file = join(profile, 'settings.json')
+    const settings = (existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {}) as { panelOpen?: boolean }
+    expect(settings.panelOpen).not.toBe(false)
+  } finally {
+    await done()
+  }
+})
+
+test('S2-R23 (а): Esc закрывает выдвинутую панель только активной половины', async () => {
+  // 1180 wide: two halves under 760 px, so a panel opened by hand slides out over the ribbon.
+  const { win, left, right, done } = await splitOfTwo(1180)
+  try {
+    const leftPanel = left.locator('[data-testid="side-panel"]')
+    const rightPanel = right.locator('[data-testid="side-panel"]')
+    await expect(leftPanel).toHaveCount(0)
+    await win.keyboard.press('Control+Backslash')
+    await expect(leftPanel).toHaveAttribute('data-mode', 'drawer')
+    // To the right half by the keyboard (a press there would fold the left drawer), and its drawer too.
+    await win.keyboard.press('Control+Tab')
+    await expect(right).toHaveClass(/is-focused/)
+    await win.keyboard.press('Control+Backslash')
+    await expect(rightPanel).toHaveAttribute('data-mode', 'drawer')
+    await expect(leftPanel).toHaveAttribute('data-mode', 'drawer')
+
+    // Esc outside the input line: the active half's drawer goes, the other's stays.
+    await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await win.keyboard.press('Escape')
+    await expect(rightPanel).toHaveCount(0)
+    await expect(leftPanel).toHaveAttribute('data-mode', 'drawer')
+  } finally {
+    await done()
   }
 })

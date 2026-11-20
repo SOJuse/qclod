@@ -5,6 +5,7 @@ import { startHeldDrafts } from './heldDrafts'
 import { MAX_PANES, nextPanes, type ProjectHistory } from '../chat/sidebarModel'
 import { projectKey } from '../../shared/projects'
 import { DEFAULT_LAYOUT, type LayoutState } from '../../shared/types'
+import type { PanelOverride } from '../app/panelVisibility'
 import type {
   AppSettings,
   CommandInfo,
@@ -30,7 +31,8 @@ const PER_TAB_KEYS = [
   'fileIndexByTab',
   'commandsByTab',
   'pathsByTab',
-  'layerByTab'
+  'layerByTab',
+  'panelChoiceByTab'
 ] as const
 
 const RECENT_COMMANDS = 6
@@ -235,6 +237,8 @@ interface AppState {
   recentCommands: string[]
   /** The one layer each pane shows over its ribbon (сверка F9); in memory only, never saved. */
   layerByTab: Record<TabId, PaneLayerState | null>
+  /** Each pane's own panel choice (S2-R23): open or closed by hand; absent — the setting decides. In memory only. */
+  panelChoiceByTab: Record<TabId, PanelOverride>
 
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
@@ -261,6 +265,7 @@ interface AppState {
   noteCommand: (name: string) => void
   /** A new layer replaces the one before it; null closes it. */
   setPaneLayer: (tabId: TabId, layer: PaneLayerState | null) => void
+  setPanelChoice: (tabId: TabId, choice: PanelOverride) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -343,6 +348,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pathsByTab: {},
   recentCommands: [],
   layerByTab: {},
+  panelChoiceByTab: {},
 
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
@@ -517,7 +523,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       recentCommands: [name, ...state.recentCommands.filter((n) => n !== name)].slice(0, RECENT_COMMANDS)
     })),
 
-  setPaneLayer: (tabId, layer) => set((state) => ({ layerByTab: { ...state.layerByTab, [tabId]: layer } }))
+  setPaneLayer: (tabId, layer) => set((state) => ({ layerByTab: { ...state.layerByTab, [tabId]: layer } })),
+  setPanelChoice: (tabId, choice) =>
+    set((state) =>
+      (state.panelChoiceByTab[tabId] ?? null) === choice
+        ? state
+        : { panelChoiceByTab: { ...state.panelChoiceByTab, [tabId]: choice } }
+    )
 }))
 
 // Written on change, so a reload (Ctrl+R) at any moment finds the latest.

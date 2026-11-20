@@ -77,11 +77,13 @@ export class QueueController {
   /**
    * Being taken back for «Отправить сейчас», each with the CLI's answer to
    * come: their `cancelled` frame neither lets the tab go nor counts as
-   * unread. A «Стоп» pressed meanwhile waits for that answer too.
+   * unread. A «Стоп» pressed meanwhile waits for that answer too, and the
+   * first one to do so claims it (`claimedBy`, its number): only that Stop
+   * hands it back, so a second Stop does not hand it back again.
    */
   private readonly resending = new Map<
     string,
-    { entry: OutboxEntry; answer: Promise<boolean | null> }
+    { entry: OutboxEntry; answer: Promise<boolean | null>; claimedBy: number | null }
   >()
   /** One more for every «Стоп»: a send-now answered after one is not sent again. */
   private stops = 0
@@ -199,15 +201,18 @@ export class QueueController {
     const driver = this.host.driver()
     if (!driver) return []
     this.stops += 1
+    const stop = this.stops
     // What is on the strip now is what Stop hands back. Marked before
     // anything is awaited: their `cancelled` frames can come before the
     // receipt does, and must read as asked for, not as messages a stopped
     // turn swallowed. One being taken back by «Отменить» answers for itself.
     // One being taken back for «Отправить сейчас» is not sent again: once the
     // CLI answers, it goes back with the rest (its `cancelled` frame may have
-    // taken it off the strip already).
+    // taken it off the strip already) — from the first Stop that claimed it.
     const resending = [...this.resending.values()]
-    const resent = new Set(resending.map((r) => r.entry))
+    const claimed = resending.filter((r) => r.claimedBy === null)
+    for (const r of claimed) r.claimedBy = stop
+    const resent = new Set(claimed.map((r) => r.entry))
     const strip = this.outbox.pending()
     const onStrip = strip.filter((e) => !e.requestedCancel)
     // In the strip's order; one already off it goes last.
@@ -235,9 +240,10 @@ export class QueueController {
           ? onStrip
           : onStrip.filter((e) => !cancelled.has(e.uuid) && receipt.stillQueued.includes(e.uuid))
       for (const uuid of await this.cancelEach(driver, rest)) cancelled.add(uuid)
+      // Every send-now on its way is waited for; only those this Stop claimed count.
       const answers = await Promise.all(resending.map((r) => r.answer))
       resending.forEach((r, i) => {
-        if (answers[i] === true) cancelled.add(r.entry.uuid)
+        if (answers[i] === true && r.claimedBy === stop) cancelled.add(r.entry.uuid)
       })
     } finally {
       this.stopsInFlight -= 1
@@ -317,7 +323,7 @@ export class QueueController {
     const epoch = this.outboxEpoch
     const stops = this.stops
     const asked = this.cancelSafely(driver, id)
-    this.resending.set(id, { entry, answer: asked })
+    this.resending.set(id, { entry, answer: asked, claimedBy: null })
     let answer: boolean | null
     try {
       answer = await asked
@@ -348,13 +354,20 @@ export class QueueController {
   /**
    * Empties the strip and hands over what was on it, to a successor. With
    * the process gone, everything there is unread: the CLI lost its queue.
+   * One being taken back for «Отправить сейчас» goes too, even once its
+   * `cancelled` frame has taken it off the strip: the epoch moves on, so that
+   * send-now answers false and sends nothing.
    */
   take(): UserInput[] {
-    const entries = this.outbox.pending()
+    const strip = this.outbox.pending()
+    const resent = [...this.resending.values()]
+      .map((r) => r.entry)
+      .filter((e) => this.outbox.get(e.uuid) !== e)
+    const entries = [...strip, ...resent]
     if (entries.length === 0) return []
     this.outboxEpoch += 1
-    for (const entry of entries) this.outbox.remove(entry.uuid)
-    this.emitQueue()
+    for (const entry of strip) this.outbox.remove(entry.uuid)
+    if (strip.length > 0) this.emitQueue()
     return entries.map((e) => e.input)
   }
 

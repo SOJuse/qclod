@@ -1124,6 +1124,9 @@ export class AgentSession {
   async dispose(): Promise<void> {
     this.disposed = true
     this.turnRunning = false
+    // A late answer about the strip — a cancel the CLI confirms after the
+    // close — finds no turn held for it to let go.
+    this.queue.onDead()
     // This process echoes nothing more. Done before anything is awaited: the
     // ribbon goes on in a successor, which keeps expectations of its own.
     this.builder.forgetEchoes()
@@ -1577,6 +1580,9 @@ export class AgentSession {
   }
 
   private setStatus(status: SessionStatus): void {
+    // A closed session only ever becomes «stopped»: whatever answers late
+    // must not set the tab idle or busy after it (the core reads statuses).
+    if (this.disposed && status !== 'stopped') return
     if (this.state === status) return
     this.state = status
     // A copy: a listener may stop itself while it is being told.

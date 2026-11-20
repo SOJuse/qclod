@@ -2409,6 +2409,116 @@ describe('AgentSession: очередь сообщений в CLI', () => {
     await session.dispose()
   })
 
+  test('двойной «Стоп» во время «Отправить сейчас» возвращает текст один раз', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      turns: [slowTurn, [{ kind: 'text', text: 'ответ-на-два' }]]
+    })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() => expect(lastQueue(rec)?.[0]?.state).toBe('queued'))
+    const id = lastQueue(rec)![0]!.id
+
+    // The CLI's answer to taking it back is held until told.
+    const cancel = driver.cancelQueued.bind(driver)
+    let answer: (() => void) | undefined
+    driver.cancelQueued = async (uuid) => {
+      const taken = await cancel(uuid)
+      await new Promise<void>((resolve) => (answer = resolve))
+      return taken
+    }
+    const now = session.sendQueuedNow(id)
+    // Two «Стоп», nothing awaited in between.
+    const first = session.interrupt()
+    const second = session.interrupt()
+    await vi.waitFor(() => expect(answer).toBeDefined())
+    answer!()
+
+    expect([...(await first), ...(await second)]).toEqual([{ text: 'два', attachments: [] }])
+    expect(await now).toBe(false)
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два'])
+
+    await settle(session)
+    await tick()
+    expect(texts(rec.items)).not.toContain('ответ-на-два')
+    expect(session.panel.queue).toEqual([])
+    await session.dispose()
+  })
+
+  test('takeQueue во время «Отправить сейчас» после кадра cancelled забирает сообщение', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      turns: [slowTurn, [{ kind: 'text', text: 'ответ-на-два' }]]
+    })
+    const options = recordOptions(driver)
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() => expect(lastQueue(rec)?.[0]?.state).toBe('queued'))
+    const id = lastQueue(rec)![0]!.id
+
+    // The CLI takes it off at once, and says so; its answer comes later.
+    const cancel = driver.cancelQueued.bind(driver)
+    let answer: (() => void) | undefined
+    driver.cancelQueued = async (uuid) => {
+      const taken = await cancel(uuid)
+      await new Promise<void>((resolve) => (answer = resolve))
+      return taken
+    }
+    const now = session.sendQueuedNow(id)
+    await vi.waitFor(() => expect(session.panel.queue).toEqual([]))
+    await vi.waitFor(() => expect(answer).toBeDefined())
+
+    // The tab is being swapped: the successor gets it, though it is off the strip.
+    expect(session.takeQueue()).toEqual([{ text: 'два', attachments: [] }])
+    answer!()
+    expect(await now).toBe(false)
+    const sentNow = driver.sent.filter((s, i) => s.text === 'два' && options[i]?.priority === 'now')
+    expect(sentNow).toEqual([])
+    await session.dispose()
+  })
+
+  test('поздний ответ отмены после dispose не ставит idle', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      turns: [[{ kind: 'tool', name: 'Bash', input: { command: 'sleep 1' }, result: 'ok', pauseMs: 300 }]]
+    })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [] })
+    const id = session.panel.queue[0]!.id
+    // The turn ended with «два» still in the CLI's queue, as its own next turn.
+    session.handle({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      session_id: session.sessionId,
+      queued_turn_count: 1
+    })
+    expect(session.status).toBe('busy')
+
+    // The CLI answers «taken back» only after the tab has closed.
+    let answer: (() => void) | undefined
+    driver.cancelQueued = () => new Promise<boolean>((resolve) => (answer = () => resolve(true)))
+    const cancelling = session.cancelQueued(id)
+    await vi.waitFor(() => expect(answer).toBeDefined())
+    await session.dispose()
+    expect(rec.statuses.at(-1)).toBe('stopped')
+
+    answer!()
+    await cancelling
+    await tick()
+    expect(rec.statuses.at(-1)).toBe('stopped')
+    expect(session.status).toBe('stopped')
+  })
+
   test('Стоп на CLI, чья квитанция без cancelled: плашка снимается по одной и не выполняется', async () => {
     // interrupt_receipt_v1 without interrupt_cancel_queued_v1.
     const { session, driver } = makeSession({

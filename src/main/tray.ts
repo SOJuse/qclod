@@ -102,10 +102,15 @@ export function createTray(deps: TrayDeps): Tray & { rebuild: () => void; refres
   const tray = new Tray(trayIcon(deps.getTone(), trayStatus(deps.getTabs())))
   tray.setToolTip(TRAY_TOOLTIP[trayStatus(deps.getTabs())])
 
-  /** Icon and tooltip: the status or the taskbar theme changed. */
+  /** Icon and tooltip: the status or the taskbar theme changed. Skipped when neither did. */
+  let shown = `${deps.getTone()}/${trayStatus(deps.getTabs())}`
   const refresh = (): void => {
+    const tone = deps.getTone()
     const status = trayStatus(deps.getTabs())
-    tray.setImage(trayIcon(deps.getTone(), status))
+    const key = `${tone}/${status}`
+    if (key === shown) return
+    shown = key
+    tray.setImage(trayIcon(tone, status))
     tray.setToolTip(TRAY_TOOLTIP[status])
   }
 

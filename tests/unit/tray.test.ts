@@ -66,6 +66,43 @@ describe('иконка в трее', () => {
   })
 })
 
+describe('refresh', () => {
+  test('два одинаковых вызова — один setImage', async () => {
+    vi.resetModules()
+    const setImage = vi.fn()
+    class FakeTray {
+      setImage = setImage
+      setToolTip = vi.fn()
+      setContextMenu = vi.fn()
+      on = vi.fn()
+    }
+    vi.doMock('electron', () => ({
+      app: {},
+      Menu: { buildFromTemplate: () => ({}) },
+      nativeImage: { createEmpty: () => ({ addRepresentation: () => undefined }) },
+      nativeTheme: {},
+      Tray: FakeTray
+    }))
+    const { createTray } = await import('../../src/main/tray')
+    let tabs = [tab('idle')]
+    const tray = createTray({
+      getWindow: () => null,
+      getTabs: () => tabs,
+      onActivateTab: () => undefined,
+      toggleWindow: () => undefined,
+      getTone: () => 'dark'
+    })
+    tray.refresh()
+    tray.refresh()
+    expect(setImage).not.toHaveBeenCalled()
+    tabs = [tab('waiting')]
+    tray.refresh()
+    tray.refresh()
+    expect(setImage).toHaveBeenCalledTimes(1)
+    vi.doUnmock('electron')
+  })
+})
+
 describe('подсказки', () => {
   test('тексты', () => {
     expect(TRAY_TOOLTIP.idle).toBe('Qclod')

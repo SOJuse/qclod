@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 
-const PERSONALIZE_KEY = 'HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+const PERSONALIZE_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize'
 
 /** `reg query ... /v SystemUsesLightTheme` output → true (light taskbar), false (dark), null (unreadable). */
 export function parseSystemUsesLightTheme(stdout: string): boolean | null {

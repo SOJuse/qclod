@@ -330,12 +330,17 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
 
   ipcMain.handle(CHANNELS.layoutGet, (): LayoutState => layout.get())
 
-  // The panes go first: the widths in the same patch are for the new count.
+  // One patch, one write, one layoutChanged: the panes (live chats only, as
+  // setPanes keeps them) and the widths for their new count together. setPanes
+  // then finds them in place and only starts the agents.
   ipcMain.handle(CHANNELS.layoutSet, async (_e, given: unknown): Promise<LayoutState> => {
-    const { panes, ...rest } = sanitizeLayoutPatch(given)
-    const starting = panes ? controller.setPanes(panes) : undefined
-    layout.patch(rest)
-    await starting
+    const patch = sanitizeLayoutPatch(given)
+    if (patch.panes) {
+      const live = new Set(controller.list().map((tab) => tab.id))
+      patch.panes = patch.panes.filter((id) => live.has(id))
+    }
+    layout.patch(patch)
+    if (patch.panes) await controller.setPanes(patch.panes)
     return layout.get()
   })
 

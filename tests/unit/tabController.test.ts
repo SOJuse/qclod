@@ -1929,6 +1929,38 @@ describe('TabController: раскладка этапа 2 (layout.json)', () => {
     expect(harness.manager.get('c')).toBeUndefined()
   })
 
+  test('restore: папка активного чата в панели удалена — без сбоя, агента нет, панели и ширины целы', async () => {
+    const gone = join(store, 'удалённая')
+    mkdirSync(gone)
+    rmSync(gone, { recursive: true })
+    writeStoredTabs([
+      { id: 'a', cwd: gone, title: 'Удалённая', overrides: {}, lastSessionId: 's-gone' },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    writeStoredLayout({ panes: ['a', 'b'], active: 'a', paneWidths: [0.4, 0.6] })
+    const harness = makeController()
+    const started = startedFor(harness)
+
+    await expect(harness.controller.restore()).resolves.toHaveLength(2)
+    await harness.controller.whenSettled()
+
+    const ids = harness.controller.list().map((t) => t.id)
+    expect(ids).toContain(harness.controller.activeTabId)
+    expect(harness.controller.list().find((t) => t.id === 'a')).toMatchObject({
+      missingCwd: true,
+      status: 'stopped'
+    })
+    // No agent for a folder that is gone; the other pane gets its own.
+    expect(started).toEqual(['b'])
+    expect(harness.manager.get('a')).toBeUndefined()
+    expect(harness.transcriptReads).toEqual([])
+    const l = harness.layout.get()
+    expect(l.panes.every((id) => ids.includes(id))).toBe(true)
+    expect(l.paneWidths).toHaveLength(l.panes.length)
+    expect(l.paneWidths.reduce((x, y) => x + y, 0)).toBeCloseTo(1, 10)
+    expect(l.active).toBe(harness.controller.activeTabId)
+  })
+
   test('restore: папки восстановленных чатов становятся проектами', async () => {
     writeStoredTabs([
       { id: 'a', cwd: projectA, title: 'A', overrides: {} },

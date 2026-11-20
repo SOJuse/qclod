@@ -173,12 +173,16 @@ describe('этап 2: проекты и раскладка', () => {
   const listed: string[] = []
   const opened: Array<[string, string, string | undefined]> = []
   const panes: string[][] = []
-  const tabs = [{ id: 't1', cwd: OPEN, title: 'открытый' }]
+  const changes: LayoutState[] = []
+  const tabs = [
+    { id: 't1', cwd: OPEN, title: 'открытый' },
+    { id: 't2', cwd: OPEN, title: 'второй' }
+  ]
 
   beforeEach(() => {
     handlers.clear()
-    for (const list of [listed, opened, panes]) list.length = 0
-    layout = new LayoutStore(mkdtempSync(join(tmpdir(), 'qclod-layout-ipc-')), () => undefined)
+    for (const list of [listed, opened, panes, changes]) list.length = 0
+    layout = new LayoutStore(mkdtempSync(join(tmpdir(), 'qclod-layout-ipc-')), (l) => changes.push(l))
     registerAgentIpc({
       getWindow: () => null,
       controller: {
@@ -260,6 +264,18 @@ describe('этап 2: проекты и раскладка', () => {
     expect(await call(CHANNELS.layoutSet, { sidebarCollapsed: true })).toMatchObject({ sidebarCollapsed: true })
     expect(panes).toHaveLength(1)
     expect(await call(CHANNELS.layoutSet, 'мусор')).toEqual(layout.get())
+  })
+
+  test('один layoutSet — одна запись и один layoutChanged; мёртвые панели не доходят', async () => {
+    const after = (await call(CHANNELS.layoutSet, {
+      panes: ['t1', 'нет-такой', 't2'],
+      paneWidths: [1, 3],
+      sidebarCollapsed: true
+    })) as LayoutState
+    expect(after).toMatchObject({ panes: ['t1', 't2'], paneWidths: [0.25, 0.75], sidebarCollapsed: true })
+    expect(panes).toEqual([['t1', 't2']])
+    expect(changes).toHaveLength(1)
+    expect(changes[0]).toEqual(after)
   })
 
   test('projectForget при открытых чатах проекта ничего не меняет и отдаёт раскладку', async () => {

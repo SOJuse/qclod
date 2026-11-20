@@ -1,17 +1,45 @@
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LAYOUT_FILE, LayoutStore, loadLayout, normalizeWidths } from '@main/store/layoutStore'
 import { DEFAULT_LAYOUT, type LayoutState } from '@shared/types'
 
+/** Failures the store meets on layout.json, one per call, in order. */
+const faults = vi.hoisted(() => ({ reads: [] as string[], renames: [] as string[] }))
+
+vi.mock('node:fs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs')>()
+  const fail = (code: string): never => {
+    throw Object.assign(new Error(`${code}: занято`), { code })
+  }
+  const mocked = {
+    ...real,
+    readFileSync: ((path: Parameters<typeof real.readFileSync>[0], ...rest: unknown[]) => {
+      const code = String(path).endsWith('layout.json') ? faults.reads.shift() : undefined
+      if (code) fail(code)
+      return (real.readFileSync as (...args: unknown[]) => unknown)(path, ...rest)
+    }) as typeof real.readFileSync,
+    // Only the store renames, so the next rename gets the next fault.
+    renameSync: ((from: string, to: string) => {
+      const code = faults.renames.shift()
+      if (code) fail(code)
+      return real.renameSync(from, to)
+    }) as typeof real.renameSync
+  }
+  return { ...mocked, default: mocked }
+})
+
 let dir = ''
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'qclod-layout-'))
+  faults.reads.length = 0
+  faults.renames.length = 0
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -189,6 +217,100 @@ describe('LayoutStore', () => {
     expect(l.paneWidths[1]).toBeCloseTo(0.625, 10)
     expect(l.active).toBeNull()
     expect(stored().panes).toEqual(['b', 'c'])
+  })
+
+  test('испорченный layout.json откладывается в layout.json.bad, старый .bad уступает место', () => {
+    const file = join(dir, LAYOUT_FILE)
+    writeFileSync(`${file}.bad`, 'прошлый испорченный', 'utf8')
+    writeFileSync(file, '{"projects":[{"cwd":"C:\\\\A","collapsed":false}', 'utf8')
+
+    const layout = new LayoutStore(dir, () => undefined)
+    expect(layout.get()).toEqual(DEFAULT_LAYOUT)
+    expect(readFileSync(`${file}.bad`, 'utf8')).toBe('{"projects":[{"cwd":"C:\\\\A","collapsed":false}')
+
+    layout.addProject('C:\\B')
+    expect(stored().projects).toEqual([{ cwd: 'C:\\B', collapsed: false }])
+    expect(readFileSync(`${file}.bad`, 'utf8')).toBe('{"projects":[{"cwd":"C:\\\\A","collapsed":false}')
+  })
+
+  test('JSON, который не раскладка (не объект), тоже откладывается', () => {
+    writeLayout([{ cwd: 'C:\\A' }])
+    new LayoutStore(dir, () => undefined).addProject('C:\\B')
+    expect(JSON.parse(readFileSync(join(dir, `${LAYOUT_FILE}.bad`), 'utf8'))).toEqual([{ cwd: 'C:\\A' }])
+    expect(stored().projects).toEqual([{ cwd: 'C:\\B', collapsed: false }])
+  })
+
+  test('испорченный файл не отложился — в этот раз файл не пишется', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const file = join(dir, LAYOUT_FILE)
+    writeFileSync(file, '{ обрыв', 'utf8')
+    faults.renames.push('EBUSY')
+
+    const layout = new LayoutStore(dir, () => undefined)
+    layout.addProject('C:\\B')
+    layout.setActive('x')
+
+    expect(layout.get().projects).toEqual([{ cwd: 'C:\\B', collapsed: false }])
+    expect(readFileSync(file, 'utf8')).toBe('{ обрыв')
+    expect(readdirSync(dir)).toEqual([LAYOUT_FILE])
+    expect(warn).toHaveBeenCalledTimes(1)
+  })
+
+  test('файл занят (EBUSY) один раз — второе чтение удаётся, раскладка своя', () => {
+    writeLayout({ panes: ['a'], projects: [{ cwd: 'C:\\A', collapsed: false }] })
+    faults.reads.push('EBUSY')
+    const layout = new LayoutStore(dir, () => undefined)
+    expect(layout.get()).toMatchObject({ panes: ['a'], projects: [{ cwd: 'C:\\A', collapsed: false }] })
+    expect(faults.reads).toEqual([])
+
+    layout.addProject('C:\\B')
+    expect(stored().projects).toEqual([
+      { cwd: 'C:\\A', collapsed: false },
+      { cwd: 'C:\\B', collapsed: false }
+    ])
+    expect(existsSync(join(dir, `${LAYOUT_FILE}.bad`))).toBe(false)
+  })
+
+  test('файл не читается и со второго раза — раскладка в памяти, файл не трогается, одно предупреждение', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    writeLayout({ projects: [{ cwd: 'C:\\A', collapsed: false }] })
+    const before = readFileSync(join(dir, LAYOUT_FILE), 'utf8')
+    faults.reads.push('EACCES', 'EACCES')
+    const seen: LayoutState[] = []
+
+    const layout = new LayoutStore(dir, (l) => seen.push(l))
+    expect(layout.get()).toEqual(DEFAULT_LAYOUT)
+    layout.addProject('C:\\B')
+    layout.patch({ sidebarCollapsed: true })
+    layout.setActive('x')
+
+    // The window still follows the layout of this run…
+    expect(seen).toHaveLength(3)
+    expect(layout.get()).toMatchObject({ sidebarCollapsed: true, active: 'x' })
+    // …and the file, which may hold the projects, is as it was.
+    expect(readFileSync(join(dir, LAYOUT_FILE), 'utf8')).toBe(before)
+    expect(readdirSync(dir)).toEqual([LAYOUT_FILE])
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0]![0])).toContain('EACCES')
+  })
+
+  test('запись идёт через временный файл: сорванная замена оставляет прежний layout.json целым', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const layout = new LayoutStore(dir, () => undefined)
+    layout.addProject('C:\\A')
+    const before = readFileSync(join(dir, LAYOUT_FILE), 'utf8')
+    expect(readdirSync(dir)).toEqual([LAYOUT_FILE])
+
+    faults.renames.push('EPERM')
+    layout.addProject('C:\\B')
+
+    expect(readFileSync(join(dir, LAYOUT_FILE), 'utf8')).toBe(before)
+    expect(readdirSync(dir)).toEqual([LAYOUT_FILE])
+    expect(warn).toHaveBeenCalledTimes(1)
+
+    // The next write goes through again, with everything this run knows.
+    layout.addProject('C:\\C')
+    expect(stored().projects.map((p) => p.cwd)).toEqual(['C:\\A', 'C:\\B', 'C:\\C'])
   })
 
   test('новая раскладка читается из того же файла', () => {

@@ -9,7 +9,21 @@ import { pasteImage, screenshotPng } from './helpers/clipboard'
  * went grey and then checks every channel a broken window would show on:
  * page errors, error boundaries, the error log, the renderer process, and the
  * window's own chrome still being there.
+ *
+ * A frozen window raises no event of its own: in task 9 a 150 000-char layout
+ * freeze never fired `unresponsive`. So each case also times a round trip into
+ * the page — a script that forces layout, then the next frame — and requires
+ * it under RESPONSIVE_MS, 1 000 ms. Work queued in the page waits for that
+ * round trip, so a window still busy laying out fails here.
  */
+const RESPONSIVE_MS = 1000
+
+/**
+ * Console errors and warnings that are not the window breaking. Each is named
+ * here on purpose; anything else fails the case. (None so far: the e2e build
+ * prints nothing on these paths.)
+ */
+const KNOWN_CONSOLE_NOISE: RegExp[] = []
 
 interface Evidence {
   pageErrors: string[]
@@ -20,9 +34,53 @@ function watch(win: Page): Evidence {
   const ev: Evidence = { pageErrors: [], consoleErrors: [] }
   win.on('pageerror', (err) => ev.pageErrors.push(`${err.message}\n${err.stack ?? ''}`))
   win.on('console', (msg) => {
-    if (msg.type() === 'error' || msg.type() === 'warning') ev.consoleErrors.push(msg.text())
+    if (msg.type() !== 'error' && msg.type() !== 'warning') return
+    const text = msg.text()
+    if (!KNOWN_CONSOLE_NOISE.some((re) => re.test(text))) ev.consoleErrors.push(`${msg.type()}: ${text}`)
   })
   return ev
+}
+
+/** The round trip into the page, in ms: script that lays the page out, then a frame. */
+async function roundTrip(win: Page): Promise<number> {
+  const started = Date.now()
+  await win.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        void document.body.offsetHeight
+        requestAnimationFrame(() => resolve())
+      })
+  )
+  return Date.now() - started
+}
+
+interface LogEntry {
+  source?: string
+  scope?: string
+  message?: string
+}
+
+/**
+ * What in userData/logs/qclod.log says the window broke: any report from the
+ * renderer (a render error, a handler error), and main's notes about the
+ * renderer process (render-process-gone, unresponsive). A line that is
+ * neither, or not JSON, is not a failure.
+ */
+function brokenWindowEntries(log: string): LogEntry[] {
+  const entries: LogEntry[] = []
+  for (const line of log.split('\n')) {
+    if (line.trim() === '') continue
+    let entry: LogEntry
+    try {
+      entry = JSON.parse(line) as LogEntry
+    } catch {
+      continue
+    }
+    const fromRenderer = entry.source === 'renderer'
+    const aboutRenderer = entry.scope === 'window' || /render-process|unresponsive/.test(entry.message ?? '')
+    if (fromRenderer || aboutRenderer) entries.push(entry)
+  }
+  return entries
 }
 
 async function watchProcess(app: ElectronApplication): Promise<void> {
@@ -39,12 +97,15 @@ async function expectAlive(app: ElectronApplication, win: Page, profile: string,
   await expect(win.locator('[data-testid="title-bar"]')).toBeVisible()
   await expect(win.locator('[data-testid="composer-input"]')).toBeVisible()
   await expect(win.locator('[data-testid^="error-boundary-"]')).toHaveCount(0)
+  expect(await roundTrip(win), `round trip into the page, ms (limit ${RESPONSIVE_MS})`).toBeLessThan(RESPONSIVE_MS)
+  // Read after the round trip: whatever the page reported before it has reached main.
   const gone = await app.evaluate(() => (globalThis as { __greyGone?: string[] }).__greyGone ?? [])
   const logFile = join(profile, 'logs', 'qclod.log')
   const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : ''
-  expect(ev.pageErrors, `console: ${ev.consoleErrors.join('\n')}`).toEqual([])
+  expect(ev.pageErrors, 'page errors').toEqual([])
+  expect(ev.consoleErrors, 'console errors and warnings').toEqual([])
   expect(gone, 'renderer process events').toEqual([])
-  expect(log, 'userData/logs/qclod.log').toBe('')
+  expect(brokenWindowEntries(log), `userData/logs/qclod.log:\n${log}`).toEqual([])
 }
 
 const input = (win: Page) => win.locator('[data-testid="composer-input"]')

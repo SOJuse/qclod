@@ -70,6 +70,32 @@ for await (const message of driver.messages) { /* ... */ }
 | `crash` | бросает ошибку `message` посреди потока. `times: N` — шаг играют только первые N сессий, в следующих он пропускается. Сессия — это созданный драйвер: она засчитывается один раз, при создании, дошла она до шага или нет. Счётчик (по `message`) лежит в `fake-sdk-crashes.json` в папке `process.env.QCLOD_USER_DATA`, так что его видят все сессии одного прогона приложения; без этой переменной шаг падает всегда, как раньше. `times` читается в шагах верхнего уровня `steps` и `nextTurn`. `beforeInit: true` — падает до `system/init` и эха хода, как агент, который не вошёл в аккаунт: сессия так и не представилась, и отправленное в неё остаётся неотправленным |
 | `reportInput` | текст агента «картинок: N; типы: image/png; байт: M» по последнему `send`: сколько вложений-картинок пришло, их `mediaType` через запятую и сумма байт после декодирования base64 — чтобы e2e видел, что картинка дошла настоящим вложением |
 
+## Очередь команд CLI
+
+Работает для `send(input, { uuid, priority })` с `uuid`; `send` без `uuid` —
+как раньше: свой ход, никаких кадров. Формы и порядок сняты с живого CLI 2.1.317
+(`05a-queue-probe.md`).
+
+| Что | Поведение фейка |
+|---|---|
+| кадр | `{type:'command_lifecycle', command_uuid, state, uuid, session_id}`: `command_uuid` — uuid сообщения, `uuid` — свежий id самого кадра |
+| `queued` | сразу при `send`, мимо хода |
+| `started` | у начавшего ход — до `system/init` (init приходит один раз за сессию, с первым ходом); у влитого — на границе шагов, после очередного шага сценария |
+| влитое сообщение | идёт в текущий ход без `user`-эха, попадает в `driver.folded` и в `result.user_message_uuids` |
+| `completed` | влитого — **до** `result`; начавшего ход — **после** `result` |
+| `result` | `user_message_uuids` (начавший ход первым), `queued_turn_count` — сколько ходов ещё ждёт |
+| `priority: 'now'` при идущем ходе | упрощённо: ход обрывается на ближайшей границе, новое сообщение первым в очереди начинает следующий |
+| `interrupt()` | ход кончается `result {subtype:'error_during_execution', is_error:true, terminal_reason:'aborted_tools'}`, затем `cancelled` начавшему его; очередь выполнится после. Ответ `{stillQueued: [uuid…], cancelled: []}` |
+| `interrupt({cancelQueued:true})` | каждому из очереди — `cancelled`; ответ `{stillQueued: [], cancelled: [uuid…]}` |
+| `cancelAsyncMessage(uuid)` / `cancelQueued(uuid)` | в очереди — `cancelled` и `true`; иначе `false` |
+| `lifecycle: false` | `claude_code_version: '2.1.200'`, без `capabilities`, без кадров; `cancelQueued` и `cancelAsyncMessage` — `null`, `interrupt` — `undefined`; сообщения всё равно вливаются |
+| `phoneCancel: {afterMs, uuid}` | кадр `cancelled` с чужим uuid через `afterMs` после первого `send` с uuid |
+
+`system/init` несёт `claude_code_version: '2.1.317'` и `capabilities`
+(`interrupt_receipt_v1`, `interrupt_cancel_queued_v1`, `interrupt_send_now_v1`,
+`msg_lifecycle_v1`). Влитые в оборванный ход сообщения закрываются как
+обычно (`completed` до `result`) — для них живого CLI не снимали.
+
 ## Что можно проверить после прогона
 
 `driver.sent`, `driver.permissionRequests`, `driver.executedTools`,

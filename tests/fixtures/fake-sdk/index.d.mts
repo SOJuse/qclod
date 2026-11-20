@@ -144,6 +144,10 @@ export interface FakeScript {
   /** stopTask() rejects with this message and the task keeps running. */
   stopTaskError?: string
   remoteControl?: FakeRemoteControl
+  /** false: a CLI without msg_lifecycle_v1 (2.1.200) — no frames, no receipt, cancel gives null. */
+  lifecycle?: boolean
+  /** A `cancelled` frame for a message that is not ours, `afterMs` after the first send with a uuid. */
+  phoneCancel?: { afterMs: number; uuid: string }
   canUseTool?: (
     toolName: string,
     input: Record<string, unknown>,
@@ -174,6 +178,8 @@ export interface FakeDriver {
   readonly messages: AsyncIterable<Record<string, never>>
   send(input: { text: string; attachments: unknown[] }, opts?: { uuid?: string; priority?: 'now' | 'next' | 'later' }): void
   cancelQueued(uuid: string): Promise<boolean | null>
+  /** The SDK's name for what cancelQueued does: true — taken off the queue, false — too late, null — no lifecycle. */
+  cancelAsyncMessage(uuid: string): Promise<boolean | null>
   interrupt(opts?: { cancelQueued?: boolean }): Promise<{ stillQueued: string[]; cancelled: string[] } | undefined>
   setPermissionMode(mode: string): Promise<void>
   supportedCommands(): Promise<
@@ -219,6 +225,8 @@ export interface FakeDriver {
   readonly model: string
   readonly effort: string | null
   readonly interrupted: boolean
+  /** Uuids of the messages taken into a running turn, in order. */
+  readonly folded: string[]
   readonly disposed: boolean
 }
 

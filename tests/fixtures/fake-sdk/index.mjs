@@ -182,7 +182,7 @@ export function createFakeSdk(script = {}) {
     }
   }
 
-  /** Sends (and phone turns) waiting to be played as their own turn. */
+  /** Sends (and phone turns) waiting to be played as their own turn: `{ input, uuid? }`. */
   const inbox = []
   /** What the CLI says by itself between turns: the bridge, a turn typed on the phone. */
   const outbox = []
@@ -203,6 +203,8 @@ export function createFakeSdk(script = {}) {
     model: script.init?.model ?? 'claude-opus-5',
     effort: null,
     interrupted: false,
+    /** Uuids of the messages taken into a running turn. */
+    folded: [],
     disposed: false,
     contextPercent: script.contextPercent ?? 21,
     /** Turns that have ended with a result; contextPercentByTurn is read by it. */
@@ -783,6 +785,90 @@ export function createFakeSdk(script = {}) {
     }
   }
 
+
+  // ---- The CLI's own message queue -------------------------------------
+  // Applies to messages sent with a uuid; a send without one keeps the plain
+  // inbox behaviour (its own turn, no frames).
+
+  /** false: a CLI without msg_lifecycle_v1 — no frames, no receipt, no cancel. */
+  const lifecycle = script.lifecycle !== false
+  /** Messages sent mid-turn, waiting for the next step boundary: `{ input, uuid }`. */
+  const pending = []
+  /** The turn being played, or null between turns: `{ starter, folded, aborted }`. */
+  let turn = null
+  let phoneCancelTimer = null
+
+  function lifecycleFrame(stateName, commandUuid) {
+    return {
+      type: 'command_lifecycle',
+      command_uuid: commandUuid,
+      state: stateName,
+      uuid: randomUUID(),
+      session_id: sessionId
+    }
+  }
+
+  /** A lifecycle frame inside the turn's own stream. */
+  function* announce(stateName, commandUuid) {
+    if (lifecycle && commandUuid) yield lifecycleFrame(stateName, commandUuid)
+  }
+
+  /** Whoever is still waiting for the CLI to take them, 'now' first. */
+  function waitingUuids() {
+    return [...inbox.filter((e) => e.uuid).map((e) => e.uuid), ...pending.map((p) => p.uuid)]
+  }
+
+  /** What the CLI's cancelAsyncMessage answers: true, false, or null for a CLI without it. */
+  function cancelAsync(uuid) {
+    if (!lifecycle) return null
+    let at = pending.findIndex((p) => p.uuid === uuid)
+    if (at >= 0) {
+      pending.splice(at, 1)
+    } else {
+      at = inbox.findIndex((e) => e.uuid === uuid)
+      if (at < 0) return false
+      inbox.splice(at, 1)
+    }
+    pushOutOfBand(lifecycleFrame('cancelled', uuid))
+    return true
+  }
+
+  function abortTurn() {
+    state.interrupted = true
+    for (const controller of openAsks) controller.abort()
+    if (turn) turn.aborted = true
+  }
+
+  /** The foreign `cancelled` frame a phone sends, once, after the first message. */
+  function armPhoneCancel() {
+    if (!lifecycle || !script.phoneCancel || phoneCancelTimer) return
+    phoneCancelTimer = setTimeout(
+      () => pushOutOfBand(lifecycleFrame('cancelled', script.phoneCancel.uuid)),
+      script.phoneCancel.afterMs ?? 0
+    )
+    phoneCancelTimer.unref?.()
+  }
+
+  /** The step boundary: what was sent mid-turn is taken into the turn. */
+  function* foldPending() {
+    while (pending.length > 0) {
+      const { uuid } = pending.shift()
+      turn.folded.push(uuid)
+      state.folded.push(uuid)
+      yield* announce('started', uuid)
+    }
+  }
+
+  /** A turn's steps, with a boundary after each one where the queue and an interrupt are heard. */
+  async function* playTurn(stepList) {
+    for (const step of stepList) {
+      if (turn.aborted) return
+      yield* play([step])
+      if (turn.aborted) return
+      yield* foldPending()
+    }
+  }
+
   let introduced = false
 
   /**
@@ -803,7 +889,17 @@ export function createFakeSdk(script = {}) {
       mcp_servers: script.init?.mcpServers ?? [],
       slash_commands: script.init?.slashCommands ?? DEFAULT_COMMANDS.map((c) => c.name),
       tools: ['Read', 'Edit', 'Bash'],
-      claude_code_version: 'fake'
+      claude_code_version: lifecycle ? '2.1.317' : '2.1.200',
+      ...(lifecycle
+        ? {
+            capabilities: [
+              'interrupt_receipt_v1',
+              'interrupt_cancel_queued_v1',
+              'interrupt_send_now_v1',
+              'msg_lifecycle_v1'
+            ]
+          }
+        : {})
     }
     yield rateLimitEvent(sessionId, windows.fiveHour, windows.sevenDay)
   }
@@ -824,8 +920,9 @@ export function createFakeSdk(script = {}) {
     // script waits for the first message and says nothing until then.
     if (steps.length > 0) {
       crashBeforeInit(steps, crashing)
+      turn = { starter: undefined, folded: [], aborted: false }
       yield* introduce()
-      yield* play(steps)
+      yield* playTurn(steps)
       yield* finishTurn()
       yield* drainAfterTurn()
     }
@@ -844,10 +941,14 @@ export function createFakeSdk(script = {}) {
       }
       if (closed) break
       if (outbox.length > 0) continue
-      const input = inbox.shift()
-      if (!input) continue
+      const entry = inbox.shift()
+      if (!entry) continue
+      const input = entry.input
+      turn = { starter: entry.uuid, folded: [], aborted: false }
 
       crashBeforeInit(script.nextTurn ?? [], crashing)
+      // R7a: the lifecycle frames come before init, which comes with the first turn.
+      yield* announce('started', entry.uuid)
       yield* introduce()
       // The CLI echoes the message back before answering it.
       yield {
@@ -859,29 +960,37 @@ export function createFakeSdk(script = {}) {
       }
       // A phone turn brings its own steps; Qclod's sends play the script's
       // turns in order.
-      let turn
+      let turnSteps
       if (input.phone) {
-        turn = input.steps ?? script.nextTurn ?? []
+        turnSteps = input.steps ?? script.nextTurn ?? []
       } else {
-        turn = script.turns?.[answered] ?? script.nextTurn ?? []
+        turnSteps = script.turns?.[answered] ?? script.nextTurn ?? []
         answered += 1
       }
-      yield* play(turn)
+      yield* playTurn(turnSteps)
       yield* finishTurn()
       yield* drainAfterTurn()
     }
   }
 
   async function* finishTurnImpl() {
+    const ended = turn
+    turn = null
+    // What arrived after the last boundary is its own turn, behind any 'now'.
+    inbox.push(...pending.splice(0))
     // Counted before the result goes out: the app asks for the context the
     // moment it sees the result.
     state.turnsDone += 1
+    // A folded message is done before the result; the starter's frame follows it.
+    for (const uuid of ended.folded) yield* announce('completed', uuid)
+    const uuids = [ended.starter, ...ended.folded].filter(Boolean)
     yield {
       type: 'result',
-      subtype: 'success',
+      ...(ended.aborted
+        ? { subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_tools' }
+        : { subtype: 'success', is_error: false }),
       uuid: randomUUID(),
       session_id: sessionId,
-      is_error: false,
       num_turns: 1,
       duration_ms: 1234,
       total_cost_usd: script.costUsd ?? 0.0421,
@@ -891,8 +1000,11 @@ export function createFakeSdk(script = {}) {
         cache_creation_input_tokens: 1400,
         cache_read_input_tokens: 44022
       },
-      result: 'done'
+      ...(ended.aborted ? {} : { result: 'done' }),
+      ...(uuids.length > 0 ? { user_message_uuids: uuids } : {}),
+      queued_turn_count: inbox.length
     }
+    yield* announce(ended.aborted ? 'cancelled' : 'completed', ended.starter)
   }
 
   const finishTurn = finishTurnImpl
@@ -948,7 +1060,7 @@ export function createFakeSdk(script = {}) {
   }
 
   function typeOnPhone(text, phoneSteps) {
-    inbox.push({ phone: true, text, steps: phoneSteps })
+    inbox.push({ input: { phone: true, text, steps: phoneSteps } })
     wakeStream()
   }
 
@@ -969,14 +1081,33 @@ export function createFakeSdk(script = {}) {
 
   return {
     messages: withOutOfBand(stream()),
-    // Temporary stub: the queue tasks give it a behaviour.
-    async cancelQueued() {
-      return null
+    async cancelQueued(uuid) {
+      return cancelAsync(uuid)
     },
-    send(input, _opts) {
+    /** The SDK's own name for it; cancelQueued calls the same thing. */
+    async cancelAsyncMessage(uuid) {
+      return cancelAsync(uuid)
+    },
+    send(input, opts) {
       state.sent.push(input)
-      inbox.push(input)
-      wakeStream()
+      const uuid = opts?.uuid
+      if (uuid === undefined) {
+        inbox.push({ input })
+        wakeStream()
+        return
+      }
+      armPhoneCancel()
+      if (lifecycle) pushOutOfBand(lifecycleFrame('queued', uuid))
+      if (!turn) {
+        inbox.push({ input, uuid })
+        wakeStream()
+      } else if (opts.priority === 'now') {
+        // The simplified model: the running turn is cut short, this starts the next.
+        inbox.unshift({ input, uuid })
+        abortTurn()
+      } else {
+        pending.push({ input, uuid })
+      }
     },
     async remoteAvailability() {
       return remote.blocked ? { available: false, reason: remote.blocked } : { available: true }
@@ -1004,10 +1135,13 @@ export function createFakeSdk(script = {}) {
     },
     /** Only the fake: a turn typed on the phone. */
     typeOnPhone,
-    async interrupt() {
-      state.interrupted = true
-      for (const controller of openAsks) controller.abort()
-      return undefined
+    async interrupt(opts) {
+      abortTurn()
+      if (!lifecycle) return undefined
+      const waiting = waitingUuids()
+      if (!opts?.cancelQueued) return { stillQueued: waiting, cancelled: [] }
+      for (const uuid of waiting) cancelAsync(uuid)
+      return { stillQueued: [], cancelled: waiting }
     },
     async setPermissionMode(mode) {
       state.permissionMode = mode
@@ -1110,6 +1244,7 @@ export function createFakeSdk(script = {}) {
     async dispose() {
       state.disposed = true
       closed = true
+      if (phoneCancelTimer) clearTimeout(phoneCancelTimer)
       if (wake) {
         const resume = wake
         wake = null
@@ -1140,6 +1275,9 @@ export function createFakeSdk(script = {}) {
     },
     get effort() {
       return state.effort
+    },
+    get folded() {
+      return state.folded
     },
     get interrupted() {
       return state.interrupted

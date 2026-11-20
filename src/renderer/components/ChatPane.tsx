@@ -216,9 +216,17 @@ export function ChatPane({
     const body = bodyRef.current
     const dock = dockRef.current
     if (!body || !dock) return
+    let last = ''
     const measure = (): void => {
       // From the dock's top to the body's bottom: its height and the gap under it.
-      body.style.setProperty('--dock-h', `${Math.max(0, body.clientHeight - dock.offsetTop)}px`)
+      // Measured from the boxes and rounded up, not from offsetTop: that one rounds
+      // a fractional top to 597 or 598 by turns, and every turn moved the ribbon's
+      // foot by a pixel, which moved it again — the ribbon never stood still.
+      const room = Math.ceil(body.getBoundingClientRect().bottom - dock.getBoundingClientRect().top)
+      const value = `${Math.max(0, room)}px`
+      if (value === last) return
+      last = value
+      body.style.setProperty('--dock-h', value)
     }
     measure()
     const observer = new ResizeObserver(measure)

@@ -472,6 +472,35 @@ describe('AutonomyHost: вопросы', () => {
     // a stays waiting for the person for good.
     expect(rig.manager.get('a')?.status).toBe('waiting')
   })
+
+  test('закрытая сессия: её waitClosed доходит до ядра, таймер карточки уходит', async () => {
+    const rig = makeRig({ script: () => ASK, defaults: { permissionMode: 'autoAllow' } })
+    await rig.controller.restore()
+    await sleep(40)
+    const id = rig.controller.list()[0]!.id
+    rig.controller.send(id, { text: 'спроси', attachments: [] })
+    await until(() => rig.host.viewOf(id).timers.length === 1, 'таймер идёт')
+    // As in «Начать заново»: the manager forgets the session first, then disposes it.
+    await rig.manager.close(id)
+    await settle(rig)
+    expect(rig.host.viewOf(id).timers).toEqual([])
+  })
+
+  test('«Начать заново» с открытым вопросом: в новой сессии ложного отсчёта нет', async () => {
+    const rig = makeRig({
+      script: (i) => (i === 0 ? ASK : { steps: [] }),
+      defaults: { permissionMode: 'autoAllow' }
+    })
+    await rig.controller.restore()
+    await sleep(40)
+    const id = rig.controller.list()[0]!.id
+    rig.controller.send(id, { text: 'спроси', attachments: [] })
+    await until(() => rig.host.viewOf(id).timers.length === 1, 'таймер идёт')
+    await rig.controller.restart(id)
+    await settle(rig)
+    expect(rig.made.length).toBeGreaterThan(1)
+    expect(rig.host.viewOf(id).timers).toEqual([])
+  })
 })
 
 describe('AutonomyHost: входы и «не спать»', () => {

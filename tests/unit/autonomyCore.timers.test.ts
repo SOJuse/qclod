@@ -27,6 +27,22 @@ describe('AutonomyCore: авто-ответы по таймеру', () => {
     expect(h.commands()).toHaveLength(1)
   })
 
+  test('новый процесс: старых карточек у него нет — таймеры прежних не заводятся заново', () => {
+    const h = inAutoAllow()
+    h.core.handle({ type: 'processUp', carried: 0 })
+    h.core.handle({ type: 'questionOpened', cardId: 'toolu_1', questions: QUESTION })
+    h.core.handle({ type: 'planOpened', cardId: 'plan_1' })
+    expect(h.core.view.timers).toHaveLength(2)
+    // «Начать заново»: the old process is gone without its waitClosed reaching the core.
+    h.core.handle({ type: 'processUp', carried: 0 })
+    expect(h.core.view.timers).toEqual([])
+    h.core.handle({ type: 'mode', mode: 'default' })
+    h.core.handle({ type: 'mode', mode: 'autoAllow' })
+    expect(h.core.view.timers).toEqual([])
+    h.clock.advance(HOUR)
+    expect(h.commands()).toEqual([])
+  })
+
   test('вне авто-да таймер не заводится', () => {
     const h = harness()
     h.core.handle({ type: 'mode', mode: 'default' })

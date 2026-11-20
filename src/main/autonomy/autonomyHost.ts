@@ -95,7 +95,10 @@ export class AutonomyHost implements AutonomyHooks {
     entry.status = session.status
     const current = (): boolean => !this.frozen && this.deps.manager.get(id) === session
     const feed = (input: AutonomyInput): void => {
-      if (current()) entry.core.handle(input)
+      // A closed session's cards close too: the manager forgets it before it
+      // is disposed, and the waits it cancels then must still leave the core.
+      const closing = input.type === 'waitClosed' && !this.frozen && this.entries.get(id) === entry
+      if (current() || closing) entry.core.handle(input)
     }
     let last: SessionStatus = session.status
     entry.unsubscribe.push(

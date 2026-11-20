@@ -295,6 +295,8 @@ export class AutonomyCore {
     const first = !this.seenUp
     this.seenUp = true
     this.alive = true
+    // A new process has none of the old one's cards: their timers would count for nothing.
+    this.cards.clear()
     this.remoteRetries = 0
     this.remoteRetryAt = null
     this.remoteGaveUpSaid = false

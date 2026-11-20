@@ -128,6 +128,9 @@ test('«разрешить всё такое» больше не спрашив�
 
     // The second identical call runs without asking a second time.
     await expect(win.locator('[data-testid="tool-group"]')).toContainText('Прочитал 2 файла', { timeout: 15000 })
+    // The answered permission rides inside the folded run.
+    await expect(win.locator('[data-testid="card-summary"]')).toHaveCount(0)
+    await win.locator('[data-testid="tool-group-toggle"]').click()
     await expect(win.locator('[data-testid="card-summary"]')).toHaveCount(1)
   } finally {
     await close(app, profile)
@@ -286,6 +289,9 @@ test('A разрешает всё такое — второй такой же н
     await win.keyboard.press('KeyA')
 
     await expect(win.locator('[data-testid="tool-group"]')).toContainText('Прочитал 2 файла', { timeout: 15000 })
+    // The answered permission rides inside the folded run.
+    await expect(win.locator('[data-testid="card-summary"]')).toHaveCount(0)
+    await win.locator('[data-testid="tool-group-toggle"]').click()
     await expect(win.locator('[data-testid="card-summary"]')).toHaveCount(1)
   } finally {
     await close(app, profile)

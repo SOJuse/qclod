@@ -25,6 +25,14 @@ const toolError = (id: string, name: string): RibbonItem => ({
 })
 const thinking = (id: string, done = true): RibbonItem => ({ id, kind: 'thinking', text: 'думаю', done, durationMs: 12000 })
 const text = (id: string): RibbonItem => ({ id, kind: 'agentText', text: 'вот', streaming: false })
+const perm = (id: string, state: 'pending' | 'allowed'): RibbonItem => ({
+  id,
+  kind: 'permission',
+  requestId: id,
+  toolName: 'Bash',
+  target: 'ls',
+  state
+})
 const never = (): boolean => false
 
 describe('groupRows', () => {
@@ -81,6 +89,41 @@ describe('groupRows', () => {
     if (g.kind !== 'toolGroup') throw new Error('not a group')
     expect(g.running).toBe(true)
     expect(groupLabel(g.category, g.count, g.running)).toBe('Читает файлы: 3')
+  })
+
+  it('ранний вызов ещё идёт, а последний уже готов — группа всё равно идёт', () => {
+    const g = groupRows([tool('a', 'Read', 'running'), tool('b', 'Read'), tool('c', 'Read')], never)[0]!
+    if (g.kind !== 'toolGroup') throw new Error('not a group')
+    expect(g.running).toBe(true)
+    expect(groupLabel(g.category, g.count, g.running)).toBe('Читает файлы: 3')
+  })
+
+  it('отвеченные разрешения не рвут группу: perm, tool, perm, tool — одна группа из двух вызовов', () => {
+    const out = groupRows([perm('p1', 'allowed'), tool('a', 'Bash'), perm('p2', 'allowed'), tool('b', 'Bash')], never)
+    expect(out).toHaveLength(1)
+    const g = out[0]!
+    if (g.kind !== 'toolGroup') throw new Error('not a group')
+    expect(g.count).toBe(2)
+    expect(g.items.map((i) => i.id)).toEqual(['p1', 'a', 'p2', 'b'])
+  })
+
+  it('разрешение после последнего вызова остаётся строкой, а перед следующей группой — её началом', () => {
+    const out = groupRows(
+      [tool('a', 'Read'), tool('b', 'Read'), perm('p', 'allowed'), tool('c', 'Bash'), tool('d', 'Bash')],
+      never
+    )
+    expect(out.map((r) => r.id)).toEqual(['group:a', 'group:p'])
+    const lone = groupRows([tool('a', 'Read'), tool('b', 'Read'), perm('p', 'allowed'), text('x')], never)
+    expect(lone.map((r) => r.id)).toEqual(['group:a', 'p', 'x'])
+  })
+
+  it('ждущее разрешение и отвеченные план и вопрос группу рвут', () => {
+    const plan: RibbonItem = { id: 'pl', kind: 'plan', requestId: 'pl', text: '1', state: 'approved' }
+    const q: RibbonItem = { id: 'q', kind: 'question', toolUseId: 'q', questions: [], answers: { a: 'b' } }
+    for (const breaker of [perm('w', 'pending'), plan, q]) {
+      const out = groupRows([tool('a', 'Read'), breaker, tool('b', 'Read')], never)
+      expect(out.map((r) => r.kind)).toEqual(['item', 'item', 'item'])
+    }
   })
 
   it('ошибка в группе', () => {

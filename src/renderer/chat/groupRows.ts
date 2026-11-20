@@ -8,7 +8,7 @@ export type RowModel =
       kind: 'toolGroup'
       id: string
       category: ToolCategory
-      /** The calls and the thinking between them, in order. */
+      /** The calls, with the thinking and answered permissions between them, in order. */
       items: RibbonItem[]
       /** Calls only. */
       count: number
@@ -31,41 +31,55 @@ function groupCategory(item: RibbonItem): ToolCategory | null {
   return GROUPED.has(category) ? category : null
 }
 
+/** A permission already answered: a line that rides along inside a run, like thinking. */
+function isAnsweredPermission(item: RibbonItem): boolean {
+  return item.kind === 'permission' && item.state !== 'pending'
+}
+
 /**
  * The ribbon's rows: two or more calls of one kind in a row fold into one
- * group; thinking between them does not break it, anything else does. A card
- * that is open is not a row at all.
+ * group. Thinking and answered permissions between them do not break it (they
+ * show inside it), anything else does. A card that is open is not a row at all.
  */
 export function groupRows(rows: RibbonItem[], isOpen: (item: RibbonItem) => boolean): RowModel[] {
   const out: RowModel[] = []
   let category: ToolCategory | null = null
   let run: RibbonItem[] = []
+  /** Answered permissions seen before a call that may start a run. */
+  let lead: RibbonItem[] = []
 
   const single = (item: RibbonItem): RowModel => ({ kind: 'item', id: item.id, item })
+  const emitLead = (): void => {
+    for (const item of lead) out.push(single(item))
+    lead = []
+  }
 
   const flush = (): void => {
-    if (category !== null && run.length > 0) {
-      // Thinking after the last call belongs to what follows, not to the group.
-      let end = run.length
-      while (end > 0 && run[end - 1]!.kind === 'thinking') end--
-      const body = run.slice(0, end)
-      const calls = body.filter(isCall)
-      if (calls.length >= 2) {
-        const last = calls[calls.length - 1]!
-        out.push({
-          kind: 'toolGroup',
-          id: `group:${body[0]!.id}`,
-          category,
-          items: body,
-          count: calls.length,
-          running: last.kind === 'tool' && last.state === 'running',
-          errors: calls.filter((c) => c.kind === 'toolError').length
-        })
-      } else {
-        for (const item of body) out.push(single(item))
-      }
-      for (const item of run.slice(end)) out.push(single(item))
+    if (category === null) return
+    // What trails the last call belongs to what follows, not to the group; the
+    // permissions among it may be the lead of the next run.
+    let end = run.length
+    while (end > 0 && (run[end - 1]!.kind === 'thinking' || isAnsweredPermission(run[end - 1]!))) end--
+    // The suffix made only of answered permissions can lead the next run.
+    let suffix = run.length
+    while (suffix > end && isAnsweredPermission(run[suffix - 1]!)) suffix--
+    const body = run.slice(0, end)
+    const calls = body.filter(isCall)
+    if (calls.length >= 2) {
+      out.push({
+        kind: 'toolGroup',
+        id: `group:${body[0]!.id}`,
+        category,
+        items: body,
+        count: calls.length,
+        running: calls.some((c) => c.kind === 'tool' && c.state === 'running'),
+        errors: calls.filter((c) => c.kind === 'toolError').length
+      })
+    } else {
+      for (const item of body) out.push(single(item))
     }
+    for (const item of run.slice(end, suffix)) out.push(single(item))
+    lead = run.slice(suffix)
     category = null
     run = []
   }
@@ -75,16 +89,24 @@ export function groupRows(rows: RibbonItem[], isOpen: (item: RibbonItem) => bool
     const own = groupCategory(item)
     if (own !== null) {
       if (category !== own) flush()
+      if (category === null) {
+        run = lead
+        lead = []
+      }
       category = own
       run.push(item)
-    } else if (item.kind === 'thinking' && category !== null) {
+    } else if (category !== null && (item.kind === 'thinking' || isAnsweredPermission(item))) {
       run.push(item)
+    } else if (category === null && isAnsweredPermission(item)) {
+      lead.push(item)
     } else {
       flush()
+      emitLead()
       out.push(single(item))
     }
   }
   flush()
+  emitLead()
   return out
 }
 

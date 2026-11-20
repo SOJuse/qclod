@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react'
 import type { RowModel } from '../chat/groupRows'
 import { groupLabel } from '../chat/groupRows'
 import { CategoryIcon } from '../ui/icons'
+import { CardSummary } from './cards/CardSummary'
 import { ThinkingRow } from './ThinkingRow'
 import { ToolCard } from './ToolCard'
 
@@ -38,6 +39,8 @@ export function ToolGroup({
           {group.items.map((item) =>
             item.kind === 'thinking' ? (
               <ThinkingRow key={item.id} item={item} />
+            ) : item.kind === 'permission' ? (
+              <CardSummary key={item.id} item={item} tabId={tabId} />
             ) : item.kind === 'tool' || item.kind === 'toolError' ? (
               <ToolCard key={item.id} item={item} cwd={cwd} tabId={tabId} />
             ) : null

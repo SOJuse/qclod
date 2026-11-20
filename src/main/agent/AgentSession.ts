@@ -34,7 +34,6 @@ import { locateAgent } from '../setup/findAgent'
 import { classifyStartFailure, LOGIN_NEEDED_TEXT } from './startFailure'
 import { sdkPermissionMode } from '../../shared/types'
 import {
-  PLAN_FOLLOW_UP,
   askedQuestions,
   denialText,
   encodeAnswers,
@@ -42,6 +41,8 @@ import {
   notesForChoices,
   notesModeFor,
   planEditModeFor,
+  planSendBackText,
+  planWithComment,
   type AskedQuestion
 } from './questionAnswer'
 
@@ -564,11 +565,15 @@ export class AgentSession {
    * Approving also leaves plan mode, because staying in it would stop the
    * agent from doing the very thing that was just approved.
    *
-   * A rejection's comment is the refusal the agent reads. An approved plan
-   * the user edited goes as ExitPlanMode's `updatedInput.plan` to a CLI known
-   * to carry it out, and to an older one as a message after a plain approval;
-   * an approval's comment follows as a message too. An edit that is empty or
-   * changes nothing is a plain approval.
+   * A rejection's comment is the refusal the agent reads. An approval with
+   * an edit or a comment goes, to a CLI known to carry it out, as
+   * ExitPlanMode's `updatedInput.plan`: the plan as edited, the comment under
+   * it. An older CLI has it sent back instead (ruling S2-R8): ExitPlanMode is
+   * refused with the edit and the comment, the mode stays «план», and the
+   * agent proposes the plan again — approving it first and correcting it by a
+   * message would let the agent start on the old plan, with edits unasked in
+   * acceptEdits. Nothing here goes as a message, so nothing can be lost to a
+   * full queue. An edit that is empty or changes nothing is no edit.
    */
   async answerPlan(requestId: string, decision: PlanDecision): Promise<void> {
     // (4) Nothing is marked answered until there is something to answer: a
@@ -588,24 +593,30 @@ export class AgentSession {
     const asked = typeof waiting.input['plan'] === 'string' ? waiting.input['plan'] : ''
     const plan = decision.plan
     const edited = plan !== undefined && plan.trim() !== '' && plan !== asked ? plan : undefined
-    this.emit(
-      this.builder.resolvePlan(requestId, 'approved', {
-        ...(comment ? { comment } : {}),
-        ...(edited !== undefined ? { edited: true as const, plan: edited } : {})
-      })
-    )
+    const shown = {
+      ...(comment ? { comment } : {}),
+      ...(edited !== undefined ? { edited: true as const, plan: edited } : {})
+    }
 
+    if ((edited !== undefined || comment) && planEditModeFor(this.cliVersion) === 'sendBack') {
+      // Sent back for rework: the card reads as not approved, with the edit
+      // and the comment that went back.
+      this.emit(this.builder.resolvePlan(requestId, 'rejected', shown))
+      waiting.resolve({ behavior: 'deny', message: planSendBackText(edited, comment) })
+      return
+    }
+
+    this.emit(this.builder.resolvePlan(requestId, 'approved', shown))
     // The mode must be in place before the tool runs, not racing it.
     await this.setPermissionMode('acceptEdits')
-    const inInput = edited !== undefined && planEditModeFor(this.cliVersion) === 'updatedInput'
     waiting.resolve(
-      inInput ? { behavior: 'allow', updatedInput: { ...waiting.input, plan: edited } } : { behavior: 'allow' }
+      edited !== undefined || comment
+        ? {
+            behavior: 'allow',
+            updatedInput: { ...waiting.input, plan: planWithComment(edited ?? asked, comment) }
+          }
+        : { behavior: 'allow' }
     )
-    // What the tool's answer did not carry, the agent reads next.
-    const followUp = [edited !== undefined && !inInput ? PLAN_FOLLOW_UP + edited : '', comment ?? '']
-      .filter((part) => part !== '')
-      .join('\n\n')
-    if (followUp) this.send({ text: followUp, attachments: [] })
   }
 
   /** Something Qclod itself needs to say — a crash, a session that would not resume. */
@@ -1688,6 +1699,9 @@ export class AgentSession {
     input: Record<string, unknown>,
     opts: ToolPermissionContext
   ): Promise<PermissionAnswer> {
+    // A closed session asks nobody: a card answered «до конца сессии» now
+    // would leave a rule for this tab that its successor would inherit.
+    if (this.disposed) return { behavior: 'deny' }
     const ask = this.options.askPermission
 
     // A question is not a permission: it has options, not «allow» and «deny»

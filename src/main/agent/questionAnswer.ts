@@ -8,10 +8,13 @@ import { versionAtLeast } from './outbox'
 export type NotesMode = 'annotations' | 'inline'
 
 /**
- * How a plan the user edited reaches the agent: as ExitPlanMode's own
- * `updatedInput.plan`, or as a message after a plain approval.
+ * How a plan the user edited or commented on reaches the agent: as
+ * ExitPlanMode's own `updatedInput.plan`, or — a CLI not known to carry that
+ * out — by sending the plan back: ExitPlanMode is refused with the edit and
+ * the comment, and the agent proposes it again. Never as a message after an
+ * approval: the agent would start on the old plan before reading it.
  */
-export type PlanEditMode = 'updatedInput' | 'followUp'
+export type PlanEditMode = 'updatedInput' | 'sendBack'
 
 /**
  * The first CLI known to hand `annotations[question].notes` to the model
@@ -22,13 +25,32 @@ export const NOTES_ANNOTATIONS_SINCE = '2.1.317'
 
 /**
  * The first CLI known to carry out `updatedInput.plan` — «Approved Plan
- * (edited by user)» (probe 05b, step 3). An older or unknown one gets the edit
- * as a message.
+ * (edited by user)» (probe 05b, step 3). An older or unknown one gets the plan
+ * sent back instead (ruling S2-R8).
  */
 export const PLAN_EDIT_SINCE = '2.1.317'
 
-/** What goes before an edited plan sent as a message. */
-export const PLAN_FOLLOW_UP = 'План поправлен, выполняй этот вариант:\n\n'
+/** The plan as approved, with the user's comment under it. */
+export function planWithComment(plan: string, comment?: string): string {
+  return comment ? `${plan}\n\nКомментарий пользователя: ${comment}` : plan
+}
+
+/**
+ * The refusal that sends a plan back for rework: the user's edit, their
+ * comment, or both, and a plain word not to start on the old one.
+ */
+export function planSendBackText(edited?: string, comment?: string): string {
+  if (edited !== undefined) {
+    return planWithComment(
+      `Пользователь поправил план. Не начинай работу — предложи этот вариант снова через ExitPlanMode:\n${edited}`,
+      comment
+    )
+  }
+  return (
+    'Пользователь одобрит план с учётом комментария. Не начинай работу — учти комментарий и предложи ' +
+    `план снова через ExitPlanMode.\n\nКомментарий: ${comment ?? ''}`
+  )
+}
 
 function atLeast(version: string | null | undefined, least: string): boolean {
   return typeof version === 'string' && versionAtLeast(version, least.split('.').map(Number))
@@ -41,7 +63,7 @@ export function notesModeFor(version: string | null | undefined): NotesMode {
 
 /** By `claude_code_version` from system/init; null — not introduced yet. */
 export function planEditModeFor(version: string | null | undefined): PlanEditMode {
-  return atLeast(version, PLAN_EDIT_SINCE) ? 'updatedInput' : 'followUp'
+  return atLeast(version, PLAN_EDIT_SINCE) ? 'updatedInput' : 'sendBack'
 }
 
 /**

@@ -6,7 +6,9 @@ import {
   encodeQuestionAnswer,
   inlineAnswer,
   notesModeFor,
-  planEditModeFor
+  planEditModeFor,
+  planSendBackText,
+  planWithComment
 } from '../../src/main/agent/questionAnswer'
 
 const input = {
@@ -99,8 +101,29 @@ describe('режимы по версии CLI', () => {
     }
     for (const version of ['2.1.316', '2.1.200', '1.9.999', '', 'не версия', null, undefined]) {
       expect(notesModeFor(version)).toBe('inline')
-      expect(planEditModeFor(version)).toBe('followUp')
+      expect(planEditModeFor(version)).toBe('sendBack')
     }
+  })
+})
+
+describe('план с правкой и комментарием (S2-R8)', () => {
+  test('planWithComment: комментарий под планом, без комментария — план как есть', () => {
+    expect(planWithComment('1. шаг', 'коротко')).toBe('1. шаг\n\nКомментарий пользователя: коротко')
+    expect(planWithComment('1. шаг')).toBe('1. шаг')
+  })
+
+  test('planSendBackText: правка, правка с комментарием, один комментарий', () => {
+    expect(planSendBackText('1. другой')).toBe(
+      'Пользователь поправил план. Не начинай работу — предложи этот вариант снова через ExitPlanMode:\n1. другой'
+    )
+    expect(planSendBackText('1. другой', 'коротко')).toBe(
+      'Пользователь поправил план. Не начинай работу — предложи этот вариант снова через ExitPlanMode:\n1. другой' +
+        '\n\nКомментарий пользователя: коротко'
+    )
+    expect(planSendBackText(undefined, 'коротко')).toBe(
+      'Пользователь одобрит план с учётом комментария. Не начинай работу — учти комментарий и предложи план ' +
+        'снова через ExitPlanMode.\n\nКомментарий: коротко'
+    )
   })
 })
 

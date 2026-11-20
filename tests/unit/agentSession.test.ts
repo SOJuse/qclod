@@ -3281,27 +3281,8 @@ describe('AgentSession: ответы на карточки', () => {
     }
   })
 
-  test('старый CLI: правка плана идёт сообщением после обычного одобрения', async () => {
-    const { session, driver } = planSession('1. всё переписать', { init: { claudeCodeVersion: '2.1.300' } })
-    const rec = watch(session)
-    const plan = await openPlan(session, rec)
-
-    await session.answerPlan(plan.requestId, { approve: true, plan: '1. поправить одну функцию' })
-    await settle(session)
-
-    expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'allow' })
-    expect(driver.sent.map((s) => s.text)).toEqual([
-      'План поправлен, выполняй этот вариант:\n\n1. поправить одну функцию'
-    ])
-    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
-      state: 'approved',
-      text: '1. поправить одну функцию',
-      edited: true
-    })
-    expect(session.panel.permissionMode).toBe('acceptEdits')
-  })
-
-  test('одобрить с комментарием — комментарий в ленте и сообщением агенту', async () => {
+  // S2-R8.2: on a CLI that carries updatedInput.plan, the comment goes under the plan.
+  test('новый CLI: комментарий одобрения — под планом в updatedInput.plan, без сообщения', async () => {
     const { session, driver } = planSession('1. шаг')
     const rec = watch(session)
     const plan = await openPlan(session, rec)
@@ -3309,12 +3290,189 @@ describe('AgentSession: ответы на карточки', () => {
     await session.answerPlan(plan.requestId, { approve: true, comment: 'и потом прогони тесты' })
     await settle(session)
 
-    expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'allow' })
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'allow',
+      updatedInput: { plan: '1. шаг\n\nКомментарий пользователя: и потом прогони тесты' }
+    })
+    const item = rec.items.find((i) => i.kind === 'plan')
+    expect(item).toMatchObject({ state: 'approved', text: '1. шаг', comment: 'и потом прогони тесты' })
+    expect(item).not.toHaveProperty('edited')
+    expect(session.panel.permissionMode).toBe('acceptEdits')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('новый CLI: правка и комментарий — правленый план с комментарием под ним', async () => {
+    const { session, driver } = planSession('1. всё переписать')
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, {
+      approve: true,
+      plan: '1. поправить одну функцию',
+      comment: 'без миграций'
+    })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)!.updatedInput).toEqual({
+      plan: '1. поправить одну функцию\n\nКомментарий пользователя: без миграций'
+    })
+    // The card shows the plan as edited; the comment stands beside it.
     expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
       state: 'approved',
-      comment: 'и потом прогони тесты'
+      text: '1. поправить одну функцию',
+      edited: true,
+      comment: 'без миграций'
     })
-    expect(driver.sent.map((s) => s.text)).toEqual(['и потом прогони тесты'])
+    expect(driver.sent).toEqual([])
+  })
+
+  // S2-R8.1: an older CLI gets the plan sent back, and plan mode stays.
+  const OLD_CLI: FakeScript = { init: { claudeCodeVersion: '2.1.300' } }
+
+  test('старый CLI: правка плана — ExitPlanMode отклонён с правкой, режим остаётся «план»', async () => {
+    const { session, driver } = planSession('1. всё переписать', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, plan: '1. поправить одну функцию' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'deny',
+      message:
+        'Пользователь поправил план. Не начинай работу — предложи этот вариант снова через ExitPlanMode:\n' +
+        '1. поправить одну функцию'
+    })
+    expect(driver.executedTools).not.toContain('ExitPlanMode')
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
+      state: 'rejected',
+      text: '1. поправить одну функцию',
+      edited: true
+    })
+    expect(session.panel.permissionMode).toBe('plan')
+    expect(driver.permissionMode).toBe('plan')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('старый CLI: правка и комментарий — оба в отказе', async () => {
+    const { session, driver } = planSession('1. всё переписать', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, {
+      approve: true,
+      plan: '1. поправить одну функцию',
+      comment: 'без миграций'
+    })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'deny',
+      message:
+        'Пользователь поправил план. Не начинай работу — предложи этот вариант снова через ExitPlanMode:\n' +
+        '1. поправить одну функцию\n\nКомментарий пользователя: без миграций'
+    })
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
+      state: 'rejected',
+      text: '1. поправить одну функцию',
+      edited: true,
+      comment: 'без миграций'
+    })
+    expect(session.panel.permissionMode).toBe('plan')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('старый CLI: комментарий без правки — план отправлен на доработку с комментарием', async () => {
+    const { session, driver } = planSession('1. шаг', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, comment: 'и потом прогони тесты' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'deny',
+      message:
+        'Пользователь одобрит план с учётом комментария. Не начинай работу — учти комментарий и предложи ' +
+        'план снова через ExitPlanMode.\n\nКомментарий: и потом прогони тесты'
+    })
+    const item = rec.items.find((i) => i.kind === 'plan')
+    expect(item).toMatchObject({ state: 'rejected', text: '1. шаг', comment: 'и потом прогони тесты' })
+    expect(item).not.toHaveProperty('edited')
+    expect(session.panel.permissionMode).toBe('plan')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('старый CLI: одобрение без правки и комментария — обычное одобрение', async () => {
+    const { session, driver } = planSession('1. шаг', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, plan: '1. шаг' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'allow' })
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({ state: 'approved', text: '1. шаг' })
+    expect(session.panel.permissionMode).toBe('acceptEdits')
+  })
+
+  // S2-R8.3: nothing of a plan answer goes as a message, so a full queue loses nothing.
+  test.each([
+    ['2.1.317', 'allow'],
+    ['2.1.300', 'deny']
+  ])('CLI %s: правка и комментарий не уходят сообщением — очереди нечего терять', async (version, behavior) => {
+    const { session, driver } = planSession('1. шаг', { init: { claudeCodeVersion: version } })
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, plan: '1. другой шаг', comment: 'коротко' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)!.behavior).toBe(behavior)
+    expect(driver.sent).toEqual([])
+    expect(session.panel.queue).toEqual([])
+    expect(rec.items.filter((i) => i.kind === 'notice')).toEqual([])
+    // Whatever reached the agent carries the edit and the comment.
+    const carried = JSON.stringify(driver.permissionLog.at(-1))
+    expect(carried).toContain('1. другой шаг')
+    expect(carried).toContain('коротко')
+  })
+
+  // S2-R8.4: a closed session asks nobody, so no «до конца сессии» rule can outlive it.
+  test.each(['2.1.317', '2.1.300'])('CLI %s: закрытая сессия отказывает сразу и никого не спрашивает', async (version) => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session } = brokeredSession(
+      broker,
+      sessions,
+      { init: { claudeCodeVersion: version }, steps: [{ kind: 'text', text: 'ок' }] },
+      { overrides: { permissionMode: 'plan' } }
+    )
+    const rec = watch(session)
+    await session.start()
+    await settle(session)
+    await session.dispose()
+    const before = rec.items.length
+
+    const late = (session as unknown as {
+      onToolPermission: (n: string, i: Record<string, unknown>, o: object) => Promise<{ behavior: string }>
+    }).onToolPermission.bind(session)
+    await expect(late('Bash', { command: 'npm test' }, { toolUseId: 'late-1' })).resolves.toEqual({ behavior: 'deny' })
+    await expect(late('ExitPlanMode', { plan: 'x' }, { toolUseId: 'late-2' })).resolves.toEqual({ behavior: 'deny' })
+    await expect(
+      late('AskUserQuestion', { questions: [{ question: 'Q', options: [{ label: 'A' }] }] }, { toolUseId: 'late-3' })
+    ).resolves.toEqual({ behavior: 'deny' })
+
+    expect(asked).toEqual([])
+    expect(rec.items).toHaveLength(before)
+    // A click meant for a card that never was saves nothing for the tab.
+    broker.answer('late-1', { behavior: 'allow', forSession: true })
+    void broker.request('t1', 'Bash', { command: 'npm test' })
+    expect(asked).toHaveLength(1)
   })
 
   test('разрешить до конца сессии', async () => {

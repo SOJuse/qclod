@@ -87,7 +87,7 @@ test('«разрешить» пропускает инструмент и он �
     const win = await app.firstWindow()
     await win.locator('[data-testid="permission-allow"]').click({ timeout: 15000 })
 
-    await expect(win.locator('[data-testid="permission-card"]')).toContainText('разрешено')
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('Разрешено: Bash · npm test')
     await expect(win.locator('[data-testid="ribbon-tool"]')).toBeVisible({ timeout: 15000 })
   } finally {
     await close(app, profile)
@@ -105,7 +105,7 @@ test('«отклонить» отменяет инструмент и агент
     const win = await app.firstWindow()
     await win.locator('[data-testid="permission-deny"]').click({ timeout: 15000 })
 
-    await expect(win.locator('[data-testid="permission-card"]')).toContainText('отклонено')
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('Запрещено: Bash · rm -rf /')
     await expect(win.locator('[data-testid="ribbon"]')).toContainText('хорошо, не буду', {
       timeout: 15000
     })
@@ -127,8 +127,8 @@ test('«разрешить всё такое» больше не спрашив�
     await win.locator('[data-testid="permission-allow-all"]').first().click({ timeout: 15000 })
 
     // The second identical call runs without asking a second time.
-    await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(2, { timeout: 15000 })
-    await expect(win.locator('[data-testid="permission-card"]')).toHaveCount(1)
+    await expect(win.locator('[data-testid="tool-group"]')).toContainText('Прочитал 2 файла', { timeout: 15000 })
+    await expect(win.locator('[data-testid="card-summary"]')).toHaveCount(1)
   } finally {
     await close(app, profile)
   }
@@ -156,8 +156,8 @@ test('вопрос агента показывает варианты и отв�
 
     await card.locator('[data-testid="question-option"]', { hasText: 'Справа' }).click()
 
-    // The choice is on the card, and the agent got it.
-    await expect(card.locator('.is-chosen')).toContainText('Справа')
+    // The answered card is one line with the choice, and the agent got it.
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('Ответ: Вопрос — Справа')
     await expect(win.locator('[data-testid="ribbon"]')).toContainText('понял, делаю справа', {
       timeout: 15000
     })
@@ -193,7 +193,7 @@ test('вопрос из двух частей: выбрал оба вариан�
     await expect(submit).toBeEnabled()
     await submit.click()
 
-    await expect(card.locator('.is-chosen')).toHaveCount(2)
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('Вопрос — Справа; Вопрос — Красный')
     const ribbon = win.locator('[data-testid="ribbon"]')
     // What the agent itself received, not the card's own text.
     await expect(ribbon).toContainText('Получено: "Где?"="Справа", "Цвет?"="Красный"', {
@@ -237,7 +237,7 @@ test('Enter разрешает, инструмент выполняется', as
     await armed(win)
     await win.keyboard.press('Enter')
 
-    await expect(card).toContainText('разрешено')
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('Разрешено: Bash · npm test')
     await expect(win.locator('[data-testid="ribbon-tool"]')).toBeVisible({ timeout: 15000 })
     // Focus is back where the typing goes.
     await expect(win.locator('[data-testid="composer-input"]')).toBeFocused()
@@ -261,7 +261,7 @@ test('Esc отклоняет', async () => {
     await armed(win)
     await win.keyboard.press('Escape')
 
-    await expect(card).toContainText('отклонено')
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('Запрещено: Bash · rm -rf /')
     await expect(win.locator('[data-testid="ribbon"]')).toContainText('хорошо, не буду', {
       timeout: 15000
     })
@@ -285,8 +285,8 @@ test('A разрешает всё такое — второй такой же н
     await armed(win)
     await win.keyboard.press('KeyA')
 
-    await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(2, { timeout: 15000 })
-    await expect(win.locator('[data-testid="permission-card"]')).toHaveCount(1)
+    await expect(win.locator('[data-testid="tool-group"]')).toContainText('Прочитал 2 файла', { timeout: 15000 })
+    await expect(win.locator('[data-testid="card-summary"]')).toHaveCount(1)
   } finally {
     await close(app, profile)
   }
@@ -458,7 +458,7 @@ test('A в первые 400 мс после появления карточки 
     // Armed: a fresh press answers.
     await armed(win)
     await win.keyboard.press('KeyA')
-    await expect(win.locator('[data-testid="ribbon-tool"]')).toHaveCount(2, { timeout: 15000 })
+    await expect(win.locator('[data-testid="tool-group"]')).toContainText('Прочитал 2 файла', { timeout: 15000 })
   } finally {
     await close(app, profile)
   }

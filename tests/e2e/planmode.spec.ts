@@ -108,7 +108,7 @@ test('подтверждение плана переводит в рабочий
     const win = await app.firstWindow()
     await win.locator('[data-testid="plan-approve"]').click({ timeout: 15000 })
 
-    await expect(win.locator('[data-testid="plan-card"]')).toContainText('принят')
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('План принят')
     await expect(win.locator('[data-testid="ribbon"]')).toContainText('приступаю', {
       timeout: 15000
     })
@@ -134,7 +134,7 @@ test('отклонение плана возвращает к обсуждени
     const win = await app.firstWindow()
     await win.locator('[data-testid="plan-reject"]').click({ timeout: 15000 })
 
-    await expect(win.locator('[data-testid="plan-card"]')).toContainText('отклонён')
+    await expect(win.locator('[data-testid="card-summary"]')).toContainText('План отклонён')
     await expect(win.locator('[data-testid="ribbon"]')).toContainText('хорошо, подумаю ещё', {
       timeout: 15000
     })

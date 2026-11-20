@@ -78,12 +78,42 @@ export function sanitizeEditorCommand(value: unknown): string | undefined {
   return typeof value === 'string' && value.length <= MAX_EDITOR_COMMAND ? value : undefined
 }
 
+/** No path to an executable is this long; a longer string is not one. */
+const MAX_AGENT_PATH = 4096
+/** No accelerator is this long. */
+const MAX_HOTKEY = 100
+const BOOLEAN_SETTINGS = ['notificationsEnabled', 'soundEnabled', 'closeToTray', 'panelOpen'] as const
+
 /**
- * Settings with a patch applied; the defaults inside the patch are sanitised
- * first, and an editor command that is not a usable string leaves the old one.
+ * The plain fields of a settings patch, each of its own type, and nothing
+ * else: an unknown key or a wrong type is dropped, never stored. `defaults`
+ * and `editorCommand` have sanitisers of their own (mergeDefaults).
+ */
+export function sanitizeSettingsFields(
+  value: unknown
+): Partial<Omit<AppSettings, 'defaults' | 'editorCommand'>> {
+  if (!isPlainObject(value)) return {}
+  const out: Partial<Omit<AppSettings, 'defaults' | 'editorCommand'>> = {}
+  const agentPath = value['agentPath']
+  if (isString(agentPath) && agentPath.length <= MAX_AGENT_PATH && !agentPath.includes('\0')) {
+    out.agentPath = agentPath
+  }
+  const hotkey = value['globalHotkey']
+  if (isString(hotkey) && hotkey.length <= MAX_HOTKEY) out.globalHotkey = hotkey
+  for (const key of BOOLEAN_SETTINGS) {
+    if (typeof value[key] === 'boolean') out[key] = value[key] as boolean
+  }
+  return out
+}
+
+/**
+ * Settings with a patch applied. Every field of the patch is checked: the
+ * defaults are sanitised, an editor command that is not a usable string leaves
+ * the old one, and anything else unknown or of the wrong type is dropped.
  */
 export function mergeDefaults(settings: AppSettings, patch: Partial<AppSettings>): AppSettings {
-  const { defaults, editorCommand, ...rest } = patch
+  const { defaults, editorCommand } = isPlainObject(patch) ? patch : {}
+  const rest = sanitizeSettingsFields(patch)
   const merged = { ...settings.defaults, ...(defaults === undefined ? {} : sanitizeDefaults(defaults)) }
   // An empty string is how the settings screen says "as Claude Code has it":
   // the key goes away rather than being stored as an empty value.

@@ -11,6 +11,7 @@ import {
   sanitizeInput,
   sanitizeOverrides,
   sanitizeQuestionAnswers,
+  sanitizeSettingsFields,
   sanitizeTabPatch
 } from '@main/tabs/sanitize'
 
@@ -248,6 +249,45 @@ describe('mergeDefaults', () => {
 
   test('патч без defaults оставляет умолчания как были', () => {
     expect(mergeDefaults(base, { soundEnabled: false }).defaults).toEqual(base.defaults)
+  })
+
+  test('settingsSet: неизвестные ключи и чужие типы не сохраняются', () => {
+    const next = mergeDefaults(base, {
+      agentPath: 42,
+      globalHotkey: { a: 1 },
+      closeToTray: 'да',
+      panelOpen: 1,
+      notificationsEnabled: false,
+      evil: 'x'
+    } as never)
+    expect(next).toEqual({ ...base, notificationsEnabled: false })
+    expect('evil' in next).toBe(false)
+  })
+
+  test('settingsSet: путь к агенту — строка разумной длины без нулевого байта', () => {
+    expect(mergeDefaults(base, { agentPath: 'C:\\tools\\claude.exe' }).agentPath).toBe('C:\\tools\\claude.exe')
+    expect(mergeDefaults(base, { agentPath: 'a'.repeat(5000) }).agentPath).toBe(base.agentPath)
+    expect(mergeDefaults(base, { agentPath: 'claude\0.exe' }).agentPath).toBe(base.agentPath)
+  })
+
+  test('settingsSet: мусор вместо объекта ничего не меняет', () => {
+    expect(mergeDefaults(base, null as never)).toEqual(base)
+    expect(mergeDefaults(base, 'строка' as never)).toEqual(base)
+  })
+})
+
+describe('sanitizeSettingsFields', () => {
+  test('оставляет только известные поля своего типа', () => {
+    expect(
+      sanitizeSettingsFields({
+        agentPath: 'claude',
+        globalHotkey: 'Control+Shift+Space',
+        soundEnabled: true,
+        defaults: { model: 'x' },
+        editorCommand: 'code -g {path}',
+        junk: true
+      })
+    ).toEqual({ agentPath: 'claude', globalHotkey: 'Control+Shift+Space', soundEnabled: true })
   })
 })
 

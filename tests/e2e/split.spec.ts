@@ -20,6 +20,26 @@ async function dragRow(row: Locator, pane: Locator, x: number): Promise<void> {
   await row.dragTo(pane, { targetPosition: { x: Math.min(box.width - 4, Math.max(4, box.width * x)), y: box.height * 0.3 } })
 }
 
+/**
+ * Holds a drag of `row` over `pane` at `x` across it, hands the drop frame
+ * (if any) to `check`, then lets go back over the row, where nothing takes it.
+ */
+async function hoverDrag(win: Page, row: Locator, pane: Locator, x: number, check: () => Promise<void>): Promise<void> {
+  const r = (await row.boundingBox())!
+  const box = (await pane.boundingBox())!
+  await win.mouse.move(r.x + r.width / 2, r.y + r.height / 2)
+  await win.mouse.down()
+  await win.mouse.move(r.x + r.width / 2 + 24, r.y + r.height / 2, { steps: 3 })
+  await win.mouse.move(box.x + box.width / 2, box.y + box.height * 0.3, { steps: 6 })
+  await win.mouse.move(box.x + Math.min(box.width - 4, Math.max(4, box.width * x)), box.y + box.height * 0.3, { steps: 4 })
+  try {
+    await check()
+  } finally {
+    await win.mouse.move(r.x + r.width / 2, r.y + r.height / 2, { steps: 6 })
+    await win.mouse.up()
+  }
+}
+
 test('чаты перетаскиваются из боковой панели в сплит: до четырёх, ширина мышью, всё переживает перезапуск', async () => {
   const folder = mkdtempSync(join(tmpdir(), 'qclod-split-dir-'))
   const profile = mkdtempSync(join(tmpdir(), 'qclod-split-profile-'))
@@ -75,6 +95,24 @@ test('чаты перетаскиваются из боковой панели �
       await expect.poll(() => order(win)).toEqual([four[3], four[0], four[1], four[2]])
       await expect(panes).toHaveCount(4)
 
+      // S2-R22(а). A full row: for a chat from outside, the middle is framed and the edges are not;
+      // for a chat already in the row the edge is framed — it would move there.
+      const frame = win.locator('[data-testid="split-drop"]')
+      await hoverDrag(win, row(others[3]!), panes.nth(3), 0.97, async () => {
+        await expect(frame).toHaveCount(0)
+      })
+      await hoverDrag(win, row(others[3]!), panes.nth(3), 0.5, async () => {
+        await expect(frame).toHaveAttribute('data-where', 'replace')
+      })
+      await hoverDrag(win, row(four[0]!), panes.nth(3), 0.97, async () => {
+        await expect(frame).toHaveAttribute('data-where', 'after')
+      })
+      await expect(frame).toHaveCount(0)
+      expect(await order(win)).toEqual([four[3], four[0], four[1], four[2]])
+      // Let go on that edge, it moves there.
+      await dragRow(row(four[0]!), panes.nth(3), 0.97)
+      await expect.poll(() => order(win)).toEqual([four[3], four[1], four[2], four[0]])
+
       // The splitter between the first two panes: an arrow key moves it by 16 px, a double click evens the row.
       const splitter = win.locator('[data-testid="pane-splitter"]').first()
       await expect(win.locator('[data-testid="pane-splitter"]')).toHaveCount(3)
@@ -129,11 +167,69 @@ test('чаты перетаскиваются из боковой панели �
       await expect
         .poll(async () => (await widths(win)).map((w, i) => Math.abs(w - saved.widths[i]!) <= 2))
         .toEqual([true, true, true, true])
+
+      // S2-R22(б). A window too narrow for four panes: the row scrolls, and the splitter still moves.
+      await second.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1100, 900))
+      const rowBox = win.locator('[data-testid="split-row"]')
+      await expect
+        .poll(() => rowBox.evaluate((el) => el.scrollWidth - el.clientWidth))
+        .toBeGreaterThan(100)
+      const narrow = await widths(win)
+      for (const w of narrow) expect(w).toBeGreaterThanOrEqual(319)
+      await win.locator('[data-testid="pane-splitter"]').first().focus()
+      await win.keyboard.press('ArrowRight')
+      await expect.poll(async () => Math.round((await widths(win))[0]! - narrow[0]!)).toBe(16)
+      const moved = await widths(win)
+      for (let i = 1; i < 4; i++) expect(Math.abs(moved[i]! - narrow[i]!)).toBeLessThan(1)
     } finally {
       await second.app.close()
     }
   } finally {
     rmSync(profile, { recursive: true, force: true, maxRetries: 3 })
     rmSync(folder, { recursive: true, force: true, maxRetries: 3 })
+  }
+})
+
+const DAY = 24 * 60 * 60 * 1000
+const HISTORY = {
+  sessions: [
+    { sessionId: 'сессия-1', summary: 'Починка вставки файлов', lastModified: Date.now() - DAY, firstPrompt: 'вставка' }
+  ],
+  messages: {
+    'сессия-1': [
+      { type: 'user', message: { role: 'user', content: 'вставка файлов не работает' } },
+      {
+        type: 'assistant',
+        message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'нашёл: обработчик не читает файлы' }] }
+      }
+    ]
+  }
+}
+
+test('прошлая сессия, брошенная на правый край, открывается справа — две панели', async () => {
+  const { app, win } = await launchQclod({
+    env: { QCLOD_FAKE_HISTORY: JSON.stringify(HISTORY) },
+    size: { width: 1400, height: 900 }
+  })
+  try {
+    const panes = panesOf(win)
+    await expect(panes).toHaveCount(1)
+    const first = (await order(win))[0]!
+    const past = win.locator('[data-testid="sidebar-session"]')
+    await expect(past).toHaveCount(1, { timeout: 15000 })
+
+    await dragRow(past.first(), panes.first(), 0.97)
+    await expect(panes).toHaveCount(2, { timeout: 15000 })
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2)
+    const two = await order(win)
+    expect(two[0]).toBe(first)
+    expect(two[1]).not.toBe(first)
+    // The new chat is the one on the right, active, with its conversation.
+    await expect(panes.last()).toHaveClass(/is-active/)
+    await expect(panes.last()).toContainText('нашёл: обработчик не читает файлы', { timeout: 15000 })
+    // Open now, so no longer under «Прошлые».
+    await expect(past).toHaveCount(0)
+  } finally {
+    await app.close()
   }
 })

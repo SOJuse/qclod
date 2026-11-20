@@ -1,15 +1,80 @@
 import { describe, expect, test } from 'vitest'
 import {
   DRAG_CHAT,
+  DRAG_IN_ROW,
   DRAG_SESSION,
   dropOnPane,
   dropWhere,
+  dropZone,
   equalWidths,
+  moveSplitter,
+  paneMinScale,
   readDrop,
   resizePanes
 } from '../../src/renderer/app/paneOps'
 
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0)
+
+describe('dropZone: полный ряд (S2-R22а)', () => {
+  const chat = [DRAG_CHAT]
+  const inRow = [DRAG_CHAT, DRAG_IN_ROW]
+  const session = [DRAG_SESSION]
+
+  test('при 4 панелях края чужого чата и прошлой сессии инертны, середина — замена', () => {
+    expect(dropZone('before', chat, 4)).toBeNull()
+    expect(dropZone('after', chat, 4)).toBeNull()
+    expect(dropZone('after', session, 4)).toBeNull()
+    expect(dropZone('replace', chat, 4)).toBe('replace')
+    expect(dropZone('replace', session, 4)).toBe('replace')
+  })
+
+  test('при 4 панелях края подсвечены для чата, уже стоящего в ряду: он переезжает', () => {
+    expect(dropZone('before', inRow, 4)).toBe('before')
+    expect(dropZone('after', inRow, 4)).toBe('after')
+  })
+
+  test('меньше четырёх — края открыты всем; чужие типы — ничего', () => {
+    expect(dropZone('after', chat, 3)).toBe('after')
+    expect(dropZone('before', session, 1)).toBe('before')
+    expect(dropZone('replace', ['Files'], 2)).toBeNull()
+    expect(dropZone('after', [DRAG_IN_ROW], 2)).toBeNull()
+  })
+})
+
+describe('moveSplitter: прокручиваемый ряд (S2-R22б)', () => {
+  test('ряд не прокручивается — как resizePanes по видимой ширине', () => {
+    const row = { shares: [0.5, 0.5], panePx: [500, 500], viewPx: 1000, minPx: 320 }
+    expect(moveSplitter(row, 0, -1000)).toEqual(resizePanes([0.5, 0.5], 0, -1000, 1000, 320))
+  })
+
+  test('окно уже 4 × минимум: разделитель всё равно двигается, левая панель растёт, правая не уже минимума', () => {
+    const row = { shares: equalWidths(4), panePx: [320, 320, 320, 320], viewPx: 540, minPx: 320 }
+    // resizePanes by the visible width is dead here: 2 × 320 > 0.5 × 540.
+    expect(resizePanes(row.shares, 0, 100, 540, 320)).toEqual(row.shares)
+    const out = moveSplitter(row, 0, 100)
+    expect(Math.abs(sum(out) - 1)).toBeLessThan(1e-9)
+    const total = 1380
+    expect(out.map((w) => w * total)).toEqual([420, 320, 320, 320].map((px) => expect.closeTo(px, 6)))
+    // The pane's share times the row it makes is the width drawn (paneMinScale): 420 px.
+    const k = paneMinScale(out)
+    expect(320 * k[0]!).toBeCloseTo(420, 6)
+    expect(320 * k[1]!).toBeCloseTo(320, 6)
+  })
+
+  test('в прокручиваемом ряду левая панель не уже минимума', () => {
+    const row = { shares: equalWidths(4), panePx: [320, 320, 320, 320], viewPx: 540, minPx: 320 }
+    expect(moveSplitter(row, 1, -50)).toEqual(row.shares)
+    const wide = { shares: [0.4, 0.2, 0.2, 0.2], panePx: [640, 320, 320, 320], viewPx: 540, minPx: 320 }
+    const out = moveSplitter(wide, 0, -500)
+    expect(out.map((w) => w * 1280)).toEqual([320, 320, 320, 320].map((px) => expect.closeTo(px, 6)))
+  })
+
+  test('paneMinScale: доля к самой узкой', () => {
+    expect(paneMinScale([0.25, 0.25, 0.25, 0.25])).toEqual([1, 1, 1, 1])
+    expect(paneMinScale([0.5, 0.25, 0.25])).toEqual([2, 1, 1])
+    expect(paneMinScale([])).toEqual([])
+  })
+})
 
 describe('dropOnPane (Review Focus 5)', () => {
   test('чат из панелей переезжает, а не дублируется', () => {

@@ -6,6 +6,7 @@ import { startLayoutSync } from '../state/layoutSync'
 import { MAX_PANES, buildSidebar, chatOrder, nextPanes } from '../chat/sidebarModel'
 import { SplitView } from './SplitView'
 import { dropOnPane, type DropPayload, type DropWhere } from './paneOps'
+import { openAndPlace } from './dropSession'
 import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { Sidebar } from '../components/sidebar/Sidebar'
 import { ChatPane, type PanelRequest } from '../components/ChatPane'
@@ -180,8 +181,11 @@ export function App(): JSX.Element {
       }
       // A full row has no room beside a pane: nothing is opened for nowhere.
       if (before.length >= MAX_PANES && where !== 'replace') return
-      void window.qclod.openProjectSession(payload.cwd, payload.sessionId, payload.title).then((tab) => {
-        if (tab) placeDropped(before, tab.id, index, where)
+      // Placed only once its chat is in the tab list, whichever of main's messages comes first.
+      void openAndPlace({
+        store: useAppStore,
+        open: () => window.qclod.openProjectSession(payload.cwd, payload.sessionId, payload.title),
+        place: (id) => placeDropped(before, id, index, where)
       })
     },
     [shownPanes, placeDropped]
@@ -345,9 +349,12 @@ export function App(): JSX.Element {
   /** A past conversation from the sidebar: its own chat, or the open one that already holds it. */
   const openPast = useCallback(
     (cwd: string, session: SessionSummary): void => {
-      void window.qclod.openProjectSession(cwd, session.id, session.title).then((tab) => {
-        if (tab) activate(tab.id)
-      })
+      window.qclod.openProjectSession(cwd, session.id, session.title).then(
+        (tab) => {
+          if (tab) activate(tab.id)
+        },
+        (err: unknown) => console.warn('[sidebar] разговор не открылся:', reasonOf(err))
+      )
     },
     [activate]
   )

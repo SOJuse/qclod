@@ -8,6 +8,12 @@ export type DropWhere = 'before' | 'after' | 'replace'
 export const DRAG_CHAT = 'application/x-qclod-chat'
 /** The drag of a past conversation: JSON `{ cwd, sessionId, title }`. */
 export const DRAG_SESSION = 'application/x-qclod-session'
+/**
+ * Marks a chat drag whose chat is already in the row. The data of a drag
+ * cannot be read until the drop, its types can: this is how a full row knows
+ * to frame its edges for a move.
+ */
+export const DRAG_IN_ROW = 'application/x-qclod-in-row'
 
 /** What a drop onto a pane brings. */
 export type DropPayload =
@@ -73,6 +79,49 @@ export function resizePanes(
   return next
 }
 
+/** A row as drawn: its shares, each pane's width in px, the visible width, the narrowest pane allowed. */
+export interface RowMeasure {
+  shares: number[]
+  panePx: number[]
+  viewPx: number
+  minPx: number
+}
+
+/**
+ * The shares after a splitter moved by `deltaPx`, whether or not the row scrolls.
+ *
+ * - The row fits the window: resizePanes over the visible width — the two
+ *   neighbours trade, the row's width stays.
+ * - The row is wider than the window (it scrolls): every pane may already be
+ *   at its narrowest, so trading would never move. The splitter then sets the
+ *   width of the pane on its left (never under `minPx`); the others keep
+ *   theirs, and the row grows or shrinks by the difference.
+ */
+export function moveSplitter(row: RowMeasure, splitter: number, deltaPx: number): number[] {
+  const { shares, panePx, viewPx, minPx } = row
+  const content = panePx.reduce((a, b) => a + b, 0)
+  if (content <= viewPx + 0.5) return resizePanes(shares, splitter, deltaPx, viewPx, minPx)
+  const left = panePx[splitter]
+  if (left === undefined || panePx[splitter + 1] === undefined || !Number.isFinite(deltaPx)) return shares
+  const nextLeft = Math.max(minPx, left + deltaPx)
+  if (nextLeft === left) return shares
+  const px = panePx.map((w, i) => (i === splitter ? nextLeft : w))
+  const total = px.reduce((a, b) => a + b, 0)
+  return px.map((w) => w / total)
+}
+
+/**
+ * Each pane's minimum as a multiple of `--pane-min-w`: its share over the
+ * narrowest share. With it the row never squeezes a pane under its share:
+ * a row too narrow for them all is as wide as the narrowest pane at the
+ * minimum makes it, and scrolls — so shares set in a scrolled row are the
+ * widths drawn.
+ */
+export function paneMinScale(shares: number[]): number[] {
+  const least = Math.min(...shares)
+  return shares.map((w) => (least > 0 ? w / least : 1))
+}
+
 /** `n` equal shares. */
 export function equalWidths(n: number): number[] {
   return n > 0 ? Array.from({ length: n }, () => 1 / n) : []
@@ -88,6 +137,18 @@ export function dropWhere(x: number, width: number): DropWhere {
 /** Whether a drag carries something a pane takes (its types are readable while it is under way). */
 export function carriesDrop(types: readonly string[]): boolean {
   return types.includes(DRAG_CHAT) || types.includes(DRAG_SESSION)
+}
+
+/**
+ * The zone a drag over a pane would land in, or null where it would land
+ * nowhere. A full row has no room beside a pane: its edges take only a chat
+ * already in the row (DRAG_IN_ROW), which moves there; anything else may only
+ * take a pane's place. What is not framed takes no drop.
+ */
+export function dropZone(where: DropWhere, types: readonly string[], paneCount: number): DropWhere | null {
+  if (!carriesDrop(types)) return null
+  if (where !== 'replace' && paneCount >= MAX_PANES && !types.includes(DRAG_IN_ROW)) return null
+  return where
 }
 
 /** What a drop brings, read from its data; anything else is null. */

@@ -1,6 +1,6 @@
 import { Smartphone, X } from 'lucide-react'
 import { hint } from '../../app/shortcuts'
-import { DRAG_CHAT } from '../../app/paneOps'
+import { DRAG_CHAT, DRAG_IN_ROW } from '../../app/paneOps'
 import type { TabId, TabState } from '../../../shared/types'
 import { REMOTE_STATE_LABEL } from '../../../shared/remote'
 import { STATUS_LABEL } from '../../labels'
@@ -13,7 +13,7 @@ function remoteWord(tab: TabState): string | null {
 interface Props {
   tab: TabState
   active: boolean
-  /** Shown in a pane of the split, though not the active one. */
+  /** Shown in a pane of the split, the active one included (only the inactive ones get .is-in-pane). */
   inPane: boolean
   onActivate: (id: TabId) => void
   onClose: (id: TabId) => void
@@ -39,6 +39,8 @@ export function ChatRow({ tab, active, inPane, onActivate, onClose }: Props): JS
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(DRAG_CHAT, tab.id)
+        // Already a pane: a full row frames its edges for this one, since it moves rather than adds.
+        if (inPane) e.dataTransfer.setData(DRAG_IN_ROW, '1')
         e.dataTransfer.effectAllowed = 'move'
       }}
       onMouseDown={(e) => {

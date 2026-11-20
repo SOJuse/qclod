@@ -498,4 +498,27 @@ describe('useAppStore: раскладка из main и хвосты сплита
     expect(useAppStore.getState().paneTabIds).toEqual(['b'])
     expect(useAppStore.getState().activeTabId).toBe('b')
   })
+
+  test('вкладки приходят частями: сохранённый сплит собирается, когда пришли все', () => {
+    const store = useAppStore.getState()
+    store.setLayout(layout({ panes: ['a', 'b', 'c'], active: 'a', paneWidths: [0.2, 0.3, 0.5] }))
+    store.setTabs([t('a')])
+    expect(useAppStore.getState().paneTabIds).toEqual(['a'])
+    store.setTabs([t('a'), t('b')])
+    expect(useAppStore.getState().paneTabIds).toEqual(['a', 'b'])
+    store.setTabs([t('a'), t('b'), t('c')])
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toEqual(['a', 'b', 'c'])
+    expect(state.paneWidths).toEqual([0.2, 0.3, 0.5])
+    expect(state.activeTabId).toBe('a')
+  })
+
+  test('вкладки частями, но пользователь уже поменял панели: сохранённое их не затирает', () => {
+    const store = useAppStore.getState()
+    store.setLayout(layout({ panes: ['a', 'b'], active: 'a' }))
+    store.setTabs([t('a'), t('c')])
+    store.setPanes(['a', 'c'])
+    store.setTabs([t('a'), t('b'), t('c')])
+    expect(useAppStore.getState().paneTabIds).toEqual(['a', 'c'])
+  })
 })

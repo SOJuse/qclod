@@ -140,6 +140,21 @@ function paneStateAfter(
   return { paneTabIds: same ? state.paneTabIds : next, activeTabId }
 }
 
+/**
+ * Whether this list brings chats that main's saved panes name and the earlier
+ * list did not hold, while the window's panes are still just what that earlier
+ * list let through: then the saved panes are laid over again, so a split that
+ * arrives in several pushes is not cut down.
+ */
+function savedPanesArrived(state: AppState, tabs: TabState[]): boolean {
+  const had = new Set(state.tabs.map((t) => t.id))
+  const has = new Set(tabs.map((t) => t.id))
+  const saved = state.layout.panes
+  if (!saved.some((id) => has.has(id) && !had.has(id))) return false
+  const then = saved.filter((id) => had.has(id))
+  return then.length === state.paneTabIds.length && then.every((id, i) => id === state.paneTabIds[i])
+}
+
 /** Main's layout laid over the tabs the window knows. */
 function applyLayout(
   state: AppState,
@@ -387,7 +402,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         // Main's layout may have come before the tabs: it is applied now, once.
         ...(state.layoutPending && tabs.length > 0
           ? applyLayout(state, state.layout, tabs)
-          : paneStateAfter(state, tabs))
+          : savedPanesArrived(state, tabs)
+            ? applyLayout(state, { ...state.layout, active: state.activeTabId }, tabs)
+            : paneStateAfter(state, tabs))
       }
     }),
 

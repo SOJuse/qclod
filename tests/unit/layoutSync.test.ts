@@ -5,6 +5,7 @@ import { DEFAULT_LAYOUT, type LayoutState } from '../../src/shared/types'
 
 interface S {
   layout: LayoutState
+  tabs: { id: string }[]
   paneTabIds: string[]
   paneWidths: number[]
   setLayout(l: LayoutState): void
@@ -21,6 +22,7 @@ const empty = (over: Partial<LayoutState> = {}): LayoutState => ({
 function fakeStore() {
   return create<S>((set) => ({
     layout: empty(),
+    tabs: ['a', 'b', 'c', 'x', 'q'].map((id) => ({ id })),
     paneTabIds: [],
     paneWidths: [],
     setLayout: (layout) => set({ layout, paneTabIds: layout.panes, paneWidths: layout.paneWidths })
@@ -61,8 +63,9 @@ describe('startLayoutSync', () => {
     expect(api.setLayout).toHaveBeenCalledWith({ panes: ['a', 'b', 'c'], paneWidths: [0.2, 0.3, 0.5] })
   })
 
-  test('onLayoutChanged обновляет store.layout', () => {
+  test('onLayoutChanged обновляет store.layout', async () => {
     const { store, push } = setup()
+    await vi.advanceTimersByTimeAsync(0)
     push(empty({ panes: ['x'], active: 'x', paneWidths: [1], projects: [{ cwd: 'C:\\p', collapsed: false }] }))
     expect(store.getState().layout.projects).toHaveLength(1)
     expect(store.getState().paneTabIds).toEqual(['x'])
@@ -111,5 +114,73 @@ describe('startLayoutSync', () => {
     await vi.advanceTimersByTimeAsync(400)
     expect(api.setLayout).toHaveBeenCalledTimes(1)
     expect(api.setLayout).toHaveBeenCalledWith({ panes: ['a', 'b'], paneWidths: [] })
+  })
+
+  test('вкладки раньше раскладки: сохранённый сплит применён, обратно ничего не пишется', async () => {
+    const store = fakeStore()
+    store.setState({ tabs: [{ id: 'a' }], paneTabIds: ['a'] })
+    let answer: (l: LayoutState) => void = () => undefined
+    const api = {
+      getLayout: vi.fn(() => new Promise<LayoutState>((r) => (answer = r))),
+      setLayout: vi.fn(async () => empty()),
+      onLayoutChanged: vi.fn(() => () => undefined)
+    }
+    startLayoutSync(store as never, api as never, 300)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(api.setLayout).not.toHaveBeenCalled()
+    store.setState({ tabs: ['a', 'b'].map((id) => ({ id })) })
+    answer(empty({ panes: ['a', 'b'], paneWidths: [0.3, 0.7], active: 'a' }))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(store.getState().paneTabIds).toEqual(['a', 'b'])
+    expect(api.setLayout).not.toHaveBeenCalled()
+  })
+
+  test('сплит приходит частями: недостающие id не пишутся обратно', async () => {
+    const store = fakeStore()
+    store.setState({ tabs: [{ id: 'a' }] })
+    const api = {
+      getLayout: vi.fn(async () => empty({ panes: ['a', 'b'], paneWidths: [0.5, 0.5], active: 'a' })),
+      setLayout: vi.fn(async () => empty()),
+      onLayoutChanged: vi.fn(() => () => undefined)
+    }
+    startLayoutSync(store as never, api as never, 300)
+    await vi.advanceTimersByTimeAsync(0)
+    // The window holds only what the first list let through.
+    store.setState({ paneTabIds: ['a'], paneWidths: [] })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(api.setLayout).not.toHaveBeenCalled()
+    store.setState({ tabs: ['a', 'b'].map((id) => ({ id })), paneTabIds: ['a', 'b'], paneWidths: [0.5, 0.5] })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(api.setLayout).not.toHaveBeenCalled()
+  })
+
+  test('отказ записи: окно сверяется с main и берёт его панели', async () => {
+    const { store, api, push } = setup()
+    await vi.advanceTimersByTimeAsync(0)
+    push(empty({ panes: ['a'], active: 'a', paneWidths: [1] }))
+    api.setLayout.mockRejectedValueOnce(new Error('ipc'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    store.setState({ paneTabIds: ['a', 'b'], paneWidths: [0.5, 0.5] })
+    await vi.advanceTimersByTimeAsync(400)
+    expect(api.setLayout).toHaveBeenCalledTimes(1)
+    expect(store.getState().paneTabIds).toEqual(['a'])
+    warn.mockRestore()
+  })
+
+  test('отказ записи, но пользователь успел поменять панели: запись взводится снова', async () => {
+    const { store, api, push } = setup()
+    await vi.advanceTimersByTimeAsync(0)
+    push(empty({ panes: ['a'], active: 'a', paneWidths: [1] }))
+    let fail: (e: Error) => void = () => undefined
+    api.setLayout.mockImplementationOnce(() => new Promise((_, rej) => (fail = rej)))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    store.setState({ paneTabIds: ['a', 'b'], paneWidths: [0.5, 0.5] })
+    await vi.advanceTimersByTimeAsync(400)
+    store.setState({ paneTabIds: ['a', 'b', 'c'], paneWidths: [0.2, 0.3, 0.5] })
+    fail(new Error('ipc'))
+    await vi.advanceTimersByTimeAsync(400)
+    expect(api.setLayout).toHaveBeenCalledTimes(2)
+    expect(api.setLayout).toHaveBeenLastCalledWith({ panes: ['a', 'b', 'c'], paneWidths: [0.2, 0.3, 0.5] })
+    warn.mockRestore()
   })
 })

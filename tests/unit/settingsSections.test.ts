@@ -35,11 +35,12 @@ describe('settings sections', () => {
     vi.unstubAllGlobals()
   })
 
-  test('the registry carries the five sections in their order', () => {
+  test('the registry carries the six sections in their order (stage 3 adds «Автономность» at 35)', () => {
     expect(sortedSections().map((s) => [s.id, s.title, s.order])).toEqual([
       ['window', 'Окно', 10],
       ['notifications', 'Уведомления', 20],
       ['agent', 'Запуск агента', 30],
+      ['autonomy', 'Автономность', 35],
       ['permissions', 'Разрешения', 40],
       ['about', 'О программе', 90]
     ])
@@ -47,7 +48,15 @@ describe('settings sections', () => {
 
   test('sortedSections goes by order; a section with order 25 lands between notifications and the agent', () => {
     const list = sortedSections([...SETTINGS_SECTIONS, stub('extra', 'Свой', 25)])
-    expect(list.map((s) => s.id)).toEqual(['window', 'notifications', 'extra', 'agent', 'permissions', 'about'])
+    expect(list.map((s) => s.id)).toEqual([
+      'window',
+      'notifications',
+      'extra',
+      'agent',
+      'autonomy',
+      'permissions',
+      'about'
+    ])
   })
 
   test('equal order falls back to the title; the given list is left alone', () => {

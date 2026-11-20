@@ -20,7 +20,10 @@ import { StatusLine } from './StatusLine'
 import { ContextBanner } from './ContextBanner'
 import { EmptyTab } from './EmptyTab'
 import { PinnedCards } from './cards/PinnedCards'
+import { AutoAnswerGuard } from './cards/AutoAnswerGuard'
 import { cardAnswers } from '../chat/cardAnswers'
+import { cardIdOf } from '../chat/openCards'
+import { autoAnswerTimer, toAutoAnswerView } from '../chat/autoAnswer'
 import { StateView } from '../ui/StateView'
 import { nextOverride, panelMode, panelToggle, type PanelOverride } from '../app/panelVisibility'
 import { restartChat } from '../app/restartChat'
@@ -360,7 +363,22 @@ export function ChatPane({
 
             {/* The cards and the queue can grow: they scroll inside the dock, so the input and the status line always show. */}
             <div className="composer-dock-scroll" data-testid="composer-dock-scroll">
-              <PinnedCards tabId={tabId} items={ribbonByTab[tabId] ?? []} answers={answers} />
+              <PinnedCards
+                tabId={tabId}
+                items={ribbonByTab[tabId] ?? []}
+                answers={answers}
+                // «Авто-да» counting down on the card (decision 2: the panel carries it); main runs the timer.
+                autoAnswerFor={(c) => toAutoAnswerView(autoAnswerTimer(panel.autonomy, cardIdOf(c)), tabId)}
+                guard={(c, children) => (
+                  <AutoAnswerGuard
+                    active={!!autoAnswerTimer(panel.autonomy, cardIdOf(c))}
+                    // A refused call leaves the timer as it is.
+                    onStop={() => void window.qclod.autonomyHold(tabId, cardIdOf(c)).catch(() => undefined)}
+                  >
+                    {children}
+                  </AutoAnswerGuard>
+                )}
+              />
 
               <QueueStrip
                 queue={panel.queue ?? []}

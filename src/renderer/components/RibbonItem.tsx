@@ -5,6 +5,7 @@ import type { Attachment, RibbonItem as Item } from '../../shared/types'
 import type { CardAnswers } from '../chat/cardAnswers'
 import type { RowModel } from '../chat/groupRows'
 import { CardSummary } from './cards/CardSummary'
+import { AutoTag } from './AutoTag'
 import { ThinkingRow } from './ThinkingRow'
 import { ToolGroup } from './ToolGroup'
 import { QuestionCard } from './cards/QuestionCard'
@@ -239,6 +240,12 @@ export function RibbonRow({
               >
                 <Smartphone size={12} aria-hidden="true" />
                 с телефона
+              </div>
+            )}
+            {/* Sent by Qclod itself — «продолжай» after a crash, a limit or a restart. */}
+            {item.auto && (
+              <div className="row-user-from" data-testid="user-auto">
+                <AutoTag />
               </div>
             )}
             <UserText text={item.text} />

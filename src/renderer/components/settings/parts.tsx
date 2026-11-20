@@ -22,12 +22,15 @@ export function Toggle({
   id,
   label,
   checked,
-  onChange
+  onChange,
+  disabled = false
 }: {
   id: string
   label: string
   checked: boolean
   onChange: (next: boolean) => void
+  /** Shown but not to be changed here — the section says why. */
+  disabled?: boolean
 }): JSX.Element {
   return (
     <label className="settings-toggle">
@@ -35,6 +38,7 @@ export function Toggle({
         type="checkbox"
         data-testid={`setting-${id}`}
         checked={checked}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
       />
       <span>{label}</span>

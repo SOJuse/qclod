@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme } from 'electron'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { APP_ID } from '../shared/appId'
@@ -11,7 +11,8 @@ import { registerAgentIpc } from './agentIpc'
 import { withFault } from './testSeams/ipcFaults'
 import { loadSettings, saveSettings } from './store/settingsStore'
 import { HotkeyRegistrar } from './hotkey/globalHotkey'
-import { createTray } from './tray'
+import { createTray, type TrayTone } from './tray'
+import { readTaskbarLight } from './system/systemTheme'
 import { CHANNELS } from '../shared/channels'
 import { AgentSessionManager } from './agent/AgentSessionManager'
 import { createDriverFactory } from './agent/createDriver'
@@ -311,12 +312,14 @@ app.whenReady().then(async () => {
     onChanged: (tabs) => {
       send(CHANNELS.tabsChanged, tabs)
       tray?.rebuild()
+      tray?.refresh()
     },
     onRibbon: (event) => outbox.ribbon(event),
     onPanel: (event) => send(CHANNELS.panelChanged, event),
     onCommands: (event) => send(CHANNELS.commandsChanged, event),
     onStatus: (event) => {
       send(CHANNELS.statusChanged, event)
+      tray?.refresh()
       const tab = controller.list().find((t) => t.id === event.tabId)
       // Nor does it show toasts.
       if (!tab || offScreen) return
@@ -415,6 +418,11 @@ app.whenReady().then(async () => {
   watchWindow(mainWindow, (e) => errorLog.write(e))
   loadRenderer(mainWindow)
 
+  // The glyph's tone follows the taskbar, not the apps' theme (decision 13):
+  // the registry first, the apps' theme until it answers or when it cannot.
+  let taskbarLight: boolean | null = null
+  const trayTone = (): TrayTone =>
+    taskbarLight === null ? (nativeTheme.shouldUseDarkColors ? 'light' : 'dark') : taskbarLight ? 'dark' : 'light'
   const tray = headless
     ? null
     : (createTray({
@@ -424,8 +432,20 @@ app.whenReady().then(async () => {
           showWindow()
           send(CHANNELS.activateTab, id)
         },
-        toggleWindow
-      }) as ReturnType<typeof createTray> & { rebuild: () => void })
+        toggleWindow,
+        getTone: trayTone
+      }))
+
+  const rereadTaskbarTheme = (): void => {
+    void readTaskbarLight().then((light) => {
+      taskbarLight = light
+      tray?.refresh()
+    })
+  }
+  if (tray) {
+    rereadTaskbarTheme()
+    nativeTheme.on('updated', rereadTaskbarTheme)
+  }
 
   mainWindow.on('close', (event) => {
     if (quitting || headless || !settings.closeToTray) return

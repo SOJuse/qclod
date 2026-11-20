@@ -8,9 +8,9 @@ import {
   dropZone,
   equalWidths,
   moveSplitter,
-  paneMinScale,
   readDrop,
-  resizePanes
+  resizePanes,
+  rowLayout
 } from '../../src/renderer/app/paneOps'
 
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0)
@@ -41,38 +41,120 @@ describe('dropZone: полный ряд (S2-R22а)', () => {
   })
 })
 
-describe('moveSplitter: прокручиваемый ряд (S2-R22б)', () => {
-  test('ряд не прокручивается — как resizePanes по видимой ширине', () => {
-    const row = { shares: [0.5, 0.5], panePx: [500, 500], viewPx: 1000, minPx: 320 }
-    expect(moveSplitter(row, 0, -1000)).toEqual(resizePanes([0.5, 0.5], 0, -1000, 1000, 320))
+const MIN = 320
+const drawn = (shares: number[], view: number): number[] => rowLayout(shares, view, MIN).px
+/** One splitter move on the row as drawn, then the row drawn again from the shares it gives. */
+const step = (shares: number[], view: number, splitter: number, delta: number): number[] =>
+  moveSplitter({ shares, viewPx: view, minPx: MIN }, splitter, delta)
+
+describe('rowLayout: ряд, который помещается, не прокручивается (раунд 2, п. 1)', () => {
+  test('[.17,.17,.17,.49] в ряду 1400 — без прокрутки, постоянный минимум', () => {
+    const row = rowLayout([0.17, 0.17, 0.17, 0.49], 1400, MIN)
+    expect(row.scrolls).toBe(false)
+    expect(sum(row.px)).toBeCloseTo(1400, 6)
+    expect(row.px.slice(0, 3)).toEqual([320, 320, 320])
+    expect(row.px[3]).toBeCloseTo(440, 6)
   })
 
-  test('окно уже 4 × минимум: разделитель всё равно двигается, левая панель растёт, правая не уже минимума', () => {
-    const row = { shares: equalWidths(4), panePx: [320, 320, 320, 320], viewPx: 540, minPx: 320 }
-    // resizePanes by the visible width is dead here: 2 × 320 > 0.5 × 540.
-    expect(resizePanes(row.shares, 0, 100, 540, 320)).toEqual(row.shares)
-    const out = moveSplitter(row, 0, 100)
-    expect(Math.abs(sum(out) - 1)).toBeLessThan(1e-9)
-    const total = 1380
-    expect(out.map((w) => w * total)).toEqual([420, 320, 320, 320].map((px) => expect.closeTo(px, 6)))
-    // The pane's share times the row it makes is the width drawn (paneMinScale): 420 px.
-    const k = paneMinScale(out)
-    expect(320 * k[0]!).toBeCloseTo(420, 6)
-    expect(320 * k[1]!).toBeCloseTo(320, 6)
+  test('[.8,.2] в ряду 1000 — без прокрутки', () => {
+    const row = rowLayout([0.8, 0.2], 1000, MIN)
+    expect(row.scrolls).toBe(false)
+    expect(row.px[0]).toBeCloseTo(680, 6)
+    expect(row.px[1]).toBe(320)
   })
 
-  test('в прокручиваемом ряду левая панель не уже минимума', () => {
-    const row = { shares: equalWidths(4), panePx: [320, 320, 320, 320], viewPx: 540, minPx: 320 }
-    expect(moveSplitter(row, 1, -50)).toEqual(row.shares)
-    const wide = { shares: [0.4, 0.2, 0.2, 0.2], panePx: [640, 320, 320, 320], viewPx: 540, minPx: 320 }
-    const out = moveSplitter(wide, 0, -500)
-    expect(out.map((w) => w * 1280)).toEqual([320, 320, 320, 320].map((px) => expect.closeTo(px, 6)))
+  test('доли, которые помещаются, рисуются как есть; ровно N × минимум — ещё без прокрутки', () => {
+    expect(rowLayout([0.25, 0.75], 2000, MIN).px).toEqual([500, 1500])
+    expect(rowLayout(equalWidths(4), 1280, MIN)).toEqual({ scrolls: false, px: [320, 320, 320, 320] })
+    expect(rowLayout([1], 200, MIN)).toEqual({ scrolls: false, px: [200] })
   })
 
-  test('paneMinScale: доля к самой узкой', () => {
-    expect(paneMinScale([0.25, 0.25, 0.25, 0.25])).toEqual([1, 1, 1, 1])
-    expect(paneMinScale([0.5, 0.25, 0.25])).toEqual([2, 1, 1])
-    expect(paneMinScale([])).toEqual([])
+  test('уже N × минимум — прокрутка, каждая панель не уже минимума', () => {
+    const row = rowLayout(equalWidths(4), 540, MIN)
+    expect(row.scrolls).toBe(true)
+    for (const w of row.px) expect(w).toBeGreaterThan(MIN)
+    expect(sum(row.px)).toBeGreaterThan(540)
+  })
+})
+
+describe('moveSplitter (раунд 2, п. 2)', () => {
+  test('ряд помещается — как resizePanes по видимой ширине', () => {
+    expect(step([0.5, 0.5], 1000, 0, -1000)).toEqual(resizePanes([0.5, 0.5], 0, -1000, 1000, MIN))
+    expect(step([0.3, 0.3, 0.4], 1500, 1, 16)).toEqual(resizePanes([0.3, 0.3, 0.4], 1, 16, 1500, MIN))
+  })
+
+  test('ряд помещается, доли из большого окна под минимумом: разделитель идёт от нарисованного', () => {
+    const shares = [0.17, 0.17, 0.17, 0.49]
+    // By the shares alone the first pair is dead: 2 × 320 > 0.34 × 1400.
+    expect(resizePanes(shares, 0, 16, 1400, MIN)).toEqual(shares)
+    const before = drawn(shares, 1400)
+    const after = drawn(step(shares, 1400, 2, 16), 1400)
+    expect(after[2]! - before[2]!).toBeCloseTo(16, 6)
+    expect(rowLayout(step(shares, 1400, 2, 16), 1400, MIN).scrolls).toBe(false)
+  })
+
+  test('[.1,.3,.3,.3] в тесном ряду: стрелка вправо — нарисованная левая панель шире на 16 px', () => {
+    const shares = [0.1, 0.3, 0.3, 0.3]
+    for (const view of [540, 840, 1100]) {
+      const before = drawn(shares, view)
+      const after = drawn(step(shares, view, 0, 16), view)
+      expect(after[0]! - before[0]!).toBeCloseTo(16, 6)
+      // The splitter moved, the row did not change its width.
+      expect(sum(after)).toBeCloseTo(sum(before), 6)
+    }
+  })
+
+  test('все по минимуму в тесном ряду: двигается в обе стороны', () => {
+    const shares = equalWidths(4)
+    const before = drawn(shares, 540)
+    expect(drawn(step(shares, 540, 0, 16), 540)[0]! - before[0]!).toBeCloseTo(16, 6)
+    expect(drawn(step(shares, 540, 1, -16), 540)[1]! - before[1]!).toBeCloseTo(-16, 6)
+  })
+
+  test('любое распределение: стрелки идут за шагом, пока есть куда; ни одна панель не уже минимума', () => {
+    for (const shares of [
+      [0.1, 0.3, 0.3, 0.3],
+      [0.3, 0.3, 0.3, 0.1],
+      [0.7, 0.1, 0.1, 0.1],
+      [0.05, 0.05, 0.45, 0.45],
+      equalWidths(3)
+    ]) {
+      for (let s = 0; s < shares.length - 1; s++) {
+        for (const d of [16, -16]) {
+          const before = drawn(shares, 600)
+          const after = drawn(step(shares, 600, s, d), 600)
+          const edge = (px: number[]): number => sum(px.slice(0, s + 1))
+          const room = d > 0 ? sum(before.slice(s + 1).map((w) => w - MIN)) : sum(before.slice(0, s + 1).map((w) => w - MIN))
+          expect(edge(after) - edge(before)).toBeCloseTo(Math.sign(d) * Math.min(16, room), 6)
+          for (const w of after) expect(w).toBeGreaterThanOrEqual(MIN - 1e-9)
+        }
+      }
+    }
+  })
+
+  test('сохранённые доли в том же окне дают ту же картину', () => {
+    let shares = [0.1, 0.3, 0.3, 0.3]
+    for (const [s, d] of [
+      [0, 40],
+      [2, -100],
+      [1, 300]
+    ] as const) {
+      const pushed = step(shares, 700, s, d)
+      expect(Math.abs(sum(pushed) - 1)).toBeLessThan(1e-9)
+      // What is written is what is drawn: drawn from it again, then moved by nothing, it stays.
+      expect(drawn(step(pushed, 700, s, 0), 700)).toEqual(drawn(pushed, 700).map((w) => expect.closeTo(w, 6)))
+      shares = pushed
+    }
+  })
+
+  test('в прокручиваемом ряду левая панель не уже минимума, правая — тоже', () => {
+    const shares = equalWidths(4)
+    const before = drawn(shares, 540)
+    const far = drawn(step(shares, 540, 0, -5000), 540)
+    expect(far[0]).toBeCloseTo(MIN, 6)
+    expect(sum(far)).toBeCloseTo(sum(before), 6)
+    const right = drawn(step(shares, 540, 2, 5000), 540)
+    expect(right[3]).toBeCloseTo(MIN, 6)
   })
 })
 

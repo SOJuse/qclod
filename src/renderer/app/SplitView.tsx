@@ -6,7 +6,7 @@ import {
   dropZone,
   equalWidths,
   moveSplitter,
-  paneMinScale,
+  rowLayout,
   readDrop,
   type DropPayload,
   type DropWhere,
@@ -40,10 +40,9 @@ function minPaneWidth(row: HTMLElement): number {
   return Number.isFinite(px) && px > 0 ? px : FALLBACK_MIN_PX
 }
 
-/** The row as drawn now: every pane's width, not only the visible part (a scrolled row is wider). */
+/** The row now: its shares, its visible width and the minimum (moveSplitter draws it from them). */
 function measure(row: HTMLElement, shares: number[]): RowMeasure {
-  const panePx = [...row.querySelectorAll<HTMLElement>(':scope > .split-pane')].map((el) => el.getBoundingClientRect().width)
-  return { shares, panePx, viewPx: row.clientWidth, minPx: minPaneWidth(row) }
+  return { shares, viewPx: row.clientWidth, minPx: minPaneWidth(row) }
 }
 
 /**
@@ -68,8 +67,24 @@ export function SplitView({ panes, widths, activeTabId, renderPane, onDrop, onRe
 
   const split = panes.length > 1
   const shares = live ?? (widths.length === panes.length ? widths : equalWidths(panes.length))
-  // A pane is never squeezed under its share: a row too narrow for them scrolls (paneMinScale).
-  const minScale = paneMinScale(shares)
+  /** The row's visible width and --pane-min-w, followed as the window changes. */
+  const [view, setView] = useState<{ px: number; min: number } | null>(null)
+  useEffect(() => {
+    const box = row.current
+    if (!box) return
+    const read = (): void => {
+      const next = { px: box.clientWidth, min: minPaneWidth(box) }
+      setView((was) => (was && was.px === next.px && was.min === next.min ? was : next))
+    }
+    read()
+    const observer = new ResizeObserver(read)
+    observer.observe(box)
+    return () => observer.disconnect()
+  }, [])
+  // A row that fits is a flex row with a constant minimum; one that does not
+  // (narrower than N × --pane-min-w) gets its panes' widths in px and scrolls.
+  const scrolled = split && view ? rowLayout(shares, view.px, view.min) : null
+  const fixedPx = scrolled?.scrolls ? scrolled.px : null
 
   // The panes themselves do not redraw while a splitter moves.
   const rendered = useMemo(() => panes.map((id, index) => renderPane(id, index)), [panes, renderPane])
@@ -181,10 +196,7 @@ export function SplitView({ panes, widths, activeTabId, renderPane, onDrop, onRe
             className={`split-pane${id === activeTabId ? ' is-active' : ''}`}
             data-testid="split-pane"
             data-pane={id}
-            style={{
-              flexGrow: shares[index] ?? 1,
-              ...(split ? { minWidth: `calc(var(--pane-min-w) * ${minScale[index] ?? 1})` } : {})
-            }}
+            style={fixedPx ? { flex: `0 0 ${fixedPx[index] ?? 0}px` } : { flexGrow: shares[index] ?? 1 }}
             onMouseDown={() => onFocus(id)}
             onDragOverCapture={dragOver(index)}
             onDragLeave={dragLeave}

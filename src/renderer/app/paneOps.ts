@@ -79,47 +79,109 @@ export function resizePanes(
   return next
 }
 
-/** A row as drawn: its shares, each pane's width in px, the visible width, the narrowest pane allowed. */
+/** A row: its shares, its visible width, the narrowest pane allowed. */
 export interface RowMeasure {
   shares: number[]
-  panePx: number[]
   viewPx: number
   minPx: number
 }
 
+const total = (xs: readonly number[]): number => xs.reduce((a, b) => a + b, 0)
+
 /**
- * The shares after a splitter moved by `deltaPx`, whether or not the row scrolls.
- *
- * - The row fits the window: resizePanes over the visible width — the two
- *   neighbours trade, the row's width stays.
- * - The row is wider than the window (it scrolls): every pane may already be
- *   at its narrowest, so trading would never move. The splitter then sets the
- *   width of the pane on its left (never under `minPx`); the others keep
- *   theirs, and the row grows or shrinks by the difference.
+ * `totalPx` shared out by `shares`, no pane under `minPx`: the panes a share
+ * would make too narrow are held at the minimum and the rest share what is
+ * left in their own proportions (what a flex row with `min-width` does).
  */
-export function moveSplitter(row: RowMeasure, splitter: number, deltaPx: number): number[] {
-  const { shares, panePx, viewPx, minPx } = row
-  const content = panePx.reduce((a, b) => a + b, 0)
-  if (content <= viewPx + 0.5) return resizePanes(shares, splitter, deltaPx, viewPx, minPx)
-  const left = panePx[splitter]
-  if (left === undefined || panePx[splitter + 1] === undefined || !Number.isFinite(deltaPx)) return shares
-  const nextLeft = Math.max(minPx, left + deltaPx)
-  if (nextLeft === left) return shares
-  const px = panePx.map((w, i) => (i === splitter ? nextLeft : w))
-  const total = px.reduce((a, b) => a + b, 0)
-  return px.map((w) => w / total)
+export function fillRow(shares: number[], totalPx: number, minPx: number): number[] {
+  const n = shares.length
+  if (n === 0) return []
+  if (n * minPx >= totalPx) return shares.map(() => minPx)
+  const held = new Set<number>()
+  for (;;) {
+    const free = shares.map((_w, i) => i).filter((i) => !held.has(i))
+    const room = totalPx - held.size * minPx
+    const freeShares = free.reduce((sum, i) => sum + Math.max(0, shares[i]!), 0)
+    const out = shares.map((w, i) =>
+      held.has(i) ? minPx : freeShares > 0 ? (Math.max(0, w) / freeShares) * room : room / free.length
+    )
+    const under = free.filter((i) => out[i]! < minPx)
+    if (under.length === 0) return out
+    for (const i of under) held.add(i)
+  }
 }
 
 /**
- * Each pane's minimum as a multiple of `--pane-min-w`: its share over the
- * narrowest share. With it the row never squeezes a pane under its share:
- * a row too narrow for them all is as wide as the narrowest pane at the
- * minimum makes it, and scrolls — so shares set in a scrolled row are the
- * widths drawn.
+ * How wide a row that does not fit is drawn: its N panes at the minimum plus
+ * room for a splitter to move (up to one more minimum). It grows from the
+ * window's width as the window narrows past N × `--pane-min-w`, so the two
+ * ways of drawing meet at the threshold.
  */
-export function paneMinScale(shares: number[]): number[] {
-  const least = Math.min(...shares)
-  return shares.map((w) => (least > 0 ? w / least : 1))
+export function scrolledRowWidth(n: number, viewPx: number, minPx: number): number {
+  const least = n * minPx
+  return least + Math.min(Math.max(0, least - viewPx), minPx)
+}
+
+/**
+ * The panes of a row `viewPx` wide, in px.
+ *
+ * - N × `--pane-min-w` fits: the visible width shared out by the shares, no
+ *   pane under the minimum (fillRow). This never scrolls.
+ * - It does not: the row is scrolledRowWidth wide and scrolls sideways; the
+ *   shares are shared out over that width the same way.
+ *
+ * Either way the picture is the shares and the window's width alone, so the
+ * same saved shares in the same window draw the same row.
+ */
+export function rowLayout(shares: number[], viewPx: number, minPx: number): { scrolls: boolean; px: number[] } {
+  const n = shares.length
+  if (n < 2) return { scrolls: false, px: n === 1 ? [viewPx] : [] }
+  if (n * minPx <= viewPx) return { scrolls: false, px: fillRow(shares, viewPx, minPx) }
+  return { scrolls: true, px: fillRow(shares, scrolledRowWidth(n, viewPx, minPx), minPx) }
+}
+
+/**
+ * The shares after a splitter moved by `deltaPx`, from the row as rowLayout
+ * draws it: a share the minimum overrides moves from where it is seen.
+ *
+ * - The row fits: the two neighbours trade (resizePanes over the visible
+ *   width). Shares the minimum does not override are used as they are.
+ * - The row scrolls: its width stays; the splitter pushes. Moving right, the
+ *   pane on its left grows and the panes on its right give way, nearest
+ *   first, each down to the minimum; moving left, the other way round. The
+ *   splitter follows as far as there is room, in any spread of widths.
+ *
+ * The result is the drawn widths over the row's width, so rowLayout draws it
+ * back exactly.
+ */
+export function moveSplitter(row: RowMeasure, splitter: number, deltaPx: number): number[] {
+  const { shares, viewPx, minPx } = row
+  const n = shares.length
+  if (splitter < 0 || splitter + 1 >= n || !Number.isFinite(deltaPx) || !(viewPx > 0)) return shares
+  const { scrolls, px: panePx } = rowLayout(shares, viewPx, minPx)
+  const width = total(panePx)
+  if (!scrolls) {
+    // Unchanged where no minimum overrides a share: the shares as they are.
+    const drawn = panePx.every((w, i) => Math.abs(w - shares[i]! * viewPx) < 1e-6) ? shares : panePx.map((w) => w / width)
+    return resizePanes(drawn, splitter, deltaPx, viewPx, minPx)
+  }
+
+  const px = [...panePx]
+  const grows = deltaPx > 0 ? splitter : splitter + 1
+  // The panes that give way, nearest the splitter first.
+  const givers =
+    deltaPx > 0
+      ? Array.from({ length: n - splitter - 1 }, (_v, k) => splitter + 1 + k)
+      : Array.from({ length: splitter + 1 }, (_v, k) => splitter - k)
+  let want = Math.abs(deltaPx)
+  for (const i of givers) {
+    if (want <= 0) break
+    const give = Math.min(want, Math.max(0, px[i]! - minPx))
+    px[i] = px[i]! - give
+    px[grows] = px[grows]! + give
+    want -= give
+  }
+  return px.map((w) => w / width)
 }
 
 /** `n` equal shares. */

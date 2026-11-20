@@ -168,19 +168,40 @@ test('чаты перетаскиваются из боковой панели �
         .poll(async () => (await widths(win)).map((w, i) => Math.abs(w - saved.widths[i]!) <= 2))
         .toEqual([true, true, true, true])
 
-      // S2-R22(б). A window too narrow for four panes: the row scrolls, and the splitter still moves.
-      await second.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1100, 900))
       const rowBox = win.locator('[data-testid="split-row"]')
-      await expect
-        .poll(() => rowBox.evaluate((el) => el.scrollWidth - el.clientWidth))
-        .toBeGreaterThan(100)
+      const overflow = (): Promise<number> => rowBox.evaluate((el) => el.scrollWidth - el.clientWidth)
+      const resize = (width: number): Promise<void> =>
+        second.app.evaluate(({ BrowserWindow }, w) => BrowserWindow.getAllWindows()[0]!.setSize(w, 900), width)
+      const rowWidth = (): Promise<number> => rowBox.evaluate((el) => el.clientWidth)
+
+      // Fix round 2. The unequal shares saved in the wide window, in a smaller one that still
+      // holds four panes at --pane-min-w: no sideways scrolling, every pane at least the minimum.
+      await resize(1560)
+      await expect.poll(rowWidth).toBeLessThan(saved.widths.reduce((x, y) => x + y, 0) - 100)
+      expect(await rowWidth()).toBeGreaterThanOrEqual(4 * 320)
+      await expect.poll(overflow).toBe(0)
+      for (const w of await widths(win)) expect(w).toBeGreaterThanOrEqual(319)
+
+      // S2-R22(б). A window too narrow for four panes: the row scrolls, and the splitter still
+      // moves with the arrow keys: the left pane grows by 16 px, the row keeps its width.
+      await resize(1100)
+      await expect.poll(overflow).toBeGreaterThan(100)
       const narrow = await widths(win)
       for (const w of narrow) expect(w).toBeGreaterThanOrEqual(319)
-      await win.locator('[data-testid="pane-splitter"]').first().focus()
+      const splitter2 = win.locator('[data-testid="pane-splitter"]').first()
+      await splitter2.focus()
       await win.keyboard.press('ArrowRight')
       await expect.poll(async () => Math.round((await widths(win))[0]! - narrow[0]!)).toBe(16)
-      const moved = await widths(win)
-      for (let i = 1; i < 4; i++) expect(Math.abs(moved[i]! - narrow[i]!)).toBeLessThan(1)
+      const sum = (xs: number[]): number => xs.reduce((x, y) => x + y, 0)
+      expect(Math.abs(sum(await widths(win)) - sum(narrow))).toBeLessThan(1)
+      // And with the mouse.
+      const pushed = await widths(win)
+      const b = (await splitter2.boundingBox())!
+      await win.mouse.move(b.x + b.width / 2, b.y + b.height / 2)
+      await win.mouse.down()
+      await win.mouse.move(b.x + b.width / 2 + 20, b.y + b.height / 2, { steps: 4 })
+      await win.mouse.up()
+      await expect.poll(async () => Math.round((await widths(win))[0]! - pushed[0]!)).toBe(20)
     } finally {
       await second.app.close()
     }

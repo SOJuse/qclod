@@ -15,6 +15,7 @@ import type {
   SessionStatus
 } from '../../src/shared/types'
 import { REMOTE_BLOCK_TEXT } from '../../src/shared/remote'
+import type { AutonomyInput } from '../../src/core/autonomy/types'
 
 type FakeScript = Parameters<typeof createFakeSdk>[0]
 
@@ -3800,6 +3801,325 @@ describe('AgentSession: ответы на карточки', () => {
     expect(rec.items.find((i) => i.kind === 'question')).toMatchObject({
       notes: { 'Язык?': 'только без generics' }
     })
+    await session.dispose()
+  })
+})
+
+describe('AgentSession: автономность', () => {
+  const slowTurn: NonNullable<NonNullable<FakeScript>['nextTurn']> = [
+    { kind: 'textStream', pieces: ['один ', 'два ', 'три ', 'четыре ', 'пять'], pauseMs: 50 }
+  ]
+  const asking: NonNullable<FakeScript>['nextTurn'] = [
+    { kind: 'askQuestion', questions: [{ question: 'Куда?', options: ['Справа (Recommended)', 'Снизу'] }] },
+    { kind: 'text', text: 'понял' }
+  ]
+  const phoneAnswers: NonNullable<FakeScript>['nextTurn'] = [
+    {
+      kind: 'remoteAnswer',
+      name: 'AskUserQuestion',
+      input: { questions: [{ question: 'Куда?', options: [{ label: 'туда' }] }] },
+      decision: 'deny'
+    }
+  ]
+
+  function listen(session: AgentSession): AutonomyInput[] {
+    const inputs: AutonomyInput[] = []
+    session.onAutonomyInput((input) => inputs.push(input))
+    return inputs
+  }
+
+  type UserItem = Extract<RibbonItem, { kind: 'user' }>
+  type QuestionItem = Extract<RibbonItem, { kind: 'question' }>
+  type PlanItem = Extract<RibbonItem, { kind: 'plan' }>
+
+  const userItems = (items: RibbonItem[]): UserItem[] => items.filter((i): i is UserItem => i.kind === 'user')
+  const questionCard = (session: AgentSession): QuestionItem =>
+    session.items.find((i) => i.kind === 'question') as QuestionItem
+  const closed = (inputs: AutonomyInput[]): AutonomyInput[] => inputs.filter((i) => i.type === 'waitClosed')
+  const acted = (inputs: AutonomyInput[]): AutonomyInput[] => inputs.filter((i) => i.type === 'personActed')
+
+  async function openAsk(session: AgentSession): Promise<string> {
+    await session.start()
+    session.send({ text: 'спроси', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    return questionCard(session).toolUseId
+  }
+
+  test('вопрос даёт questionOpened с подписями вариантов как пришли', async () => {
+    const { session } = makeSession({ steps: [], nextTurn: asking })
+    const inputs = listen(session)
+    const id = await openAsk(session)
+
+    expect(inputs.filter((i) => i.type === 'questionOpened')).toEqual([
+      {
+        type: 'questionOpened',
+        cardId: id,
+        questions: [{ question: 'Куда?', options: ['Справа (Recommended)', 'Снизу'], multiSelect: false }]
+      }
+    ])
+    // Every frame and every status reach the core too.
+    expect(inputs.some((i) => i.type === 'sdk' && (i.message as { subtype?: string }).subtype === 'init')).toBe(true)
+    expect(inputs.filter((i) => i.type === 'status').map((i) => (i as { status: string }).status)).toContain('waiting')
+    await session.dispose()
+  })
+
+  test('autoAnswerQuestion отвечает ожидающий вопрос: updatedInput.answers дошли до агента, карточка auto', async () => {
+    const { session, driver } = makeSession({ steps: [], nextTurn: asking })
+    const rec = watch(session)
+    const inputs = listen(session)
+    const id = await openAsk(session)
+    const before = acted(inputs).length
+
+    expect(session.autoAnswerQuestion(id, { 'Куда?': 'Справа (Recommended)' })).toBe(true)
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('понял'), { timeout: 2000 })
+    await settle(session)
+
+    expect(driver.questionAnswers).toEqual([{ 'Куда?': 'Справа (Recommended)' }])
+    expect(questionCard(session)).toMatchObject({ answers: { 'Куда?': 'Справа (Recommended)' }, auto: true })
+    expect(closed(inputs)).toEqual([{ type: 'waitClosed', cardId: id, by: 'auto' }])
+    // Qclod answered, not a person.
+    expect(acted(inputs)).toHaveLength(before)
+    expect(driver.sent.map((s) => s.text)).toEqual(['спроси'])
+    await session.dispose()
+  })
+
+  test('autoAnswerQuestion на вопрос, закрытый Стопом или телефоном, даёт false и ничего не шлёт', async () => {
+    // Stopped: the card stays, its question is no longer waited on.
+    {
+      const { session, driver } = makeSession({ steps: [], nextTurn: asking })
+      const rec = watch(session)
+      const id = await openAsk(session)
+      await session.interrupt()
+      await settle(session)
+      const sent = driver.sent.length
+      const bubbles = userItems(rec.items).length
+
+      expect(session.autoAnswerQuestion(id, { 'Куда?': 'Справа (Recommended)' })).toBe(false)
+      await tick()
+      expect(driver.sent).toHaveLength(sent)
+      expect(userItems(rec.items)).toHaveLength(bubbles)
+      expect(driver.questionAnswers).toEqual([])
+      // Nothing in the ribbon reads as answered by Qclod.
+      expect(session.items.some((i) => 'auto' in i)).toBe(false)
+      await session.dispose()
+    }
+    // Answered on the phone.
+    {
+      const { session, driver } = makeSession({ nextTurn: phoneAnswers })
+      const rec = watch(session)
+      await session.start()
+      await session.setRemote(true)
+      session.send({ text: 'спроси', attachments: [] })
+      await settle(session)
+      const id = questionCard(session).toolUseId
+      const sent = driver.sent.length
+      const bubbles = userItems(rec.items).length
+
+      expect(session.autoAnswerQuestion(id, { 'Куда?': 'туда' })).toBe(false)
+      await tick()
+      expect(driver.sent).toHaveLength(sent)
+      expect(userItems(rec.items)).toHaveLength(bubbles)
+      expect(questionCard(session)).toMatchObject({ answers: {}, elsewhere: true })
+      await session.dispose()
+    }
+  })
+
+  test('ExitPlanMode в авто-да показывает карточку плана; autoApprovePlan одобряет, режим остаётся autoAllow', async () => {
+    const { session, driver } = makeSession(
+      { steps: [], nextTurn: [{ kind: 'plan', plan: 'сделать всё' }, { kind: 'text', text: 'делаю' }] },
+      { overrides: { permissionMode: 'autoAllow' } }
+    )
+    const rec = watch(session)
+    const inputs = listen(session)
+    await session.start()
+    session.send({ text: 'спланируй', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    const card = rec.items.find((i) => i.kind === 'plan') as PlanItem
+    expect(card).toMatchObject({ state: 'pending', text: 'сделать всё' })
+    expect(inputs).toContainEqual({ type: 'planOpened', cardId: card.requestId })
+    expect(driver.executedTools).not.toContain('ExitPlanMode')
+
+    expect(await session.autoApprovePlan(card.requestId)).toBe(true)
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('делаю'), { timeout: 2000 })
+    await settle(session)
+
+    expect(driver.executedTools).toContain('ExitPlanMode')
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({ state: 'approved', auto: true })
+    expect(driver.permissionMode).not.toBe('acceptEdits')
+    expect(session.panel.permissionMode).toBe('autoAllow')
+    expect(closed(inputs)).toEqual([{ type: 'waitClosed', cardId: card.requestId, by: 'auto' }])
+    // A plan no longer waited on is not approved twice.
+    expect(await session.autoApprovePlan(card.requestId)).toBe(false)
+    await session.dispose()
+  })
+
+  test('send с auto: пузырь auto, personActed не приходит; обычный send — personActed', async () => {
+    const { session } = makeSession({ steps: [], nextTurn: [{ kind: 'text', text: 'ок' }] })
+    const rec = watch(session)
+    const inputs = listen(session)
+    await session.start()
+
+    expect(session.send({ text: 'продолжай', attachments: [] }, { auto: true })).toBe(true)
+    expect(userItems(rec.items).at(-1)).toMatchObject({ text: 'продолжай', auto: true })
+    expect(acted(inputs)).toEqual([])
+    await settle(session)
+
+    session.send({ text: 'сам', attachments: [] })
+    expect(userItems(rec.items).at(-1)).toMatchObject({ text: 'сам' })
+    expect(userItems(rec.items).at(-1)).not.toHaveProperty('auto')
+    expect(acted(inputs)).toEqual([{ type: 'personActed' }])
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('сообщение с auto при идущем ходе: пузырь на started тоже auto', async () => {
+    const { session } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await vi.waitFor(() => expect(session.sessionId).toBeTruthy(), { timeout: 2000 })
+    session.send({ text: 'продолжай', attachments: [] }, { auto: true })
+    // On the strip first: no bubble until the agent reads it.
+    expect(session.panel.queue.map((q) => q.text)).toEqual(['продолжай'])
+    expect(userItems(rec.items).map((i) => i.text)).toEqual(['раз'])
+
+    await vi.waitFor(() => expect(userItems(rec.items).map((i) => i.text)).toEqual(['раз', 'продолжай']), {
+      timeout: 3000
+    })
+    expect(userItems(rec.items)[0]).not.toHaveProperty('auto')
+    expect(userItems(rec.items)[1]).toMatchObject({ auto: true })
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('авто-сообщение с плашки не уходит преемнику и не возвращается Стопом в поле', async () => {
+    {
+      const { session } = makeSession({ steps: [], turns: [slowTurn] })
+      await session.start()
+      session.send({ text: 'раз', attachments: [] })
+      await vi.waitFor(() => expect(session.sessionId).toBeTruthy(), { timeout: 2000 })
+      session.send({ text: 'продолжай', attachments: [] }, { auto: true })
+      session.send({ text: 'сам', attachments: [] })
+      expect(session.takeQueue()).toEqual([{ text: 'сам', attachments: [] }])
+      expect(session.panel.queue).toEqual([])
+      await settle(session)
+      await session.dispose()
+    }
+    {
+      const { session } = makeSession({ steps: [], turns: [slowTurn] })
+      await session.start()
+      session.send({ text: 'раз', attachments: [] })
+      await vi.waitFor(() => expect(session.sessionId).toBeTruthy(), { timeout: 2000 })
+      session.send({ text: 'продолжай', attachments: [] }, { auto: true })
+      session.send({ text: 'сам', attachments: [] })
+      expect(await session.interrupt()).toEqual([{ text: 'сам', attachments: [] }])
+      expect(session.panel.queue).toEqual([])
+      await settle(session)
+      await session.dispose()
+    }
+  })
+
+  test('sentBeforeInit без авто-сообщений', async () => {
+    const { session } = makeSession({ steps: [], nextTurn: [{ kind: 'text', text: 'ок' }] })
+    await session.start()
+    session.send({ text: 'продолжай', attachments: [] }, { auto: true })
+    session.send({ text: 'сам', attachments: [] })
+    expect(session.sessionId).toBeNull()
+    expect(session.sentBeforeInit).toEqual([{ text: 'сам', attachments: [] }])
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('ответ человека: waitClosed person и personActed; аборт SDK при живом мосте: waitClosed elsewhere; Стоп: stop', async () => {
+    {
+      const { session } = makeSession({ steps: [], nextTurn: asking })
+      const inputs = listen(session)
+      const id = await openAsk(session)
+      const at = inputs.length
+      session.answerQuestion(id, { 'Куда?': 'Снизу' })
+      const after = inputs.slice(at).filter((i) => i.type === 'waitClosed' || i.type === 'personActed')
+      expect(after).toEqual([{ type: 'waitClosed', cardId: id, by: 'person' }, { type: 'personActed' }])
+      await settle(session)
+      await session.dispose()
+    }
+    {
+      const { session } = makeSession({ nextTurn: phoneAnswers })
+      const inputs = listen(session)
+      await session.start()
+      await session.setRemote(true)
+      session.send({ text: 'спроси', attachments: [] })
+      await settle(session)
+      expect(closed(inputs)).toEqual([
+        { type: 'waitClosed', cardId: questionCard(session).toolUseId, by: 'elsewhere' }
+      ])
+      await session.dispose()
+    }
+    {
+      const { session } = makeSession({ steps: [], nextTurn: asking })
+      const inputs = listen(session)
+      const id = await openAsk(session)
+      await session.interrupt()
+      expect(closed(inputs)).toEqual([{ type: 'waitClosed', cardId: id, by: 'stop' }])
+      await settle(session)
+      await session.dispose()
+    }
+  })
+
+  test('пузырь с телефона — personActed', async () => {
+    const { session, driver } = makeSession({ steps: [], nextTurn: [{ kind: 'text', text: 'ок' }] })
+    const inputs = listen(session)
+    await session.start()
+    await session.setRemote(true)
+    driver.typeOnPhone('с телефона', [{ kind: 'text', text: 'ок' }])
+    await vi.waitFor(() => expect(acted(inputs)).toEqual([{ type: 'personActed' }]), { timeout: 2000 })
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('смена режима даёт mode', async () => {
+    const { session } = makeSession({ steps: [] })
+    const inputs = listen(session)
+    await session.start()
+    await session.setPermissionMode('plan')
+    expect(inputs.filter((i) => i.type === 'mode')).toEqual([{ type: 'mode', mode: 'plan' }])
+    // Picking the same mode again is no change.
+    await session.setPermissionMode('plan')
+    expect(inputs.filter((i) => i.type === 'mode')).toHaveLength(1)
+    await session.dispose()
+  })
+
+  test('строка при включении авто-да говорит о таймере', async () => {
+    const line = (n: number): string =>
+      'Режим «авто-да»: Qclod сам отвечает «разрешить» на каждый запрос агента. ' +
+      'Сохранённые запреты по-прежнему действуют. ' +
+      `На вопрос или план, на который вы не ответите за ${n} мин, Qclod ответит сам: ` +
+      'выберет рекомендуемый вариант или одобрит план.'
+    const notices = (items: RibbonItem[]): string[] =>
+      items.filter((i) => i.kind === 'notice').map((i) => (i as { text: string }).text)
+
+    const { session } = makeSession({ steps: [] }, { confirmAutoAllow: async () => true })
+    const rec = watch(session)
+    await session.start()
+    await session.setPermissionMode('autoAllow')
+    expect(notices(rec.items)).toContain(line(5))
+    await session.dispose()
+
+    const custom = makeSession({ steps: [] }, { confirmAutoAllow: async () => true, autoAnswerMinutes: () => 12 })
+    const seen = watch(custom.session)
+    await custom.session.start()
+    await custom.session.setPermissionMode('autoAllow')
+    expect(notices(seen.items)).toContain(line(12))
+    await custom.session.dispose()
+  })
+
+  test('setAutonomyView кладёт вид в панель', async () => {
+    const { session } = makeSession({ steps: [] })
+    const rec = watch(session)
+    await session.start()
+    const view = { timers: [], limitWait: { resetsAt: null, continueAt: 1000, weekly: false }, gaveUp: null }
+    session.setAutonomyView(view)
+    expect(session.panel.autonomy).toEqual(view)
+    expect(rec.panels.at(-1)).toEqual({ autonomy: view })
     await session.dispose()
   })
 })

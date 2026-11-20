@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { RibbonBuilder } from '../../shared/ribbon'
 import type {
+  AutonomyView,
   CommandInfo,
   EffortLevel,
   ModelOption,
@@ -10,6 +11,7 @@ import type {
   PanelData,
   PanelSnapshot,
   PermissionAnswer,
+  PermissionMode,
   PermissionRequest,
   PlanDecision,
   RemoteInfo,
@@ -23,6 +25,7 @@ import type {
 } from '../../shared/types'
 import { REMOTE_OFF, explainRemoteError, isRemoteLive, remoteFromMessage } from '../../shared/remote'
 import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
+import type { AskedQuestion as CoreQuestion, AutonomyInput } from '../../core/autonomy/types'
 import type { ToolPermissionContext } from './permissionContext'
 import { parseExtraFlags } from './launchFlags'
 import { MAX_QUEUED, QueueController } from './queueController'
@@ -98,6 +101,42 @@ export interface AgentSessionOptions {
   panelRefreshMs?: number
   /** A ribbon and panel already on screen, taken over instead of new ones. */
   seed?: SessionSeed
+  /** «Автономность»: minutes before Qclod answers a card by itself, as the «авто-да» line says; 5 when absent. */
+  autoAnswerMinutes?: () => number
+}
+
+/** The default of `autoAnswerMinutes`. */
+const AUTO_ANSWER_MINUTES = 5
+
+/**
+ * How a message is sent — one object for stages 3 and 4 (cross-plan check F18).
+ * Stage 4 (task 10) adds `priority?: SendPriority` and `relay?: RelayMeta` here.
+ */
+export interface SendOptions {
+  /** Sent by Qclod itself («продолжай»): the bubble says «авто», and it is not the person acting. */
+  auto?: boolean
+}
+
+/** The questions of an AskUserQuestion input as the core reads them: labels as they came. */
+function coreQuestions(input: Record<string, unknown>): CoreQuestion[] {
+  const questions = Array.isArray(input['questions']) ? (input['questions'] as unknown[]) : []
+  return questions.flatMap((q): CoreQuestion[] => {
+    if (typeof q !== 'object' || q === null) return []
+    const item = q as Record<string, unknown>
+    if (typeof item['question'] !== 'string') return []
+    const options = Array.isArray(item['options']) ? (item['options'] as unknown[]) : []
+    return [
+      {
+        question: item['question'],
+        options: options.flatMap((o) =>
+          typeof o === 'object' && o !== null && typeof (o as Record<string, unknown>)['label'] === 'string'
+            ? [(o as Record<string, unknown>)['label'] as string]
+            : []
+        ),
+        multiSelect: item['multiSelect'] === true
+      }
+    ]
+  })
 }
 
 /** The longest `dispose` waits for the agent process to go away. */
@@ -196,8 +235,13 @@ export class AgentSession {
   private mode: string
   private todoItems: TodoItem[] = []
   private readonly idleWaiters: Array<() => void> = []
-  /** Messages given to the driver before system/init; see `sentBeforeInit`. */
-  private unintroduced: UserInput[] = []
+  /**
+   * Messages given to the driver before system/init; see `sentBeforeInit`.
+   * `auto` — Qclod's own, never sent again (decision 12).
+   */
+  private unintroduced: Array<{ sent: UserInput; auto: boolean }> = []
+  /** What AutonomyCore is fed from this session (stage 3). */
+  private readonly autonomyListeners: Array<(input: AutonomyInput) => void> = []
   private disposed = false
   /** Whether a driver was ever made; see `launched`. */
   private launchedAgent = false
@@ -254,8 +298,8 @@ export class AgentSession {
       startTurn: (opts) => this.startTurn(opts),
       endTurn: () => this.endTurn(),
       currentTurn: () => this.turn,
-      showUser: (input, composed, echoOf) => this.showUser(input, composed, echoOf),
-      remember: (sent) => this.remember(sent),
+      showUser: (input, composed, echoOf, opts) => this.showUser(input, composed, echoOf, opts),
+      remember: (sent, opts) => this.remember(sent, opts),
       emitQueue: (view) => this.emitPanel(this.collector.setQueue(view)),
       notice: (text, tone) => this.emit(this.builder.notice(text, tone)),
       cancelWaits: (scope) => this.cancelWaits(scope)
@@ -264,6 +308,36 @@ export class AgentSession {
 
   get status(): SessionStatus {
     return this.state
+  }
+
+  /**
+   * What AutonomyCore needs from this session: every frame, status and mode,
+   * the cards it could answer and how they closed, and the person acting.
+   * Returns a function that stops the listener.
+   */
+  onAutonomyInput(cb: (input: AutonomyInput) => void): () => void {
+    this.autonomyListeners.push(cb)
+    return () => {
+      const at = this.autonomyListeners.indexOf(cb)
+      if (at !== -1) this.autonomyListeners.splice(at, 1)
+    }
+  }
+
+  private feedAutonomy(input: AutonomyInput): void {
+    // A copy: a listener may stop itself while it is being told.
+    for (const listener of [...this.autonomyListeners]) listener(input)
+  }
+
+  /** The core's view of this tab — timers, a limit wait — whole, into the panel. */
+  setAutonomyView(view: AutonomyView): void {
+    this.emitPanel(this.collector.setAutonomy(view))
+  }
+
+  /** Every change of `mode` goes through here, so the core hears of it. */
+  private setMode(mode: string): void {
+    if (mode === this.mode) return
+    this.mode = mode
+    this.feedAutonomy({ type: 'mode', mode: mode as PermissionMode })
   }
 
   get error(): string | undefined {
@@ -498,15 +572,59 @@ export class AgentSession {
         entries.length === 1
           ? entries[0]![1]
           : entries.map(([question, answer]) => `«${question}» — ${answer}`).join('\n')
+      // A message of the person's: `send` tells the core so.
       this.send({ text, attachments: [] })
       return
     }
     this.pendingQuestions.delete(toolUseId)
     this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId: toolUseId, by: 'person' })
+    this.feedAutonomy({ type: 'personActed' })
     waiting.resolve({
       behavior: 'allow',
       updatedInput: encodeQuestionAnswer(waiting.input, answers, kept, notesModeFor(this.cliVersion))
     })
+  }
+
+  /**
+   * AutonomyCore's answer to a question nobody answered in time: the labels it
+   * picked, as they came. Only a question still waited on is answered, in
+   * place; a closed one — stopped, answered on the phone, a dead process —
+   * gets false and nothing is sent, never a message (Review Focus 1).
+   */
+  autoAnswerQuestion(cardId: string, answers: Record<string, string>): boolean {
+    const waiting = this.pendingQuestions.get(cardId)
+    if (!waiting) return false
+    const asked = askedQuestions(waiting.input)
+    if (asked.length === 0 || !asked.every((q) => typeof answers[q.question] === 'string')) return false
+    const given = Object.fromEntries(asked.map((q) => [q.question, answers[q.question]!]))
+    this.emit(this.builder.answerQuestion(cardId, given, { auto: true }))
+    this.pendingQuestions.delete(cardId)
+    this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId, by: 'auto' })
+    waiting.resolve({
+      behavior: 'allow',
+      updatedInput: encodeQuestionAnswer(waiting.input, given, {}, notesModeFor(this.cliVersion))
+    })
+    return true
+  }
+
+  /**
+   * AutonomyCore approves a plan nobody decided in time. Only a plan still
+   * waited on. In «авто-да» the mode stays (decision 4: leaving it would turn
+   * the next auto-answers off); in plan mode it goes to acceptEdits, as a
+   * person's approval does.
+   */
+  async autoApprovePlan(cardId: string): Promise<boolean> {
+    const waiting = this.pendingPlans.get(cardId)
+    if (!waiting) return false
+    this.pendingPlans.delete(cardId)
+    this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId, by: 'auto' })
+    this.emit(this.builder.resolvePlan(cardId, 'approved', { auto: true }))
+    if (this.mode === 'plan') await this.setPermissionMode('acceptEdits')
+    waiting.resolve({ behavior: 'allow' })
+    return true
   }
 
   /**
@@ -543,6 +661,8 @@ export class AgentSession {
     if (!waiting) return
     this.pendingPlans.delete(requestId)
     this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId: requestId, by: 'person' })
+    this.feedAutonomy({ type: 'personActed' })
 
     const comment = decision.comment || undefined
     if (!decision.approve) {
@@ -568,8 +688,10 @@ export class AgentSession {
     }
 
     this.emit(this.builder.resolvePlan(requestId, 'approved', shown))
-    // The mode must be in place before the tool runs, not racing it.
-    await this.setPermissionMode('acceptEdits')
+    // The mode must be in place before the tool runs, not racing it. A plan
+    // card in «авто-да» (decision 4) leaves the tab in «авто-да»: acceptEdits
+    // would turn the timers off for the cards after it.
+    if (this.mode !== 'autoAllow') await this.setPermissionMode('acceptEdits')
     waiting.resolve(
       edited !== undefined || comment
         ? {
@@ -609,7 +731,7 @@ export class AgentSession {
     // settings default or an older tabs.json. Starting in it unasked would
     // walk around the confirmation entirely, so the check lives here too.
     if (!(await this.allowMode(this.mode))) {
-      this.mode = 'default'
+      this.setMode('default')
       this.emit(
         this.builder.notice(
           'Режим «без проверок» не подтверждён — сессия запущена в обычном режиме.',
@@ -770,19 +892,22 @@ export class AgentSession {
    * own; during a turn the CLI reads it between the agent's steps, and the
    * strip shows it until then. Only while the agent is still starting does it
    * wait here. False when the session cannot take it — not started, dead, or
-   * the strip full — so the window can give it back.
+   * the strip full — so the window can give it back. `auto` — Qclod's own
+   * «продолжай»: marked so, and not the person acting.
    */
-  send(input: UserInput): boolean {
+  send(input: UserInput, opts: SendOptions = {}): boolean {
     if (this.disposed) return false
+    const auto = opts.auto === true
     const starting = !this.driver && this.state === 'starting'
     if (!this.driver && !starting) return false
     if (starting) {
       if (this.queue.size >= MAX_QUEUED) return false
-      this.queue.hold(input)
-      return true
+      this.queue.hold(input, auto ? { auto } : {})
+    } else {
+      if (this.queue.wouldOverflow()) return false
+      this.queue.submit(input, auto ? { auto } : {})
     }
-    if (this.queue.wouldOverflow()) return false
-    this.queue.submit(input)
+    if (!auto) this.feedAutonomy({ type: 'personActed' })
     return true
   }
 
@@ -804,9 +929,14 @@ export class AgentSession {
    * as chips; the agent — and therefore the echo that comes back — gets the
    * composed version, which is what the dedup must match. `echoOf` is the
    * uuid it went under, so the expectation ends with the turn that carried
-   * it (ruling R10); null — no echo is coming at all.
+   * it (ruling R10); null — no echo is coming at all. `auto` — Qclod sent it.
    */
-  private showUser(input: UserInput, composed: string, echoOf: string | null): void {
+  private showUser(
+    input: UserInput,
+    composed: string,
+    echoOf: string | null,
+    opts: { auto?: boolean } = {}
+  ): void {
     // The ribbon shows an image by its thumbnail, or by its copy on disk when
     // there is none (a large GIF or WebP); the full bytes (up to ~5 MB of
     // base64) would otherwise ride along in every snapshot.
@@ -814,17 +944,26 @@ export class AgentSession {
       a.kind === 'image' && (a.thumbnail || a.path) ? { ...a, dataBase64: '' } : a
     )
     this.emit(
-      this.builder.addUser(input.text, shown, echoOf === null ? null : composed, echoOf ?? undefined)
+      this.builder.addUser(
+        input.text,
+        shown,
+        echoOf === null ? null : composed,
+        echoOf ?? undefined,
+        opts.auto ? { auto: true } : {}
+      )
     )
   }
 
   /**
    * What was sent here before the CLI introduced itself. A resume that will
    * not open may only say so once it is spoken to, and takes these down with
-   * it; the session taking its place sends them again (`resend`).
+   * it; the session taking its place sends them again (`resend`). Qclod's own
+   * «продолжай» is not among them: without the conversation it means nothing
+   * (decision 12).
    */
   get sentBeforeInit(): UserInput[] {
-    return this.session === null ? [...this.unintroduced] : []
+    if (this.session !== null) return []
+    return this.unintroduced.filter((u) => !u.auto).map((u) => u.sent)
   }
 
   /**
@@ -844,8 +983,8 @@ export class AgentSession {
   }
 
   /** Before init, what went to the agent is kept for a resend (`sentBeforeInit`). */
-  private remember(sent: UserInput): void {
-    if (this.session === null) this.unintroduced.push(sent)
+  private remember(sent: UserInput, opts: { auto?: boolean } = {}): void {
+    if (this.session === null) this.unintroduced.push({ sent, auto: opts.auto === true })
   }
 
   /**
@@ -934,12 +1073,14 @@ export class AgentSession {
     const questions = [...this.pendingQuestions].filter(([, wait]) => ours(wait))
     for (const [toolUseId, waiting] of questions) {
       this.pendingQuestions.delete(toolUseId)
+      this.feedAutonomy({ type: 'waitClosed', cardId: toolUseId, by: 'stop' })
       waiting.resolve({ behavior: 'deny' })
     }
 
     const plans = [...this.pendingPlans].filter(([, wait]) => ours(wait))
     for (const [requestId, waiting] of plans) {
       this.pendingPlans.delete(requestId)
+      this.feedAutonomy({ type: 'waitClosed', cardId: requestId, by: 'stop' })
       this.emit(this.builder.resolvePlan(requestId, 'rejected'))
       waiting.resolve({ behavior: 'deny' })
     }
@@ -991,13 +1132,16 @@ export class AgentSession {
         return
       }
     }
-    this.mode = mode
+    this.setMode(mode)
     this.emitPanel(this.collector.setPermissionMode(mode))
     if (mode === 'autoAllow' && was !== 'autoAllow') {
+      const minutes = this.options.autoAnswerMinutes?.() ?? AUTO_ANSWER_MINUTES
       this.emit(
         this.builder.notice(
           'Режим «авто-да»: Qclod сам отвечает «разрешить» на каждый запрос агента. ' +
-            'Сохранённые запреты по-прежнему действуют, вопросы и планы — за вами.',
+            'Сохранённые запреты по-прежнему действуют. ' +
+            `На вопрос или план, на который вы не ответите за ${minutes} мин, Qclod ответит сам: ` +
+            'выберет рекомендуемый вариант или одобрит план.',
           'info'
         )
       )
@@ -1214,18 +1358,18 @@ export class AgentSession {
   }
 
   private onMessage(message: unknown): void {
+    this.feedAutonomy({ type: 'sdk', message })
     const changes = this.builder.apply(message)
     this.emit(changes)
+    const fromPhone = changes.some((c) => c.kind === 'append' && c.item.kind === 'user' && c.item.remote)
     // A message typed on the phone starts a turn of its own — unless one is
     // under way, which it then joins: the bubble shows, nothing is counted twice.
-    if (
-      !this.turnRunning &&
-      changes.some((c) => c.kind === 'append' && c.item.kind === 'user' && c.item.remote)
-    ) {
+    if (!this.turnRunning && fromPhone) {
       this.turn += 1
       this.turnRunning = true
       if (this.waits === 0) this.setStatus('busy')
     }
+    if (fromPhone) this.feedAutonomy({ type: 'personActed' })
     const remote = remoteFromMessage(message, this.remoteInfo)
     if (remote) {
       this.setRemoteInfo(remote)
@@ -1237,7 +1381,7 @@ export class AgentSession {
     if (panel) {
       // The collector is the one place that knows the current mode — it also
       // knows not to let a restart overrule what the user chose.
-      this.mode = this.collector.data.permissionMode
+      this.setMode(this.collector.data.permissionMode)
       this.emitPanel(panel)
     }
     const tasks = this.backgroundTasks.apply(message)
@@ -1349,7 +1493,11 @@ export class AgentSession {
     // A plan is a document to read, not a tool call to wave through. In plan
     // mode the agent finishes by calling ExitPlanMode with what it intends to
     // do, and that is the moment the user decides (spec 6.4).
-    if (toolName === 'ExitPlanMode' && this.mode === 'plan') return this.askPlan(input, opts)
+    // In «авто-да» too (decision 4): the plan gets its card, and the core's
+    // timer, rather than being waved through with the tools.
+    if (toolName === 'ExitPlanMode' && (this.mode === 'plan' || this.mode === 'autoAllow')) {
+      return this.askPlan(input, opts)
+    }
 
     // The tool call's own id, so two questions about one message's tools are
     // two requests. A clock is no id: two asks in one millisecond collided.
@@ -1455,9 +1603,9 @@ export class AgentSession {
         if (this.pendingPlans.get(requestId)?.resolve !== settle) return
         this.pendingPlans.delete(requestId)
         this.leaveWait()
-        this.emit(
-          this.builder.resolvePlan(requestId, isRemoteLive(this.remoteInfo) ? 'elsewhere' : 'rejected')
-        )
+        const elsewhere = isRemoteLive(this.remoteInfo)
+        this.feedAutonomy({ type: 'waitClosed', cardId: requestId, by: elsewhere ? 'elsewhere' : 'stop' })
+        this.emit(this.builder.resolvePlan(requestId, elsewhere ? 'elsewhere' : 'rejected'))
         resolve({ behavior: 'deny' })
       }
       const settle = (answer: PermissionAnswer): void => {
@@ -1467,6 +1615,8 @@ export class AgentSession {
       opts.signal?.addEventListener('abort', onAbort, { once: true })
       // The input is kept: an edited plan goes back as the same call's input.
       this.pendingPlans.set(requestId, { input, resolve: settle, turn: this.turn })
+      // Told once the plan is waited on, so the core can answer it at once.
+      this.feedAutonomy({ type: 'planOpened', cardId: requestId })
     })
   }
 
@@ -1493,8 +1643,10 @@ export class AgentSession {
         if (this.pendingQuestions.get(toolUseId)?.resolve !== settle) return
         this.pendingQuestions.delete(toolUseId)
         this.leaveWait()
+        const elsewhere = isRemoteLive(this.remoteInfo)
+        this.feedAutonomy({ type: 'waitClosed', cardId: toolUseId, by: elsewhere ? 'elsewhere' : 'stop' })
         // Answered on the phone: the card closes rather than waiting for a click.
-        if (isRemoteLive(this.remoteInfo)) this.emit(this.builder.closeQuestionElsewhere(toolUseId))
+        if (elsewhere) this.emit(this.builder.closeQuestionElsewhere(toolUseId))
         resolve({ behavior: 'deny' })
       }
       const settle = (answer: PermissionAnswer): void => {
@@ -1503,6 +1655,8 @@ export class AgentSession {
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
       this.pendingQuestions.set(toolUseId, { input, resolve: settle, turn: this.turn })
+      // Told once the question is waited on: `autoAnswerQuestion` finds it.
+      this.feedAutonomy({ type: 'questionOpened', cardId: toolUseId, questions: coreQuestions(input) })
     })
   }
 
@@ -1587,6 +1741,7 @@ export class AgentSession {
     this.state = status
     // A copy: a listener may stop itself while it is being told.
     for (const listener of [...this.statusListeners]) listener(status)
+    this.feedAutonomy({ type: 'status', status })
     if (this.settled()) {
       const waiters = this.idleWaiters.splice(0)
       for (const resolve of waiters) resolve()

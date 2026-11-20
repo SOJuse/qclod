@@ -51,7 +51,7 @@ describe('QueueController', () => {
     queue.onLifecycle({ type: 'command_lifecycle', command_uuid: uuid, state: 'started' })
 
     expect(host.showUser).toHaveBeenCalledTimes(1)
-    expect(host.showUser).toHaveBeenCalledWith({ text: 'два', attachments: [] }, 'два', uuid)
+    expect(host.showUser).toHaveBeenCalledWith({ text: 'два', attachments: [] }, 'два', uuid, {})
     expect(host.startTurn).toHaveBeenCalled()
     expect(queue.size).toBe(0)
   })

@@ -1309,3 +1309,53 @@ describe('RibbonBuilder: Remote Control', () => {
     expect(b.closeQuestionElsewhere('nope')).toEqual([])
   })
 })
+
+describe('RibbonBuilder: ответы «авто»', () => {
+  function withQuestionAndPlan(): RibbonBuilder {
+    const b = new RibbonBuilder()
+    b.apply({
+      type: 'assistant',
+      message: {
+        id: 'm-q',
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'q1',
+            name: 'AskUserQuestion',
+            input: { questions: [{ question: 'Куда?', options: [{ label: 'Туда (Recommended)' }, { label: 'Сюда' }] }] }
+          }
+        ]
+      }
+    })
+    b.addPlan('p1', 'план')
+    return b
+  }
+
+  test('answerQuestion с auto ставит auto в элемент и в патч', () => {
+    const b = withQuestionAndPlan()
+    const changes = b.answerQuestion('q1', { 'Куда?': 'Туда (Recommended)' }, { auto: true })
+    expect(changes).toEqual([
+      { kind: 'update', id: expect.any(String), patch: { answers: { 'Куда?': 'Туда (Recommended)' }, auto: true } }
+    ])
+    expect(b.items.find((i) => i.kind === 'question')).toMatchObject({ auto: true })
+    // Without it, a person's answer carries no mark.
+    const person = withQuestionAndPlan()
+    expect(person.answerQuestion('q1', { 'Куда?': 'Сюда' })[0]).not.toHaveProperty('patch.auto')
+  })
+
+  test('resolvePlan с auto', () => {
+    const b = withQuestionAndPlan()
+    const changes = b.resolvePlan('p1', 'approved', { auto: true })
+    expect(changes).toEqual([{ kind: 'update', id: expect.any(String), patch: { state: 'approved', auto: true } }])
+    expect(b.items.find((i) => i.kind === 'plan')).toMatchObject({ state: 'approved', auto: true })
+  })
+
+  test('addUser с auto', () => {
+    const b = new RibbonBuilder()
+    const [change] = b.addUser('продолжай', [], 'продолжай', 'u1', { auto: true })
+    expect(change).toMatchObject({ kind: 'append', item: { kind: 'user', text: 'продолжай', auto: true } })
+    const [plain] = b.addUser('сам', [])
+    expect(plain).not.toHaveProperty('item.auto')
+  })
+})

@@ -127,9 +127,17 @@
   --space-5: 24px;
 
   /* The chat column: NowLine, the input and the close warning share its width. */
-  --content-max-w: 920px;
+  --content-max-w: 800px;
   --content-gutter: 20px;
+  /* The window's columns: the sidebar, a split pane at its narrowest, the right panel. */
+  --sidebar-w: 260px;
+  --pane-min-w: 320px;
+  --panel-w: 280px;
   --prose-max-w: 72ch;
+  /* A pane's header line and its small buttons; the floating input's inner padding. */
+  --chat-header-h: 34px;
+  --chat-header-button: 24px;
+  --dock-pad: var(--space-2);
 
   --rule-category: 2px;
   /* An opened tool card's output block scrolls past this height until «Показать всё». */
@@ -192,6 +200,11 @@
   :root {
     --focus-ring-width: 3px;
   }
+}
+
+/* Motion is soft, and none at all for someone who asked the system for less. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important }
 }
 
 * {

@@ -12,12 +12,14 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding: 16px 20px 24px;
+  padding-bottom: calc(var(--dock-h, 0px) + var(--space-4));
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
 
+/* D10: the conversation's column, the width of the floating input under it. */
 .ribbon-row {
-  max-width: 820px;
+  max-width: var(--content-max-w);
   margin: 0 auto;
   font-size: var(--text-lg);
 }
@@ -216,126 +218,6 @@
   color: var(--text-dim);
 }
 
-/* ------------------------------------------------------------ permissions */
-
-.row-permission {
-  margin: 10px 0;
-  padding: 11px 13px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface-raised));
-}
-
-.row-permission-head {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  margin-bottom: 9px;
-}
-
-.row-permission-target {
-  color: var(--text-dim);
-  font-size: var(--text-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.row-permission-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.row-question-options button {
-  padding: 5px 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-
-.row-question-options button:not(:disabled):hover {
-  border-color: var(--accent);
-}
-
-/* The card spans the ribbon, which clips sideways: its ring goes inside.
-   Its buttons take the global ring as it is. */
-.row-permission:focus-visible {
-  outline-offset: var(--focus-offset-inset);
-}
-
-.row-permission-done {
-  font-size: var(--text-sm);
-  color: var(--text-dim);
-}
-
-.row-permission.is-denied {
-  border-color: var(--critical-border);
-  background: var(--critical-fill);
-}
-
-/* -------------------------------------------------------------- questions */
-
-.row-question {
-  margin: 10px 0;
-  padding: 11px 13px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-raised);
-}
-
-.row-question-text {
-  margin-bottom: 9px;
-}
-
-.row-question-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.row-question-block + .row-question-block {
-  margin-top: var(--space-3);
-}
-
-.row-question-options button {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--gap-hair);
-  text-align: left;
-}
-
-.row-question-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.row-question-desc {
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-}
-
-.row-question-options button.is-chosen {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* Its look is .btn .btn-primary (ui/controls.css). */
-.row-question-submit {
-  margin-top: var(--space-3);
-}
-
-.row-question-done {
-  margin-top: var(--space-3);
-  font-size: var(--text-sm);
-  line-height: var(--leading);
-  color: var(--text-dim);
-}
-
 /* ------------------------------------------------------- compaction, notes */
 
 .row-compaction {
@@ -428,48 +310,106 @@
 .ribbon {
 }
 
-/* ------------------------------------------------------------- plan mode */
+/* ------------------------------------------------- folded runs and answered cards */
 
-.row-plan {
-  margin: 12px 0;
-  border: 1px solid var(--border-accent);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface-raised));
-  overflow: hidden;
+/* Actions sit close together: a run of calls reads as one stretch of work. */
+.ribbon-row > .tool-card {
+  margin: var(--gap-hair) 0;
 }
 
-.row-plan-head {
-  padding: 8px 13px;
-  border-bottom: 1px solid var(--border);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-strong);
-  color: var(--text-dim);
+.tool-group {
+  --cat: var(--cat-other);
+  margin: var(--gap-hair) 0;
 }
 
-.row-plan-text {
-  padding: 12px 14px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: var(--leading-prose);
-  max-height: 420px;
-  overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
-}
+.tool-group[data-category='read'] { --cat: var(--cat-read); }
+.tool-group[data-category='search'] { --cat: var(--cat-search); }
+.tool-group[data-category='edit'] { --cat: var(--cat-edit); }
+.tool-group[data-category='command'] { --cat: var(--cat-command); }
+.tool-group[data-category='mcp'] { --cat: var(--cat-mcp); }
 
-.row-plan-actions {
+.tool-group-toggle,
+.card-summary-line {
   display: flex;
-  gap: 8px;
-  padding: 0 14px 12px;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--tool-head-h-compact);
+  padding: var(--gap-hair) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
 }
 
-.row-plan-done {
-  padding: 0 14px 12px;
-  font-size: var(--text-sm);
+.tool-group-toggle:hover,
+.card-summary-line:hover {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.tool-group-chevron {
+  flex: 0 0 auto;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.tool-group-toggle[aria-expanded='true'] .tool-group-chevron {
+  transform: rotate(90deg);
+}
+
+.tool-group-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-group-body {
+  margin-left: var(--space-3);
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--border);
+}
+
+/* An answered card: one quiet line. */
+.card-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--gap-hair) 0;
+  padding: var(--gap-hair) var(--space-2);
+  font-size: var(--text-md);
   color: var(--text-dim);
 }
 
-.row-plan.is-rejected {
-  border-color: var(--border);
+.card-summary.is-plan,
+.card-summary.is-stale {
+  display: block;
+  padding: 0;
+}
+
+.card-summary-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A question the talk moved past, opened: the card, framed, under its line. */
+.card-summary.is-stale .question-card {
+  margin: var(--space-1) 0 var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   background: var(--surface-raised);
+  color: var(--text);
+}
+
+.card-summary-plan {
+  margin: var(--space-1) 0 var(--space-2) var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
+  color: var(--text);
 }

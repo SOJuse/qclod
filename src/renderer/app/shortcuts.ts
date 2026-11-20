@@ -12,6 +12,7 @@ export type AppActionId =
   | 'settings'
   | 'history'
   | 'togglePanel'
+  | 'toggleSidebar'
   | 'toggleSplit'
   | 'restart'
   | 'compact'
@@ -29,15 +30,16 @@ export interface AppActionInfo {
 
 /** The Ctrl+K list, in the order it is shown. `tabAt` has no row: it is Ctrl+1…9. */
 export const APP_ACTIONS: AppActionInfo[] = [
-  { id: 'newTab', label: 'Новая вкладка', keys: 'Ctrl+T' },
-  { id: 'closeTab', label: 'Закрыть вкладку', keys: 'Ctrl+W' },
-  { id: 'nextTab', label: 'Следующая вкладка', keys: 'Ctrl+Tab' },
-  { id: 'prevTab', label: 'Предыдущая вкладка', keys: 'Ctrl+Shift+Tab' },
+  { id: 'newTab', label: 'Новый чат', keys: 'Ctrl+T' },
+  { id: 'closeTab', label: 'Закрыть чат', keys: 'Ctrl+W' },
+  { id: 'nextTab', label: 'Следующий чат', keys: 'Ctrl+Tab' },
+  { id: 'prevTab', label: 'Предыдущий чат', keys: 'Ctrl+Shift+Tab' },
   { id: 'actions', label: 'Палитра действий', keys: 'Ctrl+K' },
   { id: 'settings', label: 'Настройки', keys: 'Ctrl+,' },
   { id: 'history', label: 'Прошлые разговоры', keys: 'Ctrl+H' },
   { id: 'togglePanel', label: 'Показать или скрыть панель', keys: 'Ctrl+\\' },
-  { id: 'toggleSplit', label: 'Два разговора рядом', keys: 'Ctrl+Shift+Enter' },
+  { id: 'toggleSidebar', label: 'Показать или скрыть боковую панель', keys: 'Ctrl+B' },
+  { id: 'toggleSplit', label: 'Сплит: открыть рядом или закрыть', keys: 'Ctrl+Shift+Enter' },
   { id: 'restart', label: 'Перезапустить сессию' },
   { id: 'compact', label: 'Сжать контекст' },
   { id: 'cycleMode', label: 'Сменить режим', keys: 'Shift+Tab' },
@@ -52,7 +54,7 @@ export function hintKeys(label: string, keys: string): string {
   return `${label} (${keys})`
 }
 
-/** A button's tooltip: «Новая вкладка (Ctrl+T)». */
+/** A button's tooltip: «Новый чат (Ctrl+T)». */
 export function hint(label: string, id?: AppActionId): string {
   const keys = id ? APP_ACTIONS.find((a) => a.id === id)?.keys : undefined
   return keys ? hintKeys(label, keys) : label
@@ -96,6 +98,8 @@ export function resolveAppShortcut(
       return { id: 'actions' }
     case 'h':
       return { id: 'history' }
+    case 'b':
+      return { id: 'toggleSidebar' }
     case 'r':
       return { id: 'reload' }
     default:
@@ -103,7 +107,7 @@ export function resolveAppShortcut(
   }
 }
 
-/** The tab Ctrl+1…9 picks: index 8 is the last tab, a missing index picks nothing. */
+/** The chat Ctrl+1…9 picks, in the sidebar's order: index 8 is the last one, a missing index picks nothing. */
 export function tabAtTarget(tabIds: string[], index: number | undefined): string | null {
   if (index === undefined) return null
   const at = index === LAST_TAB_INDEX ? tabIds.length - 1 : index

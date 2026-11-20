@@ -3,7 +3,7 @@ import { Folder, MessageSquare } from 'lucide-react'
 import type { SessionSummary, TabId } from '../../shared/types'
 import { APP_ACTIONS } from '../app/shortcuts'
 import { PathLink } from '../paths/PathLink'
-import { when } from './HistoryScreen'
+import { shortWhen } from '../../shared/format'
 import './EmptyTab.css'
 
 const RECENT_LIMIT = 5
@@ -42,7 +42,7 @@ export function EmptyTab({ tabId, cwd, onOpenSession }: Props): JSX.Element {
   const tips: Array<{ keys: string; text: string }> = [
     { keys: '/', text: 'команды' },
     { keys: '@', text: 'файлы' },
-    { keys: keysOf('actions'), text: 'действия' },
+    { keys: keysOf('actions'), text: 'поиск' },
     { keys: keysOf('cycleMode'), text: 'режим разрешений' }
   ]
 
@@ -69,7 +69,7 @@ export function EmptyTab({ tabId, cwd, onOpenSession }: Props): JSX.Element {
                 >
                   <MessageSquare size={14} aria-hidden="true" />
                   <span className="empty-tab-session-title">{session.title}</span>
-                  <span className="empty-tab-session-when">{when(session.updatedAt)}</span>
+                  <span className="empty-tab-session-when">{shortWhen(session.updatedAt)}</span>
                 </button>
               </li>
             ))}

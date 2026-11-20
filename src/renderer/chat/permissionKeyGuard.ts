@@ -31,28 +31,28 @@ export function focusedLongEnough(since: number | null, arrivedAt: number): bool
 }
 
 /**
- * A card is mounted again whenever its row scrolls back into the virtualised
- * ribbon or its tab is shown again. It must neither count as a new arrival
- * nor take focus a second time, so both are kept by request, not by mount.
+ * A pinned card is mounted again whenever its tab is shown again or its pane
+ * moves. It must neither count as a new arrival nor take focus a second time,
+ * so both are kept by card (`cardIdOf`), not by mount.
  */
 const arrivals = new Map<string, number>()
 const offered = new Set<string>()
 /** Enough for any session's cards; the oldest are forgotten first. */
 const REMEMBERED = 500
 
-/** When this request first showed; `now` the first time it is asked about. */
-export function arrivalOf(requestId: string, now: number): number {
-  const known = arrivals.get(requestId)
+/** When this card first showed; `now` the first time it is asked about. */
+export function arrivalOf(cardId: string, now: number): number {
+  const known = arrivals.get(cardId)
   if (known !== undefined) return known
-  arrivals.set(requestId, now)
+  arrivals.set(cardId, now)
   if (arrivals.size > REMEMBERED) arrivals.delete(arrivals.keys().next().value!)
   return now
 }
 
-/** True the first time a card for this request may try to take focus, false after. */
-export function claimFocusOffer(requestId: string): boolean {
-  if (offered.has(requestId)) return false
-  offered.add(requestId)
+/** True the first time this card may try to take focus, false after. */
+export function claimFocusOffer(cardId: string): boolean {
+  if (offered.has(cardId)) return false
+  offered.add(cardId)
   if (offered.size > REMEMBERED) offered.delete(offered.values().next().value!)
   return true
 }
@@ -98,6 +98,11 @@ export function trackHeldKeys(): void {
   })
 }
 
+/**
+ * Every key that answers a card goes through one of these: Enter and Space on
+ * its buttons, and the digits 1–4 and Esc on the card itself. Matched by
+ * `code`, so a held «3» is Digit3 whatever the layout.
+ */
 export interface KeyGuard {
   /** The card has just taken focus; `held` are the keys already down. */
   focus(now: number, held: ReadonlySet<string>): void

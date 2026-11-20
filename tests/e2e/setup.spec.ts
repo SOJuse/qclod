@@ -102,8 +102,9 @@ test('над экраном установки — полоса окна: его
     for (const id of ['window-minimize', 'window-maximize', 'window-close']) {
       await expect(bar.locator(`[data-testid="${id}"]`)).toBeVisible()
     }
-    // Nothing of a working window yet: no tabs, no history, no split.
-    await expect(bar.locator('[data-testid="tab"], [data-testid="open-history"], [data-testid="toggle-split"]')).toHaveCount(0)
+    // Nothing of a working window yet: no chats, no sidebar, no split.
+    await expect(bar.locator('[data-testid="sidebar-toggle"], [data-testid="toggle-split"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="sidebar"], [data-testid="tab"]')).toHaveCount(0)
 
     // In e2e the window is not kept in the tray, so closing it ends the app.
     const closed = Promise.all([win.waitForEvent('close'), app.waitForEvent('close')])

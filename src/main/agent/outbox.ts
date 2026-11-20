@@ -17,6 +17,8 @@ export interface OutboxEntry {
    * so its `cancelled` frame is the answer, not a turn that swallowed it.
    */
   requestedCancel: boolean
+  /** Sent by Qclod itself («продолжай»): its bubble is marked «авто» when the agent reads it. */
+  auto?: true
 }
 
 /** What the strip above the input shows: the user's messages the agent has not read yet. */
@@ -70,7 +72,8 @@ export class Outbox {
 /** The first CLI that folds queued messages into a turn and answers for them. */
 const CLI_QUEUE_VERSION = [2, 1, 259]
 
-function versionAtLeast(version: string, least: number[]): boolean {
+/** Whether a `claude_code_version` is `least` or later; a version that does not parse is not. */
+export function versionAtLeast(version: string, least: number[]): boolean {
   const parts = version.split('.').map((p) => Number.parseInt(p, 10))
   if (parts.length === 0 || parts.some((p) => Number.isNaN(p))) return false
   for (let i = 0; i < least.length; i += 1) {

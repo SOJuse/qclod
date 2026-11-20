@@ -33,12 +33,14 @@ test.afterEach(async () => {
 })
 
 test('режим по умолчанию — список без «без проверок»', async () => {
+  await win.locator('[data-testid="settings-nav-agent"]').click()
   const options = await win.locator('[data-testid="setting-defaultPermissionMode"] option').allTextContents()
   expect(options).not.toContain('без проверок')
   expect(options).toContain('принимать правки')
 })
 
 test('модель по умолчанию — список моделей сессии', async () => {
+  await win.locator('[data-testid="settings-nav-agent"]').click()
   const options = await win.locator('[data-testid="setting-defaultModel"] option').allTextContents()
   expect(options).toContain('Как у Claude Code')
   expect(options).toContain('Opus 5')
@@ -46,12 +48,14 @@ test('модель по умолчанию — список моделей се�
 })
 
 test('усилие по умолчанию — список с подписями', async () => {
+  await win.locator('[data-testid="settings-nav-agent"]').click()
   const options = await win.locator('[data-testid="setting-defaultEffort"] option').allTextContents()
   expect(options).toContain('Как у Claude Code')
   expect(options).toContain('высокое')
 })
 
 test('изменение видно как «Сохранено» и попадает в файл', async () => {
+  await win.locator('[data-testid="settings-nav-agent"]').click()
   await win.locator('[data-testid="setting-defaultModel"]').selectOption('claude-sonnet-5')
   const saved = win.locator('[data-testid="settings-saved"]')
   await expect(saved).toBeVisible()
@@ -62,14 +66,30 @@ test('изменение видно как «Сохранено» и попад�
 })
 
 test('Esc закрывает настройки и сохраняет поле, которое ещё в фокусе', async () => {
+  await win.locator('[data-testid="settings-nav-agent"]').click()
   const input = win.locator('[data-testid="setting-agentPath"]')
   await input.fill('claude-custom')
   await input.press('Escape')
   await expect(win.locator('[data-testid="settings"]')).toHaveCount(0)
   await win.locator('[data-testid="open-settings"]').click()
+  await win.locator('[data-testid="settings-nav-agent"]').click()
   await expect(win.locator('[data-testid="setting-agentPath"]')).toHaveValue('claude-custom')
 })
 
 test('поля «Размер шрифта терминала» нет', async () => {
   await expect(win.locator('[data-testid="setting-fontSize"]')).toHaveCount(0)
+})
+
+test('разделы: слева навигация, у открытого aria-current, справа только его поля', async () => {
+  const nav = (id: string) => win.locator(`[data-testid="settings-nav-${id}"]`)
+  await expect(nav('window')).toHaveAttribute('aria-current', 'page')
+  await expect(win.locator('[data-testid="setting-globalHotkey"]')).toBeVisible()
+  await expect(win.locator('[data-testid="setting-agentPath"]')).toHaveCount(0)
+  await nav('agent').click()
+  await expect(nav('agent')).toHaveAttribute('aria-current', 'page')
+  await expect(nav('window')).not.toHaveAttribute('aria-current', 'page')
+  await expect(win.locator('[data-testid="setting-agentPath"]')).toBeVisible()
+  await expect(win.locator('[data-testid="setting-globalHotkey"]')).toHaveCount(0)
+  await nav('about').click()
+  await expect(win.locator('[data-testid="open-logs"]')).toHaveText('Открыть журнал')
 })

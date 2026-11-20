@@ -24,7 +24,7 @@ win:
     - target: portable
       arch:
         - x64
-  icon: build/icon.png
+  icon: build/icon.ico
   # No code signing: the spec ships an unsigned installer.
   signAndEditExecutable: false
 
@@ -57,3 +57,7 @@ publish:
   owner: SOJuse
   repo: qclod
   releaseType: release
+
+# macOS arrives in stage 6; the icon is ready for it.
+mac:
+  icon: build/icon.icns

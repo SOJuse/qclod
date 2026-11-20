@@ -13,6 +13,10 @@ export const DEFAULT_SETTINGS: AppSettings = Object.freeze({
   closeToTray: true,
   panelOpen: true,
   editorCommand: '',
+  // «Авто-да»: Qclod answers a question or a plan itself after this long.
+  autoAnswerMinutes: 5,
+  // Only an installed build is registered with Windows (decision 11).
+  openAtLogin: true,
   // A new tab accepts edits without asking: the permission card for every
   // single file change is what makes the app feel like it is in the way. The
   // commands a tool runs are still asked about, and the mode is one click away

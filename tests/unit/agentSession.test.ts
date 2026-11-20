@@ -15,6 +15,7 @@ import type {
   SessionStatus
 } from '../../src/shared/types'
 import { REMOTE_BLOCK_TEXT } from '../../src/shared/remote'
+import type { AutonomyInput } from '../../src/core/autonomy/types'
 
 type FakeScript = Parameters<typeof createFakeSdk>[0]
 
@@ -249,6 +250,38 @@ describe('AgentSession', () => {
     await manager.create('t1', 'C:/проект', {}).start()
 
     expect(resolveAgent).toHaveBeenCalledTimes(2)
+  })
+
+  test('минуты «авто-да» из настроек доходят до сессии через менеджер', async () => {
+    let minutes = 15
+    const manager = new AgentSessionManager({
+      getAgentPath: () => 'claude',
+      askPermission: async () => ({ behavior: 'deny' as const }),
+      confirmAutoAllow: async () => true,
+      autoAnswerMinutes: () => minutes,
+      createDriver: () => createFakeSdk({ steps: [] }) as unknown as AgentDriver
+    })
+    const shown = (items: RibbonItem[]): string =>
+      items
+        .filter((i) => i.kind === 'notice')
+        .map((i) => (i as { text: string }).text)
+        .join('\n')
+
+    const first = manager.create('t1', 'C:/проект', {})
+    const rec = watch(first)
+    await first.start()
+    await first.setPermissionMode('autoAllow')
+    expect(shown(rec.items)).toContain('не ответите за 15 мин')
+    await manager.close('t1')
+
+    // Read when the line is shown: a changed setting reaches the next session.
+    minutes = 30
+    const second = manager.create('t1', 'C:/проект', {})
+    const seen = watch(second)
+    await second.start()
+    await second.setPermissionMode('autoAllow')
+    expect(shown(seen.items)).toContain('не ответите за 30 мин')
+    await manager.close('t1')
   })
 
   test('setPermissionMode доходит до SDK', async () => {
@@ -519,7 +552,7 @@ describe('AgentSession: план', () => {
 
     await session.start()
     await settle(session)
-    await session.answerPlan('нет-такого-плана', true)
+    await session.answerPlan('нет-такого-плана', { approve: true })
 
     expect(rec.changes.filter((c) => c.kind === 'update')).toHaveLength(0)
   })
@@ -1136,7 +1169,7 @@ describe('AgentSession: стоп во время вопроса', () => {
     expect(plan.state).toBe('rejected')
 
     // Approving a plan the agent no longer waits on changes nothing.
-    await session.answerPlan(plan.requestId, true)
+    await session.answerPlan(plan.requestId, { approve: true })
     await tick()
 
     expect(session.status).toBe('idle')
@@ -2409,6 +2442,116 @@ describe('AgentSession: очередь сообщений в CLI', () => {
     await session.dispose()
   })
 
+  test('двойной «Стоп» во время «Отправить сейчас» возвращает текст один раз', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      turns: [slowTurn, [{ kind: 'text', text: 'ответ-на-два' }]]
+    })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() => expect(lastQueue(rec)?.[0]?.state).toBe('queued'))
+    const id = lastQueue(rec)![0]!.id
+
+    // The CLI's answer to taking it back is held until told.
+    const cancel = driver.cancelQueued.bind(driver)
+    let answer: (() => void) | undefined
+    driver.cancelQueued = async (uuid) => {
+      const taken = await cancel(uuid)
+      await new Promise<void>((resolve) => (answer = resolve))
+      return taken
+    }
+    const now = session.sendQueuedNow(id)
+    // Two «Стоп», nothing awaited in between.
+    const first = session.interrupt()
+    const second = session.interrupt()
+    await vi.waitFor(() => expect(answer).toBeDefined())
+    answer!()
+
+    expect([...(await first), ...(await second)]).toEqual([{ text: 'два', attachments: [] }])
+    expect(await now).toBe(false)
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два'])
+
+    await settle(session)
+    await tick()
+    expect(texts(rec.items)).not.toContain('ответ-на-два')
+    expect(session.panel.queue).toEqual([])
+    await session.dispose()
+  })
+
+  test('takeQueue во время «Отправить сейчас» после кадра cancelled забирает сообщение', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      turns: [slowTurn, [{ kind: 'text', text: 'ответ-на-два' }]]
+    })
+    const options = recordOptions(driver)
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() => expect(lastQueue(rec)?.[0]?.state).toBe('queued'))
+    const id = lastQueue(rec)![0]!.id
+
+    // The CLI takes it off at once, and says so; its answer comes later.
+    const cancel = driver.cancelQueued.bind(driver)
+    let answer: (() => void) | undefined
+    driver.cancelQueued = async (uuid) => {
+      const taken = await cancel(uuid)
+      await new Promise<void>((resolve) => (answer = resolve))
+      return taken
+    }
+    const now = session.sendQueuedNow(id)
+    await vi.waitFor(() => expect(session.panel.queue).toEqual([]))
+    await vi.waitFor(() => expect(answer).toBeDefined())
+
+    // The tab is being swapped: the successor gets it, though it is off the strip.
+    expect(session.takeQueue()).toEqual([{ text: 'два', attachments: [] }])
+    answer!()
+    expect(await now).toBe(false)
+    const sentNow = driver.sent.filter((s, i) => s.text === 'два' && options[i]?.priority === 'now')
+    expect(sentNow).toEqual([])
+    await session.dispose()
+  })
+
+  test('поздний ответ отмены после dispose не ставит idle', async () => {
+    const { session, driver } = makeSession({
+      steps: [],
+      turns: [[{ kind: 'tool', name: 'Bash', input: { command: 'sleep 1' }, result: 'ok', pauseMs: 300 }]]
+    })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [] })
+    const id = session.panel.queue[0]!.id
+    // The turn ended with «два» still in the CLI's queue, as its own next turn.
+    session.handle({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      session_id: session.sessionId,
+      queued_turn_count: 1
+    })
+    expect(session.status).toBe('busy')
+
+    // The CLI answers «taken back» only after the tab has closed.
+    let answer: (() => void) | undefined
+    driver.cancelQueued = () => new Promise<boolean>((resolve) => (answer = () => resolve(true)))
+    const cancelling = session.cancelQueued(id)
+    await vi.waitFor(() => expect(answer).toBeDefined())
+    await session.dispose()
+    expect(rec.statuses.at(-1)).toBe('stopped')
+
+    answer!()
+    await cancelling
+    await tick()
+    expect(rec.statuses.at(-1)).toBe('stopped')
+    expect(session.status).toBe('stopped')
+  })
+
   test('Стоп на CLI, чья квитанция без cancelled: плашка снимается по одной и не выполняется', async () => {
     // interrupt_receipt_v1 without interrupt_cancel_queued_v1.
     const { session, driver } = makeSession({
@@ -3184,6 +3327,843 @@ describe('AgentSession: итоговое ревью этапа 2', () => {
     await vi.waitFor(() => expect(session.status).toBe('error'))
     expect(session.send({ text: 'два', attachments: [] })).toBe(false)
     expect(sent).toHaveLength(1)
+    await session.dispose()
+  })
+})
+
+describe('AgentSession: ответы на карточки', () => {
+  function planSession(plan: string, script: FakeScript = {}): ReturnType<typeof makeSession> {
+    return makeSession(
+      { ...script, init: { permissionMode: 'plan', ...script.init }, steps: [{ kind: 'plan', plan }] },
+      { overrides: { permissionMode: 'plan' } }
+    )
+  }
+
+  async function openPlan(session: AgentSession, rec: Recorder): Promise<{ requestId: string }> {
+    await session.start()
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    return rec.items.find((i) => i.kind === 'plan') as { requestId: string }
+  }
+
+  test('отклонить план с комментарием', async () => {
+    const { session, driver } = planSession('1. всё переписать')
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: false, comment: 'сначала тесты' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'deny',
+      message: 'сначала тесты'
+    })
+    const item = rec.items.find((i) => i.kind === 'plan')
+    expect(item).toMatchObject({
+      state: 'rejected',
+      comment: 'сначала тесты',
+      text: '1. всё переписать'
+    })
+    // Refused, not sent back for rework.
+    expect(item).not.toHaveProperty('sentBack')
+    expect(session.panel.permissionMode).toBe('plan')
+  })
+
+  test('отклонить план без комментария — отказ без своего текста', async () => {
+    const { session, driver } = planSession('1. шаг')
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: false })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'deny' })
+    expect(rec.items.find((i) => i.kind === 'plan')).not.toHaveProperty('comment')
+  })
+
+  test('одобрить с правкой', async () => {
+    const { session, driver } = planSession('1. всё переписать')
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, plan: '1. поправить одну функцию' })
+    await settle(session)
+
+    const answer = driver.permissionLog.at(-1)!
+    expect(answer.behavior).toBe('allow')
+    expect(answer.updatedInput).toEqual({ plan: '1. поправить одну функцию' })
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
+      state: 'approved',
+      text: '1. поправить одну функцию',
+      edited: true
+    })
+    expect(rec.changes).toContainEqual(
+      expect.objectContaining({
+        kind: 'update',
+        patch: { state: 'approved', text: '1. поправить одну функцию', edited: true }
+      })
+    )
+    expect(session.panel.permissionMode).toBe('acceptEdits')
+    expect(driver.permissionMode).toBe('acceptEdits')
+    // The edit went with the tool's answer, not as a message.
+    expect(driver.sent).toEqual([])
+  })
+
+  test('пустая правка — обычное одобрение', async () => {
+    for (const edit of ['   ', '1. шаг']) {
+      const { session, driver } = planSession('1. шаг')
+      const rec = watch(session)
+      const plan = await openPlan(session, rec)
+
+      await session.answerPlan(plan.requestId, { approve: true, plan: edit })
+      await settle(session)
+
+      expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'allow' })
+      const item = rec.items.find((i) => i.kind === 'plan')
+      expect(item).toMatchObject({ state: 'approved', text: '1. шаг' })
+      expect(item).not.toHaveProperty('edited')
+      expect(session.panel.permissionMode).toBe('acceptEdits')
+      expect(driver.sent).toEqual([])
+    }
+  })
+
+  // S2-R8.2: on a CLI that carries updatedInput.plan, the comment goes under the plan.
+  test('новый CLI: комментарий одобрения — под планом в updatedInput.plan, без сообщения', async () => {
+    const { session, driver } = planSession('1. шаг')
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, comment: 'и потом прогони тесты' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'allow',
+      updatedInput: { plan: '1. шаг\n\nКомментарий пользователя: и потом прогони тесты' }
+    })
+    const item = rec.items.find((i) => i.kind === 'plan')
+    expect(item).toMatchObject({ state: 'approved', text: '1. шаг', comment: 'и потом прогони тесты' })
+    expect(item).not.toHaveProperty('edited')
+    expect(session.panel.permissionMode).toBe('acceptEdits')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('новый CLI: правка и комментарий — правленый план с комментарием под ним', async () => {
+    const { session, driver } = planSession('1. всё переписать')
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, {
+      approve: true,
+      plan: '1. поправить одну функцию',
+      comment: 'без миграций'
+    })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)!.updatedInput).toEqual({
+      plan: '1. поправить одну функцию\n\nКомментарий пользователя: без миграций'
+    })
+    // The card shows the plan as edited; the comment stands beside it.
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
+      state: 'approved',
+      text: '1. поправить одну функцию',
+      edited: true,
+      comment: 'без миграций'
+    })
+    expect(driver.sent).toEqual([])
+  })
+
+  // S2-R8.1: an older CLI gets the plan sent back, and plan mode stays.
+  const OLD_CLI: FakeScript = { init: { claudeCodeVersion: '2.1.300' } }
+
+  test('старый CLI: правка плана — ExitPlanMode отклонён с правкой, режим остаётся «план»', async () => {
+    const { session, driver } = planSession('1. всё переписать', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, plan: '1. поправить одну функцию' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'deny',
+      message:
+        'Пользователь поправил план. Не начинай работу — предложи этот вариант снова через ExitPlanMode:\n' +
+        '1. поправить одну функцию'
+    })
+    expect(driver.executedTools).not.toContain('ExitPlanMode')
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
+      state: 'rejected',
+      text: '1. поправить одну функцию',
+      edited: true,
+      sentBack: true
+    })
+    expect(session.panel.permissionMode).toBe('plan')
+    expect(driver.permissionMode).toBe('plan')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('старый CLI: правка и комментарий — оба в отказе', async () => {
+    const { session, driver } = planSession('1. всё переписать', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, {
+      approve: true,
+      plan: '1. поправить одну функцию',
+      comment: 'без миграций'
+    })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'deny',
+      message:
+        'Пользователь поправил план. Не начинай работу — предложи этот вариант снова через ExitPlanMode:\n' +
+        '1. поправить одну функцию\n\nКомментарий пользователя: без миграций'
+    })
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
+      state: 'rejected',
+      text: '1. поправить одну функцию',
+      edited: true,
+      comment: 'без миграций',
+      sentBack: true
+    })
+    expect(session.panel.permissionMode).toBe('plan')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('старый CLI: комментарий без правки — план отправлен на доработку с комментарием', async () => {
+    const { session, driver } = planSession('1. шаг', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, comment: 'и потом прогони тесты' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({
+      name: 'ExitPlanMode',
+      behavior: 'deny',
+      message:
+        'Пользователь одобрит план с учётом комментария. Не начинай работу — учти комментарий и предложи ' +
+        'план снова через ExitPlanMode.\n\nКомментарий: и потом прогони тесты'
+    })
+    const item = rec.items.find((i) => i.kind === 'plan')
+    // Sent back, not refused: the ribbon says so, though the agent reads a refusal.
+    expect(item).toMatchObject({ state: 'rejected', text: '1. шаг', comment: 'и потом прогони тесты', sentBack: true })
+    expect(item).not.toHaveProperty('edited')
+    expect(session.panel.permissionMode).toBe('plan')
+    expect(driver.sent).toEqual([])
+  })
+
+  test('старый CLI: одобрение без правки и комментария — обычное одобрение', async () => {
+    const { session, driver } = planSession('1. шаг', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, plan: '1. шаг' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'allow' })
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({ state: 'approved', text: '1. шаг' })
+    expect(rec.items.find((i) => i.kind === 'plan')).not.toHaveProperty('sentBack')
+    expect(session.panel.permissionMode).toBe('acceptEdits')
+  })
+
+  test('старый CLI: отклонение с комментарием — отказ, а не доработка', async () => {
+    const { session, driver } = planSession('1. шаг', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: false, comment: 'сначала тесты' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'deny', message: 'сначала тесты' })
+    const item = rec.items.find((i) => i.kind === 'plan')
+    expect(item).toMatchObject({ state: 'rejected', comment: 'сначала тесты' })
+    expect(item).not.toHaveProperty('sentBack')
+  })
+
+  // S2-R8.3: nothing of a plan answer goes as a message, so a full queue loses nothing.
+  test.each([
+    ['2.1.317', 'allow'],
+    ['2.1.300', 'deny']
+  ])('CLI %s: правка и комментарий не уходят сообщением — очереди нечего терять', async (version, behavior) => {
+    const { session, driver } = planSession('1. шаг', { init: { claudeCodeVersion: version } })
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: true, plan: '1. другой шаг', comment: 'коротко' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)!.behavior).toBe(behavior)
+    expect(driver.sent).toEqual([])
+    expect(session.panel.queue).toEqual([])
+    expect(rec.items.filter((i) => i.kind === 'notice')).toEqual([])
+    // Whatever reached the agent carries the edit and the comment.
+    const carried = JSON.stringify(driver.permissionLog.at(-1))
+    expect(carried).toContain('1. другой шаг')
+    expect(carried).toContain('коротко')
+  })
+
+  // S2-R8.4: a closed session asks nobody, so no «до конца сессии» rule can outlive it.
+  test.each(['2.1.317', '2.1.300'])('CLI %s: закрытая сессия отказывает сразу и никого не спрашивает', async (version) => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session } = brokeredSession(
+      broker,
+      sessions,
+      { init: { claudeCodeVersion: version }, steps: [{ kind: 'text', text: 'ок' }] },
+      { overrides: { permissionMode: 'plan' } }
+    )
+    const rec = watch(session)
+    await session.start()
+    await settle(session)
+    await session.dispose()
+    const before = rec.items.length
+
+    const late = (session as unknown as {
+      onToolPermission: (n: string, i: Record<string, unknown>, o: object) => Promise<{ behavior: string }>
+    }).onToolPermission.bind(session)
+    await expect(late('Bash', { command: 'npm test' }, { toolUseId: 'late-1' })).resolves.toEqual({ behavior: 'deny' })
+    await expect(late('ExitPlanMode', { plan: 'x' }, { toolUseId: 'late-2' })).resolves.toEqual({ behavior: 'deny' })
+    await expect(
+      late('AskUserQuestion', { questions: [{ question: 'Q', options: [{ label: 'A' }] }] }, { toolUseId: 'late-3' })
+    ).resolves.toEqual({ behavior: 'deny' })
+
+    expect(asked).toEqual([])
+    expect(rec.items).toHaveLength(before)
+    // A click meant for a card that never was saves nothing for the tab.
+    broker.answer('late-1', { behavior: 'allow', forSession: true })
+    void broker.request('t1', 'Bash', { command: 'npm test' })
+    expect(asked).toHaveLength(1)
+  })
+
+  test('разрешить до конца сессии', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session, driver } = brokeredSession(broker, sessions, {
+      steps: [
+        { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } },
+        { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }
+      ]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(asked).toHaveLength(1), { timeout: 2000 })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', forSession: true })
+    await settle(session)
+
+    expect(asked).toHaveLength(1)
+    const cards = rec.items.filter((i) => i.kind === 'permission')
+    expect(cards).toHaveLength(1)
+    expect(cards[0]).toMatchObject({ state: 'allowed', scope: 'session' })
+    expect(driver.executedTools).toEqual(['Bash', 'Bash'])
+    await session.dispose()
+  })
+
+  test('разово и навсегда: scope once и always', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session } = brokeredSession(broker, sessions, {
+      steps: [
+        { kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } },
+        { kind: 'askPermission', name: 'Read', input: { file_path: 'a.ts' } }
+      ]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(asked).toHaveLength(1), { timeout: 2000 })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow' })
+    await vi.waitFor(() => expect(asked).toHaveLength(2), { timeout: 2000 })
+    broker.answer(asked[1]!.requestId, { behavior: 'allow', remember: true })
+    await settle(session)
+
+    const cards = rec.items.filter((i) => i.kind === 'permission')
+    expect(cards[0]).toMatchObject({ toolName: 'Bash', state: 'allowed', scope: 'once' })
+    expect(cards[1]).toMatchObject({ toolName: 'Read', state: 'allowed', scope: 'always' })
+    await session.dispose()
+  })
+
+  test('отказ с причиной: причина в ленте, агенту — явный запрет с ней', async () => {
+    const sessions = new Map<string, AgentSession>()
+    const { broker, asked } = makeBrokerFor(sessions)
+    const { session, driver } = brokeredSession(broker, sessions, {
+      steps: [
+        { kind: 'askPermission', name: 'Bash', input: { command: 'git push' } },
+        { kind: 'askPermission', name: 'Bash', input: { command: 'git push --force' } }
+      ]
+    })
+    const rec = watch(session)
+
+    await session.start()
+    await vi.waitFor(() => expect(asked).toHaveLength(1), { timeout: 2000 })
+    broker.answer(asked[0]!.requestId, { behavior: 'deny', message: 'не трогай main' })
+    await vi.waitFor(() => expect(asked).toHaveLength(2), { timeout: 2000 })
+    broker.answer(asked[1]!.requestId, { behavior: 'deny' })
+    await settle(session)
+
+    expect(driver.permissionLog).toEqual([
+      {
+        name: 'Bash',
+        behavior: 'deny',
+        message:
+          'Пользователь запретил этот вызов. Причина: не трогай main. Не выполняй это действие другим ' +
+          'способом и не обходи запрет — спроси пользователя, если нужно.'
+      },
+      {
+        name: 'Bash',
+        behavior: 'deny',
+        message:
+          'Пользователь запретил этот вызов. Не выполняй это действие другим способом и не обходи запрет — ' +
+          'спроси пользователя, если нужно.'
+      }
+    ])
+    const cards = rec.items.filter((i) => i.kind === 'permission')
+    expect(cards[0]).toMatchObject({ state: 'denied', reason: 'не трогай main' })
+    expect(cards[0]).not.toHaveProperty('scope')
+    expect(cards[1]).toMatchObject({ state: 'denied' })
+    expect(cards[1]).not.toHaveProperty('reason')
+    await session.dispose()
+  })
+
+  function questionSession(script: FakeScript = {}): ReturnType<typeof makeSession> {
+    return makeSession({
+      ...script,
+      steps: [
+        {
+          kind: 'askQuestion',
+          questions: [
+            { question: 'Язык?', options: ['Go', 'Rust'] },
+            { question: 'Что ещё?', options: ['Тесты', 'Доки', 'CI'], multiSelect: true }
+          ]
+        },
+        { kind: 'text', text: 'принял' }
+      ]
+    })
+  }
+
+  async function openQuestion(session: AgentSession, rec: Recorder): Promise<string> {
+    await session.start()
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    return (rec.items.find((i) => i.kind === 'question') as { toolUseId: string }).toolUseId
+  }
+
+  test('заметка к варианту: новый CLI — в annotations, ответ как есть', async () => {
+    const { session, driver } = questionSession()
+    const rec = watch(session)
+    const id = await openQuestion(session, rec)
+
+    session.answerQuestion(
+      id,
+      { 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' },
+      { 'Язык?': 'только без generics', 'Что ещё?': 'по минимуму' }
+    )
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('принял'), { timeout: 2000 })
+    await settle(session)
+
+    const answer = driver.permissionLog.at(-1)!
+    expect(answer.updatedInput?.['answers']).toEqual({ 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' })
+    expect(answer.updatedInput?.['annotations']).toEqual({
+      'Язык?': { notes: 'только без generics' },
+      'Что ещё?': { notes: 'по минимуму' }
+    })
+    expect(rec.items.find((i) => i.kind === 'question')).toMatchObject({
+      answers: { 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' },
+      notes: { 'Язык?': 'только без generics', 'Что ещё?': 'по минимуму' }
+    })
+  })
+
+  test('заметка к варианту: старый CLI — «Вариант — комментарий» в самом ответе', async () => {
+    const { session, driver } = questionSession({ init: { claudeCodeVersion: '2.1.200' } })
+    const rec = watch(session)
+    const id = await openQuestion(session, rec)
+
+    session.answerQuestion(
+      id,
+      { 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' },
+      { 'Язык?': 'только без generics', 'Что ещё?': 'по минимуму' }
+    )
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('принял'), { timeout: 2000 })
+    await settle(session)
+
+    expect(driver.questionAnswers).toEqual([
+      { 'Язык?': 'Go — только без generics', 'Что ещё?': 'Тесты, CI — по минимуму' }
+    ])
+    expect(driver.permissionLog.at(-1)!.updatedInput).not.toHaveProperty('annotations')
+    // The ribbon keeps the labels as they are, and the notes beside them.
+    expect(rec.items.find((i) => i.kind === 'question')).toMatchObject({
+      answers: { 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' },
+      notes: { 'Язык?': 'только без generics', 'Что ещё?': 'по минимуму' }
+    })
+  })
+
+  test('заметка к своему тексту отброшена, к чужому вопросу — тоже', async () => {
+    const { session, driver } = questionSession()
+    const rec = watch(session)
+    const id = await openQuestion(session, rec)
+
+    session.answerQuestion(
+      id,
+      { 'Язык?': 'Zig, пожалуйста', 'Что ещё?': 'Доки' },
+      { 'Язык?': 'заметка', Чужой: 'x' }
+    )
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('принял'), { timeout: 2000 })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)!.updatedInput).not.toHaveProperty('annotations')
+    expect(rec.items.find((i) => i.kind === 'question')).not.toHaveProperty('notes')
+  })
+
+  test('никто не ждёт: заметка уходит в сообщении «Вопрос» — Вариант — комментарий', async () => {
+    const { session, driver } = questionSession({ nextTurn: [{ kind: 'text', text: 'ок' }] })
+    const rec = watch(session)
+    const id = await openQuestion(session, rec)
+    await session.interrupt()
+
+    session.answerQuestion(
+      id,
+      { 'Язык?': 'Go', 'Что ещё?': 'Тесты, CI' },
+      { 'Язык?': 'только без generics' }
+    )
+
+    expect(driver.sent.at(-1)?.text).toBe('«Язык?» — Go — только без generics\n«Что ещё?» — Тесты, CI')
+    expect(rec.items.find((i) => i.kind === 'question')).toMatchObject({
+      notes: { 'Язык?': 'только без generics' }
+    })
+    await session.dispose()
+  })
+})
+
+describe('AgentSession: автономность', () => {
+  const slowTurn: NonNullable<NonNullable<FakeScript>['nextTurn']> = [
+    { kind: 'textStream', pieces: ['один ', 'два ', 'три ', 'четыре ', 'пять'], pauseMs: 50 }
+  ]
+  const asking: NonNullable<FakeScript>['nextTurn'] = [
+    { kind: 'askQuestion', questions: [{ question: 'Куда?', options: ['Справа (Recommended)', 'Снизу'] }] },
+    { kind: 'text', text: 'понял' }
+  ]
+  const phoneAnswers: NonNullable<FakeScript>['nextTurn'] = [
+    {
+      kind: 'remoteAnswer',
+      name: 'AskUserQuestion',
+      input: { questions: [{ question: 'Куда?', options: [{ label: 'туда' }] }] },
+      decision: 'deny'
+    }
+  ]
+
+  function listen(session: AgentSession): AutonomyInput[] {
+    const inputs: AutonomyInput[] = []
+    session.onAutonomyInput((input) => inputs.push(input))
+    return inputs
+  }
+
+  type UserItem = Extract<RibbonItem, { kind: 'user' }>
+  type QuestionItem = Extract<RibbonItem, { kind: 'question' }>
+  type PlanItem = Extract<RibbonItem, { kind: 'plan' }>
+
+  const userItems = (items: RibbonItem[]): UserItem[] => items.filter((i): i is UserItem => i.kind === 'user')
+  const questionCard = (session: AgentSession): QuestionItem =>
+    session.items.find((i) => i.kind === 'question') as QuestionItem
+  const closed = (inputs: AutonomyInput[]): AutonomyInput[] => inputs.filter((i) => i.type === 'waitClosed')
+  const acted = (inputs: AutonomyInput[]): AutonomyInput[] => inputs.filter((i) => i.type === 'personActed')
+
+  async function openAsk(session: AgentSession): Promise<string> {
+    await session.start()
+    session.send({ text: 'спроси', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    return questionCard(session).toolUseId
+  }
+
+  test('вопрос даёт questionOpened с подписями вариантов как пришли', async () => {
+    const { session } = makeSession({ steps: [], nextTurn: asking })
+    const inputs = listen(session)
+    const id = await openAsk(session)
+
+    expect(inputs.filter((i) => i.type === 'questionOpened')).toEqual([
+      {
+        type: 'questionOpened',
+        cardId: id,
+        questions: [{ question: 'Куда?', options: ['Справа (Recommended)', 'Снизу'], multiSelect: false }]
+      }
+    ])
+    // Every frame and every status reach the core too.
+    expect(inputs.some((i) => i.type === 'sdk' && (i.message as { subtype?: string }).subtype === 'init')).toBe(true)
+    expect(inputs.filter((i) => i.type === 'status').map((i) => (i as { status: string }).status)).toContain('waiting')
+    await session.dispose()
+  })
+
+  test('autoAnswerQuestion отвечает ожидающий вопрос: updatedInput.answers дошли до агента, карточка auto', async () => {
+    const { session, driver } = makeSession({ steps: [], nextTurn: asking })
+    const rec = watch(session)
+    const inputs = listen(session)
+    const id = await openAsk(session)
+    const before = acted(inputs).length
+
+    expect(session.autoAnswerQuestion(id, { 'Куда?': 'Справа (Recommended)' })).toBe(true)
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('понял'), { timeout: 2000 })
+    await settle(session)
+
+    expect(driver.questionAnswers).toEqual([{ 'Куда?': 'Справа (Recommended)' }])
+    expect(questionCard(session)).toMatchObject({ answers: { 'Куда?': 'Справа (Recommended)' }, auto: true })
+    expect(closed(inputs)).toEqual([{ type: 'waitClosed', cardId: id, by: 'auto' }])
+    // Qclod answered, not a person.
+    expect(acted(inputs)).toHaveLength(before)
+    expect(driver.sent.map((s) => s.text)).toEqual(['спроси'])
+    await session.dispose()
+  })
+
+  test('autoAnswerQuestion на вопрос, закрытый Стопом или телефоном, даёт false и ничего не шлёт', async () => {
+    // Stopped: the card stays, its question is no longer waited on.
+    {
+      const { session, driver } = makeSession({ steps: [], nextTurn: asking })
+      const rec = watch(session)
+      const id = await openAsk(session)
+      await session.interrupt()
+      await settle(session)
+      const sent = driver.sent.length
+      const bubbles = userItems(rec.items).length
+
+      expect(session.autoAnswerQuestion(id, { 'Куда?': 'Справа (Recommended)' })).toBe(false)
+      await tick()
+      expect(driver.sent).toHaveLength(sent)
+      expect(userItems(rec.items)).toHaveLength(bubbles)
+      expect(driver.questionAnswers).toEqual([])
+      // Nothing in the ribbon reads as answered by Qclod.
+      expect(session.items.some((i) => 'auto' in i)).toBe(false)
+      await session.dispose()
+    }
+    // Answered on the phone.
+    {
+      const { session, driver } = makeSession({ nextTurn: phoneAnswers })
+      const rec = watch(session)
+      await session.start()
+      await session.setRemote(true)
+      session.send({ text: 'спроси', attachments: [] })
+      await settle(session)
+      const id = questionCard(session).toolUseId
+      const sent = driver.sent.length
+      const bubbles = userItems(rec.items).length
+
+      expect(session.autoAnswerQuestion(id, { 'Куда?': 'туда' })).toBe(false)
+      await tick()
+      expect(driver.sent).toHaveLength(sent)
+      expect(userItems(rec.items)).toHaveLength(bubbles)
+      expect(questionCard(session)).toMatchObject({ answers: {}, elsewhere: true })
+      await session.dispose()
+    }
+  })
+
+  test('ExitPlanMode в авто-да показывает карточку плана; autoApprovePlan одобряет, режим остаётся autoAllow', async () => {
+    const { session, driver } = makeSession(
+      { steps: [], nextTurn: [{ kind: 'plan', plan: 'сделать всё' }, { kind: 'text', text: 'делаю' }] },
+      { overrides: { permissionMode: 'autoAllow' } }
+    )
+    const rec = watch(session)
+    const inputs = listen(session)
+    await session.start()
+    session.send({ text: 'спланируй', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    const card = rec.items.find((i) => i.kind === 'plan') as PlanItem
+    expect(card).toMatchObject({ state: 'pending', text: 'сделать всё' })
+    expect(inputs).toContainEqual({ type: 'planOpened', cardId: card.requestId })
+    expect(driver.executedTools).not.toContain('ExitPlanMode')
+
+    expect(await session.autoApprovePlan(card.requestId)).toBe(true)
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('делаю'), { timeout: 2000 })
+    await settle(session)
+
+    expect(driver.executedTools).toContain('ExitPlanMode')
+    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({ state: 'approved', auto: true })
+    expect(driver.permissionMode).not.toBe('acceptEdits')
+    expect(session.panel.permissionMode).toBe('autoAllow')
+    expect(closed(inputs)).toEqual([{ type: 'waitClosed', cardId: card.requestId, by: 'auto' }])
+    // A plan no longer waited on is not approved twice.
+    expect(await session.autoApprovePlan(card.requestId)).toBe(false)
+    await session.dispose()
+  })
+
+  test('send с auto: пузырь auto, personActed не приходит; обычный send — personActed', async () => {
+    const { session } = makeSession({ steps: [], nextTurn: [{ kind: 'text', text: 'ок' }] })
+    const rec = watch(session)
+    const inputs = listen(session)
+    await session.start()
+
+    expect(session.send({ text: 'продолжай', attachments: [] }, { auto: true })).toBe(true)
+    expect(userItems(rec.items).at(-1)).toMatchObject({ text: 'продолжай', auto: true })
+    expect(acted(inputs)).toEqual([])
+    await settle(session)
+
+    session.send({ text: 'сам', attachments: [] })
+    expect(userItems(rec.items).at(-1)).toMatchObject({ text: 'сам' })
+    expect(userItems(rec.items).at(-1)).not.toHaveProperty('auto')
+    expect(acted(inputs)).toEqual([{ type: 'personActed' }])
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('сообщение с auto при идущем ходе: пузырь на started тоже auto', async () => {
+    const { session } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await vi.waitFor(() => expect(session.sessionId).toBeTruthy(), { timeout: 2000 })
+    session.send({ text: 'продолжай', attachments: [] }, { auto: true })
+    // On the strip first: no bubble until the agent reads it.
+    expect(session.panel.queue.map((q) => q.text)).toEqual(['продолжай'])
+    expect(userItems(rec.items).map((i) => i.text)).toEqual(['раз'])
+
+    await vi.waitFor(() => expect(userItems(rec.items).map((i) => i.text)).toEqual(['раз', 'продолжай']), {
+      timeout: 3000
+    })
+    expect(userItems(rec.items)[0]).not.toHaveProperty('auto')
+    expect(userItems(rec.items)[1]).toMatchObject({ auto: true })
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('авто-сообщение с плашки не уходит преемнику и не возвращается Стопом в поле', async () => {
+    {
+      const { session } = makeSession({ steps: [], turns: [slowTurn] })
+      await session.start()
+      session.send({ text: 'раз', attachments: [] })
+      await vi.waitFor(() => expect(session.sessionId).toBeTruthy(), { timeout: 2000 })
+      session.send({ text: 'продолжай', attachments: [] }, { auto: true })
+      session.send({ text: 'сам', attachments: [] })
+      expect(session.takeQueue()).toEqual([{ text: 'сам', attachments: [] }])
+      expect(session.panel.queue).toEqual([])
+      await settle(session)
+      await session.dispose()
+    }
+    {
+      const { session } = makeSession({ steps: [], turns: [slowTurn] })
+      await session.start()
+      session.send({ text: 'раз', attachments: [] })
+      await vi.waitFor(() => expect(session.sessionId).toBeTruthy(), { timeout: 2000 })
+      session.send({ text: 'продолжай', attachments: [] }, { auto: true })
+      session.send({ text: 'сам', attachments: [] })
+      expect(await session.interrupt()).toEqual([{ text: 'сам', attachments: [] }])
+      expect(session.panel.queue).toEqual([])
+      await settle(session)
+      await session.dispose()
+    }
+  })
+
+  test('sentBeforeInit без авто-сообщений', async () => {
+    const { session } = makeSession({ steps: [], nextTurn: [{ kind: 'text', text: 'ок' }] })
+    await session.start()
+    session.send({ text: 'продолжай', attachments: [] }, { auto: true })
+    session.send({ text: 'сам', attachments: [] })
+    expect(session.sessionId).toBeNull()
+    expect(session.sentBeforeInit).toEqual([{ text: 'сам', attachments: [] }])
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('ответ человека: waitClosed person и personActed; аборт SDK при живом мосте: waitClosed elsewhere; Стоп: stop', async () => {
+    {
+      const { session } = makeSession({ steps: [], nextTurn: asking })
+      const inputs = listen(session)
+      const id = await openAsk(session)
+      const at = inputs.length
+      session.answerQuestion(id, { 'Куда?': 'Снизу' })
+      const after = inputs.slice(at).filter((i) => i.type === 'waitClosed' || i.type === 'personActed')
+      expect(after).toEqual([{ type: 'waitClosed', cardId: id, by: 'person' }, { type: 'personActed' }])
+      await settle(session)
+      await session.dispose()
+    }
+    {
+      const { session } = makeSession({ nextTurn: phoneAnswers })
+      const inputs = listen(session)
+      await session.start()
+      await session.setRemote(true)
+      session.send({ text: 'спроси', attachments: [] })
+      await settle(session)
+      expect(closed(inputs)).toEqual([
+        { type: 'waitClosed', cardId: questionCard(session).toolUseId, by: 'elsewhere' }
+      ])
+      await session.dispose()
+    }
+    {
+      const { session } = makeSession({ steps: [], nextTurn: asking })
+      const inputs = listen(session)
+      const id = await openAsk(session)
+      await session.interrupt()
+      expect(closed(inputs)).toEqual([{ type: 'waitClosed', cardId: id, by: 'stop' }])
+      await settle(session)
+      await session.dispose()
+    }
+  })
+
+  test('«Стоп» человека — personActed', async () => {
+    const { session } = makeSession({ steps: [], nextTurn: [{ kind: 'thinking', ms: 1000 }] })
+    const inputs = listen(session)
+    await session.start()
+    session.send({ text: 'работай', attachments: [] })
+    const before = acted(inputs).length
+    await session.interrupt()
+    expect(acted(inputs)).toHaveLength(before + 1)
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('пузырь с телефона — personActed', async () => {
+    const { session, driver } = makeSession({ steps: [], nextTurn: [{ kind: 'text', text: 'ок' }] })
+    const inputs = listen(session)
+    await session.start()
+    await session.setRemote(true)
+    driver.typeOnPhone('с телефона', [{ kind: 'text', text: 'ок' }])
+    await vi.waitFor(() => expect(acted(inputs)).toEqual([{ type: 'personActed' }]), { timeout: 2000 })
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('смена режима даёт mode', async () => {
+    const { session } = makeSession({ steps: [] })
+    const inputs = listen(session)
+    await session.start()
+    await session.setPermissionMode('plan')
+    expect(inputs.filter((i) => i.type === 'mode')).toEqual([{ type: 'mode', mode: 'plan' }])
+    // Picking the same mode again is no change.
+    await session.setPermissionMode('plan')
+    expect(inputs.filter((i) => i.type === 'mode')).toHaveLength(1)
+    await session.dispose()
+  })
+
+  test('строка при включении авто-да говорит о таймере', async () => {
+    const line = (n: number): string =>
+      'Режим «авто-да»: Qclod сам отвечает «разрешить» на каждый запрос агента. ' +
+      'Сохранённые запреты по-прежнему действуют. ' +
+      `На вопрос или план, на который вы не ответите за ${n} мин, Qclod ответит сам: ` +
+      'выберет рекомендуемый вариант или одобрит план.'
+    const notices = (items: RibbonItem[]): string[] =>
+      items.filter((i) => i.kind === 'notice').map((i) => (i as { text: string }).text)
+
+    const { session } = makeSession({ steps: [] }, { confirmAutoAllow: async () => true })
+    const rec = watch(session)
+    await session.start()
+    await session.setPermissionMode('autoAllow')
+    expect(notices(rec.items)).toContain(line(5))
+    await session.dispose()
+
+    const custom = makeSession({ steps: [] }, { confirmAutoAllow: async () => true, autoAnswerMinutes: () => 12 })
+    const seen = watch(custom.session)
+    await custom.session.start()
+    await custom.session.setPermissionMode('autoAllow')
+    expect(notices(seen.items)).toContain(line(12))
+    await custom.session.dispose()
+  })
+
+  test('setAutonomyView кладёт вид в панель', async () => {
+    const { session } = makeSession({ steps: [] })
+    const rec = watch(session)
+    await session.start()
+    const view = { timers: [], limitWait: { resetsAt: null, continueAt: 1000, weekly: false }, gaveUp: null }
+    session.setAutonomyView(view)
+    expect(session.panel.autonomy).toEqual(view)
+    expect(rec.panels.at(-1)).toEqual({ autonomy: view })
     await session.dispose()
   })
 })

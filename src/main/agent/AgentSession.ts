@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { RibbonBuilder } from '../../shared/ribbon'
 import type {
+  AutonomyView,
   CommandInfo,
   EffortLevel,
   ModelOption,
@@ -10,7 +11,9 @@ import type {
   PanelData,
   PanelSnapshot,
   PermissionAnswer,
+  PermissionMode,
   PermissionRequest,
+  PlanDecision,
   RemoteInfo,
   RibbonChange,
   RibbonItem,
@@ -21,17 +24,29 @@ import type {
   UserInput
 } from '../../shared/types'
 import { REMOTE_OFF, explainRemoteError, isRemoteLive, remoteFromMessage } from '../../shared/remote'
-import type { AgentDriver, DriverFactory, DriverOptions, InterruptReceipt, SendPriority } from './driver'
+import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
+import type { AskedQuestion as CoreQuestion, AutonomyInput } from '../../core/autonomy/types'
 import type { ToolPermissionContext } from './permissionContext'
 import { parseExtraFlags } from './launchFlags'
-import { composeText } from './userMessage'
-import { Outbox, queueModeFrom, type OutboxEntry } from './outbox'
+import { MAX_QUEUED, QueueController } from './queueController'
 import { PanelCollector, readProjectSettings } from './panelData'
 import { BackgroundTracker } from './backgroundTasks'
 import { displayTarget } from './permissionStore'
 import { locateAgent } from '../setup/findAgent'
 import { classifyStartFailure, LOGIN_NEEDED_TEXT } from './startFailure'
 import { sdkPermissionMode } from '../../shared/types'
+import {
+  askedQuestions,
+  denialText,
+  encodeAnswers,
+  encodeQuestionAnswer,
+  notesForChoices,
+  notesModeFor,
+  planEditModeFor,
+  planSendBackText,
+  planWithComment,
+  type AskedQuestion
+} from './questionAnswer'
 
 /** How a notice names a mode; the window has its own, longer labels. */
 const MODE_NAMES: Record<string, string> = {
@@ -86,6 +101,42 @@ export interface AgentSessionOptions {
   panelRefreshMs?: number
   /** A ribbon and panel already on screen, taken over instead of new ones. */
   seed?: SessionSeed
+  /** «Автономность»: minutes before Qclod answers a card by itself, as the «авто-да» line says; 5 when absent. */
+  autoAnswerMinutes?: () => number
+}
+
+/** The default of `autoAnswerMinutes`. */
+const AUTO_ANSWER_MINUTES = 5
+
+/**
+ * How a message is sent — one object for stages 3 and 4 (cross-plan check F18).
+ * Stage 4 (task 10) adds `priority?: SendPriority` and `relay?: RelayMeta` here.
+ */
+export interface SendOptions {
+  /** Sent by Qclod itself («продолжай»): the bubble says «авто», and it is not the person acting. */
+  auto?: boolean
+}
+
+/** The questions of an AskUserQuestion input as the core reads them: labels as they came. */
+function coreQuestions(input: Record<string, unknown>): CoreQuestion[] {
+  const questions = Array.isArray(input['questions']) ? (input['questions'] as unknown[]) : []
+  return questions.flatMap((q): CoreQuestion[] => {
+    if (typeof q !== 'object' || q === null) return []
+    const item = q as Record<string, unknown>
+    if (typeof item['question'] !== 'string') return []
+    const options = Array.isArray(item['options']) ? (item['options'] as unknown[]) : []
+    return [
+      {
+        question: item['question'],
+        options: options.flatMap((o) =>
+          typeof o === 'object' && o !== null && typeof (o as Record<string, unknown>)['label'] === 'string'
+            ? [(o as Record<string, unknown>)['label'] as string]
+            : []
+        ),
+        multiSelect: item['multiSelect'] === true
+      }
+    ]
+  })
 }
 
 /** The longest `dispose` waits for the agent process to go away. */
@@ -100,23 +151,10 @@ export const MCP_POLL_MS = 2000
 export const MCP_POLL_MAX = 15
 
 /** Messages on the strip, not read by the agent yet; one more is handed back rather than kept. */
-export const MAX_QUEUED = 20
+export { MAX_QUEUED }
 
 /** What a session whose agent simply went away says, and keeps as its error. */
 const AGENT_EXITED = 'Агент завершил работу'
-
-/** A message the CLI dropped from its queue without being asked to. */
-const NOT_DELIVERED = 'Сообщение не дошло до агента: ход прервали'
-
-/** A queued image handed back to the window: its copy on disk stands for its bytes. */
-function withoutCopiedBytes(input: UserInput): UserInput {
-  return {
-    ...input,
-    attachments: input.attachments.map((a) =>
-      a.kind === 'image' && a.path ? { ...a, dataBase64: '' } : a
-    )
-  }
-}
 
 /**
  * Turns what the SDK said into something worth reading. «Claude Code process
@@ -154,14 +192,9 @@ export function seedFromTranscript(messages: unknown[]): SessionSeed {
   return { builder, collector }
 }
 
-/** The texts of an AskUserQuestion's questions — the keys its answers go under. */
-function questionTexts(input: Record<string, unknown>): string[] {
-  const questions = input['questions']
-  if (!Array.isArray(questions)) return []
-  return questions.flatMap((q: unknown) => {
-    const text = typeof q === 'object' && q !== null ? (q as Record<string, unknown>)['question'] : undefined
-    return typeof text === 'string' ? [text] : []
-  })
+/** How the user allowed a tool, as its card shows it. */
+function scopeOf(answer: PermissionAnswer): 'once' | 'always' | 'session' {
+  return answer.forSession ? 'session' : answer.remember ? 'always' : 'once'
 }
 
 type ChangeListener = (changes: RibbonChange[]) => void
@@ -202,8 +235,13 @@ export class AgentSession {
   private mode: string
   private todoItems: TodoItem[] = []
   private readonly idleWaiters: Array<() => void> = []
-  /** Messages given to the driver before system/init; see `sentBeforeInit`. */
-  private unintroduced: UserInput[] = []
+  /**
+   * Messages given to the driver before system/init; see `sentBeforeInit`.
+   * `auto` — Qclod's own, never sent again (decision 12).
+   */
+  private unintroduced: Array<{ sent: UserInput; auto: boolean }> = []
+  /** What AutonomyCore is fed from this session (stage 3). */
+  private readonly autonomyListeners: Array<(input: AutonomyInput) => void> = []
   private disposed = false
   /** Whether a driver was ever made; see `launched`. */
   private launchedAgent = false
@@ -220,8 +258,10 @@ export class AgentSession {
   >()
   private readonly pendingPlans = new Map<
     string,
-    { resolve: (answer: PermissionAnswer) => void; turn: number }
+    { input: Record<string, unknown>; resolve: (answer: PermissionAnswer) => void; turn: number }
   >()
+  /** `claude_code_version` from system/init: how a card's comments and edits can reach this CLI. */
+  private cliVersion: string | null = null
   /** Permission questions still waiting on the user; aborting one refuses it. */
   private readonly openPermissions = new Map<string, { controller: AbortController; turn: number }>()
   /**
@@ -237,47 +277,10 @@ export class AgentSession {
    */
   private turnRunning = false
   /**
-   * The user's messages the agent has not read yet, oldest first — on the
-   * strip, not in the ribbon. While the agent starts they wait here
-   * (`waiting`); once it is up they are with the CLI, which folds them into
-   * the turn between steps, and its `command_lifecycle` frames move them
-   * along: `started` turns one into a bubble.
+   * The user's messages the agent has not read yet — the strip — and the
+   * CLI's queue behind it (`queueController.ts`).
    */
-  private readonly outbox = new Outbox()
-  /**
-   * Whether this CLI keeps a queue of its own and reports on it (ruling R6):
-   * init says so, or a lifecycle frame has already come. init comes after the
-   * first frames and again every turn; until either, a message sent during a
-   * turn shows at once, as with an old CLI.
-   */
-  private cliQueue = false
-  /**
-   * The last result came while the CLI still had a turn of this tab's to run:
-   * the tab stays busy and the turn counts as under way until that turn starts
-   * or there is nothing left for it to run. `queuedTurns` is how many the
-   * result said were waiting, less those taken back since.
-   */
-  private heldByQueue = false
-  private queuedTurns = 0
-  /** One more every time the outbox is handed over: a cancel answered after that is not ours. */
-  private outboxEpoch = 0
-  /**
-   * Being taken back for «Отправить сейчас», each with the CLI's answer to
-   * come: their `cancelled` frame neither lets the tab go nor counts as
-   * unread. A «Стоп» pressed meanwhile waits for that answer too.
-   */
-  private readonly resending = new Map<
-    string,
-    { entry: OutboxEntry; answer: Promise<boolean | null> }
-  >()
-  /** One more for every «Стоп»: a send-now answered after one is not sent again. */
-  private stops = 0
-  /**
-   * How many «Стоп» are on their way. Meanwhile a message goes straight to
-   * the agent: the queue was handed back when Stop was pressed, and a message
-   * typed after that is meant to be sent, not pulled back too.
-   */
-  private stopsInFlight = 0
+  private readonly queue: QueueController
   private mcpTimer: ReturnType<typeof setTimeout> | null = null
   private refreshTimer: ReturnType<typeof setInterval> | null = null
   /** Repeats asked since the servers were last all settled. */
@@ -289,10 +292,52 @@ export class AgentSession {
     this.builder = options.seed?.builder ?? new RibbonBuilder()
     this.collector = options.seed?.collector ?? new PanelCollector()
     this.todoItems = this.builder.todo ?? []
+    this.queue = new QueueController({
+      driver: () => this.driver,
+      turnRunning: () => this.turnRunning,
+      startTurn: (opts) => this.startTurn(opts),
+      endTurn: () => this.endTurn(),
+      currentTurn: () => this.turn,
+      showUser: (input, composed, echoOf, opts) => this.showUser(input, composed, echoOf, opts),
+      remember: (sent, opts) => this.remember(sent, opts),
+      emitQueue: (view) => this.emitPanel(this.collector.setQueue(view)),
+      notice: (text, tone) => this.emit(this.builder.notice(text, tone)),
+      cancelWaits: (scope) => this.cancelWaits(scope)
+    })
   }
 
   get status(): SessionStatus {
     return this.state
+  }
+
+  /**
+   * What AutonomyCore needs from this session: every frame, status and mode,
+   * the cards it could answer and how they closed, and the person acting.
+   * Returns a function that stops the listener.
+   */
+  onAutonomyInput(cb: (input: AutonomyInput) => void): () => void {
+    this.autonomyListeners.push(cb)
+    return () => {
+      const at = this.autonomyListeners.indexOf(cb)
+      if (at !== -1) this.autonomyListeners.splice(at, 1)
+    }
+  }
+
+  private feedAutonomy(input: AutonomyInput): void {
+    // A copy: a listener may stop itself while it is being told.
+    for (const listener of [...this.autonomyListeners]) listener(input)
+  }
+
+  /** The core's view of this tab — timers, a limit wait — whole, into the panel. */
+  setAutonomyView(view: AutonomyView): void {
+    this.emitPanel(this.collector.setAutonomy(view))
+  }
+
+  /** Every change of `mode` goes through here, so the core hears of it. */
+  private setMode(mode: string): void {
+    if (mode === this.mode) return
+    this.mode = mode
+    this.feedAutonomy({ type: 'mode', mode: mode as PermissionMode })
   }
 
   get error(): string | undefined {
@@ -493,37 +538,93 @@ export class AgentSession {
    * `«Question» — answer` per question, just the answer for a single question —
    * which is what the user would have typed anyway. A stopped question is dropped
    * from `pendingQuestions` the moment it is stopped, so its card lands here.
+   *
+   * `notes` are the user's comments on the chosen options. One goes with an
+   * answer that is a choice (one option or several); an answer in the user's
+   * own words is the comment already. A CLI that reads `annotations` gets them
+   * there, an older one as «Вариант — комментарий» in the answer — and so does
+   * the message.
    */
-  answerQuestion(toolUseId: string, given: Record<string, string>): void {
+  answerQuestion(
+    toolUseId: string,
+    given: Record<string, string>,
+    notes: Record<string, string> = {}
+  ): void {
     const waiting = this.pendingQuestions.get(toolUseId)
     // The window only says which choice goes with which question; what the
     // questions are comes from here. Foreign keys are dropped, and a card
     // with a question left unanswered stays open and the agent stays held.
     const card = this.builder.items.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)
-    const asked = waiting
-      ? questionTexts(waiting.input)
+    const asked: AskedQuestion[] = waiting
+      ? askedQuestions(waiting.input)
       : card && card.kind === 'question'
-        ? card.questions.map((q) => q.question)
+        ? card.questions.map((q) => ({ question: q.question, labels: q.options.map((o) => o.label) }))
         : []
-    if (asked.length === 0 || !asked.every((q) => typeof given[q] === 'string')) return
-    const answers = Object.fromEntries(asked.map((q) => [q, given[q]!]))
-    this.emit(this.builder.answerQuestion(toolUseId, answers))
+    if (asked.length === 0 || !asked.every((q) => typeof given[q.question] === 'string')) return
+    const answers = Object.fromEntries(asked.map((q) => [q.question, given[q.question]!]))
+    const kept = notesForChoices(asked, answers, notes)
+    // The card keeps the labels as they are, and the comments beside them.
+    this.emit(this.builder.answerQuestion(toolUseId, answers, { notes: kept }))
 
     if (!waiting) {
-      const entries = Object.entries(answers)
+      const entries = Object.entries(encodeAnswers(answers, kept, 'inline').answers)
       const text =
         entries.length === 1
           ? entries[0]![1]
           : entries.map(([question, answer]) => `«${question}» — ${answer}`).join('\n')
+      // A message of the person's: `send` tells the core so.
       this.send({ text, attachments: [] })
       return
     }
     this.pendingQuestions.delete(toolUseId)
     this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId: toolUseId, by: 'person' })
+    this.feedAutonomy({ type: 'personActed' })
     waiting.resolve({
       behavior: 'allow',
-      updatedInput: { ...waiting.input, answers }
+      updatedInput: encodeQuestionAnswer(waiting.input, answers, kept, notesModeFor(this.cliVersion))
     })
+  }
+
+  /**
+   * AutonomyCore's answer to a question nobody answered in time: the labels it
+   * picked, as they came. Only a question still waited on is answered, in
+   * place; a closed one — stopped, answered on the phone, a dead process —
+   * gets false and nothing is sent, never a message (Review Focus 1).
+   */
+  autoAnswerQuestion(cardId: string, answers: Record<string, string>): boolean {
+    const waiting = this.pendingQuestions.get(cardId)
+    if (!waiting) return false
+    const asked = askedQuestions(waiting.input)
+    if (asked.length === 0 || !asked.every((q) => typeof answers[q.question] === 'string')) return false
+    const given = Object.fromEntries(asked.map((q) => [q.question, answers[q.question]!]))
+    this.emit(this.builder.answerQuestion(cardId, given, { auto: true }))
+    this.pendingQuestions.delete(cardId)
+    this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId, by: 'auto' })
+    waiting.resolve({
+      behavior: 'allow',
+      updatedInput: encodeQuestionAnswer(waiting.input, given, {}, notesModeFor(this.cliVersion))
+    })
+    return true
+  }
+
+  /**
+   * AutonomyCore approves a plan nobody decided in time. Only a plan still
+   * waited on. In «авто-да» the mode stays (decision 4: leaving it would turn
+   * the next auto-answers off); in plan mode it goes to acceptEdits, as a
+   * person's approval does.
+   */
+  async autoApprovePlan(cardId: string): Promise<boolean> {
+    const waiting = this.pendingPlans.get(cardId)
+    if (!waiting) return false
+    this.pendingPlans.delete(cardId)
+    this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId, by: 'auto' })
+    this.emit(this.builder.resolvePlan(cardId, 'approved', { auto: true }))
+    if (this.mode === 'plan') await this.setPermissionMode('acceptEdits')
+    waiting.resolve({ behavior: 'allow' })
+    return true
   }
 
   /**
@@ -542,24 +643,63 @@ export class AgentSession {
    *
    * Approving also leaves plan mode, because staying in it would stop the
    * agent from doing the very thing that was just approved.
+   *
+   * A rejection's comment is the refusal the agent reads. An approval with
+   * an edit or a comment goes, to a CLI known to carry it out, as
+   * ExitPlanMode's `updatedInput.plan`: the plan as edited, the comment under
+   * it. An older CLI has it sent back instead (ruling S2-R8): ExitPlanMode is
+   * refused with the edit and the comment, the mode stays «план», and the
+   * agent proposes the plan again — approving it first and correcting it by a
+   * message would let the agent start on the old plan, with edits unasked in
+   * acceptEdits. Nothing here goes as a message, so nothing can be lost to a
+   * full queue. An edit that is empty or changes nothing is no edit.
    */
-  async answerPlan(requestId: string, approve: boolean): Promise<void> {
+  async answerPlan(requestId: string, decision: PlanDecision): Promise<void> {
     // (4) Nothing is marked answered until there is something to answer: a
     // card with no pending plan behind it must not look settled.
     const waiting = this.pendingPlans.get(requestId)
     if (!waiting) return
     this.pendingPlans.delete(requestId)
     this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId: requestId, by: 'person' })
+    this.feedAutonomy({ type: 'personActed' })
 
-    this.emit(this.builder.resolvePlan(requestId, approve ? 'approved' : 'rejected'))
-    if (!approve) {
-      waiting.resolve({ behavior: 'deny' })
+    const comment = decision.comment || undefined
+    if (!decision.approve) {
+      this.emit(this.builder.resolvePlan(requestId, 'rejected', comment ? { comment } : {}))
+      waiting.resolve(comment ? { behavior: 'deny', message: comment } : { behavior: 'deny' })
       return
     }
 
-    // The mode must be in place before the tool runs, not racing it.
-    await this.setPermissionMode('acceptEdits')
-    waiting.resolve({ behavior: 'allow' })
+    const asked = typeof waiting.input['plan'] === 'string' ? waiting.input['plan'] : ''
+    const plan = decision.plan
+    const edited = plan !== undefined && plan.trim() !== '' && plan !== asked ? plan : undefined
+    const shown = {
+      ...(comment ? { comment } : {}),
+      ...(edited !== undefined ? { edited: true as const, plan: edited } : {})
+    }
+
+    if ((edited !== undefined || comment) && planEditModeFor(this.cliVersion) === 'sendBack') {
+      // Sent back for rework: the card reads as not approved — sent back,
+      // not refused — with the edit and the comment that went back.
+      this.emit(this.builder.resolvePlan(requestId, 'rejected', { ...shown, sentBack: true }))
+      waiting.resolve({ behavior: 'deny', message: planSendBackText(edited, comment) })
+      return
+    }
+
+    this.emit(this.builder.resolvePlan(requestId, 'approved', shown))
+    // The mode must be in place before the tool runs, not racing it. A plan
+    // card in «авто-да» (decision 4) leaves the tab in «авто-да»: acceptEdits
+    // would turn the timers off for the cards after it.
+    if (this.mode !== 'autoAllow') await this.setPermissionMode('acceptEdits')
+    waiting.resolve(
+      edited !== undefined || comment
+        ? {
+            behavior: 'allow',
+            updatedInput: { ...waiting.input, plan: planWithComment(edited ?? asked, comment) }
+          }
+        : { behavior: 'allow' }
+    )
   }
 
   /** Something Qclod itself needs to say — a crash, a session that would not resume. */
@@ -591,7 +731,7 @@ export class AgentSession {
     // settings default or an older tabs.json. Starting in it unasked would
     // walk around the confirmation entirely, so the check lives here too.
     if (!(await this.allowMode(this.mode))) {
-      this.mode = 'default'
+      this.setMode('default')
       this.emit(
         this.builder.notice(
           'Режим «без проверок» не подтверждён — сессия запущена в обычном режиме.',
@@ -666,7 +806,7 @@ export class AgentSession {
     // wire before the first queued message and that message runs at it.
     this.background(this.applyStoredEffort())
     // What was sent while the agent was starting goes now, all of it.
-    if (!this.flushWaiting()) this.setStatus('idle')
+    if (!this.queue.flushWaiting()) this.setStatus('idle')
     this.emitPanel(this.collector.setProjectSettings(readProjectSettings(this.options.cwd)))
 
     // The panel is filled now rather than after the first answer. `system/init`
@@ -752,83 +892,51 @@ export class AgentSession {
    * own; during a turn the CLI reads it between the agent's steps, and the
    * strip shows it until then. Only while the agent is still starting does it
    * wait here. False when the session cannot take it — not started, dead, or
-   * the strip full — so the window can give it back.
+   * the strip full — so the window can give it back. `auto` — Qclod's own
+   * «продолжай»: marked so, and not the person acting.
    */
-  send(input: UserInput): boolean {
+  send(input: UserInput, opts: SendOptions = {}): boolean {
     if (this.disposed) return false
+    const auto = opts.auto === true
     const starting = !this.driver && this.state === 'starting'
     if (!this.driver && !starting) return false
     if (starting) {
-      if (this.outbox.size >= MAX_QUEUED) return false
-      this.hold(input)
-      return true
+      if (this.queue.size >= MAX_QUEUED) return false
+      this.queue.hold(input, auto ? { auto } : {})
+    } else {
+      if (this.queue.wouldOverflow()) return false
+      this.queue.submit(input, auto ? { auto } : {})
     }
-    if (this.willQueue() && this.outbox.size >= MAX_QUEUED) return false
-    this.dispatch(input, randomUUID())
+    if (!auto) this.feedAutonomy({ type: 'personActed' })
     return true
   }
 
-  /** A message sent now would wait on the strip for the agent to read it. */
-  private willQueue(): boolean {
-    return this.turnRunning && this.stopsInFlight === 0 && this.cliQueue
+  /** turn += 1 and the tab working, unless a card is open — or even then (`evenIfWaiting`). */
+  private startTurn(opts: { evenIfWaiting?: boolean } = {}): void {
+    this.turn += 1
+    this.turnRunning = true
+    if (opts.evenIfWaiting === true || this.waits === 0) this.setStatus('busy')
+  }
+
+  /** The turn is over: the tab is free, unless a card still waits on the user. */
+  private endTurn(): void {
+    this.turnRunning = false
+    if (this.waits === 0) this.setStatus('idle')
   }
 
   /**
-   * Gives a message to the CLI, by what is going on. No turn: it starts one
-   * and shows at once. A «Стоп» on its way: the same — the strip was handed
-   * back when Stop was pressed, and a message typed after that is meant to
-   * be sent, not pulled back too. A turn under way: the CLI folds it in, and
-   * it shows when the CLI says the agent read it — or at once, with a CLI that
-   * says nothing about its queue.
-   */
-  private dispatch(input: UserInput, uuid: string): void {
-    if (!this.turnRunning || this.stopsInFlight > 0) this.sendNow(input, uuid)
-    else if (this.cliQueue) this.enqueue(input, uuid)
-    else this.foldNow(input, uuid)
-  }
-
-  private sendNow(input: UserInput, uuid: string): void {
-    if (!this.driver) return
-    const text = this.showUser(input, composeText(input), uuid)
-    this.deliver({ ...input, text }, uuid)
-  }
-
-  /**
-   * Into the turn under way, on a CLI that keeps no account of it: shown at
-   * once, no new turn. Its echo is still expected — such a CLI may run it as
-   * a turn of its own, and echo it — until the result that carried it.
-   */
-  private foldNow(input: UserInput, uuid: string): void {
-    if (!this.driver) return
-    const text = this.showUser(input, composeText(input), uuid)
-    this.transmit({ ...input, text }, { uuid })
-  }
-
-  /** Onto the strip and to the CLI; its lifecycle frames take it from there. */
-  private enqueue(input: UserInput, uuid: string, priority?: SendPriority): void {
-    if (!this.driver) return
-    const composed = composeText(input)
-    this.outbox.add({ uuid, input, composed, state: 'sending' })
-    this.emitQueue()
-    // Without a priority the CLI takes it as 'next': read at the next step boundary.
-    this.driver.send({ ...input, text: composed }, priority ? { uuid, priority } : { uuid })
-  }
-
-  /** Held until the agent is up. The uuid is the one it will go with (ruling R2). */
-  private hold(input: UserInput): void {
-    this.outbox.add({ uuid: randomUUID(), input, composed: composeText(input), state: 'waiting' })
-    this.emitQueue()
-  }
-
-  /**
-   * The user's bubble. Returns the text as the agent gets it: composed once,
-   * by the caller. The ribbon shows what the user typed with their files as
-   * chips; the agent — and therefore the echo that comes back — gets the
+   * The user's bubble. The ribbon shows what the user typed with their files
+   * as chips; the agent — and therefore the echo that comes back — gets the
    * composed version, which is what the dedup must match. `echoOf` is the
    * uuid it went under, so the expectation ends with the turn that carried
-   * it (ruling R10); null — no echo is coming at all.
+   * it (ruling R10); null — no echo is coming at all. `auto` — Qclod sent it.
    */
-  private showUser(input: UserInput, composed: string, echoOf: string | null): string {
+  private showUser(
+    input: UserInput,
+    composed: string,
+    echoOf: string | null,
+    opts: { auto?: boolean } = {}
+  ): void {
     // The ribbon shows an image by its thumbnail, or by its copy on disk when
     // there is none (a large GIF or WebP); the full bytes (up to ~5 MB of
     // base64) would otherwise ride along in every snapshot.
@@ -836,18 +944,26 @@ export class AgentSession {
       a.kind === 'image' && (a.thumbnail || a.path) ? { ...a, dataBase64: '' } : a
     )
     this.emit(
-      this.builder.addUser(input.text, shown, echoOf === null ? null : composed, echoOf ?? undefined)
+      this.builder.addUser(
+        input.text,
+        shown,
+        echoOf === null ? null : composed,
+        echoOf ?? undefined,
+        opts.auto ? { auto: true } : {}
+      )
     )
-    return composed
   }
 
   /**
    * What was sent here before the CLI introduced itself. A resume that will
    * not open may only say so once it is spoken to, and takes these down with
-   * it; the session taking its place sends them again (`resend`).
+   * it; the session taking its place sends them again (`resend`). Qclod's own
+   * «продолжай» is not among them: without the conversation it means nothing
+   * (decision 12).
    */
   get sentBeforeInit(): UserInput[] {
-    return this.session === null ? [...this.unintroduced] : []
+    if (this.session !== null) return []
+    return this.unintroduced.filter((u) => !u.auto).map((u) => u.sent)
   }
 
   /**
@@ -859,22 +975,16 @@ export class AgentSession {
     const uuid = randomUUID()
     // The dead process's expectations went with it; this one is for the new turn.
     this.builder.expectEcho(sent.text, uuid)
-    this.deliver(sent, uuid)
+    const driver = this.driver
+    if (!driver) return
+    this.startTurn({ evenIfWaiting: true })
+    this.remember(sent)
+    driver.send(sent, { uuid })
   }
 
-  private deliver(sent: UserInput, uuid: string): void {
-    if (!this.driver) return
-    this.turn += 1
-    this.turnRunning = true
-    this.setStatus('busy')
-    this.transmit(sent, { uuid })
-  }
-
-  /** What is on screen goes to the agent; before init it is also kept for a resend. */
-  private transmit(sent: UserInput, opts: { uuid: string }): void {
-    if (!this.driver) return
-    if (this.session === null) this.unintroduced.push(sent)
-    this.driver.send(sent, opts)
+  /** Before init, what went to the agent is kept for a resend (`sentBeforeInit`). */
+  private remember(sent: UserInput, opts: { auto?: boolean } = {}): void {
+    if (this.session === null) this.unintroduced.push({ sent, auto: opts.auto === true })
   }
 
   /**
@@ -886,83 +996,23 @@ export class AgentSession {
    * The stop is for the turn under way when it was pressed. The user need
    * not wait for it to land: a message sent meanwhile starts a turn of its
    * own, and that turn — its status, its first question — is left alone.
+   * What was on the strip is taken back by the queue (`QueueController.stop`)
+   * and handed back here.
    */
   async interrupt(): Promise<UserInput[]> {
-    const driver = this.driver
-    if (!driver) return []
+    if (!this.driver) return []
+    // The person's own «Стоп»: a turn they ended is no limit to wait out and carry on after.
+    this.feedAutonomy({ type: 'personActed' })
     const stopped = this.turn
-    this.stops += 1
-    // What is on the strip now is what Stop hands back. Marked before
-    // anything is awaited: their `cancelled` frames can come before the
-    // receipt does, and must read as asked for, not as messages a stopped
-    // turn swallowed. One being taken back by «Отменить» answers for itself.
-    // One being taken back for «Отправить сейчас» is not sent again: once the
-    // CLI answers, it goes back with the rest (its `cancelled` frame may have
-    // taken it off the strip already).
-    const resending = [...this.resending.values()]
-    const resent = new Set(resending.map((r) => r.entry))
-    const strip = this.outbox.pending()
-    const onStrip = strip.filter((e) => !e.requestedCancel)
-    // In the strip's order; one already off it goes last.
-    const handing = [
-      ...strip.filter((e) => !e.requestedCancel || resent.has(e)),
-      ...[...resent].filter((e) => !strip.includes(e))
-    ]
-    const before = new Map(onStrip.map((e) => [e.uuid, e.state]))
-    for (const entry of onStrip) {
-      entry.requestedCancel = true
-      this.outbox.mark(entry.uuid, 'cancelling')
-    }
-    if (onStrip.length > 0) this.emitQueue()
-    const epoch = this.outboxEpoch
     this.cancelWaits()
-    this.stopsInFlight += 1
-    let cancelled: Set<string>
-    try {
-      const receipt = await this.interruptSafely(driver, { cancelQueued: true })
-      cancelled = new Set(receipt?.cancelled ?? [])
-      // A CLI with no receipt, or one that cannot cancel with it (no
-      // `cancelled` in it, or messages still in `still_queued`), is asked
-      // about each of the rest in turn: left alone, it runs them after Stop.
-      const rest =
-        receipt?.cancelled === undefined
-          ? onStrip
-          : onStrip.filter((e) => !cancelled.has(e.uuid) && receipt.stillQueued.includes(e.uuid))
-      for (const uuid of await this.cancelEach(driver, rest)) cancelled.add(uuid)
-      const answers = await Promise.all(resending.map((r) => r.answer))
-      resending.forEach((r, i) => {
-        if (answers[i] === true) cancelled.add(r.entry.uuid)
-      })
-    } finally {
-      this.stopsInFlight -= 1
-    }
-    // An image with its copy on disk goes back without its bytes: the window
-    // has the copy, and main reads it again on the next send. Nothing goes
-    // back from a strip that was handed to a successor meanwhile.
-    const returned: UserInput[] = []
-    if (epoch === this.outboxEpoch) {
-      for (const entry of handing) {
-        if (cancelled.has(entry.uuid)) {
-          this.outbox.remove(entry.uuid)
-          returned.push(withoutCopiedBytes(entry.input))
-        } else if (this.outbox.get(entry.uuid) === entry) {
-          // The CLI kept it, or the agent read it first: it is as it was.
-          entry.requestedCancel = false
-          const was = before.get(entry.uuid)
-          if (was) this.outbox.mark(entry.uuid, was)
-        }
-      }
-      if (handing.length > 0) this.emitQueue()
-    }
+    const returned = await this.queue.stop()
     // A question asked while the interrupt was on its way belongs to the
     // turn being stopped and is refused with it; left open, it would hold a
     // count of one behind an idle tab.
     this.cancelWaits({ upTo: stopped })
     if (this.turn !== stopped) return returned
-    this.turnRunning = false
-    this.heldByQueue = false
-    this.queuedTurns = 0
-    this.setStatus('idle')
+    this.queue.onDead()
+    this.endTurn()
     return returned
   }
 
@@ -972,80 +1022,17 @@ export class AgentSession {
    * agent has read it already (its bubble is on its way), or when this CLI
    * cannot take it back.
    */
-  async cancelQueued(id: string): Promise<UserInput | null> {
-    const entry = this.outbox.get(id)
-    if (!entry || entry.requestedCancel) return null
-    const driver = this.driver
-    // Still only Qclod's — the agent is starting, or the one it went to is
-    // gone: nothing to ask anyone.
-    if (entry.state === 'waiting' || !driver) {
-      this.dropEntry(id)
-      return withoutCopiedBytes(entry.input)
-    }
-    const was = entry.state
-    entry.requestedCancel = true
-    this.outbox.mark(id, 'cancelling')
-    this.emitQueue()
-    const epoch = this.outboxEpoch
-    const answer = await this.cancelSafely(driver, id)
-    // Handed to a successor meanwhile: it is that session's to send.
-    if (epoch !== this.outboxEpoch) return null
-    if (answer === true) {
-      // Its `cancelled` frame may have taken it off the strip already.
-      this.dropEntry(id)
-      return withoutCopiedBytes(entry.input)
-    }
-    if (this.outbox.get(id) === entry) {
-      entry.requestedCancel = false
-      this.outbox.mark(id, was)
-      this.emitQueue()
-    }
-    return null
+  cancelQueued(id: string): Promise<UserInput | null> {
+    return this.queue.cancel(id)
   }
 
   /**
-   * «Отправить сейчас»: taken back and sent again with `priority: 'now'`,
-   * under a new uuid — the strip shows it as a new entry. A CLI that cannot
-   * take it back has it queued already: the turn is stopped, and it goes
-   * first. False when it is not on the strip, the agent has read it, or a
-   * «Стоп» came before the CLI answered (that Stop hands it back).
+   * «Отправить сейчас»: taken back and sent again with `priority: 'now'`.
+   * False when it is not on the strip, the agent has read it, or a «Стоп»
+   * came before the CLI answered (that Stop hands it back).
    */
-  async sendQueuedNow(id: string): Promise<boolean> {
-    const entry = this.outbox.get(id)
-    const driver = this.driver
-    if (!entry || !driver || !this.cliQueue || entry.requestedCancel) return false
-    if (entry.state !== 'sending' && entry.state !== 'queued') return false
-    // Its `cancelled` frame is our doing, not a stopped turn's.
-    entry.requestedCancel = true
-    const epoch = this.outboxEpoch
-    const stops = this.stops
-    const asked = this.cancelSafely(driver, id)
-    this.resending.set(id, { entry, answer: asked })
-    let answer: boolean | null
-    try {
-      answer = await asked
-    } finally {
-      this.resending.delete(id)
-    }
-    if (epoch !== this.outboxEpoch || this.driver !== driver) return false
-    // «Стоп» pressed meanwhile wins: it hands the message back to the input
-    // field, or leaves it as it was — either way it is not sent again.
-    if (this.stops !== stops) return false
-    if (answer === true) {
-      // Off and on again in one go, so the tab is not let go in between.
-      this.outbox.remove(id)
-      this.enqueue(entry.input, randomUUID(), 'now')
-      return true
-    }
-    if (this.outbox.get(id) === entry) entry.requestedCancel = false
-    if (answer === false) return false
-    // A turn genuinely under way is stopped; between turns it goes next anyway.
-    if (this.turnRunning && !this.heldByQueue) {
-      // As with «Стоп»: the SDK abandons an open question without saying so.
-      this.cancelWaits({ upTo: this.turn })
-      await this.interruptSafely(driver)
-    }
-    return true
+  sendQueuedNow(id: string): Promise<boolean> {
+    return this.queue.sendNow(id)
   }
 
   /**
@@ -1053,12 +1040,7 @@ export class AgentSession {
    * the process gone, everything there is unread: the CLI lost its queue.
    */
   takeQueue(): UserInput[] {
-    const entries = this.outbox.pending()
-    if (entries.length === 0) return []
-    this.outboxEpoch += 1
-    for (const entry of entries) this.outbox.remove(entry.uuid)
-    this.emitQueue()
-    return entries.map((e) => e.input)
+    return this.queue.take()
   }
 
   /**
@@ -1066,100 +1048,11 @@ export class AgentSession {
    * once, as if just typed; one that is not holds it until it is.
    */
   requeue(inputs: UserInput[]): void {
-    if (inputs.length === 0) return
-    if (!this.driver) {
-      for (const input of inputs) this.hold(input)
-      return
-    }
-    for (const input of inputs) this.dispatch(input, randomUUID())
-  }
-
-  /** The agent is up: everything held for it goes, in order, each under the uuid it was given. */
-  private flushWaiting(): boolean {
-    const waiting = this.outbox.pending().filter((e) => e.state === 'waiting')
-    if (!this.driver || waiting.length === 0) return false
-    for (const entry of waiting) {
-      this.outbox.remove(entry.uuid)
-      this.dispatch(entry.input, entry.uuid)
-    }
-    this.emitQueue()
-    return true
-  }
-
-  /** Off the strip without the agent reading it. */
-  private dropEntry(uuid: string): void {
-    if (!this.outbox.remove(uuid)) return
-    this.emitQueue()
-    this.releaseIfDone(true)
-  }
-
-  /**
-   * The agent read one of the strip's messages: its bubble shows now. If no
-   * turn was under way — or the last one had ended with this waiting — it
-   * starts one.
-   */
-  private onRead(entry: OutboxEntry): void {
-    // Folded into a turn under way, it is never echoed (probe 05a): no
-    // expectation that could swallow the same words typed later (ruling R10).
-    // One that starts a turn of its own may be, until that turn's result.
-    const folded = this.turnRunning && !this.heldByQueue
-    this.showUser(entry.input, entry.composed, folded ? null : entry.uuid)
-    if (this.session === null) this.unintroduced.push({ ...entry.input, text: entry.composed })
-    if (folded) return
-    this.turn += 1
-    this.turnRunning = true
-    this.heldByQueue = false
-    if (this.queuedTurns > 0) this.queuedTurns -= 1
-    if (this.waits === 0) this.setStatus('busy')
-  }
-
-  /**
-   * Whether a result held back by the CLI's queue can let the tab go: nothing
-   * left on the strip with the CLI and no turn it said was waiting. `taken`
-   * — a message just came off the strip unread, one turn fewer to wait for.
-   */
-  private releaseIfDone(taken = false): void {
-    if (!this.heldByQueue) return
-    if (taken && this.queuedTurns > 0) this.queuedTurns -= 1
-    if (this.cliOwesTurn()) return
-    this.heldByQueue = false
-    this.turnRunning = false
-    if (this.waits === 0) this.setStatus('idle')
-  }
-
-  /** The CLI still has something of this tab's to run. */
-  private cliOwesTurn(): boolean {
-    return this.queuedTurns > 0 || this.outbox.pending().some((e) => e.state !== 'waiting')
-  }
-
-  /** A driver that throws (a session already closed) cannot cancel: the same as a CLI that cannot. */
-  private async cancelSafely(driver: AgentDriver, uuid: string): Promise<boolean | null> {
-    try {
-      return await driver.cancelQueued(uuid)
-    } catch {
-      return null
-    }
-  }
-
-  private async interruptSafely(
-    driver: AgentDriver,
-    opts?: { cancelQueued?: boolean }
-  ): Promise<InterruptReceipt | undefined> {
-    try {
-      return await driver.interrupt(opts)
-    } catch {
-      return undefined
-    }
-  }
-
-  /** Which of these the CLI took back, asked one by one. */
-  private async cancelEach(driver: AgentDriver, entries: OutboxEntry[]): Promise<Set<string>> {
-    const answers = await Promise.all(entries.map((e) => this.cancelSafely(driver, e.uuid)))
-    return new Set(entries.filter((_, i) => answers[i] === true).map((e) => e.uuid))
+    this.queue.requeue(inputs)
   }
 
   private emitQueue(): void {
-    this.emitPanel(this.collector.setQueue(this.outbox.view(this.cliQueue && this.driver !== null)))
+    this.emitPanel(this.collector.setQueue(this.queue.view()))
   }
 
   /**
@@ -1182,12 +1075,14 @@ export class AgentSession {
     const questions = [...this.pendingQuestions].filter(([, wait]) => ours(wait))
     for (const [toolUseId, waiting] of questions) {
       this.pendingQuestions.delete(toolUseId)
+      this.feedAutonomy({ type: 'waitClosed', cardId: toolUseId, by: 'stop' })
       waiting.resolve({ behavior: 'deny' })
     }
 
     const plans = [...this.pendingPlans].filter(([, wait]) => ours(wait))
     for (const [requestId, waiting] of plans) {
       this.pendingPlans.delete(requestId)
+      this.feedAutonomy({ type: 'waitClosed', cardId: requestId, by: 'stop' })
       this.emit(this.builder.resolvePlan(requestId, 'rejected'))
       waiting.resolve({ behavior: 'deny' })
     }
@@ -1239,13 +1134,16 @@ export class AgentSession {
         return
       }
     }
-    this.mode = mode
+    this.setMode(mode)
     this.emitPanel(this.collector.setPermissionMode(mode))
     if (mode === 'autoAllow' && was !== 'autoAllow') {
+      const minutes = this.options.autoAnswerMinutes?.() ?? AUTO_ANSWER_MINUTES
       this.emit(
         this.builder.notice(
           'Режим «авто-да»: Qclod сам отвечает «разрешить» на каждый запрос агента. ' +
-            'Сохранённые запреты по-прежнему действуют, вопросы и планы — за вами.',
+            'Сохранённые запреты по-прежнему действуют. ' +
+            `На вопрос или план, на который вы не ответите за ${minutes} мин, Qclod ответит сам: ` +
+            'выберет рекомендуемый вариант или одобрит план.',
           'info'
         )
       )
@@ -1372,6 +1270,9 @@ export class AgentSession {
   async dispose(): Promise<void> {
     this.disposed = true
     this.turnRunning = false
+    // A late answer about the strip — a cancel the CLI confirms after the
+    // close — finds no turn held for it to let go.
+    this.queue.onDead()
     // This process echoes nothing more. Done before anything is awaited: the
     // ribbon goes on in a successor, which keeps expectations of its own.
     this.builder.forgetEchoes()
@@ -1459,18 +1360,18 @@ export class AgentSession {
   }
 
   private onMessage(message: unknown): void {
+    this.feedAutonomy({ type: 'sdk', message })
     const changes = this.builder.apply(message)
     this.emit(changes)
+    const fromPhone = changes.some((c) => c.kind === 'append' && c.item.kind === 'user' && c.item.remote)
     // A message typed on the phone starts a turn of its own — unless one is
     // under way, which it then joins: the bubble shows, nothing is counted twice.
-    if (
-      !this.turnRunning &&
-      changes.some((c) => c.kind === 'append' && c.item.kind === 'user' && c.item.remote)
-    ) {
+    if (!this.turnRunning && fromPhone) {
       this.turn += 1
       this.turnRunning = true
       if (this.waits === 0) this.setStatus('busy')
     }
+    if (fromPhone) this.feedAutonomy({ type: 'personActed' })
     const remote = remoteFromMessage(message, this.remoteInfo)
     if (remote) {
       this.setRemoteInfo(remote)
@@ -1482,7 +1383,7 @@ export class AgentSession {
     if (panel) {
       // The collector is the one place that knows the current mode — it also
       // knows not to let a restart overrule what the user chose.
-      this.mode = this.collector.data.permissionMode
+      this.setMode(this.collector.data.permissionMode)
       this.emitPanel(panel)
     }
     const tasks = this.backgroundTasks.apply(message)
@@ -1503,7 +1404,7 @@ export class AgentSession {
         } else if (m['subtype'] === 'plugin_install') this.background(this.refreshMcp())
         break
       case 'command_lifecycle':
-        this.onLifecycle(m)
+        this.queue.onLifecycle(m)
         break
       case 'result':
         this.onResult(m)
@@ -1517,78 +1418,18 @@ export class AgentSession {
   }
 
   /**
-   * The CLI's account of a message sent with a uuid. Only what is on the
-   * strip is followed: a frame for anything else — the message that started
-   * the turn, one sent from the phone — is ignored (ruling R5).
-   */
-  private onLifecycle(m: Record<string, unknown>): void {
-    if (!this.cliQueue) {
-      this.cliQueue = true
-      if (this.outbox.size > 0) this.emitQueue()
-    }
-    const uuid = m['command_uuid']
-    const entry = typeof uuid === 'string' ? this.outbox.get(uuid) : undefined
-    if (!entry) return
-    switch (m['state']) {
-      case 'queued':
-        // One being taken back stays so until the CLI answers.
-        if (entry.state === 'sending') {
-          this.outbox.mark(entry.uuid, 'queued')
-          this.emitQueue()
-        }
-        break
-      case 'started':
-        this.outbox.remove(entry.uuid)
-        this.emitQueue()
-        this.onRead(entry)
-        break
-      case 'cancelled':
-        if (this.resending.has(entry.uuid)) {
-          // «Отправить сейчас»: it comes back under a new uuid in a moment.
-          this.outbox.remove(entry.uuid)
-          this.emitQueue()
-          break
-        }
-        this.dropEntry(entry.uuid)
-        if (!entry.requestedCancel) {
-          this.emit(this.builder.notice(`${NOT_DELIVERED} — «${entry.input.text}»`, 'error'))
-        }
-        break
-      default:
-        break
-    }
-  }
-
-  /**
    * The end of a turn. The tab is free only when the CLI has nothing more of
-   * its to run — no turn it says is waiting (`queued_turn_count`), nothing on
-   * the strip it holds; otherwise it stays busy (ruling R4).
+   * its to run (ruling R4, `QueueController.onResult`); otherwise it stays busy.
    */
   private onResult(m: Record<string, unknown>): void {
-    // What the turn read, by its uuids: anything on the strip it names was
-    // read without a frame saying so, and shows now rather than never.
-    const read = Array.isArray(m['user_message_uuids']) ? m['user_message_uuids'] : []
-    for (const uuid of read) {
-      const entry = typeof uuid === 'string' ? this.outbox.get(uuid) : undefined
-      if (!entry || entry.state === 'waiting') continue
-      this.outbox.remove(entry.uuid)
-      this.emitQueue()
-      this.onRead(entry)
-    }
-    const count = m['queued_turn_count']
-    this.queuedTurns = typeof count === 'number' && count > 0 ? count : 0
-    this.heldByQueue = this.cliOwesTurn()
-    if (this.heldByQueue) return
+    if (this.queue.onResult(m) === 'hold') return
     this.turnRunning = false
     this.setStatus('idle')
   }
 
   private onInit(m: Record<string, unknown>): void {
-    // init comes again with every turn; what it says of the queue only ever turns it on.
-    if (!this.cliQueue && queueModeFrom(m) === 'cli') {
-      this.cliQueue = true
-      if (this.outbox.size > 0) this.emitQueue()
-    }
+    this.queue.onInit(m)
+    if (typeof m['claude_code_version'] === 'string') this.cliVersion = m['claude_code_version']
     const id = typeof m['session_id'] === 'string' ? m['session_id'] : null
     if (id && id !== this.session) {
       this.session = id
@@ -1641,6 +1482,9 @@ export class AgentSession {
     input: Record<string, unknown>,
     opts: ToolPermissionContext
   ): Promise<PermissionAnswer> {
+    // A closed session asks nobody: a card answered «до конца сессии» now
+    // would leave a rule for this tab that its successor would inherit.
+    if (this.disposed) return { behavior: 'deny' }
     const ask = this.options.askPermission
 
     // A question is not a permission: it has options, not «allow» and «deny»
@@ -1651,7 +1495,11 @@ export class AgentSession {
     // A plan is a document to read, not a tool call to wave through. In plan
     // mode the agent finishes by calling ExitPlanMode with what it intends to
     // do, and that is the moment the user decides (spec 6.4).
-    if (toolName === 'ExitPlanMode' && this.mode === 'plan') return this.askPlan(input, opts)
+    // In «авто-да» too (decision 4): the plan gets its card, and the core's
+    // timer, rather than being waved through with the tools.
+    if (toolName === 'ExitPlanMode' && (this.mode === 'plan' || this.mode === 'autoAllow')) {
+      return this.askPlan(input, opts)
+    }
 
     // The tool call's own id, so two questions about one message's tools are
     // two requests. A clock is no id: two asks in one millisecond collided.
@@ -1663,10 +1511,14 @@ export class AgentSession {
     if (this.mode === 'autoAllow') {
       if (opts.signal?.aborted) return { behavior: 'deny' }
       try {
-        return await ask(
+        const answer = await ask(
           { requestId, tabId: this.options.tabId, toolName, target, input, auto: true },
           opts.signal ?? new AbortController().signal
         )
+        // A saved deny is the user's refusal too, and is read as one.
+        return answer.behavior === 'deny' && !opts.signal?.aborted
+          ? { behavior: 'deny', message: denialText(answer.message) }
+          : answer
       } catch {
         return { behavior: 'deny' }
       }
@@ -1689,6 +1541,7 @@ export class AgentSession {
     this.enterWait()
 
     let answer: PermissionAnswer
+    let failed = false
     try {
       answer = await ask(
         { requestId, tabId: this.options.tabId, toolName, target, input },
@@ -1697,11 +1550,13 @@ export class AgentSession {
     } catch {
       // A gate that failed is not a gate that said yes.
       answer = { behavior: 'deny' }
+      failed = true
     } finally {
       opts.signal?.removeEventListener('abort', cancel)
     }
     // An answer to a question nobody waits on any more is no answer.
-    if (controller.signal.aborted) answer = { behavior: 'deny' }
+    const abandoned = controller.signal.aborted
+    if (abandoned) answer = { behavior: 'deny' }
 
     // Still open unless «Стоп» already closed it — and marked its card.
     if (this.openPermissions.get(requestId) === wait) {
@@ -1713,7 +1568,19 @@ export class AgentSession {
           : answer.behavior === 'allow'
             ? 'allowed'
             : 'denied'
-      this.emit(this.builder.resolvePermission(requestId, state))
+      // The card says how it was allowed, or why it was refused.
+      const extra =
+        state === 'allowed'
+          ? { scope: scopeOf(answer) }
+          : state === 'denied' && answer.message
+            ? { reason: answer.message }
+            : {}
+      this.emit(this.builder.resolvePermission(requestId, state, extra))
+    }
+    // The user's refusal, with their reason, in words the agent cannot take
+    // for a remark: probe 05b saw a bare reason walked around with another tool.
+    if (answer.behavior === 'deny' && !failed && !abandoned) {
+      return { behavior: 'deny', message: denialText(answer.message) }
     }
     return answer
   }
@@ -1738,9 +1605,9 @@ export class AgentSession {
         if (this.pendingPlans.get(requestId)?.resolve !== settle) return
         this.pendingPlans.delete(requestId)
         this.leaveWait()
-        this.emit(
-          this.builder.resolvePlan(requestId, isRemoteLive(this.remoteInfo) ? 'elsewhere' : 'rejected')
-        )
+        const elsewhere = isRemoteLive(this.remoteInfo)
+        this.feedAutonomy({ type: 'waitClosed', cardId: requestId, by: elsewhere ? 'elsewhere' : 'stop' })
+        this.emit(this.builder.resolvePlan(requestId, elsewhere ? 'elsewhere' : 'rejected'))
         resolve({ behavior: 'deny' })
       }
       const settle = (answer: PermissionAnswer): void => {
@@ -1748,7 +1615,10 @@ export class AgentSession {
         resolve(answer)
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
-      this.pendingPlans.set(requestId, { resolve: settle, turn: this.turn })
+      // The input is kept: an edited plan goes back as the same call's input.
+      this.pendingPlans.set(requestId, { input, resolve: settle, turn: this.turn })
+      // Told once the plan is waited on, so the core can answer it at once.
+      this.feedAutonomy({ type: 'planOpened', cardId: requestId })
     })
   }
 
@@ -1775,8 +1645,10 @@ export class AgentSession {
         if (this.pendingQuestions.get(toolUseId)?.resolve !== settle) return
         this.pendingQuestions.delete(toolUseId)
         this.leaveWait()
+        const elsewhere = isRemoteLive(this.remoteInfo)
+        this.feedAutonomy({ type: 'waitClosed', cardId: toolUseId, by: elsewhere ? 'elsewhere' : 'stop' })
         // Answered on the phone: the card closes rather than waiting for a click.
-        if (isRemoteLive(this.remoteInfo)) this.emit(this.builder.closeQuestionElsewhere(toolUseId))
+        if (elsewhere) this.emit(this.builder.closeQuestionElsewhere(toolUseId))
         resolve({ behavior: 'deny' })
       }
       const settle = (answer: PermissionAnswer): void => {
@@ -1785,6 +1657,8 @@ export class AgentSession {
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
       this.pendingQuestions.set(toolUseId, { input, resolve: settle, turn: this.turn })
+      // Told once the question is waited on: `autoAnswerQuestion` finds it.
+      this.feedAutonomy({ type: 'questionOpened', cardId: toolUseId, questions: coreQuestions(input) })
     })
   }
 
@@ -1816,8 +1690,7 @@ export class AgentSession {
     // would write into a ribbon its successor carries on.
     if (this.disposed) return
     this.turnRunning = false
-    this.heldByQueue = false
-    this.queuedTurns = 0
+    this.queue.onDead()
     this.stopPanelRefresh()
     const text = err instanceof Error ? err.message : String(err)
     const dead = this.driver
@@ -1826,7 +1699,7 @@ export class AgentSession {
     this.builder.forgetEchoes()
     // The strip stays, unread, for the session taking this one's place
     // (`takeQueue`); nothing on it can be hurried any more.
-    if (this.outbox.size > 0) this.emitQueue()
+    if (this.queue.size > 0) this.emitQueue()
     // The process may still be alive; and cards nobody can answer any more
     // must not stay live (a click could save a rule from a dead session).
     this.cancelWaits()
@@ -1863,10 +1736,14 @@ export class AgentSession {
   }
 
   private setStatus(status: SessionStatus): void {
+    // A closed session only ever becomes «stopped»: whatever answers late
+    // must not set the tab idle or busy after it (the core reads statuses).
+    if (this.disposed && status !== 'stopped') return
     if (this.state === status) return
     this.state = status
     // A copy: a listener may stop itself while it is being told.
     for (const listener of [...this.statusListeners]) listener(status)
+    this.feedAutonomy({ type: 'status', status })
     if (this.settled()) {
       const waiters = this.idleWaiters.splice(0)
       for (const resolve of waiters) resolve()

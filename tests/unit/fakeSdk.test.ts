@@ -157,6 +157,44 @@ describe('createFakeSdk', () => {
     }
   })
 
+  test('limitHit: rejected, assistant с error rate_limit, result is_error — в этом порядке', async () => {
+    const before = Math.floor(Date.now() / 1000)
+    const driver = createFakeSdk({ steps: [{ kind: 'limitHit', resetsInMs: 3_600_000, type: 'seven_day' }] })
+    const got = await collect(driver)
+    const order = got
+      .map((m) => (m['type'] === 'system' ? null : (m['type'] as string)))
+      .filter((t): t is string => t !== null && ['rate_limit_event', 'assistant', 'result'].includes(t))
+    // The window-state event of the init comes first and is 'allowed'; the rejection follows.
+    const rejected = got.findIndex(
+      (m) => m['type'] === 'rate_limit_event' && (m['rate_limit_info'] as Record<string, unknown>)['status'] === 'rejected'
+    )
+    const assistantAt = got.findIndex((m) => m['type'] === 'assistant' && m['error'] === 'rate_limit')
+    const resultAt = got.findIndex((m) => m['type'] === 'result')
+    expect(order.length).toBeGreaterThan(2)
+    expect(rejected).toBeGreaterThan(-1)
+    expect(rejected).toBeLessThan(assistantAt)
+    expect(assistantAt).toBeLessThan(resultAt)
+    const info = got[rejected]!['rate_limit_info'] as Record<string, unknown>
+    expect(info['rateLimitType']).toBe('seven_day')
+    expect(info['resetsAt'] as number).toBeGreaterThanOrEqual(before + 3599)
+    const result = got[resultAt]!
+    expect(result['is_error']).toBe(true)
+    expect(String(result['result'])).toContain("You've hit your session limit")
+  })
+
+  test('limitHit times 1: второй ход проходит', async () => {
+    const driver = createFakeSdk({
+      steps: [],
+      nextTurn: [{ kind: 'limitHit', resetsInMs: 1000, times: 1 }, { kind: 'text', text: 'дальше' }]
+    })
+    driver.send({ text: 'раз', attachments: [] })
+    driver.send({ text: 'два', attachments: [] })
+    const got = await collect(driver, 2)
+    const results = got.filter((m) => m['type'] === 'result')
+    expect(results.map((r) => r['is_error'])).toEqual([true, false])
+    expect(got.filter((m) => m['error'] === 'rate_limit')).toHaveLength(1)
+  })
+
   test('crash с times без QCLOD_USER_DATA падает всегда, как раньше', async () => {
     vi.stubEnv('QCLOD_USER_DATA', '')
     try {
@@ -1483,5 +1521,112 @@ describe('createFakeSdk: очередь команд CLI', () => {
     driver.send(said('A'), { uuid: 'A' })
     const got = await collect(driver)
     expect(lifecycleOf(got)).toContain('cancelled:phone-1')
+  })
+})
+
+function agentTexts(messages: Array<Record<string, unknown>>): string[] {
+  return messages
+    .filter((m) => m['type'] === 'assistant')
+    .flatMap((m) => (m['message'] as { content: Array<Record<string, unknown>> }).content)
+    .filter((b) => b['type'] === 'text')
+    .map((b) => String(b['text']))
+}
+
+describe('createFakeSdk: ответы на карточки', () => {
+  test('permissionLog пишет каждый ответ canUseTool', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        { kind: 'askPermission', name: 'Bash', input: { command: 'git push' } },
+        { kind: 'askQuestion', question: 'Какой?', options: ['Справа'] }
+      ],
+      canUseTool: async (name, input): Promise<Answer> =>
+        name === 'Bash'
+          ? { behavior: 'deny', message: 'не трогай main' }
+          : { behavior: 'allow', updatedInput: { ...input, answers: { 'Какой?': 'Справа' } } }
+    })
+    await collect(driver)
+
+    expect(driver.permissionLog).toEqual([
+      { name: 'Bash', behavior: 'deny', message: 'не трогай main' },
+      {
+        name: 'AskUserQuestion',
+        behavior: 'allow',
+        updatedInput: expect.objectContaining({ answers: { 'Какой?': 'Справа' } })
+      }
+    ])
+  })
+
+  test('plan спрашивает ExitPlanMode с планом; одобрили — вызов с исправленным планом', async () => {
+    const asked: Array<[string, Record<string, unknown>]> = []
+    const driver = createFakeSdk({
+      steps: [{ kind: 'plan', plan: '1. шаг' }],
+      canUseTool: async (name, input): Promise<Answer> => {
+        asked.push([name, input])
+        return { behavior: 'allow', updatedInput: { ...input, plan: '1. другой шаг' } }
+      }
+    })
+    const out = await collect(driver)
+
+    expect(asked).toEqual([['ExitPlanMode', { plan: '1. шаг' }]])
+    expect(toolUses(out).map((t) => t.name)).toEqual(['ExitPlanMode'])
+    expect(driver.executedTools).toEqual(['ExitPlanMode'])
+  })
+
+  test('plan: отказ — tool_result с is_error и текстом отказа', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'plan', plan: '1. шаг' }],
+      canUseTool: async () => ({ behavior: 'deny' as const, message: 'сначала тесты' })
+    })
+    const out = await collect(driver)
+
+    const result = toolResults(out)[0]!
+    expect(result['is_error']).toBe(true)
+    expect(String(result['content'])).toContain('сначала тесты')
+    expect(driver.executedTools).toEqual([])
+  })
+
+  test('echo: true у шага плана пишет «Получено:» с plan', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'plan', plan: '1. шаг', echo: true }],
+      canUseTool: async (_name, input): Promise<Answer> => ({
+        behavior: 'allow',
+        updatedInput: { ...input, plan: '1. другой шаг' }
+      })
+    })
+    const out = await collect(driver)
+
+    expect(agentTexts(out)).toEqual([`Получено: ${JSON.stringify({ plan: '1. другой шаг' })}`])
+  })
+
+  test('echo: true у разрешения и вопроса пишет message, answers и annotations', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        { kind: 'askPermission', name: 'Bash', input: { command: 'git push' }, echo: true },
+        { kind: 'askQuestion', question: 'Какой?', options: ['Справа'], echo: true }
+      ],
+      canUseTool: async (name, input): Promise<Answer> =>
+        name === 'Bash'
+          ? { behavior: 'deny', message: 'не трогай main' }
+          : {
+              behavior: 'allow',
+              updatedInput: {
+                ...input,
+                answers: { 'Какой?': 'Справа' },
+                annotations: { 'Какой?': { notes: 'ближе' } }
+              }
+            }
+    })
+    const out = await collect(driver)
+
+    expect(agentTexts(out)).toEqual([
+      `Получено: ${JSON.stringify({ message: 'не трогай main' })}`,
+      `Получено: ${JSON.stringify({ answers: { 'Какой?': 'Справа' }, annotations: { 'Какой?': { notes: 'ближе' } } })}`
+    ])
+  })
+
+  test('init.claudeCodeVersion меняет claude_code_version в system/init', async () => {
+    const driver = createFakeSdk({ steps: [{ kind: 'text', text: 'ок' }], init: { claudeCodeVersion: '2.1.300' } })
+    const out = await collect(driver)
+    expect(out[0]).toMatchObject({ type: 'system', subtype: 'init', claude_code_version: '2.1.300' })
   })
 })

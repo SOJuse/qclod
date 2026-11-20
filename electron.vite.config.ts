@@ -30,8 +30,16 @@ export default defineConfig(({ mode }) => {
       plugins: [react()],
       define,
       build: {
-        rollupOptions: { input: { index: resolve(__dirname, 'src/renderer/index.html') } }
+        // fallback.html is the page of a window that will not start: a second,
+        // separate entry, so it does not depend on the bundle that failed.
+        rollupOptions: {
+          input: {
+            index: resolve(__dirname, 'src/renderer/index.html'),
+            fallback: resolve(__dirname, 'src/renderer/fallback.html')
+          }
+        }
       }
     }
   }
 })
+

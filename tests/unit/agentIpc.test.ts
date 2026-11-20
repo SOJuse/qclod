@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,9 +15,11 @@ vi.mock('electron', () => ({
 
 import { registerAgentIpc, type AgentIpcDeps } from '@main/agentIpc'
 import { CHANNELS } from '@shared/channels'
-import type { LaunchOverrides, UserInput } from '@shared/types'
+import { LayoutStore } from '@main/store/layoutStore'
+import { DEFAULT_LAYOUT, type LaunchOverrides, type LayoutState, type UserInput } from '@shared/types'
 
 const USER_DATA = mkdtempSync(join(tmpdir(), 'qclod-agent-ipc-'))
+afterAll(() => rmSync(USER_DATA, { recursive: true, force: true }))
 
 let mode = 'default'
 let sendAnswer = true
@@ -26,8 +28,11 @@ const overrides: LaunchOverrides[] = []
 const defaults: LaunchOverrides[] = []
 const models: string[] = []
 const remoteCalls: Array<[boolean, string | undefined]> = []
+/** setRemote: how the CLI answers — at once, never (up to a minute in life), or with a failure. */
+let remoteAnswer: 'ok' | 'hang' | 'fail' = 'ok'
 const resolved: string[][] = []
 const queueCalls: Array<[string, string]> = []
+const autonomyCalls: unknown[][] = []
 let cancelAnswer: UserInput | null = null
 let sendNowAnswer = false
 
@@ -39,8 +44,9 @@ beforeEach(() => {
   handlers.clear()
   mode = 'default'
   sendAnswer = true
-  for (const list of [sent, overrides, defaults, models, resolved, remoteCalls, queueCalls]) list.length = 0
+  for (const list of [sent, overrides, defaults, models, resolved, remoteCalls, queueCalls, autonomyCalls]) list.length = 0
   cancelAnswer = null
+  remoteAnswer = 'ok'
   sendNowAnswer = false
   const session = {
     get panel() {
@@ -54,6 +60,8 @@ beforeEach(() => {
     },
     setRemote: async (enabled: boolean, name?: string) => {
       remoteCalls.push([enabled, name])
+      if (remoteAnswer === 'hang') await new Promise(() => undefined)
+      if (remoteAnswer === 'fail') throw new Error('мост не поднялся')
     },
     cancelQueued: async (queuedId: string) => {
       queueCalls.push(['cancel', queuedId])
@@ -86,8 +94,56 @@ beforeEach(() => {
       forget: () => undefined
     },
     getEditorCommand: () => '',
+    autonomy: {
+      hold: (...args: unknown[]) => autonomyCalls.push(['hold', ...args]),
+      answerNow: (...args: unknown[]) => autonomyCalls.push(['answerNow', ...args]),
+      remoteWanted: (...args: unknown[]) => autonomyCalls.push(['remoteWanted', ...args])
+    },
     userData: USER_DATA
   } as unknown as AgentIpcDeps)
+})
+
+describe('autonomy:* каналы', () => {
+  test('autonomyHold и autonomyAnswerNow отвергают не-строки, длинные id и чужие вкладки', () => {
+    for (const [channel, name] of [
+      [CHANNELS.autonomyHold, 'hold'],
+      [CHANNELS.autonomyAnswerNow, 'answerNow']
+    ] as const) {
+      call(channel, 't1', 'card-1')
+      expect(autonomyCalls.pop()).toEqual([name, 't1', 'card-1'])
+
+      call(channel, 42, 'card-1')
+      call(channel, 't1', { id: 'x' })
+      call(channel, 't1', 'c'.repeat(201))
+      call(channel, 't'.repeat(201), 'card-1')
+      call(channel, 'чужая', 'card-1')
+      expect(autonomyCalls).toEqual([])
+    }
+  })
+
+  test('agentRemote сообщает remoteWanted и зовёт setRemote', async () => {
+    await call(CHANNELS.agentRemote, 't1', true)
+    expect(remoteCalls).toEqual([[true, 'проект']])
+    expect(autonomyCalls).toEqual([['remoteWanted', 't1', true]])
+    await call(CHANNELS.agentRemote, 't1', false)
+    expect(autonomyCalls.at(-1)).toEqual(['remoteWanted', 't1', false])
+    // A bad call tells nobody.
+    autonomyCalls.length = 0
+    await call(CHANNELS.agentRemote, 't1', 'да')
+    await call(CHANNELS.agentRemote, 'чужая', true)
+    expect(autonomyCalls).toEqual([])
+  })
+
+  test('agentRemote: remoteWanted уходит, не дожидаясь ответа CLI, и при сбое первой попытки', async () => {
+    remoteAnswer = 'hang'
+    void call(CHANNELS.agentRemote, 't1', true)
+    expect(autonomyCalls).toEqual([['remoteWanted', 't1', true]])
+
+    autonomyCalls.length = 0
+    remoteAnswer = 'fail'
+    await Promise.resolve(call(CHANNELS.agentRemote, 't1', true)).catch(() => undefined)
+    expect(autonomyCalls).toEqual([['remoteWanted', 't1', true]])
+  })
 })
 
 describe('agent:* каналы', () => {
@@ -163,5 +219,134 @@ describe('agent:* каналы', () => {
     const out = (await call(CHANNELS.filesResolve, 't1', raws)) as unknown[]
     expect(out).toHaveLength(200)
     expect(resolved[0]).toHaveLength(200)
+  })
+})
+
+describe('этап 2: проекты и раскладка', () => {
+  const OPEN = 'C:\\Открытый'
+  let layout: LayoutStore
+  const listed: string[] = []
+  const opened: Array<[string, string, string | undefined]> = []
+  const panes: string[][] = []
+  const changes: LayoutState[] = []
+  const tabs = [
+    { id: 't1', cwd: OPEN, title: 'открытый' },
+    { id: 't2', cwd: OPEN, title: 'второй' }
+  ]
+
+  let layoutDir = ''
+  afterEach(() => rmSync(layoutDir, { recursive: true, force: true }))
+
+  beforeEach(() => {
+    handlers.clear()
+    for (const list of [listed, opened, panes, changes]) list.length = 0
+    layoutDir = mkdtempSync(join(tmpdir(), 'qclod-layout-ipc-'))
+    layout = new LayoutStore(layoutDir, (l) => changes.push(l))
+    registerAgentIpc({
+      getWindow: () => null,
+      controller: {
+        list: () => tabs,
+        setPanes: async (ids: string[]) => {
+          panes.push(ids)
+          layout.patch({ panes: ids })
+        },
+        openSession: (cwd: string, sessionId: string, title?: string) => {
+          opened.push([cwd, sessionId, title])
+          return { id: 'новая', cwd }
+        }
+      },
+      manager: { get: () => undefined },
+      broker: { cancelTab: () => undefined },
+      layout,
+      history: {
+        list: async (cwd: string) => {
+          listed.push(cwd)
+          return [{ sessionId: 's1', summary: 'прошлый', lastModified: 1 }]
+        }
+      },
+      rememberDefault: () => undefined,
+      resolver: { forget: () => undefined },
+      getEditorCommand: () => '',
+      userData: USER_DATA
+    } as unknown as AgentIpcDeps)
+  })
+
+  test('история чужой папки — пусто, history.list не вызван', async () => {
+    expect(await call(CHANNELS.projectHistory, 'C:\\чужая')).toEqual([])
+    expect(await call(CHANNELS.projectHistory, 42)).toEqual([])
+    expect(await call(CHANNELS.projectHistory, '')).toEqual([])
+    expect(listed).toEqual([])
+  })
+
+  test('история проекта читается по его первой записи (П13), открытого чата — по его папке', async () => {
+    layout.addProject('C:\\Проект')
+    expect(await call(CHANNELS.projectHistory, 'c:/проект/')).toHaveLength(1)
+    expect(await call(CHANNELS.projectHistory, 'c:/открытый')).toHaveLength(1)
+    expect(listed).toEqual(['C:\\Проект', OPEN])
+  })
+
+  test('с hostId этап 2 отвечает пусто и ничего не открывает', async () => {
+    layout.addProject('C:\\Проект')
+    expect(await call(CHANNELS.projectHistory, 'C:\\Проект', 'srv1')).toEqual([])
+    expect(await call(CHANNELS.projectHistory, OPEN, 7)).toEqual([])
+    expect(await call(CHANNELS.projectOpenSession, 'C:\\Проект', 's1', undefined, 'srv1')).toBeNull()
+    expect(listed).toEqual([])
+    expect(opened).toEqual([])
+  })
+
+  test('сессия открывается только в известном проекте и только с id-строкой', async () => {
+    layout.addProject('C:\\Проект')
+    expect(await call(CHANNELS.projectOpenSession, 'C:\\чужая', 's1')).toBeNull()
+    expect(await call(CHANNELS.projectOpenSession, 'C:\\Проект', 5)).toBeNull()
+    expect(await call(CHANNELS.projectOpenSession, 'C:\\Проект', '')).toBeNull()
+    expect(opened).toEqual([])
+
+    expect(await call(CHANNELS.projectOpenSession, 'c:/проект', 's1', 'Вчера')).toMatchObject({ id: 'новая' })
+    expect(await call(CHANNELS.projectOpenSession, OPEN, 's2', 42)).toMatchObject({ id: 'новая' })
+    expect(opened).toEqual([
+      ['C:\\Проект', 's1', 'Вчера'],
+      [OPEN, 's2', undefined]
+    ])
+  })
+
+  test('layoutGet отдаёт раскладку, layoutSet чистит патч и зовёт setPanes', async () => {
+    expect(await call(CHANNELS.layoutGet)).toEqual(DEFAULT_LAYOUT)
+
+    const after = (await call(CHANNELS.layoutSet, {
+      panes: ['t1', 't1', 5],
+      paneWidths: [1, 3],
+      sidebarCollapsed: 'да'
+    })) as LayoutState
+    expect(panes).toEqual([['t1']])
+    expect(after).toMatchObject({ panes: ['t1'], paneWidths: [1], sidebarCollapsed: false })
+
+    expect(await call(CHANNELS.layoutSet, { sidebarCollapsed: true })).toMatchObject({ sidebarCollapsed: true })
+    expect(panes).toHaveLength(1)
+    expect(await call(CHANNELS.layoutSet, 'мусор')).toEqual(layout.get())
+  })
+
+  test('один layoutSet — одна запись и один layoutChanged; мёртвые панели не доходят', async () => {
+    const after = (await call(CHANNELS.layoutSet, {
+      panes: ['t1', 'нет-такой', 't2'],
+      paneWidths: [1, 3],
+      sidebarCollapsed: true
+    })) as LayoutState
+    expect(after).toMatchObject({ panes: ['t1', 't2'], paneWidths: [0.25, 0.75], sidebarCollapsed: true })
+    expect(panes).toEqual([['t1', 't2']])
+    expect(changes).toHaveLength(1)
+    expect(changes[0]).toEqual(after)
+  })
+
+  test('projectForget при открытых чатах проекта ничего не меняет и отдаёт раскладку', async () => {
+    layout.addProject(OPEN)
+    layout.addProject('C:\\Пустой')
+    const before = layout.get()
+    expect(await call(CHANNELS.projectForget, 'c:/открытый')).toEqual(before)
+    expect(layout.get()).toEqual(before)
+
+    expect(await call(CHANNELS.projectForget, 'C:\\Пустой')).toMatchObject({
+      projects: [{ cwd: OPEN, collapsed: false }]
+    })
+    expect(await call(CHANNELS.projectForget, 9)).toEqual(layout.get())
   })
 })

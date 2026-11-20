@@ -31,11 +31,16 @@ window.addEventListener('error', (e) => {
   report(err instanceof Error ? err.message : e.message, err instanceof Error ? err.stack : undefined)
 })
 window.addEventListener('unhandledrejection', (e) => {
-  const reason: unknown = e.reason
-  report(
-    reason instanceof Error ? reason.message : String(reason),
-    reason instanceof Error ? reason.stack : undefined
-  )
+  // A reason whose toString throws must not become an error of its own.
+  try {
+    const reason: unknown = e.reason
+    report(
+      reason instanceof Error ? reason.message : String(reason),
+      reason instanceof Error ? reason.stack : undefined
+    )
+  } catch {
+    report('unprintable rejection reason')
+  }
 })
 
 createRoot(container).render(
@@ -43,3 +48,4 @@ createRoot(container).render(
     <App />
   </ErrorBoundary>
 )
+

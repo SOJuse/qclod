@@ -11,6 +11,14 @@ export interface AgentSessionManagerOptions {
   confirmBypass?: () => Promise<boolean>
   confirmAutoAllow?: () => Promise<boolean>
   disposeTimeoutMs?: number
+  /** The «авто-да» timer's minutes from the settings, read when its line is shown. */
+  autoAnswerMinutes?: () => number
+  /**
+   * A tab's session was closed: «Начать заново», «Закрыть чат», a restart
+   * after a crash, or the app quitting. What was allowed «до конца сессии»
+   * ends here.
+   */
+  onClosed?: (tabId: TabId) => void
 }
 
 /**
@@ -40,6 +48,7 @@ export class AgentSessionManager {
       askPermission: this.options.askPermission,
       ...(this.options.confirmBypass ? { confirmBypass: this.options.confirmBypass } : {}),
       ...(this.options.confirmAutoAllow ? { confirmAutoAllow: this.options.confirmAutoAllow } : {}),
+      ...(this.options.autoAnswerMinutes ? { autoAnswerMinutes: this.options.autoAnswerMinutes } : {}),
       ...(this.options.disposeTimeoutMs === undefined
         ? {}
         : { disposeTimeoutMs: this.options.disposeTimeoutMs }),
@@ -61,12 +70,14 @@ export class AgentSessionManager {
     const session = this.sessions.get(tabId)
     if (!session) return
     this.sessions.delete(tabId)
+    this.options.onClosed?.(tabId)
     await session.dispose()
   }
 
   async disposeAll(): Promise<void> {
-    const all = [...this.sessions.values()]
+    const all = [...this.sessions.entries()]
     this.sessions.clear()
-    await Promise.all(all.map((session) => session.dispose()))
+    for (const [tabId] of all) this.options.onClosed?.(tabId)
+    await Promise.all(all.map(([, session]) => session.dispose()))
   }
 }

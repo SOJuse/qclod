@@ -59,9 +59,10 @@ for await (const message of driver.messages) { /* ... */ }
 | `thinking` | блок размышлений; с `ms` — потоком, как в живой сессии (`message_start`, `thinking_delta`, пауза `ms`, `content_block_stop`, затем целое сообщение с тем же id), и лента показывает «Думал N с» |
 | `tool` | вызов инструмента и его результат; `output` (объект) уходит как `tool_use_result` рядом с `tool_result` (формы — `sdk-tools.d.ts`); `pauseMs` — пауза между `tool_use` и результатом |
 | `toolError` | вызов и результат с `is_error`; `output` уходит как `tool_use_result` |
-| `askPermission` | спрашивает `canUseTool` с `toolUseID` будущего вызова и `signal`; разрешили — выполняет, отказали — `permission_denied` |
+| `askPermission` | спрашивает `canUseTool` с `toolUseID` будущего вызова и `signal`; разрешили — выполняет, отказали — `permission_denied`; `echo: true` — после ответа агент пишет `Получено: <JSON>` с `message` отказа |
 | `askPermissions` | несколько инструментов одного сообщения: спрашивает о всех сразу, у каждого свой `toolUseID`; разрешённые выполняет одним сообщением ассистента |
-| `askQuestion` | вызов `AskUserQuestion`; `questions: [{question, header?, options, multiSelect?}]` — до четырёх вопросов, а `question`/`options` — сокращение для одного; `echoAnswers: true` — после ответа агент пишет текстом `Получено: …` (в ленте `tool_result` вопроса не виден); затем `canUseTool` с его id; ответ — `updatedInput.answers` в `tool_result`, отказ — `tool_result` с `is_error` |
+| `askQuestion` | вызов `AskUserQuestion`; `questions: [{question, header?, options, multiSelect?}]` — до четырёх вопросов, а `question`/`options` — сокращение для одного; `echoAnswers: true` — после ответа агент пишет текстом `Получено: …` (в ленте `tool_result` вопроса не виден); затем `canUseTool` с его id; ответ — `updatedInput.answers` в `tool_result`, отказ — `tool_result` с `is_error`; `echo: true` — после ответа агент пишет `Получено: <JSON>` с `message`, `answers` и `annotations` |
+| `plan` | вызов `ExitPlanMode` с `plan` (сначала в потоке, как у CLI), затем `canUseTool` с его id; одобрили — `tool_result` с планом из `updatedInput.plan` (правка пользователя, проба 05b) или с исходным, отказали — `tool_result` с `is_error` и `message`; `echo: true` — `Получено: <JSON>` с `message` и `plan` |
 | `todo` | вызов `TodoWrite` со списком задач |
 | `subagent` | вызов `Agent`, вложенные шаги помечаются `parent_tool_use_id`; `tool_use_result` — `AgentOutput` (`status: completed`, `agentId`, `totalTokens`, `totalDurationMs`, `totalToolUseCount`, `content`), итоги — из `stats` под теми же именами; `report` — текст отчёта (`content[].text` и текст `tool_result`, по умолчанию «подагент закончил»); `subagent` внутри `steps` — вложенный: его шаги помечены его собственным id |
 | `backgroundAgent` | вызов `Agent` с `run_in_background: true`; `tool_result` «Async agent launched successfully.» с `tool_use_result.status: async_launched`; `system/task_started`. **После `result` этого хода** — по `system/task_progress` на каждый элемент `progress`, затем (если `finish` не `null`) `system/task_notification` и сообщение пользователя с `origin.kind: task-notification` и текстом `<task-notification>…`. `pauseMs` — пауза между событиями; `agentId` по умолчанию — `a` и 16 hex. Порядок «после `result`» — решение C2 (тест видит, что ход кончился, а агент ещё работает); ответного хода главного агента на уведомление фейк не играет |
@@ -69,6 +70,7 @@ for await (const message of driver.messages) { /* ... */ }
 | `remoteAnswer` | как `askPermission` (тот же `toolUseID`, свой `signal`), но через `afterMs` (по умолчанию 50) абортит именно этот сигнал — так CLI шлёт `control_cancel_request`, когда ответили на телефоне; дальше по `decision`: `allow` — выполняет инструмент (результат `ok`), `deny` — `permission_denied`. Ответ Qclod после аборта игнорируется |
 | `compact` | `compact_boundary` с токенами до и после |
 | `crash` | бросает ошибку `message` посреди потока. `times: N` — шаг играют только первые N сессий, в следующих он пропускается. Сессия — это созданный драйвер: она засчитывается один раз, при создании, дошла она до шага или нет. Счётчик (по `message`) лежит в `fake-sdk-crashes.json` в папке `process.env.QCLOD_USER_DATA`, так что его видят все сессии одного прогона приложения; без этой переменной шаг падает всегда, как раньше. `times` читается в шагах верхнего уровня `steps` и `nextTurn`. `beforeInit: true` — падает до `system/init` и эха хода, как агент, который не вошёл в аккаунт: сессия так и не представилась, и отправленное в неё остаётся неотправленным |
+| `limitHit` | лимит подписки: `rate_limit_event` со `status: 'rejected'` (`resetsAt` = сейчас + `resetsInMs`, `rateLimitType` = `type`, по умолчанию `five_hour`; `seven_day` — недельный), затем `assistant` с `error: 'rate_limit'` и текстом `You've hit your session limit · resets <время>`, а в конце хода `result` с `is_error: true` и тем же текстом в `result`. `times: N` — шаг срабатывает только первые N раз за сессию (считается по сессии, а не между сессиями, как у `crash`). Формы взяты из `sdk.d.ts` и `errors`-документации, не с живой сессии |
 | `reportInput` | текст агента «картинок: N; типы: image/png; байт: M» по последнему `send`: сколько вложений-картинок пришло, их `mediaType` через запятую и сумма байт после декодирования base64 — чтобы e2e видел, что картинка дошла настоящим вложением |
 
 ## Очередь команд CLI
@@ -94,14 +96,15 @@ for await (const message of driver.messages) { /* ... */ }
 | `lifecycle: false` | `claude_code_version: '2.1.200'`, без `capabilities`, без кадров; `cancelQueued` и `cancelAsyncMessage` — `null`, `interrupt` — `undefined`; сообщения всё равно вливаются |
 | `phoneCancel: {afterMs, uuid}` | кадр `cancelled` с чужим uuid через `afterMs` после первого `send` с uuid |
 
-`system/init` несёт `claude_code_version: '2.1.317'` и `capabilities`
+`system/init` несёт `claude_code_version: '2.1.317'` (своя версия — `init.claudeCodeVersion`) и `capabilities`
 (`interrupt_receipt_v1`, `interrupt_cancel_queued_v1`, `interrupt_send_now_v1`,
 `msg_lifecycle_v1`). Влитые в оборванный ход сообщения закрываются как
 обычно (`completed` до `result`) — для них живого CLI не снимали.
 
 ## Что можно проверить после прогона
 
-`driver.sent`, `driver.permissionRequests`, `driver.executedTools`,
+`driver.sent`, `driver.permissionRequests`, `driver.permissionLog` (каждый ответ
+`canUseTool`: `{name, behavior, message?, updatedInput?}`), `driver.executedTools`,
 `driver.questionAnswers` (что пришло в `updatedInput.answers` каждого
 отвеченного вопроса), `driver.permissionMode`, `driver.interrupted`,
 `driver.disposed` — чтобы

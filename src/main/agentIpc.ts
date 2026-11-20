@@ -2,12 +2,16 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFileSync } from 'node:fs'
 import { CHANNELS } from '../shared/channels'
 import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
+import { projectKey } from '../shared/projects'
 import type {
   EffortLevel,
   LaunchOverrides,
+  LayoutState,
   PanelSnapshot,
   RibbonSnapshot,
+  SessionSummary,
   TabId,
+  TabState,
   UserInput
 } from '../shared/types'
 import { buildFileIndex } from './files/fileIndex'
@@ -15,7 +19,9 @@ import { MAX_PER_CALL, type PathResolver } from './files/pathResolver'
 import { openInEditor, openPath, revealPath } from './files/fileActions'
 import { pasteMediaType, pasteRealPath } from './files/imagePaste'
 import { prepareImage } from './files/prepareImage'
-import type { TabController } from './tabs/TabController'
+import type { TabController, TabHistory } from './tabs/TabController'
+import type { LayoutStore } from './store/layoutStore'
+import type { AutonomyHost } from './autonomy/autonomyHost'
 import { EMPTY_PANEL } from './agent/panelData'
 import { withFault } from './testSeams/ipcFaults'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
@@ -24,7 +30,10 @@ import {
   sanitizeAnswer,
   sanitizeQuestionAnswers,
   sanitizeInput,
+  sanitizeLayoutPatch,
   sanitizeOverrides,
+  sanitizePlanDecision,
+  sanitizeQuestionNotes,
   sanitizeTabPatch
 } from './tabs/sanitize'
 
@@ -43,6 +52,12 @@ export interface AgentIpcDeps {
   userData: string
   /** Opens Claude Code in a console in this folder. */
   openTerminal: (cwd: string) => void
+  /** userData/layout.json, shared with the controller. */
+  layout: LayoutStore
+  /** Past conversations of a folder, for a project in the sidebar. */
+  history: Pick<TabHistory, 'list'>
+  /** The per-tab autonomy cores (stage 3). */
+  autonomy?: Pick<AutonomyHost, 'hold' | 'answerNow' | 'remoteWanted'>
 }
 
 function isString(value: unknown): value is string {
@@ -223,6 +238,10 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!session) return
     // The session name the phone shows is the tab's title.
     const title = controller.list().find((tab) => tab.id === id)?.title
+    // The person's own switch is what the core keeps on (decision 9) — told
+    // before the CLI answers: that may take a minute, and a first attempt
+    // that fails is the core's to retry.
+    deps.autonomy?.remoteWanted(id, enabled)
     await session.setRemote(enabled, title)
   })
 
@@ -276,19 +295,104 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     broker.answer(requestId, sanitizeAnswer(answer))
   })
 
-  ipcMain.handle(CHANNELS.questionAnswer, (_e, id: unknown, toolUseId: unknown, answers: unknown) => {
-    if (!isString(id) || !isString(toolUseId)) return
-    const clean = sanitizeQuestionAnswers(answers)
-    // Nothing usable is no answer: the card stays open rather than sending an empty one.
-    if (Object.keys(clean).length === 0) return
-    manager.get(id)?.answerQuestion(toolUseId, clean)
+  // The fourth argument is the comments on the chosen options; which of them
+  // belong to a chosen option is the session's call, which knows the options.
+  ipcMain.handle(
+    CHANNELS.questionAnswer,
+    (_e, id: unknown, toolUseId: unknown, answers: unknown, notes: unknown) => {
+      if (!isString(id) || !isString(toolUseId)) return
+      const clean = sanitizeQuestionAnswers(answers)
+      // Nothing usable is no answer: the card stays open rather than sending an empty one.
+      if (Object.keys(clean).length === 0) return
+      manager.get(id)?.answerQuestion(toolUseId, clean, sanitizeQuestionNotes(notes))
+    }
+  )
+
+  // Anything but a literal true is not an approval, and an unusable decision
+  // is no answer: the card stays open.
+  ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, given: unknown) => {
+    if (!isString(id) || !isString(requestId)) return
+    const decision = sanitizePlanDecision(given)
+    if (decision === null) return
+    return manager.get(id)?.answerPlan(requestId, decision)
   })
 
-  ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, approve: unknown) => {
-    if (!isString(id) || !isString(requestId)) return
-    // Anything but a literal true is not an approval.
-    manager.get(id)?.answerPlan(requestId, approve === true)
+  // — этап 2: проекты и раскладка.
+  const { layout } = deps
+
+  /**
+   * The folder a project request may act on, as main knows it: a project's
+   * first spelling (П13), or the folder of an open chat. Anything else — a
+   * folder the window made up — is null. A folder on another machine
+   * (`hostId`) is none until этап 6 can reach it.
+   */
+  const knownFolder = (cwd: unknown, hostId: unknown): string | null => {
+    if (!isString(cwd) || cwd === '') return null
+    if (hostId !== undefined && hostId !== '') return null
+    const key = projectKey(cwd)
+    const project = layout.get().projects.find((p) => !p.hostId && projectKey(p.cwd) === key)
+    if (project) return project.cwd
+    return controller.list().find((tab) => projectKey(tab.cwd) === key)?.cwd ?? null
+  }
+
+  ipcMain.handle(CHANNELS.layoutGet, (): LayoutState => layout.get())
+
+  // One patch, one write, one layoutChanged: the panes (live chats only, as
+  // setPanes keeps them) and the widths for their new count together. setPanes
+  // then finds them in place and only starts the agents.
+  ipcMain.handle(CHANNELS.layoutSet, async (_e, given: unknown): Promise<LayoutState> => {
+    const patch = sanitizeLayoutPatch(given)
+    if (patch.panes) {
+      const live = new Set(controller.list().map((tab) => tab.id))
+      patch.panes = patch.panes.filter((id) => live.has(id))
+    }
+    layout.patch(patch)
+    if (patch.panes) await controller.setPanes(patch.panes)
+    return layout.get()
   })
+
+  // A project with open chats stays: nothing changes.
+  ipcMain.handle(CHANNELS.projectForget, (_e, cwd: unknown, hostId: unknown): LayoutState => {
+    if (!isString(cwd) || cwd === '' || (hostId !== undefined && !isString(hostId))) return layout.get()
+    const open = controller.list().map((tab) => projectKey(tab.cwd))
+    layout.forgetProject(cwd, open, hostId === '' ? undefined : hostId)
+    return layout.get()
+  })
+
+  ipcMain.handle(
+    CHANNELS.projectHistory,
+    (_e, cwd: unknown, hostId: unknown): Promise<SessionSummary[]> =>
+      // e2e sees the sidebar's «Загружаю…» and «Не удалось прочитать историю» through this.
+      withFault(CHANNELS.projectHistory, async () => {
+        const folder = knownFolder(cwd, hostId)
+        return folder === null ? [] : deps.history.list(folder)
+      })
+  )
+
+  ipcMain.handle(
+    CHANNELS.projectOpenSession,
+    (_e, cwd: unknown, sessionId: unknown, title: unknown, hostId: unknown): TabState | null => {
+      if (!isString(sessionId) || sessionId === '') return null
+      const folder = knownFolder(cwd, hostId)
+      if (folder === null) return null
+      return controller.openSession(folder, sessionId, isString(title) ? title : undefined)
+    }
+  )
+
+
+  // The timer of a question or plan card: stop it, or answer now. Only a known
+  // tab and short strings reach the host.
+  const autonomyCall = (id: unknown, cardId: unknown, run: (id: TabId, cardId: string) => void | undefined): void => {
+    if (!isString(id) || !isString(cardId) || id.length > 200 || cardId.length > 200) return
+    if (!controller.list().some((tab) => tab.id === id)) return
+    run(id, cardId)
+  }
+  ipcMain.handle(CHANNELS.autonomyHold, (_e, id: unknown, cardId: unknown): void =>
+    autonomyCall(id, cardId, (t, c) => deps.autonomy?.hold(t, c))
+  )
+  ipcMain.handle(CHANNELS.autonomyAnswerNow, (_e, id: unknown, cardId: unknown): void =>
+    autonomyCall(id, cardId, (t, c) => deps.autonomy?.answerNow(t, c))
+  )
 
   ipcMain.handle(CHANNELS.permissionRules, () => withFault(CHANNELS.permissionRules, () => broker.rules()))
 

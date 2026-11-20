@@ -5,9 +5,12 @@ import {
   type Attachment,
   type EffortLevel,
   type LaunchOverrides,
+  type LayoutPatch,
   type PermissionAnswer,
   type PermissionMode,
+  type PlanDecision,
   type RendererErrorReport,
+  type TabAutonomyRecord,
   type TabState,
   type UserInput
 } from '../../shared/types'
@@ -83,7 +86,16 @@ export function sanitizeEditorCommand(value: unknown): string | undefined {
 const MAX_AGENT_PATH = 4096
 /** No accelerator is this long. */
 const MAX_HOTKEY = 100
-const BOOLEAN_SETTINGS = ['notificationsEnabled', 'soundEnabled', 'closeToTray', 'panelOpen'] as const
+const BOOLEAN_SETTINGS = [
+  'notificationsEnabled',
+  'soundEnabled',
+  'closeToTray',
+  'panelOpen',
+  'openAtLogin'
+] as const
+/** «Авто-да» waits at least a minute and at most an hour before answering by itself. */
+const AUTO_ANSWER_MINUTES_MIN = 1
+const AUTO_ANSWER_MINUTES_MAX = 60
 
 /**
  * The plain fields of a settings patch, each of its own type, and nothing
@@ -104,7 +116,31 @@ export function sanitizeSettingsFields(
   for (const key of BOOLEAN_SETTINGS) {
     if (typeof value[key] === 'boolean') out[key] = value[key] as boolean
   }
+  const minutes = value['autoAnswerMinutes']
+  if (
+    typeof minutes === 'number' &&
+    Number.isInteger(minutes) &&
+    minutes >= AUTO_ANSWER_MINUTES_MIN &&
+    minutes <= AUTO_ANSWER_MINUTES_MAX
+  ) {
+    out.autoAnswerMinutes = minutes
+  }
   return out
+}
+
+/**
+ * A tab's autonomy record as tabs.json keeps it: `working` and `remote` only
+ * as a literal true, `limitUntil` only as a finite time after the epoch.
+ * Anything else is dropped; a record with nothing left is none.
+ */
+export function sanitizeAutonomyRecord(value: unknown): TabAutonomyRecord | undefined {
+  if (!isPlainObject(value)) return undefined
+  const out: TabAutonomyRecord = {}
+  if (value['working'] === true) out.working = true
+  if (value['remote'] === true) out.remote = true
+  const until = value['limitUntil']
+  if (typeof until === 'number' && Number.isFinite(until) && until > 0) out.limitUntil = until
+  return Object.keys(out).length === 0 ? undefined : out
 }
 
 /**
@@ -226,18 +262,134 @@ export function sanitizeQuestionAnswers(value: unknown): Record<string, string> 
   return out
 }
 
+/** A deny reason or a note on an option: a line or two from the person. */
+const MAX_NOTE = 2000
+/** What the user says with a plan decision. */
+const MAX_PLAN_COMMENT = 4000
+/** A plan the user edited: long, but not unbounded. */
+const MAX_PLAN = 100_000
+
+/**
+ * A text from the person, trimmed: nothing when it is not a string, empty
+ * after trimming, or longer than `max`. Never cut — a cut text says something
+ * else than what was written.
+ */
+function personText(value: unknown, max: number): string | undefined {
+  if (!isString(value)) return undefined
+  const text = value.trim()
+  return text !== '' && text.length <= max ? text : undefined
+}
+
+/**
+ * The user's comments on the options chosen in a question card: question text
+ * -> comment, trimmed. An empty or over-long comment is none.
+ */
+export function sanitizeQuestionNotes(value: unknown): Record<string, string> {
+  if (!isPlainObject(value)) return {}
+  const out: Record<string, string> = {}
+  let kept = 0
+  for (const [question, given] of Object.entries(value)) {
+    if (kept >= MAX_ANSWERS) break
+    const note = personText(given, MAX_NOTE)
+    if (note === undefined || question.length > MAX_QUESTION) continue
+    out[question] = note
+    kept += 1
+  }
+  return out
+}
+
+/**
+ * What the user decided about a plan, or null when it is no usable answer —
+ * the card then stays open. Only a literal true approves. An edited plan goes
+ * only with an approval; one that is there but unusable (not a string, empty,
+ * too long) spoils the whole decision rather than being dropped: otherwise the
+ * agent would carry out the plan the user had changed.
+ */
+export function sanitizePlanDecision(value: unknown): PlanDecision | null {
+  if (!isPlainObject(value)) return null
+  const approve = value['approve'] === true
+  const decision: PlanDecision = { approve }
+  const given = value['plan']
+  if (given !== undefined) {
+    if (!isString(given) || given.trim() === '' || given.length > MAX_PLAN) return null
+    if (approve) decision.plan = given
+  }
+  const comment = personText(value['comment'], MAX_PLAN_COMMENT)
+  if (comment !== undefined) decision.comment = comment
+  return decision
+}
+
 /**
  * An answer is allow or deny — anything else is a deny. A malformed payload
  * must never widen a permission, and `updatedInput` never crosses from the
  * window: it would let the window rewrite the tool call it is approving.
+ * «До конца сессии» goes only with an allow, and over `remember` the narrower
+ * answer wins: a session's permission must not be saved as a rule for ever.
+ * A reason goes only with a deny.
  */
 export function sanitizeAnswer(value: unknown): PermissionAnswer {
   if (typeof value !== 'object' || value === null) return { behavior: 'deny' }
   const answer = value as Record<string, unknown>
-  return {
-    behavior: answer['behavior'] === 'allow' ? 'allow' : 'deny',
+  const behavior = answer['behavior'] === 'allow' ? 'allow' : 'deny'
+  if (behavior === 'allow' && answer['forSession'] === true) return { behavior, forSession: true }
+  const out: PermissionAnswer = {
+    behavior,
     ...(answer['remember'] === true ? { remember: true } : {})
   }
+  const message = behavior === 'deny' ? personText(answer['message'], MAX_NOTE) : undefined
+  if (message !== undefined) out.message = message
+  return out
+}
+
+/** A split holds at most this many chats side by side. */
+const MAX_PANES = 4
+/** A tab id is a UUID; no id is this long. */
+const MAX_PANE_ID = 200
+/** No folder path is this long; a longer string is not worth a project lookup. */
+const MAX_LAYOUT_CWD = 4096
+
+/**
+ * What the window may change in the layout: the split's chats (ids, each
+ * once, at most four) and their widths (shares above zero, at most four), the
+ * sidebar, and one project's folding. Which chats are active and which
+ * folders are projects are main's to say, so they never come from here.
+ * Whether the ids are live chats is checked where they are used.
+ */
+export function sanitizeLayoutPatch(value: unknown): LayoutPatch {
+  if (!isPlainObject(value)) return {}
+  const patch: LayoutPatch = {}
+
+  const panes = value['panes']
+  if (Array.isArray(panes)) {
+    const kept: string[] = []
+    for (const id of panes) {
+      if (kept.length >= MAX_PANES) break
+      if (!isString(id) || id === '' || id.length > MAX_PANE_ID || kept.includes(id)) continue
+      kept.push(id)
+    }
+    patch.panes = kept
+  }
+
+  const widths = value['paneWidths']
+  if (Array.isArray(widths)) {
+    const kept: number[] = []
+    for (const w of widths) {
+      if (kept.length >= MAX_PANES) break
+      if (typeof w === 'number' && Number.isFinite(w) && w > 0) kept.push(w)
+    }
+    patch.paneWidths = kept
+  }
+
+  if (typeof value['sidebarCollapsed'] === 'boolean') patch.sidebarCollapsed = value['sidebarCollapsed']
+
+  const folding = value['projectCollapsed']
+  if (isPlainObject(folding)) {
+    const { cwd, collapsed } = folding
+    if (isString(cwd) && cwd !== '' && cwd.length <= MAX_LAYOUT_CWD && typeof collapsed === 'boolean') {
+      patch.projectCollapsed = { cwd, collapsed }
+    }
+  }
+  return patch
 }
 
 const MAX_ERROR_TEXT = 20_000

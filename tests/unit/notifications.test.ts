@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'vitest'
-import { notificationFor, shouldRaiseWindowForPermission } from '@main/notifications'
+import { describe, expect, test, vi } from 'vitest'
+import { alertNotification, alertPlan, notificationFor, shouldRaiseWindowForPermission } from '@main/notifications'
 import { DEFAULT_SETTINGS } from '@main/store/settingsStore'
 
 const base = {
@@ -72,5 +72,21 @@ describe('shouldRaiseWindowForPermission', () => {
 
   test('активной вкладки нет — не всплывает', () => {
     expect(shouldRaiseWindowForPermission(null, 't2')).toBe(false)
+  })
+})
+
+describe('alertNotification', () => {
+  test('alertNotification молчит при notificationsEnabled false', () => {
+    const off = { ...DEFAULT_SETTINGS, notificationsEnabled: false }
+    expect(alertPlan(off, 'Проект', 'Агент упал')).toBeNull()
+    const activate = vi.fn()
+    // Nothing is built, so Electron is not even asked.
+    expect(() => alertNotification({ settings: off, title: 'Проект', body: 'x', onActivate: activate })).not.toThrow()
+    expect(activate).not.toHaveBeenCalled()
+  })
+
+  test('при включённых — заголовок вкладки, звук по настройке', () => {
+    const on = { ...DEFAULT_SETTINGS, notificationsEnabled: true, soundEnabled: false }
+    expect(alertPlan(on, 'Проект', 'Агент упал')).toEqual({ title: 'Проект', body: 'Агент упал', silent: true })
   })
 })

@@ -82,7 +82,24 @@ export const CHANNELS = Object.freeze({
   commandsChanged: 'commands:changed',
   setupOutput: 'setup:output',
   setupLoginProgress: 'setup:loginProgress',
-  updateChanged: 'update:changed'
+  updateChanged: 'update:changed',
+
+  // — этап 2: проекты, раскладка, окно-заглушка
+  // renderer -> main (invoke)
+  layoutGet: 'layout:get',
+  layoutSet: 'layout:set',
+  projectHistory: 'projects:history',
+  projectOpenSession: 'projects:openSession',
+  projectForget: 'projects:forget',
+  rendererRetry: 'window:rendererRetry',
+  logsOpen: 'logs:open',
+  // main -> renderer (event)
+  layoutChanged: 'layout:changed',
+
+  // stage 3: autonomy
+  // renderer -> main (invoke)
+  autonomyHold: 'autonomy:hold',
+  autonomyAnswerNow: 'autonomy:answerNow'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -140,7 +157,18 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.setupCancel,
   CHANNELS.setupLogin,
   CHANNELS.updateGet,
-  CHANNELS.updateRestart
+  CHANNELS.updateRestart,
+  // — этап 2: проекты, раскладка, окно-заглушка
+  CHANNELS.layoutGet,
+  CHANNELS.layoutSet,
+  CHANNELS.projectHistory,
+  CHANNELS.projectOpenSession,
+  CHANNELS.projectForget,
+  CHANNELS.rendererRetry,
+  CHANNELS.logsOpen,
+  // stage 3: autonomy
+  CHANNELS.autonomyHold,
+  CHANNELS.autonomyAnswerNow
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
@@ -153,7 +181,9 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.commandsChanged,
   CHANNELS.setupOutput,
   CHANNELS.setupLoginProgress,
-  CHANNELS.updateChanged
+  CHANNELS.updateChanged,
+  // — этап 2: проекты, раскладка, окно-заглушка
+  CHANNELS.layoutChanged
 ])
 
 /** Fire-and-forget: the renderer sends, nothing comes back. */

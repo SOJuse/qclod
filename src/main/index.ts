@@ -1,17 +1,42 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  nativeTheme,
+  powerMonitor,
+  powerSaveBlocker,
+  shell
+} from 'electron'
+import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { APP_ID } from '../shared/appId'
 import { AFTER_HANG, RELOAD_PARAM } from '../shared/reloadReason'
-import { createMainWindow, hardenWebContents, offScreen, RENDERER_ENTRY, watchRenderer } from './window'
+import {
+  createMainWindow,
+  FALLBACK_ENTRY,
+  hardenWebContents,
+  offScreen,
+  RENDERER_ENTRY,
+  watchMount,
+  watchRenderer
+} from './window'
 import { ErrorLog, type ErrorEntry } from './system/errorLog'
+import { installMainErrorHandlers } from './system/mainErrors'
+import { registerFallbackIpc } from './fallbackIpc'
+import { FALLBACK_PARAM, type FallbackReason } from '../shared/fallbackReason'
 import { ReportThrottle } from './system/reportThrottle'
 import { registerBaseIpc } from './ipc'
 import { registerAgentIpc } from './agentIpc'
 import { withFault } from './testSeams/ipcFaults'
 import { loadSettings, saveSettings } from './store/settingsStore'
+import { LayoutStore } from './store/layoutStore'
 import { HotkeyRegistrar } from './hotkey/globalHotkey'
-import { createTray } from './tray'
+import { createTray, type TrayTone } from './tray'
+import { readTaskbarLight } from './system/systemTheme'
 import { CHANNELS } from '../shared/channels'
 import { AgentSessionManager } from './agent/AgentSessionManager'
 import { createDriverFactory } from './agent/createDriver'
@@ -22,13 +47,23 @@ import { loadTranscript } from './agent/transcript'
 import { TabController } from './tabs/TabController'
 import { pickDefaultCwd } from './tabs/defaultCwd'
 import { mergeDefaults, sanitizeErrorReport } from './tabs/sanitize'
-import { notifyIfNeeded, shouldRaiseWindowForPermission } from './notifications'
+import { alertNotification, notifyIfNeeded, shouldRaiseWindowForPermission } from './notifications'
 import { RendererOutbox } from './rendererOutbox'
 import { PathResolver } from './files/pathResolver'
 import { cleanupPasteDir } from './files/imagePaste'
 import { createUpdateSource, UpdateFlow } from './update/updater'
 import { openAgentTerminal, startVoiceTyping } from './system/console'
 import { locateAgent } from './setup/findAgent'
+import {
+  electronBlocker,
+  executionStateHelper,
+  KeepAwake,
+  USE_EXECUTION_STATE_HELPER
+} from './system/keepAwake'
+import { AutonomyHost } from './autonomy/autonomyHost'
+import { applyOpenAtLogin } from './system/loginItem'
+import { claimSingleInstance } from './system/singleInstance'
+import { QuitReason, sessionEnding } from './system/quitReason'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -82,8 +117,9 @@ async function confirmAutoAllow(win: BrowserWindow | null): Promise<boolean> {
     message: 'Qclod будет сам разрешать агенту всё, о чём он спросит',
     detail:
       'Агент сможет менять файлы и запускать команды в этой вкладке без вашего ответа. ' +
-      'Сохранённые запреты по-прежнему действуют. Режим запомнится для этой вкладки, ' +
-      'пока вы не выберете другой.'
+      'Сохранённые запреты по-прежнему действуют. Если на вопрос или план никто не ответит ' +
+      'за время из настроек «Автономность», Qclod ответит сам. Режим запомнится для этой ' +
+      'вкладки, пока вы не выберете другой.'
   })
   return response === 1
 }
@@ -101,19 +137,72 @@ function loadRenderer(win: BrowserWindow, afterHang = false): void {
 }
 
 /**
- * The renderer watchdog for this window (window.ts). e2e only: QCLOD_HANG_MS
- * shortens the wait before a hung page is killed.
+ * The static page for a window that will not start (fallback.html): no React,
+ * so it does not depend on the bundle that failed. The dev server serves it
+ * from the renderer root; a build has it next to index.html.
+ */
+function loadFallback(win: BrowserWindow, reason: FallbackReason): void {
+  if (win.isDestroyed()) return
+  const devServer = process.env['ELECTRON_RENDERER_URL']
+  if (devServer) {
+    const url = new URL('fallback.html', devServer.endsWith('/') ? devServer : devServer + '/')
+    url.searchParams.set(FALLBACK_PARAM, reason)
+    void win.loadURL(url.toString())
+  } else void win.loadFile(FALLBACK_ENTRY, { query: { [FALLBACK_PARAM]: reason } })
+}
+
+/** The watchdog of the current window; «Попробовать снова» clears its reload count. */
+let rendererWatch: { reset(): void } | null = null
+
+/**
+ * The renderer watchdogs for this window (window.ts): a page that crashes
+ * three times in a minute, fails to load, or never shows its first screen ends
+ * on the static page. e2e only: QCLOD_HANG_MS shortens the wait before a hung
+ * page is killed, QCLOD_MOUNT_MS the wait for the first screen.
  */
 function watchWindow(win: BrowserWindow, log: (e: ErrorEntry) => void): void {
   const hangMs = __QCLOD_TEST_SEAMS__ ? Number(process.env['QCLOD_HANG_MS']) || undefined : undefined
-  watchRenderer(win.webContents, { log, hangMs, reloadAfterHang: () => loadRenderer(win, true) })
+  const mountMs = __QCLOD_TEST_SEAMS__ ? Number(process.env['QCLOD_MOUNT_MS']) || undefined : undefined
+  const onGiveUp = (reason: FallbackReason): void => loadFallback(win, reason)
+  rendererWatch = watchRenderer(win.webContents, {
+    log,
+    hangMs,
+    reloadAfterHang: () => loadRenderer(win, true),
+    onGiveUp
+  })
+  watchMount(win.webContents, { log, ms: mountMs, onGiveUp })
 }
+
+// The start of this file has one permanent order. Each stage puts its piece in
+// its own place and moves nobody else's (tests/unit/startupOrder.test.ts):
+//   1. the askpass client and its exit               (stage 6, runAskpassClient)
+//   2. the userData override                         (app.setPath('userData', …))
+//   3. ErrorLog and installMainErrorHandlers         (below)
+//   4. the single-instance lock                      (stage 3, claimSingleInstance)
+//   5. command-line switches                         (stage 5, app.commandLine.appendSwitch)
+// and then app.whenReady().
 
 // Tests point the app at a throwaway profile so runs cannot affect each other
 // or the real one.
 const userDataOverride = process.env['QCLOD_USER_DATA']
 if (userDataOverride) app.setPath('userData', userDataOverride)
 
+// What broke, for whoever has to find out why (system/errorLog.ts). Errors the
+// main process throws are written down as well as printed, from here on: one
+// thrown before the app is ready is the one nobody would otherwise see.
+const errorLog = new ErrorLog(join(app.getPath('userData'), 'logs'))
+installMainErrorHandlers(process, (e) => errorLog.write(e))
+
+// One Qclod per profile (system/singleInstance.ts). A second one only raises the
+// window of the first and quits; it must start nothing, so everything below that
+// needs the app ready is behind gotLock. The first one may still be starting when
+// the second arrives: the raise waits for the window.
+let onSecondInstance: (() => void) | null = null
+let secondPending = false
+const gotLock = claimSingleInstance(app, () => {
+  if (onSecondInstance) onSecondInstance()
+  else secondPending = true
+})
 // The tray keeps the app alive after its window closes, which a headless test
 // run cannot shut down cleanly.
 const headless = process.env['QCLOD_HEADLESS'] === '1'
@@ -129,35 +218,21 @@ app.on('web-contents-created', (_e, contents) => {
   hardenWebContents(contents)
 })
 
-app.whenReady().then(async () => {
+if (gotLock) void app.whenReady().then(async () => {
   // No default menu: its accelerators (Close Window, Reload) would fight ours.
   Menu.setApplicationMenu(null)
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
+  // Start at login: an installed build only, and never from an e2e run.
+  const syncLoginItem = (): void => {
+    if (!__QCLOD_TEST_SEAMS__) applyOpenAtLogin(app, settings.openAtLogin)
+  }
+  syncLoginItem()
+  // Why Qclod ends: a session end or an update restart leaves the tabs marked
+  // as working for the next start (system/quitReason.ts); before-quit hands it to the host.
+  const quitReason = new QuitReason()
+  powerMonitor.on('shutdown', () => sessionEnding(quitReason, autonomy))
 
-  // What broke, for whoever has to find out why (system/errorLog.ts). Errors
-  // the main process throws are written down as well as printed.
-  const errorLog = new ErrorLog(join(userData, 'logs'))
-  process.on('uncaughtExceptionMonitor', (err) => {
-    errorLog.write({
-      source: 'main',
-      message: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-      at: Date.now()
-    })
-  })
-  // A promise nobody caught. Electron only warns about it and the app goes
-  // on, as it still does: listening only quiets the warning, so it is
-  // printed here, and written down.
-  process.on('unhandledRejection', (reason) => {
-    console.error('Unhandled promise rejection in main:', reason)
-    errorLog.write({
-      source: 'main',
-      message: reason instanceof Error ? reason.message : String(reason),
-      stack: reason instanceof Error ? reason.stack : undefined,
-      at: Date.now()
-    })
-  })
   // A repeating or hostile sender must not push the first, most useful error
   // out of the log (system/reportThrottle.ts).
   const reportGate = new ReportThrottle()
@@ -234,6 +309,57 @@ app.whenReady().then(async () => {
     toggleWindow
   )
 
+  // The machine stays awake while an agent works or waits for the person
+  // (system/keepAwake.ts). An off-screen test run holds nothing.
+  const keepAwake = new KeepAwake(
+    offScreen || headless
+      ? []
+      : [
+          electronBlocker(powerSaveBlocker),
+          ...(process.platform === 'win32' && USE_EXECUTION_STATE_HELPER
+            ? [executionStateHelper(spawn, process.pid)]
+            : [])
+        ]
+  )
+  keepAwake.onChange(() => tray?.rebuild())
+
+  // The «авто-да» timer, read on every use so the setting applies to new cards
+  // at once. e2e shortens it to milliseconds and takes the jitter out
+  // (buildFlags.d.ts); the ribbon line and the core both read this one.
+  const autoAnswerMs = (): number => {
+    const seam = __QCLOD_TEST_SEAMS__ ? Number(process.env['QCLOD_AUTO_ANSWER_MS']) : 0
+    return seam > 0 ? seam : settings.autoAnswerMinutes * 60_000
+  }
+
+  // One autonomy core per tab (autonomy/autonomyHost.ts). The controller does
+  // not exist yet, so the host reaches it through these.
+  const autonomy = new AutonomyHost({
+    controller: {
+      list: () => controller.list(),
+      revive: (id) => controller.revive(id),
+      notice: (id, text, tone) => controller.notice(id, text, tone),
+      setAutonomyRecord: (id, record) => controller.setAutonomyRecord(id, record)
+    },
+    manager: { get: (id) => manager.get(id) },
+    autoAnswerMs,
+    alert: (id, text) => {
+      const tab = controller.list().find((t) => t.id === id)
+      if (!tab || offScreen) return
+      alertNotification({
+        settings,
+        title: tab.title,
+        body: text,
+        onActivate: () => {
+          showWindow()
+          send(CHANNELS.activateTab, id)
+        }
+      })
+    },
+    onAwakeChange: (needed) => keepAwake.set(needed),
+    ...(__QCLOD_TEST_SEAMS__ && process.env['QCLOD_AUTONOMY_NO_JITTER'] === '1' ? { random: () => 0 } : {})
+  })
+  powerMonitor.on('resume', () => autonomy.systemResumed())
+
   // The question is put in the tab's own ribbon and answered from there.
   // A window that is gone cannot answer, so the broker denies rather than
   // leaving the agent waiting forever.
@@ -268,8 +394,17 @@ app.whenReady().then(async () => {
         request.auto === true
       ),
     confirmBypass: () => confirmBypass(mainWindow),
-    confirmAutoAllow: () => confirmAutoAllow(mainWindow)
+    confirmAutoAllow: () => confirmAutoAllow(mainWindow),
+    // The same length the core counts down; under the e2e seam a fraction.
+    autoAnswerMinutes: () => autoAnswerMs() / 60_000,
+    onClosed: (id) => broker.clearSession(id)
   })
+  // e2e asks whether a chat still holds its agent session (stage2.spec.ts).
+  // Only the e2e build has it (buildFlags.d.ts).
+  if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_FAKE_SDK']) {
+    ;(globalThis as { __qclodHasSession?: (id: TabId) => boolean }).__qclodHasSession = (id) =>
+      manager.get(id) !== undefined
+  }
 
   // Under the fixture the past conversations come from the environment too,
   // so a history test never touches anyone's real session files: a session
@@ -298,9 +433,15 @@ app.whenReady().then(async () => {
     return process.env['CLAUDE_CONFIG_DIR'] ? loadTranscript(sessionId, cwd) : []
   }
 
-  const controller = new TabController({
+  // userData/layout.json: the split, the active chat, the projects. The
+  // controller and the IPC share it; every change reaches the window.
+  const layout = new LayoutStore(userData, (l) => send(CHANNELS.layoutChanged, l))
+
+  const controller: TabController = new TabController({
     manager,
+    autonomy,
     storeDir: userData,
+    layout,
     defaultCwd: pickDefaultCwd(app.isPackaged, process.cwd(), homedir()),
     // «По умолчанию» in settings means exactly that: a new tab starts with it.
     getDefaults: () => ({ ...settings.defaults }),
@@ -311,12 +452,14 @@ app.whenReady().then(async () => {
     onChanged: (tabs) => {
       send(CHANNELS.tabsChanged, tabs)
       tray?.rebuild()
+      tray?.refresh()
     },
     onRibbon: (event) => outbox.ribbon(event),
     onPanel: (event) => send(CHANNELS.panelChanged, event),
     onCommands: (event) => send(CHANNELS.commandsChanged, event),
     onStatus: (event) => {
       send(CHANNELS.statusChanged, event)
+      tray?.refresh()
       const tab = controller.list().find((t) => t.id === event.tabId)
       // Nor does it show toasts.
       if (!tab || offScreen) return
@@ -339,9 +482,11 @@ app.whenReady().then(async () => {
     getSettings: () => settings,
     setSettings: (patch) => {
       const previousHotkey = settings.globalHotkey
+      const previousLogin = settings.openAtLogin
       settings = mergeDefaults(settings, patch)
       saveSettings(userData, settings)
       if (settings.globalHotkey !== previousHotkey) hotkey.apply(settings.globalHotkey)
+      if (settings.openAtLogin !== previousLogin) syncLoginItem()
       return settings
     },
     // Tabs that stopped for want of a login carry on by themselves.
@@ -359,8 +504,11 @@ app.whenReady().then(async () => {
     controller,
     manager,
     broker,
+    layout,
+    history,
     resolver: new PathResolver(),
     getEditorCommand: () => settings.editorCommand,
+    autonomy,
     userData,
     openTerminal: (cwd) => {
       // e2e records the call instead of opening a console (buildFlags.d.ts).
@@ -409,12 +557,35 @@ app.whenReady().then(async () => {
       })
     : null
   ipcMain.handle(CHANNELS.updateGet, () => updates?.state ?? { kind: 'idle' })
-  ipcMain.handle(CHANNELS.updateRestart, () => updates?.restart() ?? false)
+  ipcMain.handle(CHANNELS.updateRestart, () => {
+    const ready = updates?.state.kind === 'ready'
+    if (ready) quitReason.markInterrupted()
+    return updates?.restart() ?? false
+  })
 
   mainWindow = createMainWindow()
   watchWindow(mainWindow, (e) => errorLog.write(e))
+  mainWindow.on('session-end', () => sessionEnding(quitReason, autonomy))
   loadRenderer(mainWindow)
+  onSecondInstance = showWindow
+  if (secondPending) showWindow()
 
+  // The static page's ways out. The retry starts the count of reloads afresh.
+  registerFallbackIpc({
+    ipcMain,
+    openPath: (path) => shell.openPath(path),
+    userData,
+    resetWatch: () => rendererWatch?.reset(),
+    reload: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) loadRenderer(mainWindow)
+    }
+  })
+
+  // The glyph's tone follows the taskbar, not the apps' theme (decision 13):
+  // the registry first, the apps' theme until it answers or when it cannot.
+  let taskbarLight: boolean | null = null
+  const trayTone = (): TrayTone =>
+    taskbarLight === null ? (nativeTheme.shouldUseDarkColors ? 'light' : 'dark') : taskbarLight ? 'dark' : 'light'
   const tray = headless
     ? null
     : (createTray({
@@ -424,8 +595,21 @@ app.whenReady().then(async () => {
           showWindow()
           send(CHANNELS.activateTab, id)
         },
-        toggleWindow
-      }) as ReturnType<typeof createTray> & { rebuild: () => void })
+        toggleWindow,
+        getTone: trayTone,
+        isKeepingAwake: () => keepAwake.active
+      }))
+
+  const rereadTaskbarTheme = (): void => {
+    void readTaskbarLight().then((light) => {
+      taskbarLight = light
+      tray?.refresh()
+    })
+  }
+  if (tray) {
+    rereadTaskbarTheme()
+    nativeTheme.on('updated', rereadTaskbarTheme)
+  }
 
   mainWindow.on('close', (event) => {
     if (quitting || headless || !settings.closeToTray) return
@@ -446,12 +630,15 @@ app.whenReady().then(async () => {
     quitting = true
     event.preventDefault()
     hotkey.release()
+    // Before the sessions go down: their ending is no crash and no idle to write down.
+    autonomy.quitting(quitReason.deliberate)
     broker.cancelAll()
     void controller.disposeAll().finally(() => app.quit())
   })
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll()
+    keepAwake.dispose()
   })
 
   app.on('activate', () => {

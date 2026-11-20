@@ -1,5 +1,5 @@
-import { test, expect, type Locator } from '@playwright/test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { test, expect, type ElectronApplication, type Locator } from '@playwright/test'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { launchQclod } from './helpers/launch'
@@ -23,23 +23,24 @@ const HISTORY = JSON.stringify({
   messages: {}
 })
 
-test('история: загрузка, затем ошибка с причиной и «Повторить»', async () => {
+test('история в боковой панели: загрузка, затем ошибка с причиной и «Повторить»', async () => {
   const { app, win } = await launchQclod({
     env: {
       QCLOD_FAKE_HISTORY: HISTORY,
-      QCLOD_FAKE_SLOW: '{"history:list":1500}',
-      QCLOD_FAKE_FAIL: '{"history:list":"нет доступа"}'
+      QCLOD_FAKE_SLOW: '{"projects:history":1500}',
+      QCLOD_FAKE_FAIL: '{"projects:history":"нет доступа"}'
     }
   })
   try {
-    await win.keyboard.press('Control+H')
-    const loading = win.locator('[data-testid="history-screen"] [data-state="loading"]')
-    await expect(loading).toContainText('Читаю историю…')
+    const sidebar = win.locator('[data-testid="sidebar"]')
+    const loading = sidebar.locator('[data-state="loading"]')
+    await expect(loading).toContainText('Загружаю…')
     await expect(loading).toHaveAttribute('role', 'status')
+    // A fast answer never flashes it (S2-R18): it fades in after a short wait.
     await shownAfterDelay(loading)
     await shot(win, '09-history-loading')
 
-    const err = win.locator('[data-testid="history-screen"] [data-state="error"]')
+    const err = sidebar.locator('[data-state="error"]')
     await expect(err).toContainText('Не удалось прочитать историю', { timeout: 10000 })
     await expect(err).toContainText('нет доступа')
     // Electron's wrapping of the main side's message is not shown.
@@ -52,36 +53,69 @@ test('история: загрузка, затем ошибка с причин�
   }
 })
 
-test('история: «Повторить» читает заново и показывает список', async () => {
-  // The empty tab reads the history once by itself; the screen's first read fails too.
+test('история в боковой панели: «Повторить» читает заново и показывает список', async () => {
   const { app, win } = await launchQclod({
     env: {
       QCLOD_FAKE_HISTORY: HISTORY,
-      QCLOD_FAKE_FAIL: '{"history:list":"нет доступа"}',
-      QCLOD_FAKE_FAIL_TIMES: '{"history:list":2}'
+      QCLOD_FAKE_FAIL: '{"projects:history":"нет доступа"}',
+      QCLOD_FAKE_FAIL_TIMES: '{"projects:history":1}'
     }
   })
   try {
-    await expect(win.locator('[data-testid="empty-tab"]')).toBeVisible({ timeout: 15000 })
-    await win.keyboard.press('Control+H')
-    const err = win.locator('[data-testid="history-screen"] [data-state="error"]')
-    await expect(err).toBeVisible()
+    const err = win.locator('[data-testid="sidebar"] [data-state="error"]')
+    await expect(err).toBeVisible({ timeout: 15000 })
     await err.getByRole('button', { name: 'Повторить' }).click()
-    await expect(win.locator('[data-testid="history-item"]')).toHaveCount(1)
+    await expect(win.locator('[data-testid="sidebar-session"]')).toHaveCount(1)
+    await expect(err).toHaveCount(0)
   } finally {
     await app.close()
   }
 })
 
-test('история: поиск без совпадений называет запрос', async () => {
-  const { app, win } = await launchQclod({ env: { QCLOD_FAKE_HISTORY: HISTORY } })
+test('история в боковой панели: при перечитывании список стоит на месте, «Загружаю…» не мигает', async () => {
+  const { app, win } = await launchQclod({
+    env: { QCLOD_FAKE_HISTORY: HISTORY, QCLOD_FAKE_SLOW: '{"projects:history":1500}' }
+  })
   try {
-    await win.keyboard.press('Control+H')
-    await expect(win.locator('[data-testid="history-item"]')).toHaveCount(1)
-    await win.locator('[data-testid="history-query"]').fill('zzz')
-    const empty = win.locator('[data-testid="history-screen"] [data-state="empty"]')
-    await expect(empty).toContainText('Ничего не нашлось по «zzz»')
-    await shot(win, '09-history-no-match')
+    const sidebar = win.locator('[data-testid="sidebar"]')
+    const sessions = sidebar.locator('[data-testid="sidebar-session"]')
+    await expect(sessions).toHaveCount(1, { timeout: 15000 })
+    await sessions.first().click()
+    // Opened, it is a chat: nothing past is left to show while the list is read again.
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+    await expect(sessions).toHaveCount(0)
+
+    // Closed, it is past again at once; the re-read under way (1.5 s) does not wipe it.
+    await win.locator('[data-testid="tab"].is-active .tab-close').click()
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(1)
+    // Counted right now, not waited for: a «Загружаю…» in between must fail the test.
+    for (let i = 0; i < 8; i++) {
+      expect(await sidebar.locator('[data-state="loading"]').count()).toBe(0)
+      expect(await sessions.count()).toBe(1)
+      await win.waitForTimeout(250)
+    }
+  } finally {
+    await app.close()
+  }
+})
+
+test('история в боковой панели: «Начать заново» перечитывает её, как закрытие чата', async () => {
+  // The first read fails; nothing but the restart asks again.
+  const { app, win } = await launchQclod({
+    env: {
+      QCLOD_FAKE_HISTORY: HISTORY,
+      QCLOD_FAKE_FAIL: '{"projects:history":"нет доступа"}',
+      QCLOD_FAKE_FAIL_TIMES: '{"projects:history":1}'
+    }
+  })
+  try {
+    const err = win.locator('[data-testid="sidebar"] [data-state="error"]')
+    await expect(err).toBeVisible({ timeout: 15000 })
+    await win.keyboard.press('Control+K')
+    await win.locator('[data-testid="action-query"]').fill('перезапустить')
+    await win.keyboard.press('Enter')
+    await expect(win.locator('[data-testid="sidebar-session"]')).toHaveCount(1, { timeout: 15000 })
+    await expect(err).toHaveCount(0)
   } finally {
     await app.close()
   }
@@ -137,6 +171,7 @@ test('вкладки и версия не прочитались при стар
     await win.locator('[data-testid="open-settings"]').click()
     await expect(win.locator('[data-testid="settings"]')).toBeVisible()
     // An unknown version is left out, not printed as a gap.
+    await win.locator('[data-testid="settings-nav-about"]').click()
     await expect(win.locator('.settings-version')).toHaveText(/^Qclod · /)
     expect(errors).toEqual([])
   } finally {
@@ -174,6 +209,7 @@ test('настройки: хоткей и правила не прочитали
     await expect(hotkey).toContainText('нет ответа')
     await expect(hotkey.getByRole('button', { name: 'Повторить' })).toBeVisible()
 
+    await win.locator('[data-testid="settings-nav-permissions"]').click()
     const rules = win.locator('[data-testid="rules-error"]')
     await expect(rules).toContainText('Не удалось прочитать правила')
     await expect(rules).toContainText('хранилище закрыто')
@@ -189,6 +225,7 @@ test('настройки: сохранение упало — «Не сохра�
   const { app, win } = await launchQclod({ env: { QCLOD_FAKE_FAIL: '{"settings:set":"диск полон"}' } })
   try {
     await win.locator('[data-testid="open-settings"]').click()
+    await win.locator('[data-testid="settings-nav-notifications"]').click()
     await win.locator('[data-testid="setting-soundEnabled"]').click()
     const failed = win.locator('[data-testid="settings-save-failed"]')
     await expect(failed).toHaveText('Не сохранилось: диск полон')
@@ -232,13 +269,17 @@ test('лента не загрузилась — ошибка и «Повтор�
   }
 })
 
-test('панель без данных — «Появится после первого ответа», агентов — «Агентов нет»', async () => {
+test('панель без данных — ни одного уверенного нуля, серверов — «Серверов нет»', async () => {
   const { app, win } = await launchQclod({ script: { steps: [] } })
   try {
     const panel = win.locator('[data-testid="side-panel"]')
     await expect(panel).toBeVisible({ timeout: 15000 })
-    await expect(panel.locator('[data-testid="panel-empty"]').first()).toContainText('Появится после первого ответа')
-    await expect(panel.locator('[data-testid="panel-empty"]', { hasText: 'Агентов нет' })).toHaveCount(1)
+    // Nothing sent yet: no cost is shown rather than $0 (the «Расход» section went into the session row).
+    await expect(panel.locator('[data-testid="panel-session"]')).toBeVisible()
+    await expect(panel.locator('[data-testid="panel-cost"]')).toHaveCount(0)
+    await expect(panel).not.toContainText('$0')
+    // No agents section any more (решение 10): the empty MCP list speaks for itself.
+    await expect(panel.locator('[data-testid="panel-empty"]', { hasText: 'Серверов нет' })).toHaveCount(1)
     await shot(win, '09-panel-empty')
   } finally {
     await app.close()
@@ -249,9 +290,12 @@ test('палитра Ctrl+K: ничего не нашлось', async () => {
   const { app, win } = await launchQclod()
   try {
     await win.keyboard.press('Control+K')
-    await win.locator('[data-testid="action-query"]').fill('zzzz')
+    // Not Latin: the palette searches the folder's files too, and their paths are Latin.
+    await win.locator('[data-testid="action-query"]').fill('щщщщ')
     const empty = win.locator('[data-testid="action-palette"] [data-state="empty"]')
-    await expect(empty).toContainText('Такого действия нет')
+    // One search over everything now (task 7), so not «Такого действия нет».
+    await expect(empty).toContainText('Ничего не нашлось')
+    await expect(win.locator('[data-testid="action-item"]')).toHaveCount(0)
     await shot(win, '09-palette-empty')
   } finally {
     await app.close()
@@ -333,5 +377,96 @@ test('ошибка отрисовки панели не гасит окно — 
   } finally {
     await app.close()
     rmSync(other, { recursive: true, force: true })
+  }
+})
+
+/**
+ * The window that will not start (task 17). Runs in the page through main:
+ * after a renderer crash Playwright's Page is gone for good, while the
+ * webContents lives on with whatever page was loaded next.
+ */
+function inPageOf<T>(app: ElectronApplication, code: string): Promise<T> {
+  return app.evaluate(
+    ({ BrowserWindow }, js) => BrowserWindow.getAllWindows()[0]!.webContents.executeJavaScript(js),
+    code
+  ) as Promise<T>
+}
+const present = (testid: string): string => `document.querySelector('[data-testid="${testid}"]') !== null`
+
+/** Saves what the window shows now, taken by main, so it works with no Page left. */
+async function shotFromMain(app: ElectronApplication, name: string): Promise<void> {
+  const png = await app.evaluate(async ({ BrowserWindow }) => {
+    const image = await BrowserWindow.getAllWindows()[0]!.webContents.capturePage()
+    return image.toPNG().toString('base64')
+  })
+  const dir = process.env['QCLOD_SHOT_DIR'] ?? 'tests/.artifacts/shots'
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, name + '.png'), Buffer.from(png, 'base64'))
+}
+
+test('окно упало четыре раза: заглушка со способом выйти, «Попробовать снова» возвращает окно', async () => {
+  test.setTimeout(90_000)
+  const { app, profile } = await launchQclod()
+  try {
+    // Crashed from outside, as a real renderer crash would be: no test seam is involved.
+    // The first three are reloaded; the fourth leaves the static page.
+    for (let i = 0; i < 4; i++) {
+      await app.evaluate(
+        ({ BrowserWindow }) =>
+          new Promise<void>((resolve) => {
+            const contents = BrowserWindow.getAllWindows()[0]!.webContents
+            contents.once('did-finish-load', () => resolve())
+            contents.forcefullyCrashRenderer()
+          })
+      )
+    }
+    await expect.poll(() => inPageOf(app, present('fallback-retry')), { timeout: 15_000 }).toBe(true)
+    expect(await inPageOf(app, present('fallback-logs'))).toBe(true)
+    expect(await inPageOf(app, present('fallback-close'))).toBe(true)
+    expect(await inPageOf(app, `document.querySelector('h1').textContent`)).toBe('Окно Qclod не запускается')
+    expect(await inPageOf(app, `document.querySelector('.fb-text').textContent`)).toContain('Окно трижды перезагрузилось и снова упало.')
+    // The page is the static one: nothing of the app is in it.
+    expect(await inPageOf(app, present('app-root'))).toBe(false)
+    await shotFromMain(app, '17-fallback')
+
+    // It was written down why.
+    const log = readFileSync(join(profile, 'logs', 'qclod.log'), 'utf8')
+    expect(log).toContain('giving up')
+
+    await inPageOf(app, `document.querySelector('[data-testid="fallback-retry"]').click()`)
+    await expect.poll(() => inPageOf(app, present('app-root')).catch(() => false), { timeout: 15_000 }).toBe(true)
+    expect(await inPageOf(app, present('fallback-retry'))).toBe(false)
+  } finally {
+    await app.close()
+  }
+})
+
+test('сборка окна не загрузилась: после ожидания та же заглушка, а не вечная заставка', async () => {
+  test.setTimeout(90_000)
+  // QCLOD_MOUNT_MS shortens the 15 s wait for the first screen.
+  const { app, profile } = await launchQclod({ env: { QCLOD_MOUNT_MS: '5000' } })
+  try {
+    // The script of the window cannot be fetched: the page loads, createRoot never runs.
+    await app.evaluate(({ BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0]!.webContents
+      contents.session.webRequest.onBeforeRequest({ urls: ['*://*/*.js', 'file:///*.js'] }, (details, callback) =>
+        callback({ cancel: /\/assets\/index-[^/]*\.js$/.test(details.url) })
+      )
+      contents.reload()
+    })
+    await expect
+      .poll(() => inPageOf(app, present('boot')).catch(() => null), { timeout: 5_000 })
+      .toBe(true)
+    await expect.poll(() => inPageOf(app, present('fallback-retry')), { timeout: 20_000 }).toBe(true)
+    expect(readFileSync(join(profile, 'logs', 'qclod.log'), 'utf8')).toContain('did not mount')
+    // It says what happened: the window did not open, not that it crashed three times.
+    expect(await inPageOf(app, `document.querySelector('.fb-text').textContent`)).toContain('Окно не открылось за 15 секунд.')
+
+    // The bundle is back: «Попробовать снова» loads the window.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.session.webRequest.onBeforeRequest(null))
+    await inPageOf(app, `document.querySelector('[data-testid="fallback-retry"]').click()`)
+    await expect.poll(() => inPageOf(app, present('app-root')).catch(() => false), { timeout: 15_000 }).toBe(true)
+  } finally {
+    await app.close()
   }
 })

@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { NO_AUTONOMY } from '../../shared/types'
 import type {
+  AutonomyView,
   BackgroundTask,
   EffortLevel,
   LimitWindow,
@@ -83,7 +85,8 @@ export const EMPTY_PANEL: PanelData = {
   mcp: [],
   projectSettings: null,
   queue: [],
-  backgroundTasks: []
+  backgroundTasks: [],
+  autonomy: NO_AUTONOMY
 }
 
 let lastPanelRev = 0
@@ -269,6 +272,14 @@ export class PanelCollector {
   /** The whole list each time: BackgroundTracker hands over a fresh one. */
   setBackgroundTasks(tasks: BackgroundTask[]): Partial<PanelData> {
     return this.patch({ backgroundTasks: tasks })
+  }
+
+  /**
+   * The tab's AutonomyCore view, whole each time (decision 2): timers, a limit
+   * wait, giving up. It lives in the panel so it survives a window reload.
+   */
+  setAutonomy(view: AutonomyView): Partial<PanelData> {
+    return this.patch({ autonomy: view })
   }
 
   private onInit(m: Record<string, unknown>): Partial<PanelData> {

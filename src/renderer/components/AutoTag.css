@@ -1,0 +1,11 @@
+.auto-tag {
+  flex: 0 0 auto;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+  color: var(--text-dim);
+  cursor: default;
+}

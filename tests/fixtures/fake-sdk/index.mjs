@@ -849,13 +849,23 @@ export function createFakeSdk(script = {}) {
     phoneCancelTimer.unref?.()
   }
 
-  /** The step boundary: what was sent mid-turn is taken into the turn. */
-  function* foldPending() {
+  /**
+   * The step boundary: what was sent mid-turn is taken into the turn, and
+   * the model answers it right there, before the turn's own steps go on —
+   * as the live CLI does (05a-queue-probe §1: `started(B)`, the reply to B,
+   * `completed(B)`, `result`). The answer is the message's own `turns[i]`
+   * (or `nextTurn`), counted like a message that starts a turn.
+   */
+  async function* foldPending() {
     while (pending.length > 0) {
+      if (turn.aborted) return
       const { uuid } = pending.shift()
       turn.folded.push(uuid)
       state.folded.push(uuid)
       yield* announce('started', uuid)
+      const reply = script.turns?.[answered] ?? script.nextTurn ?? []
+      answered += 1
+      yield* playTurn(reply)
     }
   }
 

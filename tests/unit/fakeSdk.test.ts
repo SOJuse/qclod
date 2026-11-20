@@ -1266,6 +1266,32 @@ describe('createFakeSdk: очередь команд CLI', () => {
     expect(frame['uuid']).not.toBe('B')
   })
 
+  test('влитое сообщение получает ответ в том же ходе, сразу после started (05a §1)', async () => {
+    const driver = createFakeSdk({ steps: [], turns: [three, [{ kind: 'text', text: 'бэ' }]] })
+    const r = reader(driver)
+    driver.send(said('A'), { uuid: 'A' })
+    await r.until(isType('assistant'))
+    driver.send(said('B'), { uuid: 'B' })
+    const tail = await r.until(frameIs('completed', 'A'))
+    const texts = tail
+      .filter(isType('assistant'))
+      .map((m) => (m['message'] as { content: Array<{ text?: string }> }).content[0]?.text)
+    expect(shape(tail)).toEqual([
+      'queued:B',
+      'started:B',
+      'assistant',
+      'assistant',
+      'assistant',
+      'completed:B',
+      'result/success',
+      'completed:A'
+    ])
+    // The answer to B comes at the boundary where B was taken, then A's turn goes on.
+    expect(texts).toEqual(['бэ', 'два', 'три'])
+    expect(tail.filter(isType('result'))).toHaveLength(1)
+    expect(tail.find(isType('result'))!['user_message_uuids']).toEqual(['A', 'B'])
+  })
+
   test('send без хода: queued и started до init, ход, result, completed после него', async () => {
     const driver = createFakeSdk({ steps: [], turns: [[{ kind: 'text', text: 'ок' }]] })
     const r = reader(driver)

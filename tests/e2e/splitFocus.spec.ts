@@ -31,8 +31,8 @@ test('клик по правой панели делает её активной
     const right = panes.last()
     const rightTab = await right.getAttribute('data-tab')
 
-    // Its title is part of the pane: a press there makes it active too, in place.
-    await left.locator('[data-testid="pane-title"]').click()
+    // Its header is part of the pane: a press there makes it active too, in place.
+    await left.locator('[data-testid="chat-header"]').click()
     await expect(left).toHaveClass(/is-focused/)
     await expect(frames.first()).toHaveClass(/is-active/)
     expect(await frameOf(frames.first())).toContain(ACCENT_RGB)

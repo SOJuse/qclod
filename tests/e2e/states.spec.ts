@@ -215,13 +215,17 @@ test('лента не загрузилась — ошибка и «Повтор�
   }
 })
 
-test('панель без данных — «Появится после первого ответа», агентов — «Агентов нет»', async () => {
+test('панель без данных — ни одного уверенного нуля, серверов — «Серверов нет»', async () => {
   const { app, win } = await launchQclod({ script: { steps: [] } })
   try {
     const panel = win.locator('[data-testid="side-panel"]')
     await expect(panel).toBeVisible({ timeout: 15000 })
-    await expect(panel.locator('[data-testid="panel-empty"]').first()).toContainText('Появится после первого ответа')
-    await expect(panel.locator('[data-testid="panel-empty"]', { hasText: 'Агентов нет' })).toHaveCount(1)
+    // Nothing sent yet: no cost is shown rather than $0 (the «Расход» section went into the session row).
+    await expect(panel.locator('[data-testid="panel-session"]')).toBeVisible()
+    await expect(panel.locator('[data-testid="panel-cost"]')).toHaveCount(0)
+    await expect(panel).not.toContainText('$0')
+    // No agents section any more (решение 10): the empty MCP list speaks for itself.
+    await expect(panel.locator('[data-testid="panel-empty"]', { hasText: 'Серверов нет' })).toHaveCount(1)
     await shot(win, '09-panel-empty')
   } finally {
     await app.close()

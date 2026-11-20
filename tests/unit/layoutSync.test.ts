@@ -204,4 +204,28 @@ describe('startLayoutSync', () => {
     expect(api.setLayout).toHaveBeenLastCalledWith({ panes: ['a', 'b', 'c'], paneWidths: [0.2, 0.3, 0.5] })
     warn.mockRestore()
   })
+
+  test('страница уходит (Ctrl+R) раньше тихой паузы — запись уходит сразу, а не теряется', async () => {
+    const store = fakeStore()
+    const api = {
+      getLayout: vi.fn(async () => empty()),
+      setLayout: vi.fn(async () => store.getState().layout),
+      onLayoutChanged: vi.fn(() => () => undefined)
+    }
+    const page = new EventTarget()
+    const stop = startLayoutSync(store as never, api as never, 300, page)
+    await vi.advanceTimersByTimeAsync(0)
+    store.setState({ paneTabIds: ['a', 'b'] })
+    await vi.advanceTimersByTimeAsync(100)
+    page.dispatchEvent(new Event('pagehide'))
+    expect(api.setLayout).toHaveBeenCalledTimes(1)
+    expect(api.setLayout).toHaveBeenLastCalledWith({ panes: ['a', 'b'], paneWidths: [] })
+    // Nothing waits any more: the timer does not write it a second time.
+    await vi.advanceTimersByTimeAsync(400)
+    expect(api.setLayout).toHaveBeenCalledTimes(1)
+    // Nothing pending: leaving writes nothing.
+    page.dispatchEvent(new Event('pagehide'))
+    expect(api.setLayout).toHaveBeenCalledTimes(1)
+    stop()
+  })
 })

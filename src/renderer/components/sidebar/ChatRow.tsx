@@ -1,17 +1,9 @@
 import { Smartphone, X } from 'lucide-react'
 import { hint } from '../../app/shortcuts'
 import { DRAG_CHAT } from '../../app/paneOps'
-import type { SessionStatus, TabId, TabState } from '../../../shared/types'
+import type { TabId, TabState } from '../../../shared/types'
 import { REMOTE_STATE_LABEL } from '../../../shared/remote'
-
-const STATUS_LABEL: Record<SessionStatus, string> = {
-  starting: 'запускается',
-  busy: 'работает',
-  waiting: 'ждёт ответа',
-  idle: 'простаивает',
-  stopped: 'не запущена',
-  error: 'ошибка'
-}
+import { STATUS_LABEL } from '../../labels'
 
 /** The chat's Remote Control word, or null while it is off: then the row says nothing of it. */
 function remoteWord(tab: TabState): string | null {

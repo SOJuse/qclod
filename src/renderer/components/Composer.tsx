@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, Image as ImageIcon, ImageOff, Mic, Paperclip, Square, X } from 'lucide-react'
+import { ArrowUp, Image as ImageIcon, ImageOff, Paperclip, Square, X } from 'lucide-react'
 import type {
   Attachment,
   CommandInfo,
@@ -37,6 +37,8 @@ import {
 import { longFieldClasses } from '../ui/longText'
 import { InlineMenu, type InlineMenuItem } from './InlineMenu'
 import { SlashMenu } from './SlashMenu'
+import { MicButton } from './composer/MicButton'
+import type { VoiceControls } from './composer/voice'
 import './Composer.css'
 
 interface Props {
@@ -85,6 +87,8 @@ interface Props {
   /** A long draft held back after the window froze and was reloaded (state/heldDrafts.ts). */
   heldDraft?: boolean
   onInsertHeldDraft?: () => void
+  /** Этап 5's voice input; without it the microphone is Windows dictation (Win+H). */
+  voice?: VoiceControls
 }
 
 const MAX_MATCHES = 8
@@ -194,7 +198,8 @@ export function Composer({
   onPickFiles,
   onImagePrepared,
   heldDraft = false,
-  onInsertHeldDraft
+  onInsertHeldDraft,
+  voice
 }: Props): JSX.Element {
   const field = useRef<HTMLTextAreaElement | null>(null)
   const histories = useRef(new Map<string, InputHistory>())
@@ -627,21 +632,15 @@ export function Composer({
         </button>
 
         {/* Beside the clip, not after the field: Tab from the field still goes to «Отправить». */}
-        <button
-          type="button"
-          className="composer-mic"
-          data-testid="composer-mic"
-          aria-label="Голосовой ввод"
-          title="Голосовой ввод — диктовка Windows (Win+H). Говорите, текст появится в поле"
+        <MicButton
+          {...(voice ? { voice } : {})}
           disabled={dead}
-          onClick={() => {
+          onFallback={() => {
             // Windows types into whatever has the focus, so the field gets it first.
             field.current?.focus()
             void window.qclod.startVoice()
           }}
-        >
-          <Mic size={16} aria-hidden="true" />
-        </button>
+        />
 
         <textarea
           ref={field}

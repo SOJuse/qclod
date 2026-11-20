@@ -412,9 +412,8 @@ test.describe('снимки для владельца', () => {
       await button.click()
       await expect(win.locator('[data-testid="now-agents-list"] li')).toHaveCount(2)
       await expect(win.locator('[data-testid="now-agents-list"] li').first()).toContainText('Bash', { timeout: 10000 })
-      // The panel counts calls the way the ribbon does: «1 вызов», not «1 инструментов».
-      await expect(win.locator('[data-testid="side-panel"]')).toContainText('1 вызов')
-      await expect(win.locator('[data-testid="side-panel"]')).not.toContainText('инструментов')
+      // The panel no longer lists subagents (решение 10); nowhere is a call counted as «инструментов».
+      await expect(win.locator('[data-testid="ribbon"]')).not.toContainText('инструментов')
     })
   })
   test('07 полоска задач раскрыта', async () => {

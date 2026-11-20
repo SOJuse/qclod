@@ -68,10 +68,21 @@ test('панель показывает контекст, лимиты, моде
     await expect(limits).toContainText('38%')
     await expect(limits).toContainText('сброс')
 
-    // Four MCP states, not two: «требует входа» is real.
+    // Four MCP states, not two: «требует входа» is real. What needs the person is named;
+    // the connected ones fold into one line until it is pressed.
     const mcp = panel.locator('[data-testid="panel-mcp"]')
     await expect(mcp).toContainText('требует входа')
+    const ok = panel.locator('[data-testid="panel-mcp-ok"]')
+    await expect(ok).toHaveText('1 подключено')
+    await expect(mcp).not.toContainText('unity-mcp')
+    await ok.click()
+    await expect(mcp).toContainText('unity-mcp')
     await expect(mcp).toContainText('подключён')
+
+    // The sections in their order (решение 10), then the session's row; no agents here any more.
+    await expect(panel.locator('.panel-section h3')).toHaveText(['Контекст', 'Лимиты', 'MCP', 'Remote Control'])
+    await expect(panel.locator('[data-testid="panel-session"]')).toContainText('Opus 5')
+    await expect(panel.locator('[data-testid="panel-agents"]')).toHaveCount(0)
   } finally {
     await close(app, profile)
   }
@@ -309,5 +320,48 @@ test('разбивка контекста — одна полоса и леге�
     expect(seg!.width).toBeGreaterThanOrEqual(8)
   } finally {
     await close(app, profile)
+  }
+})
+
+test('в сплите у каждой панели своя side-panel с контекстом своей вкладки', async () => {
+  const other = mkdtempSync(join(tmpdir(), 'qclod-split-'))
+  const { app, profile } = await launch(
+    { steps: [], contextPercent: 10, contextPercentByTurn: [55] },
+    { QCLOD_PICK_FOLDER: other }
+  )
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').first().waitFor({ timeout: 15000 })
+    // Wide enough for two panes of at least 760 px each beside the sidebar: both panels docked.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1900, 900))
+    await win.locator('[data-testid="tab-new"]').click()
+    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+    await win.locator('[data-testid="toggle-split"]').click()
+
+    const panes = win.locator('[data-testid="chat-pane"]')
+    await expect(panes).toHaveCount(2)
+    const left = panes.first()
+    const right = panes.last()
+    // One panel per pane, inside it, and none for the window as a whole.
+    await expect(win.locator('[data-testid="side-panel"]')).toHaveCount(2)
+    await expect(left.locator('[data-testid="side-panel"]')).toHaveAttribute('data-mode', 'docked')
+    await expect(right.locator('[data-testid="side-panel"]')).toHaveAttribute('data-mode', 'docked')
+    await expect(left.locator('[data-testid="panel-context"]')).toContainText('10%', { timeout: 15000 })
+    await expect(right.locator('[data-testid="panel-context"]')).toContainText('10%', { timeout: 15000 })
+
+    // A turn in the left chat moves its own context, and only its own.
+    const input = left.locator('[data-testid="composer-input"]')
+    await input.click()
+    await input.fill('первый')
+    await input.press('Enter')
+    await expect(left.locator('[data-testid="panel-context"]')).toContainText('55%', { timeout: 15000 })
+    await expect(right.locator('[data-testid="panel-context"]')).toContainText('10%')
+
+    // Each pane's header has its own panel button.
+    await expect(left.locator('[data-testid="chat-header"] [data-testid="panel-close"]')).toBeVisible()
+    await expect(right.locator('[data-testid="chat-header"] [data-testid="panel-close"]')).toBeVisible()
+  } finally {
+    await close(app, profile)
+    rmSync(other, { recursive: true, force: true })
   }
 })

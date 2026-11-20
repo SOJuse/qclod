@@ -1,9 +1,61 @@
+/* A pane: its conversation, and beside it its own right-hand panel (E5). */
 .chat-pane {
+  position: relative;
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   display: flex;
+}
+
+/* The header, then the ribbon with the floating input over its foot. */
+.chat-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
   flex-direction: column;
+}
+
+/* The ribbon fills it; a layer and the dock lie over it. --dock-h is the dock's real height (ChatPane). */
+.chat-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * D9: the input floats, centred in the ~800 px column (D10), over the ribbon's foot.
+ * An opaque raised surface with the menu's shadow — never blurred, never see-through.
+ * Everything above the input (todos, «now», the close warning, the context banner, the
+ * cards, the queue) stands in it, the status line under the input.
+ */
+.composer-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--space-3);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  width: min(var(--content-max-w), calc(100% - 2 * var(--content-gutter)));
+  margin: 0 auto;
+  padding: var(--dock-pad) var(--dock-pad) var(--space-1);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-menu);
+}
+
+/* Inside the dock every strip takes the dock's width, not the column's again. */
+.chat-pane .composer-dock > * {
+  width: auto;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.chat-pane .composer-dock > :last-child {
+  margin-bottom: 0;
 }
 
 /* The ribbon is still loading or could not be read: the notice takes the empty tab's place. */
@@ -14,27 +66,12 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-5);
+  padding-bottom: calc(var(--dock-h, 0px) + var(--space-5));
   pointer-events: none;
 }
 
 .ribbon-state .state-view {
   pointer-events: auto;
-}
-
-.chat-pane-title {
-  flex: 0 0 auto;
-  padding: 6px 14px;
-  border-bottom: 1px solid var(--border);
-  font-size: var(--text-xs);
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-pane.is-focused .chat-pane-title {
-  color: var(--accent);
-  border-bottom-color: color-mix(in srgb, var(--accent) 35%, var(--border));
 }
 
 /* A one-line warning above the input, same width as the input. */

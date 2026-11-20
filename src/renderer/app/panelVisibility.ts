@@ -1,35 +1,40 @@
 /**
- * Whether the side panel shows.
+ * How a chat pane shows its own right-hand panel (spec E5: each half of a
+ * split has its own).
  *
- * Below this width the panel would squeeze the conversation, so it folds by
- * itself; what it held that matters while typing — context, limits, model,
- * effort, mode — is in the status line by the input anyway.
+ * Below this width of the pane the panel would squeeze the conversation, so
+ * it folds by itself; opened by hand there, it slides out over the ribbon
+ * instead of taking room. What matters while typing — context, model,
+ * effort, mode, a limit near its end — is in the status line anyway.
  */
-export const PANEL_MIN_WIDTH = 1100
+export const PANE_PANEL_MIN_WIDTH = 760
 
-/** A choice made with the panel button for this window, not saved anywhere. */
+/** A choice made with the panel button for this pane, not saved anywhere. */
 export type PanelOverride = 'open' | 'closed' | null
 
-export function panelVisible({
+export type PanelMode = 'docked' | 'drawer' | 'hidden'
+
+export function panelMode({
   setting,
-  width,
+  paneWidth,
   override
 }: {
   setting: boolean
-  width: number
+  paneWidth: number
   override: PanelOverride
-}): boolean {
-  if (override === 'open') return true
-  if (override === 'closed') return false
-  return setting && width >= PANEL_MIN_WIDTH
+}): PanelMode {
+  const wide = paneWidth >= PANE_PANEL_MIN_WIDTH
+  if (override === 'closed') return 'hidden'
+  if (override === 'open') return wide ? 'docked' : 'drawer'
+  return setting && wide ? 'docked' : 'hidden'
 }
 
 /**
- * The override after the window changed width. Crossing the threshold
- * forgets it: the window is a different shape now, and the rule applies again.
+ * The override after the pane changed width. Crossing the threshold
+ * forgets it: the pane is a different shape now, and the rule applies again.
  */
 export function nextOverride(override: PanelOverride, before: number, after: number): PanelOverride {
-  const wasWide = before >= PANEL_MIN_WIDTH
-  const isWide = after >= PANEL_MIN_WIDTH
+  const wasWide = before >= PANE_PANEL_MIN_WIDTH
+  const isWide = after >= PANE_PANEL_MIN_WIDTH
   return wasWide === isWide ? override : null
 }

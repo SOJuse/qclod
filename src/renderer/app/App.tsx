@@ -1,31 +1,22 @@
-import { PanelRightOpen } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type {
-  EnvironmentReport,
-  HotkeyRegistration,
-  RemoteInfo,
-  SessionSummary
-} from '../../shared/types'
-import { REMOTE_OFF } from '../../shared/remote'
+import type { EnvironmentReport, HotkeyRegistration, SessionSummary } from '../../shared/types'
 import { projectKey } from '../../shared/projects'
-import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
+import { useAppStore } from '../state/useAppStore'
 import { startLayoutSync } from '../state/layoutSync'
 import { MAX_PANES, buildSidebar, chatOrder, nextPanes } from '../chat/sidebarModel'
 import { SplitView } from './SplitView'
 import { dropOnPane, type DropPayload, type DropWhere } from './paneOps'
 import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { Sidebar } from '../components/sidebar/Sidebar'
-import { ChatPane } from '../components/ChatPane'
+import { ChatPane, type PanelRequest } from '../components/ChatPane'
 import { ErrorBoundary } from '../ui/ErrorBoundary'
-import { SidePanel } from '../components/SidePanel'
 import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { ActionPalette } from '../components/ActionPalette'
 import { UpdateBanner } from '../components/UpdateBanner'
 import { compactNow } from '../input/slash'
 import { reasonOf } from '../ui/StateView'
-import { hint, resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
-import { PANEL_MIN_WIDTH, nextOverride, panelVisible, type PanelOverride } from './panelVisibility'
+import { resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
 import './App.css'
 
 /** A failed first read of the tabs is asked once more after this long. */
@@ -52,8 +43,8 @@ function ThrowInPane(): null {
 /**
  * The window: projects and their chats on the left, the conversation beside them.
  *
- * Owns the shortcuts, the sidebar, the panel and the settings screen; each
- * conversation is a ChatPane.
+ * Owns the shortcuts, the sidebar and the settings screen; each conversation
+ * is a ChatPane, with its own right-hand panel.
  */
 export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -74,22 +65,13 @@ export function App(): JSX.Element {
   const [closeGuardTab, setCloseGuardTab] = useState<string | null>(null)
   const closeGuardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /**
-   * The window's width, and a panel choice made in a narrow window. That
-   * choice lasts until the window crosses the threshold; it is never saved.
+   * The last Ctrl+\: the active pane opens or closes its own panel. The
+   * number tells a new request from an old one.
    */
-  const [width, setWidth] = useState(() => window.innerWidth)
-  const widthRef = useRef(width)
-  const [panelOverride, setPanelOverride] = useState<PanelOverride>(null)
-  useEffect(() => {
-    const onResize = (): void => {
-      const before = widthRef.current
-      const after = window.innerWidth
-      widthRef.current = after
-      setPanelOverride((override) => nextOverride(override, before, after))
-      setWidth(after)
-    }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+  const [panelRequest, setPanelRequest] = useState<PanelRequest | null>(null)
+  const togglePanel = useCallback((): void => {
+    const tabId = useAppStore.getState().activeTabId
+    if (tabId) setPanelRequest((was) => ({ tabId, n: (was?.n ?? 0) + 1 }))
   }, [])
 
   /** A check is under way: «Проверить снова» says so and waits. */
@@ -125,29 +107,6 @@ export function App(): JSX.Element {
   // Main keeps the layout; the window follows it and writes its pane changes back.
   useEffect(() => startLayoutSync(useAppStore, window.qclod), [])
   const split = paneTabIds.length > 1
-
-  // The session's subagents, read from the ribbon it already holds.
-  const activeRibbon = useAppStore((state) => state.ribbonByTab[state.activeTabId])
-  const agentRuns = useMemo(
-    () =>
-      (activeRibbon ?? [])
-        .filter((item) => item.kind === 'subagent')
-        .map((item) => {
-          const run = item as Extract<typeof item, { kind: 'subagent' }>
-          return {
-            id: run.id,
-            name: run.name,
-            task: run.task,
-            state: run.state,
-            ...(run.tokens ? { tokens: run.tokens } : {}),
-            ...(run.durationMs ? { durationMs: run.durationMs } : {}),
-            ...(run.toolCalls ? { toolCalls: run.toolCalls } : {}),
-            ...(run.lastTool ? { lastTool: run.lastTool } : {}),
-            ...(run.summary ? { summary: run.summary } : {})
-          }
-        }),
-    [activeRibbon]
-  )
 
   /** A click on a pane: it becomes the one everything acts on, and no pane moves. */
   const focusPane = useCallback((id: string): void => {
@@ -311,37 +270,6 @@ export function App(): JSX.Element {
   useEffect(() => {
     for (const id of paneTabIds) loadPanel(id)
   }, [paneTabIds, loadPanel])
-
-  /**
-   * The panel button. In a wide window it flips the saved setting; in a
-   * narrow one, where the panel folds by itself, it opens or closes it for
-   * this window only.
-   */
-  const togglePanel = useCallback((): void => {
-    const setting = useAppStore.getState().settings?.panelOpen === true
-    const visible = panelVisible({ setting, width: widthRef.current, override: panelOverride })
-    if (widthRef.current < PANEL_MIN_WIDTH) {
-      setPanelOverride(visible ? 'closed' : 'open')
-    } else {
-      setPanelOverride(null)
-      void window.qclod.setSettings({ panelOpen: !visible }).then(setSettings)
-    }
-    if (!visible && activeTabId) loadPanel(activeTabId)
-  }, [activeTabId, panelOverride, setSettings, loadPanel])
-
-  /** Opens the panel the way its button does; one already shown stays as it is. */
-  const revealPanel = useCallback((): void => {
-    const setting = useAppStore.getState().settings?.panelOpen === true
-    if (!panelVisible({ setting, width: widthRef.current, override: panelOverride })) togglePanel()
-  }, [panelOverride, togglePanel])
-
-  const remoteOf = (id: string): RemoteInfo => tabs.find((t) => t.id === id)?.remote ?? REMOTE_OFF
-
-  const showPanel = panelVisible({
-    setting: settings?.panelOpen === true,
-    width,
-    override: panelOverride
-  })
 
   const toggleSidebar = useCallback((): void => {
     void window.qclod.setLayout({ sidebarCollapsed: !useAppStore.getState().layout.sidebarCollapsed })
@@ -690,13 +618,14 @@ export function App(): JSX.Element {
                 focused={id === activeTabId}
                 focusToken={focusToken}
                 title={tabs.find((t) => t.id === id)?.title ?? ''}
-                showTitle={split}
+                split={split}
+                onUnsplit={() => applyPanes(shownPanes().filter((pane) => pane !== id))}
                 // Clicking a pane makes it the one everything acts on, in place.
                 onFocus={() => focusPane(id)}
                 onCycleMode={cycleMode}
                 onOpenHistory={showActiveProject}
                 onOpenSession={openSession}
-                onShowPanel={revealPanel}
+                panelRequest={panelRequest}
                 ribbonError={ribbonErrors[id] ?? null}
                 onRetryRibbon={() => retryRibbon(id)}
                 notice={
@@ -711,28 +640,6 @@ export function App(): JSX.Element {
           onResize={setPaneWidths}
           onFocus={focusPane}
         />
-        {showPanel && (
-          <SidePanel
-            data={panelByTab[activeTabId] ?? EMPTY_PANEL}
-            agents={agentRuns}
-            started={(tabs.find((t) => t.id === activeTabId)?.status ?? 'stopped') !== 'stopped'}
-            remote={remoteOf(activeTabId)}
-            onRemote={(enabled) => void window.qclod.setRemote(activeTabId, enabled)}
-            onClose={togglePanel}
-          />
-        )}
-        {!showPanel && (
-          <button
-            type="button"
-            className="panel-reopen"
-            data-testid="panel-open"
-            aria-label="Показать панель"
-            title={hint('Показать панель', 'togglePanel')}
-            onClick={togglePanel}
-          >
-            <PanelRightOpen size={14} aria-hidden="true" />
-          </button>
-        )}
       </div>
       {paletteOpen && (
         <ActionPalette

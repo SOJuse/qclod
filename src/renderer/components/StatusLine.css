@@ -1,6 +1,7 @@
 /*
  * The status line under the input, and the context banner above it.
- * Context leads; the plan's limits sit one step quieter beside it. The bars are the shared meter
+ * Context leads; a plan limit shows only from 80 %, as one quiet chip (the panel holds the
+ * rest, and the context meter's hint names both windows). The bar is the shared meter
  * (ui/meter.css): quiet until 80%, then the status colour on the fill and an alert icon; words
  * and numbers keep text colours.
  *
@@ -43,13 +44,18 @@
   gap: var(--space-2);
 }
 
-/* The limits: one step quieter than the context, behind a hairline. */
-.status-limits {
+/* A plan window at 80 % or more: one quiet chip behind a hairline, its icon in the level's colour. */
+.status-limit-alert {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   padding-left: var(--space-2);
   border-left: 1px solid var(--border);
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
 }
 
 /* ---------------------------------------------------------- remote control */
@@ -122,20 +128,10 @@
 }
 
 /*
- * Too narrow for everything: the least important parts go, in this order: the limits' bars
- * (their names, figures and alerts stay), the remote switch, effort and mode, the model, then
- * the limits themselves. The panel beside the line holds the model and the limits; the context
- * meter never goes.
- *
- * With the sidebar and the panel open, the default window (1180) leaves the line ~610px and
- * the smallest one (800) ~230px.
+ * Too narrow for everything: the least important parts go, in this order: the remote switch,
+ * effort and mode, then the model. The panel holds the model; the context meter and a limit's
+ * alert chip never go — in a split pane with its panel closed they are the only place left.
  */
-@container (max-width: 680px) {
-  .status-limits .status-meter-bar {
-    display: none;
-  }
-}
-
 @container (max-width: 540px) {
   .status-remote,
   .status-group > .dropdown:has([data-testid='status-mode']),
@@ -146,12 +142,6 @@
 
 @container (max-width: 470px) {
   .status-group > .dropdown:has([data-testid='status-model']) {
-    display: none;
-  }
-}
-
-@container (max-width: 320px) {
-  .status-limits {
     display: none;
   }
 }
@@ -197,23 +187,6 @@
 .status-meter.is-primary .status-meter-value {
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
-}
-
-/* When the five-hour window resets, by the system clock. */
-.status-meter-reset {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--gap-hair);
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-@container (max-width: 640px) {
-  .status-meter-reset {
-    display: none;
-  }
 }
 
 /* The icon wears its level's colour itself (LevelIcon). */

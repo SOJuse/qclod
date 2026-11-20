@@ -19,11 +19,14 @@ const same = (a: readonly unknown[], b: readonly unknown[]): boolean =>
  *   (an activation, say) but not their older panes. When the write settles,
  *   whichever way, the two are compared again: main's panes are taken if the
  *   user has not changed them since, otherwise the write is armed again.
+ * - A page going away (Ctrl+R, the watchdog's reload) writes at once what
+ *   still waits for its quiet moment: the reloaded window reads main's layout.
  */
 export function startLayoutSync(
   store: Pick<typeof useAppStore, 'getState' | 'subscribe'>,
   api: Pick<QclodApi, 'getLayout' | 'setLayout' | 'onLayoutChanged'>,
-  debounceMs = 300
+  debounceMs = 300,
+  page: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> | null = typeof window === 'undefined' ? null : window
 ): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined
   let inFlight = 0
@@ -83,11 +86,19 @@ export function startLayoutSync(
     if (state.paneTabIds === before.paneTabIds && state.paneWidths === before.paneWidths && state.tabs === before.tabs) return
     arm()
   })
+  // The message leaves before the page does; main answers the reloaded page's read after it.
+  const leaving = (): void => {
+    if (timer === undefined) return
+    clearTimeout(timer)
+    flush()
+  }
+  page?.addEventListener('pagehide', leaving)
 
   return () => {
     stopped = true
     clearTimeout(timer)
     unsubscribe()
     off()
+    page?.removeEventListener('pagehide', leaving)
   }
 }

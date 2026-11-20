@@ -29,7 +29,8 @@ const PER_TAB_KEYS = [
   'attachmentsByTab',
   'fileIndexByTab',
   'commandsByTab',
-  'pathsByTab'
+  'pathsByTab',
+  'layerByTab'
 ] as const
 
 const RECENT_COMMANDS = 6
@@ -105,6 +106,17 @@ function forgetClosed(state: AppState, tabs: TabState[]): Partial<AppState> {
 }
 
 export { MAX_PANES }
+
+/** What a pane can lay over its ribbon: subagents (этап 4), a file (этап 6), git (этап 7). */
+export type PaneLayerKind = 'agents' | 'git' | 'file'
+
+/** One layer over a pane's ribbon. agentId — этап 4; path, line — этапы 6, 7. */
+export interface PaneLayerState {
+  kind: PaneLayerKind
+  agentId?: string
+  path?: string
+  line?: number
+}
 
 /**
  * The panes and the active tab once the tab list changed (or main's layout
@@ -221,6 +233,8 @@ interface AppState {
   pathsByTab: Record<TabId, ReadonlyMap<string, PathAnswer>>
   /** The last commands run, newest first — they head the list before anything is typed. */
   recentCommands: string[]
+  /** The one layer each pane shows over its ribbon (сверка F9); in memory only, never saved. */
+  layerByTab: Record<TabId, PaneLayerState | null>
 
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
@@ -245,6 +259,8 @@ interface AppState {
   setCommands: (id: TabId, commands: CommandInfo[]) => void
   setPaths: (id: TabId, answers: ReadonlyArray<readonly [string, ResolvedPath | null]>) => void
   noteCommand: (name: string) => void
+  /** A new layer replaces the one before it; null closes it. */
+  setPaneLayer: (tabId: TabId, layer: PaneLayerState | null) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -326,6 +342,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   commandsByTab: {},
   pathsByTab: {},
   recentCommands: [],
+  layerByTab: {},
 
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
@@ -498,8 +515,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   noteCommand: (name) =>
     set((state) => ({
       recentCommands: [name, ...state.recentCommands.filter((n) => n !== name)].slice(0, RECENT_COMMANDS)
-    }))
+    })),
 
+  setPaneLayer: (tabId, layer) => set((state) => ({ layerByTab: { ...state.layerByTab, [tabId]: layer } }))
 }))
 
 // Written on change, so a reload (Ctrl+R) at any moment finds the latest.

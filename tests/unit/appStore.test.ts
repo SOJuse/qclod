@@ -554,3 +554,32 @@ describe('useAppStore: раскладка из main и хвосты сплита
     expect(state.activeTabId).toBe('a')
   })
 })
+
+describe('useAppStore: слой поверх ленты', () => {
+  const tab = (id: string): TabState => ({ id, cwd: 'C:\p', title: id, overrides: {}, status: 'idle', badge: false })
+
+  test('setPaneLayer: один слой на панель', () => {
+    const store = useAppStore.getState()
+    store.setPaneLayer('a', { kind: 'agents' })
+    store.setPaneLayer('b', { kind: 'file', path: 'src/a.ts', line: 3 })
+    expect(useAppStore.getState().layerByTab['a']).toEqual({ kind: 'agents' })
+
+    // A new layer replaces the one before it.
+    useAppStore.getState().setPaneLayer('a', { kind: 'git' })
+    expect(useAppStore.getState().layerByTab['a']).toEqual({ kind: 'git' })
+
+    // null closes it.
+    useAppStore.getState().setPaneLayer('a', null)
+    expect(useAppStore.getState().layerByTab['a']).toBeNull()
+
+    // The other tab's layer is not touched.
+    expect(useAppStore.getState().layerByTab['b']).toEqual({ kind: 'file', path: 'src/a.ts', line: 3 })
+  })
+
+  test('слой закрытой вкладки уходит вместе с ней', () => {
+    useAppStore.getState().setTabs([tab('a'), tab('b')])
+    useAppStore.getState().setPaneLayer('a', { kind: 'agents' })
+    useAppStore.getState().setTabs([tab('b')])
+    expect('a' in useAppStore.getState().layerByTab).toBe(false)
+  })
+})

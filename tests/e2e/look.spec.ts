@@ -477,8 +477,10 @@ test('строка статуса в одну строку при открыто
     await toggle.click()
     await expect(toggle).toHaveAttribute('data-state', 'reconnecting', { timeout: 15000 })
     await expect(win.locator('[data-testid="status-context-alert"]')).toBeVisible({ timeout: 15000 })
-    await expect(win.locator('[data-testid="status-limit-5h-alert"]')).toBeVisible()
-    await expect(win.locator('[data-testid="status-limit-7d-alert"]')).toBeVisible()
+    // Both windows over 80 %: one chip, the fuller one, with its level's icon.
+    const limit = win.locator('[data-testid="status-limit-alert"]')
+    await expect(limit).toHaveText('5 ч: 95 %')
+    await expect(limit.locator('[data-level-icon="critical"]')).toHaveCount(1)
     await expect(win.locator('[data-testid="side-panel"]')).toBeVisible()
 
     // One row: every child of the line shares one vertical band, and the line is one row tall.

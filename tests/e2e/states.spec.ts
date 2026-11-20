@@ -1,5 +1,5 @@
-import { test, expect, type Locator } from '@playwright/test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { test, expect, type ElectronApplication, type Locator } from '@playwright/test'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { launchQclod } from './helpers/launch'
@@ -320,5 +320,96 @@ test('ошибка отрисовки панели не гасит окно — 
   } finally {
     await app.close()
     rmSync(other, { recursive: true, force: true })
+  }
+})
+
+/**
+ * The window that will not start (task 17). Runs in the page through main:
+ * after a renderer crash Playwright's Page is gone for good, while the
+ * webContents lives on with whatever page was loaded next.
+ */
+function inPageOf<T>(app: ElectronApplication, code: string): Promise<T> {
+  return app.evaluate(
+    ({ BrowserWindow }, js) => BrowserWindow.getAllWindows()[0]!.webContents.executeJavaScript(js),
+    code
+  ) as Promise<T>
+}
+const present = (testid: string): string => `document.querySelector('[data-testid="${testid}"]') !== null`
+
+/** Saves what the window shows now, taken by main, so it works with no Page left. */
+async function shotFromMain(app: ElectronApplication, name: string): Promise<void> {
+  const png = await app.evaluate(async ({ BrowserWindow }) => {
+    const image = await BrowserWindow.getAllWindows()[0]!.webContents.capturePage()
+    return image.toPNG().toString('base64')
+  })
+  const dir = process.env['QCLOD_SHOT_DIR'] ?? 'tests/.artifacts/shots'
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, name + '.png'), Buffer.from(png, 'base64'))
+}
+
+test('окно упало четыре раза: заглушка со способом выйти, «Попробовать снова» возвращает окно', async () => {
+  test.setTimeout(90_000)
+  const { app, profile } = await launchQclod()
+  try {
+    // Crashed from outside, as a real renderer crash would be: no test seam is involved.
+    // The first three are reloaded; the fourth leaves the static page.
+    for (let i = 0; i < 4; i++) {
+      await app.evaluate(
+        ({ BrowserWindow }) =>
+          new Promise<void>((resolve) => {
+            const contents = BrowserWindow.getAllWindows()[0]!.webContents
+            contents.once('did-finish-load', () => resolve())
+            contents.forcefullyCrashRenderer()
+          })
+      )
+    }
+    await expect.poll(() => inPageOf(app, present('fallback-retry')), { timeout: 15_000 }).toBe(true)
+    expect(await inPageOf(app, present('fallback-logs'))).toBe(true)
+    expect(await inPageOf(app, present('fallback-close'))).toBe(true)
+    expect(await inPageOf(app, `document.querySelector('h1').textContent`)).toBe('Окно Qclod не запускается')
+    expect(await inPageOf(app, `document.querySelector('.fb-text').textContent`)).toContain('Окно трижды перезагрузилось и снова упало.')
+    // The page is the static one: nothing of the app is in it.
+    expect(await inPageOf(app, present('app-root'))).toBe(false)
+    await shotFromMain(app, '17-fallback')
+
+    // It was written down why.
+    const log = readFileSync(join(profile, 'logs', 'qclod.log'), 'utf8')
+    expect(log).toContain('giving up')
+
+    await inPageOf(app, `document.querySelector('[data-testid="fallback-retry"]').click()`)
+    await expect.poll(() => inPageOf(app, present('app-root')).catch(() => false), { timeout: 15_000 }).toBe(true)
+    expect(await inPageOf(app, present('fallback-retry'))).toBe(false)
+  } finally {
+    await app.close()
+  }
+})
+
+test('сборка окна не загрузилась: после ожидания та же заглушка, а не вечная заставка', async () => {
+  test.setTimeout(90_000)
+  // QCLOD_MOUNT_MS shortens the 15 s wait for the first screen.
+  const { app, profile } = await launchQclod({ env: { QCLOD_MOUNT_MS: '5000' } })
+  try {
+    // The script of the window cannot be fetched: the page loads, createRoot never runs.
+    await app.evaluate(({ BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0]!.webContents
+      contents.session.webRequest.onBeforeRequest({ urls: ['*://*/*.js', 'file:///*.js'] }, (details, callback) =>
+        callback({ cancel: /\/assets\/index-[^/]*\.js$/.test(details.url) })
+      )
+      contents.reload()
+    })
+    await expect
+      .poll(() => inPageOf(app, present('boot')).catch(() => null), { timeout: 5_000 })
+      .toBe(true)
+    await expect.poll(() => inPageOf(app, present('fallback-retry')), { timeout: 20_000 }).toBe(true)
+    expect(readFileSync(join(profile, 'logs', 'qclod.log'), 'utf8')).toContain('did not mount')
+    // It says what happened: the window did not open, not that it crashed three times.
+    expect(await inPageOf(app, `document.querySelector('.fb-text').textContent`)).toContain('Окно не открылось за 15 секунд.')
+
+    // The bundle is back: «Попробовать снова» loads the window.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.session.webRequest.onBeforeRequest(null))
+    await inPageOf(app, `document.querySelector('[data-testid="fallback-retry"]').click()`)
+    await expect.poll(() => inPageOf(app, present('app-root')).catch(() => false), { timeout: 15_000 }).toBe(true)
+  } finally {
+    await app.close()
   }
 })

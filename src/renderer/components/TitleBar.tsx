@@ -1,5 +1,6 @@
 import { Columns2, Minus, PanelLeftClose, PanelLeftOpen, Settings, Square, TriangleAlert, X } from 'lucide-react'
 import { hint } from '../app/shortcuts'
+import markUrl from '../assets/mark.svg'
 import { CHROME_ICON_SIZE } from '../ui/icons'
 import type { HotkeyRegistration } from '../../shared/types'
 import './TitleBar.css'
@@ -43,7 +44,7 @@ export function TitleBar({
       >
         <SidebarIcon size={CHROME_ICON_SIZE} aria-hidden="true" />
       </button>
-      <span className="title-bar-mark" aria-hidden />
+      <img className="title-bar-mark" src={markUrl} alt="" />
       <span className="title-bar-name">Qclod</span>
       {chatTitle && (
         <div className="title-bar-title" data-testid="title-bar-chat">
@@ -134,7 +135,7 @@ function WindowButtons(): JSX.Element {
 export function SetupTitleBar(): JSX.Element {
   return (
     <header className="title-bar" data-testid="setup-title-bar">
-      <span className="title-bar-mark" aria-hidden />
+      <img className="title-bar-mark" src={markUrl} alt="" />
       <div className="title-bar-spacer" />
       <div className="window-controls">
         <WindowButtons />

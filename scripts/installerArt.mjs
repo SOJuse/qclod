@@ -1,6 +1,6 @@
 // Pure drawing helpers for the NSIS wizard artwork (sidebar and header BMPs).
 // Motif: the Qclod ribbon - chat-like bars of different lengths, one in the
-// accent colour, and the app mark (rounded square) like on the icon.
+// accent colour, and the a-orbit app mark, rasterised from the master SVG.
 
 export const GRAPHITE = { bg: '#0f0f11', surface: '#16161a', raised: '#1d1d22', line: '#26262d' }
 
@@ -59,13 +59,22 @@ function mix(base, top, alpha) {
 }
 
 // shapes: [{ left, top, right, bottom, radius, color }], painted in order.
-function paint(width, height, shapes) {
+// Then the mark ({ rgba, size }, as rendered by resvg: premultiplied alpha)
+// is laid over at placement { left, top }.
+function paint(width, height, shapes, mark, placement) {
   const bg = hex(GRAPHITE.bg)
   return encodeBmp24(width, height, (x, y) => {
     let color = bg
     for (const s of shapes) {
       const alpha = roundedRectAlpha(x + 0.5, y + 0.5, s.left, s.top, s.right, s.bottom, s.radius)
       if (alpha > 0) color = mix(color, s.color, alpha)
+    }
+    const mx = x - placement.left
+    const my = y - placement.top
+    if (mx >= 0 && my >= 0 && mx < mark.size && my < mark.size) {
+      const at = (my * mark.size + mx) * 4
+      const keep = 1 - mark.rgba[at + 3] / 255
+      color = color.map((channel, i) => Math.round(channel * keep + mark.rgba[at + i]))
     }
     return color
   })
@@ -75,24 +84,24 @@ function bar(left, top, width, height, color) {
   return { left, top, right: left + width, bottom: top + height, radius: height / 2 > 3 ? 3 : height / 2, color }
 }
 
-export function drawSidebar(accent) {
+export function drawSidebar(accent, mark) {
   const widths = [96, 120, 72, 108, 56]
   const neutral = [hex(GRAPHITE.raised), hex(GRAPHITE.line)]
   const bottom = 280
-  const shapes = [{ left: 20, top: 20, right: 48, bottom: 48, radius: 7, color: accent }]
+  const shapes = []
   widths.forEach((w, i) => {
     const top = bottom - 6 - (widths.length - 1 - i) * 14
     shapes.push(bar(20, top, w, 6, i === 2 ? accent : neutral[i % 2]))
   })
-  return paint(164, 314, shapes)
+  return paint(164, 314, shapes, mark, { left: 16, top: 16 })
 }
 
-export function drawHeader(accent) {
+export function drawHeader(accent, mark) {
   const neutral = [hex(GRAPHITE.raised), hex(GRAPHITE.line)]
-  const shapes = [{ left: 10, top: 18, right: 30, bottom: 38, radius: 5, color: accent }]
+  const shapes = []
   const widths = [64, 44, 54]
   widths.forEach((w, i) => {
     shapes.push(bar(42, 15 + i * 11, w, 5, i === 1 ? accent : neutral[i % 2]))
   })
-  return paint(150, 57, shapes)
+  return paint(150, 57, shapes, mark, { left: 4, top: 10 })
 }

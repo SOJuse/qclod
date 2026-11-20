@@ -11,11 +11,9 @@
 
 .title-bar-mark {
   align-self: center;
-  width: 9px;
-  height: 9px;
-  margin-right: 10px;
-  border-radius: var(--radius-hair);
-  background: var(--accent);
+  width: 20px;
+  height: 20px;
+  margin-right: 8px;
 }
 
 .title-bar-spacer {

@@ -372,8 +372,6 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     }
   )
 
-  ipcMain.handle(CHANNELS.rendererRetry, (): void => undefined)
-  ipcMain.handle(CHANNELS.logsOpen, (): void => undefined)
 
   ipcMain.handle(CHANNELS.permissionRules, () => withFault(CHANNELS.permissionRules, () => broker.rules()))
 

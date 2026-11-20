@@ -429,8 +429,6 @@ describe('этап 2: обработчики-заглушки в main', () => {
       ...DEFAULT_LAYOUT,
       sidebarCollapsed: true
     })
-    expect(await call(CHANNELS.rendererRetry)).toBeUndefined()
-    expect(await call(CHANNELS.logsOpen)).toBeUndefined()
     expect(DEFAULT_LAYOUT).toEqual({
       panes: [],
       active: null,

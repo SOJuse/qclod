@@ -1,8 +1,39 @@
+import { readFileSync } from 'node:fs'
+import { Resvg } from '@resvg/resvg-js'
 import { describe, expect, test } from 'vitest'
 // @ts-expect-error plain .mjs helper, same as scripts/releaseSeams.mjs
 import { encodeBmp24, readAccent, drawSidebar, drawHeader, GRAPHITE } from '../../scripts/installerArt.mjs'
 
 type Rgb = [number, number, number]
+
+// The mark is rasterised from the master SVG, exactly as make-installer-art does.
+function renderMark(size: number): { rgba: Uint8Array; size: number } {
+  const svg = readFileSync('build/brand/qclod.svg', 'utf8')
+  const image = new Resvg(svg, { fitTo: { mode: 'width', value: size } }).render()
+  return { rgba: new Uint8Array(image.pixels), size }
+}
+
+// CIE76 deltaE of two sRGB colours.
+function deltaE(a: Rgb, b: Rgb): number {
+  const lab = ([r, g, bl]: Rgb): Rgb => {
+    const lin = (c: number): number => {
+      const v = c / 255
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+    }
+    const [R, G, B] = [lin(r), lin(g), lin(bl)] as Rgb
+    const xyz: Rgb = [
+      (0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047,
+      0.2126 * R + 0.7152 * G + 0.0722 * B,
+      (0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883
+    ]
+    const f = (t: number): number => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116)
+    const [fx, fy, fz] = xyz.map(f) as Rgb
+    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)]
+  }
+  const [l1, a1, b1] = lab(a)
+  const [l2, a2, b2] = lab(b)
+  return Math.hypot(l1 - l2, a1 - a2, b1 - b2)
+}
 
 function pixelAt(bmp: Buffer, x: number, y: number): Rgb {
   const width = bmp.readInt32LE(18)
@@ -34,7 +65,7 @@ describe('картинки установщика', () => {
   })
 
   test('drawSidebar: фон, акцентная третья полоса, размер', () => {
-    const bmp: Buffer = drawSidebar([255, 0, 0])
+    const bmp: Buffer = drawSidebar([255, 0, 0], renderMark(72))
     expect(bmp.length).toBe(54 + 492 * 314)
     expect(pixelAt(bmp, 10, 10)).toEqual([0x0f, 0x0f, 0x11])
     expect(GRAPHITE.bg).toBe('#0f0f11')
@@ -42,8 +73,18 @@ describe('картинки установщика', () => {
   })
 
   test('drawHeader: размер 150x57', () => {
-    const bmp: Buffer = drawHeader([255, 0, 0])
+    const bmp: Buffer = drawHeader([255, 0, 0], renderMark(36))
     expect(bmp.readInt32LE(18)).toBe(150)
     expect(bmp.readInt32LE(22)).toBe(57)
+  })
+
+  test('drawSidebar: в центре марки a-orbit пиксель заметно отличается от фона (ΔE > 15)', () => {
+    const bmp: Buffer = drawSidebar([255, 0, 0], renderMark(72))
+    expect(deltaE(pixelAt(bmp, 16 + 36, 16 + 36), pixelAt(bmp, 10, 10))).toBeGreaterThan(15)
+  })
+
+  test('drawHeader: в центре марки пиксель заметно отличается от фона (ΔE > 15)', () => {
+    const bmp: Buffer = drawHeader([255, 0, 0], renderMark(36))
+    expect(deltaE(pixelAt(bmp, 4 + 18, 10 + 18), pixelAt(bmp, 1, 1))).toBeGreaterThan(15)
   })
 })

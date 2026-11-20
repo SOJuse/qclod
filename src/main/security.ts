@@ -27,14 +27,14 @@ function samePath(a: string, b: string): boolean {
  * and `file://remote-host/<our path>` through.
  *
  * @param devServerUrl ELECTRON_RENDERER_URL when running from the dev server.
- * @param appFilePath  absolute path of the packaged renderer entry file.
+ * @param appFilePaths absolute paths of the packaged pages the window may show (the app and the fallback page).
  */
 export function makeNavigationGuard(
   devServerUrl: string | undefined,
-  appFilePath: string
+  appFilePaths: string[]
 ): (url: string) => boolean {
   const expectedOrigin = devServerUrl ? safeOrigin(devServerUrl) : undefined
-  const expectedFile = fileURLToPath(pathToFileURL(appFilePath))
+  const expectedFiles = appFilePaths.map((p) => fileURLToPath(pathToFileURL(p)))
 
   return (url: string): boolean => {
     let target: URL
@@ -52,7 +52,8 @@ export function makeNavigationGuard(
     // another machine, which would load a remote page with our preload attached.
     if (target.protocol !== 'file:' || target.host !== '') return false
     try {
-      return samePath(fileURLToPath(target), expectedFile)
+      const file = fileURLToPath(target)
+      return expectedFiles.some((expected) => samePath(file, expected))
     } catch {
       return false
     }
@@ -66,3 +67,4 @@ function safeOrigin(url: string): string | undefined {
     return undefined
   }
 }
+

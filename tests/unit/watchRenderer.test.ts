@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { watchRenderer } from '../../src/main/window'
+import { watchMount, watchRenderer } from '../../src/main/window'
 import type { ErrorEntry } from '../../src/main/system/errorLog'
 
 vi.mock('electron', () => ({ BrowserWindow: class {}, shell: {} }))
@@ -132,5 +132,128 @@ describe('watchRenderer: reload after a hang', () => {
     }
     expect(afterHang).toHaveBeenCalledTimes(3)
     expect(log.at(-1)!.message).toContain('not reloading')
+  })
+})
+
+describe('watchRenderer: giving up', () => {
+  let onGiveUp: ReturnType<typeof vi.fn>
+  let handle: { reset(): void }
+  beforeEach(() => {
+    contents = new Fake()
+    log = []
+    onGiveUp = vi.fn()
+    handle = watchRenderer(contents as never, { log: (e) => log.push(e), now: () => t, hangMs: 15000, onGiveUp })
+  })
+
+  test('four crashes in a minute: three reloads, then one give-up', () => {
+    for (let i = 0; i < 4; i++) {
+      gone('crashed')
+      t += 5000
+    }
+    expect(contents.reload).toHaveBeenCalledTimes(3)
+    expect(onGiveUp).toHaveBeenCalledTimes(1)
+    expect(log.at(-1)!.message).toContain('giving up')
+  })
+
+  test('the page that was shown instead crashing too does not call it again', () => {
+    for (let i = 0; i < 6; i++) gone('crashed')
+    expect(onGiveUp).toHaveBeenCalledTimes(1)
+  })
+
+  test('reset() clears the count: the fifth crash reloads again', () => {
+    for (let i = 0; i < 4; i++) gone('crashed')
+    handle.reset()
+    gone('crashed')
+    expect(contents.reload).toHaveBeenCalledTimes(4)
+    expect(onGiveUp).toHaveBeenCalledTimes(1)
+  })
+
+  test('after reset() a new run of crashes can give up again', () => {
+    for (let i = 0; i < 4; i++) gone('crashed')
+    handle.reset()
+    for (let i = 0; i < 4; i++) gone('crashed')
+    expect(onGiveUp).toHaveBeenCalledTimes(2)
+  })
+
+  test('destroyed with the hang timer armed: the renderer is not crashed afterwards', () => {
+    contents.emit('unresponsive')
+    contents.emit('destroyed')
+    vi.advanceTimersByTime(60000)
+    expect(contents.forcefullyCrashRenderer).not.toHaveBeenCalled()
+  })
+
+  const failLoad = (code: number, mainFrame = true): boolean =>
+    contents.emit('did-fail-load', {}, code, 'ERR', 'file:///x', mainFrame)
+
+  test('the main page failing to load gives up at once', () => {
+    failLoad(-6)
+    expect(onGiveUp).toHaveBeenCalledTimes(1)
+    expect(log[0]!.message).toContain('did-fail-load')
+  })
+
+  test('an aborted navigation, or a subframe failing, is not a failure', () => {
+    failLoad(-3)
+    failLoad(-6, false)
+    expect(onGiveUp).not.toHaveBeenCalled()
+  })
+})
+
+describe('watchMount', () => {
+  class Page extends EventEmitter {
+    stuck = true
+    executeJavaScript = vi.fn(async () => this.stuck)
+  }
+  let page: Page
+  let giveUp: ReturnType<typeof vi.fn>
+  const navigate = (): boolean => page.emit('did-start-navigation', {}, 'file:///index.html', false, true)
+  beforeEach(() => {
+    page = new Page()
+    log = []
+    giveUp = vi.fn()
+    watchMount(page as never, { log: (e) => log.push(e), ms: 15000, onGiveUp: giveUp })
+  })
+
+  test('the boot screen still up after the bound: logged, given up', async () => {
+    navigate()
+    await vi.advanceTimersByTimeAsync(14999)
+    expect(giveUp).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(giveUp).toHaveBeenCalledTimes(1)
+    expect(log[0]!.message).toContain('did not mount')
+  })
+
+  test('a page that mounted is left alone', async () => {
+    page.stuck = false
+    navigate()
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(giveUp).not.toHaveBeenCalled()
+  })
+
+  test('a page that cannot be asked counts as not mounted', async () => {
+    page.executeJavaScript.mockRejectedValue(new Error('no frame'))
+    navigate()
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(giveUp).toHaveBeenCalledTimes(1)
+  })
+
+  test('a new navigation restarts the wait; a subframe or in-page one does not', async () => {
+    navigate()
+    await vi.advanceTimersByTimeAsync(10000)
+    page.emit('did-start-navigation', {}, 'file:///f', false, false)
+    page.emit('did-start-navigation', {}, 'file:///index.html#x', true, true)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(giveUp).toHaveBeenCalledTimes(1)
+    navigate()
+    await vi.advanceTimersByTimeAsync(10000)
+    navigate()
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(giveUp).toHaveBeenCalledTimes(1)
+  })
+
+  test('destroyed disarms it', async () => {
+    navigate()
+    page.emit('destroyed')
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(page.executeJavaScript).not.toHaveBeenCalled()
   })
 })

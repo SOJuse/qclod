@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:"
+    />
+    <title>Qclod</title>
+    <link rel="stylesheet" href="./styles/fallback.css" />
+  </head>
+  <body>
+    <div class="fb-titlebar">Qclod</div>
+    <main class="fb-main" role="alert">
+      <img src="./assets/mark.svg" width="56" height="56" alt="" />
+      <h1 class="fb-title">Окно Qclod не запускается</h1>
+      <p class="fb-text">
+        Окно трижды перезагрузилось и снова упало. Агенты в чатах продолжают работать — с ними ничего не случилось.
+      </p>
+      <div class="fb-actions">
+        <button type="button" class="fb-btn fb-primary" data-testid="fallback-retry">Попробовать снова</button>
+        <button type="button" class="fb-btn" data-testid="fallback-logs">Открыть журнал</button>
+        <button type="button" class="fb-btn" data-testid="fallback-close">Закрыть окно</button>
+      </div>
+    </main>
+    <script type="module" src="./fallback.ts"></script>
+  </body>
+</html>

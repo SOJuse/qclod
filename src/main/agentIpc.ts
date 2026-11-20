@@ -303,15 +303,13 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     manager.get(id)?.answerPlan(requestId, decision.approve)
   })
 
-  // — этап 2: заглушки до задач 2 и 9. Their arguments (cwd, sessionId, title,
+  // — этап 2: заглушки до задач 2 и 9 (rendererRetry и logsOpen — в index.ts). Their arguments (cwd, sessionId, title,
   // and hostId for этап 6) are checked there, where they are used.
   ipcMain.handle(CHANNELS.layoutGet, (): LayoutState => DEFAULT_LAYOUT)
   ipcMain.handle(CHANNELS.layoutSet, (): LayoutState => DEFAULT_LAYOUT)
   ipcMain.handle(CHANNELS.projectForget, (): LayoutState => DEFAULT_LAYOUT)
   ipcMain.handle(CHANNELS.projectHistory, (): SessionSummary[] => [])
   ipcMain.handle(CHANNELS.projectOpenSession, (): TabState | null => null)
-  ipcMain.handle(CHANNELS.rendererRetry, (): void => undefined)
-  ipcMain.handle(CHANNELS.logsOpen, (): void => undefined)
 
   ipcMain.handle(CHANNELS.permissionRules, () => withFault(CHANNELS.permissionRules, () => broker.rules()))
 

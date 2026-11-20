@@ -371,8 +371,6 @@ describe('этап 2: обработчики-заглушки в main', () => {
     expect(await call(CHANNELS.projectHistory, '/home/u/p', 'srv1')).toEqual([])
     expect(await call(CHANNELS.projectOpenSession, '/home/u/p', 's1', undefined, 'srv1')).toBeNull()
     expect(await call(CHANNELS.projectForget, '/home/u/p', 'srv1')).toEqual(DEFAULT_LAYOUT)
-    expect(await call(CHANNELS.rendererRetry)).toBeUndefined()
-    expect(await call(CHANNELS.logsOpen)).toBeUndefined()
     expect(DEFAULT_LAYOUT).toEqual({
       panes: [],
       active: null,

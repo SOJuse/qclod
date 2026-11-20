@@ -4,9 +4,10 @@ import { resolve } from 'node:path'
 import { makeNavigationGuard } from '@main/security'
 
 const appFile = 'C:\\Users\\user\\qclod\\out\\renderer\\index.html'
+const fallbackFile = 'C:\\Users\\user\\qclod\\out\\renderer\\fallback.html'
 
 describe('makeNavigationGuard (packaged, file://)', () => {
-  const allowed = makeNavigationGuard(undefined, appFile)
+  const allowed = makeNavigationGuard(undefined, [appFile, fallbackFile])
 
   test('the app page itself is allowed', () => {
     expect(allowed('file:///C:/Users/user/qclod/out/renderer/index.html')).toBe(true)
@@ -14,6 +15,14 @@ describe('makeNavigationGuard (packaged, file://)', () => {
 
   test('a hash or query on the app page is allowed', () => {
     expect(allowed('file:///C:/Users/user/qclod/out/renderer/index.html#/settings')).toBe(true)
+  })
+
+  test('the fallback page is allowed', () => {
+    expect(allowed('file:///C:/Users/user/qclod/out/renderer/fallback.html')).toBe(true)
+  })
+
+  test('another file next to them is rejected', () => {
+    expect(allowed('file:///C:/Users/user/qclod/out/renderer/other.html')).toBe(false)
   })
 
   test('another local file is rejected', () => {
@@ -36,7 +45,7 @@ describe('makeNavigationGuard (packaged, file://)', () => {
 })
 
 describe('makeNavigationGuard (dev server)', () => {
-  const allowed = makeNavigationGuard('http://localhost:5173', appFile)
+  const allowed = makeNavigationGuard('http://localhost:5173', [appFile, fallbackFile])
 
   test('the dev origin is allowed', () => {
     expect(allowed('http://localhost:5173/index.html')).toBe(true)
@@ -60,3 +69,4 @@ describe('window wiring', () => {
     expect(source).toContain("'will-frame-navigate'")
   })
 })
+

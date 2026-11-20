@@ -12,6 +12,11 @@
   margin: 0 auto var(--strip-margin);
 }
 
+/* Only listens for the person touching the card (AutoAnswerGuard); lays nothing out. */
+.auto-answer-guard {
+  display: contents;
+}
+
 .pinned-card {
   display: flex;
   flex-direction: column;

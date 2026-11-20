@@ -1,6 +1,7 @@
 import type { SettingsSectionDef } from './types'
 import { AboutSection } from './AboutSection'
 import { AgentSection } from './AgentSection'
+import { AutonomySection } from './AutonomySection'
 import { NotificationsSection } from './NotificationsSection'
 import { PermissionsSection } from './PermissionsSection'
 import { WindowSection } from './WindowSection'
@@ -14,6 +15,7 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'window', title: 'Окно', order: 10, Component: WindowSection },
   { id: 'notifications', title: 'Уведомления', order: 20, Component: NotificationsSection },
   { id: 'agent', title: 'Запуск агента', order: 30, Component: AgentSection },
+  { id: 'autonomy', title: 'Автономность', order: 35, Component: AutonomySection },
   { id: 'permissions', title: 'Разрешения', order: 40, Component: PermissionsSection },
   { id: 'about', title: 'О программе', order: 90, Component: AboutSection }
 ]

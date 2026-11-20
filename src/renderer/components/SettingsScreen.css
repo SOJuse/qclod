@@ -75,6 +75,33 @@
   accent-color: var(--accent);
 }
 
+.settings-toggle input:disabled,
+.settings-toggle input:disabled + span {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* What a setting does, under it, in the column's quiet voice. */
+.settings-hint {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+  color: var(--text-faint);
+}
+
+/* Minutes and their unit: a short number, not a path-wide field. */
+.settings-minutes {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.settings-field .settings-minutes .field {
+  width: 72px;
+}
+
 /* A section that could not be read: the notice sits in the column, not centred. */
 .settings-group .state-view {
   margin: 0;

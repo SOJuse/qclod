@@ -37,8 +37,9 @@ function composing(ev: React.KeyboardEvent): boolean {
  * first, and its Enter sends the refusal, empty or not — and 3 opens the plan
  * for editing: Ctrl+Enter approves it as edited, Esc goes back to the
  * buttons. An edit that is empty or changes nothing approves nothing. The keys
- * work only while the card itself has focus, armed as the permission card is;
- * in the comment field and the editor digits are text. While a refusal is
+ * work only while the card itself — its root, not a link or the plan text
+ * inside it — has focus, armed as the permission card is; in the comment
+ * field and the editor digits are text. While a refusal is
  * being written the digits answer nothing and Enter on any of the card's
  * buttons sends the refusal (S2-R15, as on the permission card).
  *
@@ -138,6 +139,12 @@ export function PlanCard({ item, answers, focused = true, tabId }: Props): JSX.E
       return
     }
     if (!focused) return
+    // Only the card itself answers to keys. A link in the plan, the plan text
+    // (focusable to scroll it) and the buttons' digits are not the card: Enter
+    // on a link opens the link and approves nothing. Esc below only moves
+    // between the card's parts, so it is taken from anywhere in it.
+    const onCard = ev.target === card.current
+    if (!onCard && ev.key !== 'Escape') return
     // Keys still in flight when the card appeared never answer: only a fresh
     // plain press after it is armed.
     if (chorded(ev) || !guard.current.allows(ev.code || ev.key, performance.now())) return

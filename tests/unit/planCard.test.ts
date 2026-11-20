@@ -312,6 +312,52 @@ describe('PlanCard', () => {
     expect(comment()).toBeNull()
   })
 
+  test('Enter и цифра на ссылке в плане не отвечают карточке', () => {
+    const answers = fakeAnswers()
+    mount(answers, { text: '1. Прочитать [доку](https://example.com/doc)\n2. Сделать' })
+    focusAndArm()
+    const link = byId<HTMLElement>('plan-text')!.querySelector<HTMLAnchorElement>('a[href]')!
+    expect(link).not.toBeNull()
+    act(() => link.focus())
+    for (const [key, code] of [['Enter', 'Enter'], ['1', 'Digit1'], ['2', 'Digit2'], ['3', 'Digit3']] as const) {
+      // The link's own Enter is left to the link: nothing prevents it.
+      expect(press(link, key, code).defaultPrevented).toBe(false)
+    }
+    expect(answers.plan).not.toHaveBeenCalled()
+    expect(comment()).toBeNull()
+    expect(editor()).toBeNull()
+
+    // Nor while a refusal is being written: Enter on the link opens the link, not the refusal.
+    act(() => byId('plan-reject')!.click())
+    typeInto(comment()!, 'сначала тесты')
+    act(() => link.focus())
+    expect(press(link, 'Enter', 'Enter').defaultPrevented).toBe(false)
+    expect(answers.plan).not.toHaveBeenCalled()
+  })
+
+  test('Enter и цифры на тексте плана (он фокусируем для прокрутки) и цифры на кнопках не отвечают', () => {
+    const answers = fakeAnswers()
+    mount(answers)
+    focusAndArm()
+    const text = byId<HTMLElement>('plan-text')!
+    act(() => text.focus())
+    for (const [key, code] of [['Enter', 'Enter'], ['1', 'Digit1'], ['2', 'Digit2'], ['3', 'Digit3']] as const) {
+      expect(press(text, key, code).defaultPrevented).toBe(false)
+    }
+    const edit = byId('plan-edit')!
+    act(() => edit.focus())
+    press(edit, '1', 'Digit1')
+    press(edit, '2', 'Digit2')
+    expect(answers.plan).not.toHaveBeenCalled()
+    expect(comment()).toBeNull()
+    expect(editor()).toBeNull()
+
+    // On the card itself, the keys work (without this the test above proves nothing).
+    act(() => card().focus())
+    press(card(), '1', 'Digit1')
+    expect(answers.plan).toHaveBeenCalledWith('r1', { approve: true })
+  })
+
   test('у длинного комментария и длинной правки виден счётчик до предела', () => {
     mount(fakeAnswers())
     act(() => byId('plan-reject')!.click())

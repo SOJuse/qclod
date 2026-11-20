@@ -294,10 +294,13 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   )
 
   // The window sends a whole decision; until задача 9 the session hears only
-  // whether it was approved. Anything but a literal true is not an approval.
-  ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, decision: unknown) => {
+  // whether it was approved. Anything but a literal true is not an approval,
+  // and an unusable decision is no answer: the card stays open.
+  ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, given: unknown) => {
     if (!isString(id) || !isString(requestId)) return
-    manager.get(id)?.answerPlan(requestId, sanitizePlanDecision(decision).approve)
+    const decision = sanitizePlanDecision(given)
+    if (decision === null) return
+    manager.get(id)?.answerPlan(requestId, decision.approve)
   })
 
   // — этап 2: заглушки до задач 2 и 9. Their arguments (cwd, sessionId, title,

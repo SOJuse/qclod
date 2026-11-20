@@ -227,45 +227,60 @@ export function sanitizeQuestionAnswers(value: unknown): Record<string, string> 
   return out
 }
 
+/** A deny reason or a note on an option: a line or two from the person. */
+const MAX_NOTE = 2000
+/** What the user says with a plan decision. */
+const MAX_PLAN_COMMENT = 4000
+/** A plan the user edited: long, but not unbounded. */
+const MAX_PLAN = 100_000
+
+/**
+ * A text from the person, trimmed: nothing when it is not a string, empty
+ * after trimming, or longer than `max`. Never cut — a cut text says something
+ * else than what was written.
+ */
+function personText(value: unknown, max: number): string | undefined {
+  if (!isString(value)) return undefined
+  const text = value.trim()
+  return text !== '' && text.length <= max ? text : undefined
+}
+
 /**
  * The user's comments on the options chosen in a question card: question text
- * -> comment. Bounded like the answers themselves; an empty comment is none.
+ * -> comment, trimmed. An empty or over-long comment is none.
  */
 export function sanitizeQuestionNotes(value: unknown): Record<string, string> {
   if (!isPlainObject(value)) return {}
   const out: Record<string, string> = {}
   let kept = 0
-  for (const [question, note] of Object.entries(value)) {
+  for (const [question, given] of Object.entries(value)) {
     if (kept >= MAX_ANSWERS) break
-    if (typeof note !== 'string' || note === '' || note.length > MAX_ANSWER) continue
-    if (question.length > MAX_QUESTION) continue
+    const note = personText(given, MAX_NOTE)
+    if (note === undefined || question.length > MAX_QUESTION) continue
     out[question] = note
     kept += 1
   }
   return out
 }
 
-/** A comment or a deny reason is a line or two from the person, not a document. */
-const MAX_COMMENT = 2000
-/** A plan the user edited: long, but not unbounded. */
-const MAX_PLAN = 100_000
-
-/** A non-empty string no longer than `max`, or nothing: a longer one is not cut, it is dropped. */
-function boundedText(value: unknown, max: number): string | undefined {
-  return isString(value) && value !== '' && value.length <= max ? value : undefined
-}
-
 /**
- * What the user decided about a plan. Only a literal true approves; a comment
- * and an edited plan pass when they are strings of a sane length.
+ * What the user decided about a plan, or null when it is no usable answer —
+ * the card then stays open. Only a literal true approves. An edited plan goes
+ * only with an approval; one that is there but unusable (not a string, empty,
+ * too long) spoils the whole decision rather than being dropped: otherwise the
+ * agent would carry out the plan the user had changed.
  */
-export function sanitizePlanDecision(value: unknown): PlanDecision {
-  if (!isPlainObject(value)) return { approve: false }
-  const decision: PlanDecision = { approve: value['approve'] === true }
-  const comment = boundedText(value['comment'], MAX_COMMENT)
+export function sanitizePlanDecision(value: unknown): PlanDecision | null {
+  if (!isPlainObject(value)) return null
+  const approve = value['approve'] === true
+  const decision: PlanDecision = { approve }
+  const given = value['plan']
+  if (given !== undefined) {
+    if (!isString(given) || given.trim() === '' || given.length > MAX_PLAN) return null
+    if (approve) decision.plan = given
+  }
+  const comment = personText(value['comment'], MAX_PLAN_COMMENT)
   if (comment !== undefined) decision.comment = comment
-  const plan = boundedText(value['plan'], MAX_PLAN)
-  if (plan !== undefined) decision.plan = plan
   return decision
 }
 
@@ -273,18 +288,20 @@ export function sanitizePlanDecision(value: unknown): PlanDecision {
  * An answer is allow or deny — anything else is a deny. A malformed payload
  * must never widen a permission, and `updatedInput` never crosses from the
  * window: it would let the window rewrite the tool call it is approving.
- * «До конца сессии» goes only with an allow, a reason only with a deny.
+ * «До конца сессии» goes only with an allow, and over `remember` the narrower
+ * answer wins: a session's permission must not be saved as a rule for ever.
+ * A reason goes only with a deny.
  */
 export function sanitizeAnswer(value: unknown): PermissionAnswer {
   if (typeof value !== 'object' || value === null) return { behavior: 'deny' }
   const answer = value as Record<string, unknown>
   const behavior = answer['behavior'] === 'allow' ? 'allow' : 'deny'
+  if (behavior === 'allow' && answer['forSession'] === true) return { behavior, forSession: true }
   const out: PermissionAnswer = {
     behavior,
     ...(answer['remember'] === true ? { remember: true } : {})
   }
-  if (behavior === 'allow' && answer['forSession'] === true) out.forSession = true
-  const message = behavior === 'deny' ? boundedText(answer['message'], MAX_COMMENT) : undefined
+  const message = behavior === 'deny' ? personText(answer['message'], MAX_NOTE) : undefined
   if (message !== undefined) out.message = message
   return out
 }

@@ -148,11 +148,32 @@ describe('agentIpc: проверка полезной нагрузки', () => {
       behavior: 'deny',
       message: 'п'.repeat(2000)
     })
-    // Too long, empty, not a string, or on an allow: no message at all.
+    // Trimmed; then too long, empty, not a string, or on an allow: no message at all.
+    expect(sanitizeAnswer({ behavior: 'deny', message: '  не трогай main \n' })).toEqual({
+      behavior: 'deny',
+      message: 'не трогай main'
+    })
+    expect(sanitizeAnswer({ behavior: 'deny', message: ` ${'п'.repeat(2000)} ` })).toEqual({
+      behavior: 'deny',
+      message: 'п'.repeat(2000)
+    })
     expect(sanitizeAnswer({ behavior: 'deny', message: 'п'.repeat(2001) })).toEqual({ behavior: 'deny' })
     expect(sanitizeAnswer({ behavior: 'deny', message: '' })).toEqual({ behavior: 'deny' })
+    expect(sanitizeAnswer({ behavior: 'deny', message: '   \n ' })).toEqual({ behavior: 'deny' })
     expect(sanitizeAnswer({ behavior: 'deny', message: 42 })).toEqual({ behavior: 'deny' })
     expect(sanitizeAnswer({ behavior: 'allow', message: 'ок' })).toEqual({ behavior: 'allow' })
+  })
+
+  test('«до конца сессии» сильнее «всегда»: узкий ответ не становится правилом навсегда', () => {
+    expect(sanitizeAnswer({ behavior: 'allow', remember: true, forSession: true })).toEqual({
+      behavior: 'allow',
+      forSession: true
+    })
+    // A deny is never «for the session», so remember stays as it always did.
+    expect(sanitizeAnswer({ behavior: 'deny', remember: true, forSession: true })).toEqual({
+      behavior: 'deny',
+      remember: true
+    })
   })
 
   test('окно не может подменить ввод инструмента через updatedInput', () => {
@@ -234,7 +255,9 @@ describe('sanitizeQuestionNotes', () => {
     for (const garbage of [null, undefined, 'строка', ['A'], 5]) {
       expect(sanitizeQuestionNotes(garbage)).toEqual({})
     }
-    expect(sanitizeQuestionNotes({ A: 'да', B: 2, C: { x: 1 }, D: '' })).toEqual({ A: 'да' })
+    expect(sanitizeQuestionNotes({ A: 'да', B: 2, C: { x: 1 }, D: '', E: '  \n ' })).toEqual({ A: 'да' })
+    expect(sanitizeQuestionNotes({ A: '  у окна \n' })).toEqual({ A: 'у окна' })
+    expect(sanitizeQuestionNotes({ A: ` ${'я'.repeat(2000)} ` })).toEqual({ A: 'я'.repeat(2000) })
     expect(sanitizeQuestionNotes({ A: 'я'.repeat(2001), B: 'я'.repeat(2000) })).toEqual({
       B: 'я'.repeat(2000)
     })
@@ -247,26 +270,36 @@ describe('sanitizeQuestionNotes', () => {
 })
 
 describe('sanitizePlanDecision', () => {
-  test('одобрение — только буквальное true; мусор — отказ', () => {
+  test('одобрение — только буквальное true; не объект — не ответ', () => {
     expect(sanitizePlanDecision({ approve: true })).toEqual({ approve: true })
     expect(sanitizePlanDecision({ approve: false })).toEqual({ approve: false })
     expect(sanitizePlanDecision({ approve: 'да' })).toEqual({ approve: false })
     for (const garbage of [null, undefined, true, 'approve', [true]]) {
-      expect(sanitizePlanDecision(garbage)).toEqual({ approve: false })
+      expect(sanitizePlanDecision(garbage)).toBeNull()
     }
   })
 
-  test('комментарий до 2000 знаков и план до 100 000 проходят, длиннее — нет', () => {
-    expect(sanitizePlanDecision({ approve: false, comment: 'без миграций', extra: 1 })).toEqual({
+  test('комментарий обрезается по краям, до 4000 знаков; пустой или длиннее — его нет', () => {
+    expect(sanitizePlanDecision({ approve: false, comment: '  без миграций \n', extra: 1 })).toEqual({
       approve: false,
       comment: 'без миграций'
     })
-    expect(sanitizePlanDecision({ approve: true, comment: 'к'.repeat(2000) }).comment).toHaveLength(2000)
-    expect(sanitizePlanDecision({ approve: true, comment: 'к'.repeat(2001) })).toEqual({ approve: true })
-    expect(sanitizePlanDecision({ approve: true, plan: 'п'.repeat(100_000) }).plan).toHaveLength(100_000)
-    expect(sanitizePlanDecision({ approve: true, plan: 'п'.repeat(100_001) })).toEqual({ approve: true })
-    expect(sanitizePlanDecision({ approve: true, comment: '', plan: '' })).toEqual({ approve: true })
-    expect(sanitizePlanDecision({ approve: true, comment: 3, plan: { text: 'x' } })).toEqual({ approve: true })
+    expect(sanitizePlanDecision({ approve: true, comment: ` ${'к'.repeat(4000)} ` })?.comment).toHaveLength(4000)
+    expect(sanitizePlanDecision({ approve: true, comment: 'к'.repeat(4001) })).toEqual({ approve: true })
+    expect(sanitizePlanDecision({ approve: true, comment: '   ' })).toEqual({ approve: true })
+    expect(sanitizePlanDecision({ approve: true, comment: 3 })).toEqual({ approve: true })
+  })
+
+  test('правленый план — только при одобрении; негодный план делает всё решение негодным', () => {
+    expect(sanitizePlanDecision({ approve: true, plan: '1. шаг' })).toEqual({ approve: true, plan: '1. шаг' })
+    expect(sanitizePlanDecision({ approve: true, plan: 'п'.repeat(100_000) })?.plan).toHaveLength(100_000)
+    // A rejection carries no plan to carry out.
+    expect(sanitizePlanDecision({ approve: false, plan: '1. шаг' })).toEqual({ approve: false })
+    // Never cut, never dropped quietly: the agent must not run the plan the user had changed.
+    for (const plan of ['п'.repeat(100_001), '', '  \n ', 42, { text: 'x' }, null]) {
+      expect(sanitizePlanDecision({ approve: true, plan })).toBeNull()
+    }
+    expect(sanitizePlanDecision({ approve: false, plan: 'п'.repeat(100_001) })).toBeNull()
   })
 })
 
@@ -304,15 +337,21 @@ describe('этап 2: обработчики-заглушки в main', () => {
     register()
     await call(CHANNELS.planAnswer, 't1', 'p1', { approve: true, comment: 'ок' })
     await call(CHANNELS.planAnswer, 't1', 'p2', { approve: false })
-    await call(CHANNELS.planAnswer, 't1', 'p3', true)
-    await call(CHANNELS.planAnswer, 't1', 'p4', { approve: 'да' })
+    await call(CHANNELS.planAnswer, 't1', 'p3', { approve: 'да' })
     await call(CHANNELS.planAnswer, 't1', 5, { approve: true })
     expect(plans).toEqual([
       ['p1', true],
       ['p2', false],
-      ['p3', false],
-      ['p4', false]
+      ['p3', false]
     ])
+  })
+
+  test('plan:answer с негодным решением ничего не отвечает — карточка остаётся открытой', async () => {
+    register()
+    await call(CHANNELS.planAnswer, 't1', 'p1', { approve: true, plan: 'п'.repeat(100_001) })
+    await call(CHANNELS.planAnswer, 't1', 'p2', { approve: true, plan: '   ' })
+    await call(CHANNELS.planAnswer, 't1', 'p3', true)
+    expect(plans).toEqual([])
   })
 
   test('question:answer принимает комментарии четвёртым аргументом', async () => {

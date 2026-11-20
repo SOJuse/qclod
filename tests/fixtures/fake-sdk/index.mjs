@@ -969,7 +969,11 @@ export function createFakeSdk(script = {}) {
 
   return {
     messages: withOutOfBand(stream()),
-    send(input) {
+    // Temporary stub: the queue tasks give it a behaviour.
+    async cancelQueued() {
+      return null
+    },
+    send(input, _opts) {
       state.sent.push(input)
       inbox.push(input)
       wakeStream()
@@ -1003,6 +1007,7 @@ export function createFakeSdk(script = {}) {
     async interrupt() {
       state.interrupted = true
       for (const controller of openAsks) controller.abort()
+      return undefined
     },
     async setPermissionMode(mode) {
       state.permissionMode = mode

@@ -57,8 +57,11 @@ const api = {
     ipcRenderer.invoke(CHANNELS.agentSend, id, input),
   /** Stops the turn; resolves with the messages that were waiting to be sent. */
   interrupt: (id: TabId): Promise<UserInput[]> => ipcRenderer.invoke(CHANNELS.agentInterrupt, id),
-  cancelQueued: (tabId: TabId, id: string): Promise<boolean> =>
+  /** The cancelled message, or null when it has already reached the agent or is gone. */
+  cancelQueued: (tabId: TabId, id: string): Promise<UserInput | null> =>
     ipcRenderer.invoke(CHANNELS.agentQueueCancel, tabId, id),
+  sendQueuedNow: (tabId: TabId, id: string): Promise<boolean> =>
+    ipcRenderer.invoke(CHANNELS.agentQueueSendNow, tabId, id),
   setPermissionMode: (id: TabId, mode: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.agentPermissionMode, id, mode),
   setModel: (id: TabId, model: string): Promise<void> =>

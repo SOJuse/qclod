@@ -172,8 +172,9 @@ export interface FakeScript {
 
 export interface FakeDriver {
   readonly messages: AsyncIterable<Record<string, never>>
-  send(input: { text: string; attachments: unknown[] }): void
-  interrupt(): Promise<void>
+  send(input: { text: string; attachments: unknown[] }, opts?: { uuid?: string; priority?: 'now' | 'next' | 'later' }): void
+  cancelQueued(uuid: string): Promise<boolean | null>
+  interrupt(opts?: { cancelQueued?: boolean }): Promise<{ stillQueued: string[]; cancelled: string[] } | undefined>
   setPermissionMode(mode: string): Promise<void>
   supportedCommands(): Promise<
     Array<{ name: string; description: string; argumentHint: string; builtin?: boolean }>

@@ -1804,6 +1804,7 @@ describe('AgentSession: ожидание вне хода', () => {
     driver.interrupt = async () => {
       await original()
       await new Promise<void>((resolve) => (interrupted = resolve))
+      return undefined
     }
     const stopping = session.interrupt()
     await vi.waitFor(() => expect(interrupted).toBeDefined())
@@ -1839,7 +1840,7 @@ describe('AgentSession: «Стоп» не трогает следующий хо
 
     // The interrupt is on its way and not back yet.
     let interrupted!: () => void
-    driver.interrupt = () => new Promise<void>((resolve) => (interrupted = resolve))
+    driver.interrupt = () => new Promise<undefined>((resolve) => (interrupted = () => resolve(undefined)))
     const stopping = session.interrupt()
     await vi.waitFor(() => expect(interrupted).toBeDefined())
 
@@ -1907,7 +1908,7 @@ describe('AgentSession: очередь сообщений', () => {
     // Not sent, not in the ribbon — only on the strip above the input.
     expect(driver.sent).toHaveLength(1)
     expect(rec.items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text)).toEqual(['раз'])
-    expect(lastQueue(rec)).toEqual([{ id: expect.any(String), text: 'два', attachments: 0 }])
+    expect(lastQueue(rec)).toEqual([{ id: expect.any(String), text: 'два', attachments: 0, state: 'queued', canSendNow: false }])
     expect(session.panel.queue).toHaveLength(1)
 
     await vi.waitFor(() => expect(texts(rec.items)).toContain('второй ответ'), { timeout: 3000 })
@@ -1969,7 +1970,7 @@ describe('AgentSession: очередь сообщений', () => {
     session.send({ text: 'два', attachments: [] })
 
     let interrupted!: () => void
-    driver.interrupt = () => new Promise<void>((resolve) => (interrupted = resolve))
+    driver.interrupt = () => new Promise<undefined>((resolve) => (interrupted = () => resolve(undefined)))
     const stopping = session.interrupt()
     await vi.waitFor(() => expect(interrupted).toBeDefined())
 

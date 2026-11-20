@@ -23,8 +23,10 @@ import type { ToolPermissionContext } from './permissionContext'
 export interface AgentDriver {
   /** The session's message stream. It ends only when the session does. */
   readonly messages: AsyncIterable<unknown>
-  send(input: UserInput): void
-  interrupt(): Promise<void>
+  send(input: UserInput, opts?: SendOptions): void
+  /** true — снято с очереди; false — уже ушло агенту; null — этот SDK или CLI не умеет. */
+  cancelQueued(uuid: string): Promise<boolean | null>
+  interrupt(opts?: { cancelQueued?: boolean }): Promise<InterruptReceipt | undefined>
   setPermissionMode(mode: string): Promise<void>
   supportedCommands(): Promise<CommandInfo[]>
   mcpServerStatus(): Promise<McpServerInfo[]>
@@ -54,6 +56,16 @@ export interface AgentDriver {
    */
   setRemoteControl(enabled: boolean, name?: string): Promise<RemoteLink | null>
   dispose(): Promise<void>
+}
+
+export type SendPriority = 'now' | 'next' | 'later'
+export interface SendOptions {
+  uuid?: string
+  priority?: SendPriority
+}
+export interface InterruptReceipt {
+  stillQueued: string[]
+  cancelled: string[]
 }
 
 export interface RemoteLink {

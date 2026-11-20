@@ -154,8 +154,14 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
       push(toSdkMessage(input))
     },
 
-    async interrupt(): Promise<void> {
+    // Temporary: the real logic comes with the queue tasks.
+    async cancelQueued(): Promise<boolean | null> {
+      return null
+    },
+
+    async interrupt(): Promise<undefined> {
       await session.interrupt()
+      return undefined
     },
 
     async setPermissionMode(mode: string): Promise<void> {

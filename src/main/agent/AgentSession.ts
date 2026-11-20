@@ -851,7 +851,13 @@ export class AgentSession {
   private emitQueue(): void {
     this.emitPanel(
       this.collector.setQueue(
-        this.queue.map((q) => ({ id: q.id, text: q.input.text, attachments: q.input.attachments.length }))
+        this.queue.map((q) => ({
+          id: q.id,
+          text: q.input.text,
+          attachments: q.input.attachments.length,
+          state: 'queued' as const,
+          canSendNow: false
+        }))
       )
     )
   }

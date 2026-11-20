@@ -8,6 +8,8 @@ import type {
 } from '../../shared/types'
 import { REMOTE_OFF } from '../../shared/remote'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
+import { startLayoutSync } from '../state/layoutSync'
+import { nextPanes } from '../chat/sidebarModel'
 import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { ChatPane } from '../components/ChatPane'
 import { ErrorBoundary } from '../ui/ErrorBoundary'
@@ -118,6 +120,8 @@ export function App(): JSX.Element {
   useEffect(recheck, [recheck])
   const paneTabIds = useAppStore((s) => s.paneTabIds)
   const setPanes = useAppStore((s) => s.setPanes)
+  // Main keeps the layout; the window follows it and writes its pane changes back.
+  useEffect(() => startLayoutSync(useAppStore, window.qclod), [])
   const split = paneTabIds.length > 1
 
   // The session's subagents, read from the ribbon it already holds.
@@ -152,19 +156,29 @@ export function App(): JSX.Element {
     setFocusToken((n) => n + 1)
   }, [])
 
+  /** Sets the panes; when that changes the active chat, main is told, as with a click. */
+  const applyPanes = useCallback(
+    (ids: string[]): void => {
+      const { activate } = nextPanes(useAppStore.getState(), ids)
+      setPanes(ids)
+      if (activate) void window.qclod.activateTab(activate)
+    },
+    [setPanes]
+  )
+
   /** Opens the conversation beside this one, or closes the second pane. */
   const toggleSplit = useCallback((): void => {
     const state = useAppStore.getState()
     if (state.paneTabIds.length > 1) {
-      setPanes([state.activeTabId])
+      applyPanes([state.activeTabId])
       return
     }
     const other = state.tabs.find((t) => t.id !== state.activeTabId)
     if (!other) return
-    setPanes([state.activeTabId, other.id])
+    applyPanes([state.activeTabId, other.id])
     state.focusPane(other.id)
     void window.qclod.activateTab(other.id)
-  }, [setPanes])
+  }, [applyPanes])
   const settings = useAppStore((s) => s.settings)
   const tabs = useAppStore((s) => s.tabs)
   const activeTabId = useAppStore((s) => s.activeTabId)

@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import type { PendingAttachment } from '../input/attachments'
 import { UI_KEY, loadUi, serializeUi } from './uiPersist'
 import { startHeldDrafts } from './heldDrafts'
+import { MAX_PANES, nextPanes, type ProjectHistory } from '../chat/sidebarModel'
+import { projectKey } from '../../shared/projects'
+import { DEFAULT_LAYOUT, type LayoutState } from '../../shared/types'
 import type {
   AppSettings,
   CommandInfo,
@@ -101,30 +104,53 @@ function forgetClosed(state: AppState, tabs: TabState[]): Partial<AppState> {
   return next as Partial<AppState>
 }
 
-/** How many panes a window can hold. */
-export const MAX_PANES = 4
+export { MAX_PANES }
 
 /**
- * The panes and the active tab once the tab list changed: a pane whose tab was
- * closed stops being a pane, and the active one is replaced by its neighbour.
+ * The panes and the active tab once the tab list changed (or main's layout
+ * came): a pane whose tab was closed stops being a pane, and the active one
+ * is replaced by its neighbour. `want` is the layout to fit instead of the
+ * window's own panes, and `was` the chat that was active there before. An
+ * active chat that is not a pane takes the slot of the chat that was active
+ * before it, so no other pane is pushed out.
  */
 function paneStateAfter(
   state: Pick<AppState, 'paneTabIds' | 'activeTabId'>,
-  tabs: TabState[]
+  tabs: TabState[],
+  want?: { panes: TabId[]; active: TabId | null; was?: TabId }
 ): { paneTabIds: TabId[]; activeTabId: TabId } {
   const alive = (id: TabId): boolean => tabs.some((t) => t.id === id)
-  const paneTabIds = state.paneTabIds.filter(alive)
-  let activeTabId = state.activeTabId
+  const source = want?.panes ?? state.paneTabIds
+  const paneTabIds = [...new Set(source)].filter(alive)
+  let activeTabId = want?.active ?? state.activeTabId
   if (!alive(activeTabId)) {
-    const was = state.paneTabIds.indexOf(activeTabId)
+    const was = source.indexOf(activeTabId)
     const near = was === -1 ? paneTabIds[0] : paneTabIds[Math.min(was, paneTabIds.length - 1)]
     activeTabId = near ?? tabs[0]?.id ?? ''
   }
-  if (activeTabId && !paneTabIds.includes(activeTabId)) paneTabIds.unshift(activeTabId)
+  if (activeTabId && !paneTabIds.includes(activeTabId)) {
+    const slot = paneTabIds.indexOf(want?.was ?? state.activeTabId)
+    if (paneTabIds.length === 0) paneTabIds.push(activeTabId)
+    else if (slot !== -1 || paneTabIds.length >= MAX_PANES) paneTabIds[Math.max(0, slot)] = activeTabId
+    else paneTabIds.unshift(activeTabId)
+  }
   const next = paneTabIds.slice(0, MAX_PANES)
   // The same panes keep the same array: effects and storage writes key on it.
   const same = next.length === state.paneTabIds.length && next.every((id, i) => id === state.paneTabIds[i])
   return { paneTabIds: same ? state.paneTabIds : next, activeTabId }
+}
+
+/** Main's layout laid over the tabs the window knows. */
+function applyLayout(
+  state: AppState,
+  layout: LayoutState,
+  tabs: TabState[],
+  was?: TabId
+): Pick<AppState, 'paneTabIds' | 'activeTabId' | 'paneWidths' | 'layoutPending'> {
+  const fit = paneStateAfter(state, tabs, { panes: layout.panes, active: layout.active, ...(was ? { was } : {}) })
+  const widths = layout.paneWidths.length === fit.paneTabIds.length ? layout.paneWidths : []
+  const sameWidths = widths.length === state.paneWidths.length && widths.every((w, i) => w === state.paneWidths[i])
+  return { ...fit, paneWidths: sameWidths ? state.paneWidths : widths, layoutPending: false }
 }
 
 export const EMPTY_PANEL: PanelData = Object.freeze({
@@ -146,6 +172,14 @@ interface AppState {
   activeTabId: TabId
   /** The panes left to right; one of them is always the active tab. [] while there are no tabs. */
   paneTabIds: TabId[]
+  /** Shares of the row, one per pane; [] means equal. Main's, via the layout. */
+  paneWidths: number[]
+  /** The layout as main last said it: panes, active and widths are applied from it, the rest is read from it. */
+  layout: LayoutState
+  /** The layout came before any tab did; the first list lays it over them. */
+  layoutPending: boolean
+  /** The past conversations per project, by projectKey. */
+  historyByProject: Record<string, ProjectHistory>
   tabs: TabState[]
   /** Ids of tabs that were closed: late events and answers for them are dropped. */
   closedTabs: ReadonlySet<TabId>
@@ -179,6 +213,11 @@ interface AppState {
   setPanes: (ids: TabId[]) => void
   /** Makes a pane the active one without moving any pane. */
   focusPane: (id: TabId) => void
+  /** Takes main's layout: panes, active and widths at once if the tabs are known, otherwise with the list. */
+  setLayout: (layout: LayoutState) => void
+  setPaneWidths: (widths: number[]) => void
+  /** Asks main for a folder's past conversations; once, unless forced. */
+  loadProjectHistory: (cwd: string, force?: boolean) => void
   setTabs: (tabs: TabState[]) => void
   setRibbon: (id: TabId, snapshot: RibbonSnapshot) => void
   applyRibbon: (id: TabId, changes: RibbonChange[], rev: number) => void
@@ -249,10 +288,14 @@ const restored = loadUi(ui())
 /** After the watchdog's reload a long draft is held back, not put into the field (heldDrafts.ts). */
 const restoredDrafts = startHeldDrafts(restored.draftByTab, ui())
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   settings: null,
-  activeTabId: restored.activeTabId,
-  paneTabIds: restored.paneTabIds,
+  activeTabId: '',
+  paneTabIds: [],
+  paneWidths: [],
+  layout: { ...DEFAULT_LAYOUT, panes: [], paneWidths: [], projects: [] },
+  layoutPending: false,
+  historyByProject: {},
   tabs: [],
   closedTabs: new Set(),
   ribbonByTab: {},
@@ -280,28 +323,73 @@ export const useAppStore = create<AppState>((set) => ({
     }),
   setPanes: (ids) =>
     set((state) => {
-      const paneTabIds = [...new Set(ids)].filter((id) => !state.closedTabs.has(id)).slice(0, MAX_PANES)
-      const activeTabId = paneTabIds.includes(state.activeTabId) ? state.activeTabId : (paneTabIds[0] ?? state.activeTabId)
-      return { paneTabIds, activeTabId }
+      const next = nextPanes(
+        state,
+        ids.filter((id) => !state.closedTabs.has(id))
+      )
+      const same =
+        next.paneTabIds.length === state.paneTabIds.length && next.paneTabIds.every((id, i) => id === state.paneTabIds[i])
+      return {
+        paneTabIds: same ? state.paneTabIds : next.paneTabIds,
+        activeTabId: next.activeTabId,
+        // The shares belong to the panes they were made for.
+        ...(next.paneTabIds.length === state.paneWidths.length ? {} : { paneWidths: [] })
+      }
     }),
   focusPane: (id) => set((state) => (state.paneTabIds.includes(id) ? { activeTabId: id } : state)),
 
+  setLayout: (layout) =>
+    set((state) =>
+      state.tabs.length === 0
+        ? { layout, layoutPending: true }
+        : layout.active !== null && !state.tabs.some((t) => t.id === layout.active)
+          ? // Main made a chat active that the list does not hold yet: its own activation and the list follow.
+            { layout }
+          : // The new active chat takes the slot of the one main had active, as main's panes know it.
+            { layout, ...applyLayout(state, layout, state.tabs, state.layout.active ?? undefined) }
+    ),
+  setPaneWidths: (paneWidths) => set({ paneWidths }),
+
+  loadProjectHistory: (cwd, force = false) => {
+    const key = projectKey(cwd)
+    const known = get().historyByProject[key]
+    if (known === 'loading' || (known !== undefined && known.error === undefined && !force)) return
+    set((state) => ({ historyByProject: { ...state.historyByProject, [key]: 'loading' } }))
+    const done = (entry: ProjectHistory): void =>
+      set((state) => ({ historyByProject: { ...state.historyByProject, [key]: entry } }))
+    window.qclod.projectHistory(cwd).then(
+      (items) => done({ items }),
+      (err: unknown) => done({ items: [], error: err instanceof Error ? err.message : String(err) })
+    )
+  },
+
   setTabs: (tabs) =>
-    set((state) => ({
-      tabs,
-      // A closed tab's data goes with it. Only tabs this store has seen in
-      // `tabs` are forgotten: a new tab's ribbon events can precede the list.
-      ...forgetClosed(state, tabs),
-      closedTabs: closedAfter(state, tabs),
-      busySinceByTab: tabs.reduce<Record<TabId, number>>((acc, tab) => {
+    set((state) => {
+      const busySince = tabs.reduce<Record<TabId, number>>((acc, tab) => {
         const working = tab.status === 'busy' || tab.status === 'waiting'
         const previous = state.tabs.find((t) => t.id === tab.id)
         const wasWorking = previous?.status === 'busy' || previous?.status === 'waiting'
         if (working) acc[tab.id] = wasWorking ? (state.busySinceByTab[tab.id] ?? Date.now()) : Date.now()
         return acc
-      }, {}),
-      ...paneStateAfter(state, tabs)
-    })),
+      }, {})
+      const before = state.busySinceByTab
+      // Statuses that did not change keep the same object: readers key on it.
+      const unchanged =
+        Object.keys(busySince).length === Object.keys(before).length &&
+        Object.entries(busySince).every(([id, at]) => before[id] === at)
+      return {
+        tabs,
+        // A closed tab's data goes with it. Only tabs this store has seen in
+        // `tabs` are forgotten: a new tab's ribbon events can precede the list.
+        ...forgetClosed(state, tabs),
+        closedTabs: closedAfter(state, tabs),
+        busySinceByTab: unchanged ? before : busySince,
+        // Main's layout may have come before the tabs: it is applied now, once.
+        ...(state.layoutPending && tabs.length > 0
+          ? applyLayout(state, state.layout, tabs)
+          : paneStateAfter(state, tabs))
+      }
+    }),
 
   // The snapshot is the whole ribbon at its revision: it replaces whatever
   // the window holds unless that is already newer. Events it already holds
@@ -398,9 +486,7 @@ export const useAppStore = create<AppState>((set) => ({
 useAppStore.subscribe((state, before) => {
   if (
     state.draftByTab === before.draftByTab &&
-    state.attachmentsByTab === before.attachmentsByTab &&
-    state.paneTabIds === before.paneTabIds &&
-    state.activeTabId === before.activeTabId
+    state.attachmentsByTab === before.attachmentsByTab
   ) {
     return
   }

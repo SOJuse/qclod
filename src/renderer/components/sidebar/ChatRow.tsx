@@ -1,5 +1,6 @@
 import { Smartphone, X } from 'lucide-react'
 import { hint } from '../../app/shortcuts'
+import { DRAG_CHAT } from '../../app/paneOps'
 import type { SessionStatus, TabId, TabState } from '../../../shared/types'
 import { REMOTE_STATE_LABEL } from '../../../shared/remote'
 
@@ -29,24 +30,33 @@ interface Props {
 /**
  * One open chat under its project. It keeps the old tab's names (`tab`,
  * `.is-active`, `.tab-status`, `.tab-title`): a live chat is what a tab was.
- * A press makes it active; the middle button closes it.
+ * A click makes it active; the middle button closes it. It can be dragged
+ * onto a pane of the split (DRAG_CHAT): that is why a press alone does not
+ * activate it — the chat would take the active pane's place before the drop.
  */
 export function ChatRow({ tab, active, inPane, onActivate, onClose }: Props): JSX.Element {
   const remote = remoteWord(tab)
   return (
     <div
       data-testid="tab"
+      data-tab={tab.id}
       className={`tab${active ? ' is-active' : ''}${inPane && !active ? ' is-in-pane' : ''}${
         tab.badge ? ' has-badge' : ''
       }`}
       title={`${tab.cwd}\n${STATUS_LABEL[tab.status]}${remote ? `\nRemote Control: ${remote}` : ''}`}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(DRAG_CHAT, tab.id)
+        e.dataTransfer.effectAllowed = 'move'
+      }}
       onMouseDown={(e) => {
         if (e.button === 1) {
           e.preventDefault()
           onClose(tab.id)
-        } else {
-          onActivate(tab.id)
         }
+      }}
+      onClick={(e) => {
+        if (e.button === 0) onActivate(tab.id)
       }}
     >
       <span className={`tab-status is-${tab.status}`} aria-hidden />

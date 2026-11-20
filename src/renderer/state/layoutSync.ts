@@ -37,8 +37,10 @@ export function startLayoutSync(
     const known = new Set(s.tabs.map((t) => t.id))
     const expected = lastMain.panes.filter((id) => known.has(id))
     if (!same(s.paneTabIds, expected)) return true
-    // The shares of panes that are not all here yet mean nothing.
-    return expected.length === lastMain.panes.length && !same(s.paneWidths, lastMain.paneWidths)
+    if (expected.length === lastMain.panes.length) return !same(s.paneWidths, lastMain.paneWidths)
+    // Main's shares are for panes not all here (yet, or ever: a dead id). Shares
+    // the person set for the panes shown are news all the same; [] is a guess.
+    return s.paneWidths.length > 0 && s.paneWidths.length === s.paneTabIds.length
   }
   const arm = (): void => {
     clearTimeout(timer)

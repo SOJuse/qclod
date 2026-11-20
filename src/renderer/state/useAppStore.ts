@@ -121,7 +121,8 @@ function paneStateAfter(
 ): { paneTabIds: TabId[]; activeTabId: TabId } {
   const alive = (id: TabId): boolean => tabs.some((t) => t.id === id)
   const source = want?.panes ?? state.paneTabIds
-  const paneTabIds = [...new Set(source)].filter(alive)
+  // Cut to the row first: an active chat past the fourth then takes a slot instead of falling off.
+  const paneTabIds = [...new Set(source)].filter(alive).slice(0, MAX_PANES)
   let activeTabId = want?.active ?? state.activeTabId
   if (!alive(activeTabId)) {
     const was = source.indexOf(activeTabId)
@@ -134,10 +135,10 @@ function paneStateAfter(
     else if (slot !== -1 || paneTabIds.length >= MAX_PANES) paneTabIds[Math.max(0, slot)] = activeTabId
     else paneTabIds.unshift(activeTabId)
   }
-  const next = paneTabIds.slice(0, MAX_PANES)
   // The same panes keep the same array: effects and storage writes key on it.
-  const same = next.length === state.paneTabIds.length && next.every((id, i) => id === state.paneTabIds[i])
-  return { paneTabIds: same ? state.paneTabIds : next, activeTabId }
+  const same =
+    paneTabIds.length === state.paneTabIds.length && paneTabIds.every((id, i) => id === state.paneTabIds[i])
+  return { paneTabIds: same ? state.paneTabIds : paneTabIds, activeTabId }
 }
 
 /**
@@ -331,6 +332,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => (state.settings ? { settings: { ...state.settings, ...patch } } : state)),
   setActiveTabId: (activeTabId) =>
     set((state) => {
+      // A late word about a chat already closed changes nothing.
+      if (state.closedTabs.has(activeTabId)) return state
       // A tab from outside the panes takes the place of the active pane.
       if (state.paneTabIds.length === 0 || state.paneTabIds.includes(activeTabId)) return { activeTabId }
       const at = Math.max(0, state.paneTabIds.indexOf(state.activeTabId))
@@ -338,10 +341,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
   setPanes: (ids) =>
     set((state) => {
-      const next = nextPanes(
-        state,
-        ids.filter((id) => !state.closedTabs.has(id))
-      )
+      const open = ids.filter((id) => !state.closedTabs.has(id))
+      // An empty row is never asked for: the active chat stays its one pane.
+      const keep = open.length === 0 && state.tabs.some((t) => t.id === state.activeTabId) ? [state.activeTabId] : open
+      const next = nextPanes(state, keep)
       const same =
         next.paneTabIds.length === state.paneTabIds.length && next.paneTabIds.every((id, i) => id === state.paneTabIds[i])
       return {

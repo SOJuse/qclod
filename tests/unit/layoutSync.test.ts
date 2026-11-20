@@ -154,6 +154,27 @@ describe('startLayoutSync', () => {
     expect(api.setLayout).not.toHaveBeenCalled()
   })
 
+  test('в сохранённых панелях мёртвый id: ширины, поменянные мышью, всё равно пишутся', async () => {
+    const store = fakeStore()
+    const api = {
+      getLayout: vi.fn(async () =>
+        empty({ panes: ['a', 'b', 'dead'], paneWidths: [0.3, 0.3, 0.4], active: 'a' })
+      ),
+      setLayout: vi.fn(async () => empty()),
+      onLayoutChanged: vi.fn(() => () => undefined)
+    }
+    startLayoutSync(store as never, api as never, 300)
+    await vi.advanceTimersByTimeAsync(0)
+    // The window shows what is alive; equal shares until the person moves a splitter.
+    store.setState({ paneTabIds: ['a', 'b'], paneWidths: [] })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(api.setLayout).not.toHaveBeenCalled()
+    store.setState({ paneWidths: [0.35, 0.65] })
+    await vi.advanceTimersByTimeAsync(400)
+    expect(api.setLayout).toHaveBeenCalledTimes(1)
+    expect(api.setLayout).toHaveBeenCalledWith({ panes: ['a', 'b'], paneWidths: [0.35, 0.65] })
+  })
+
   test('отказ записи: окно сверяется с main и берёт его панели', async () => {
     const { store, api, push } = setup()
     await vi.advanceTimersByTimeAsync(0)

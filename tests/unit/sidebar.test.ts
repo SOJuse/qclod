@@ -170,4 +170,10 @@ describe('Sidebar', () => {
     expect(html).toContain('>сервер<')
     expect(html).not.toContain('style=')
   })
+
+  test('строки чатов и прошлых сессий перетаскиваются сами (П10)', () => {
+    const html = render([project('C:\\a', { chats: [chat('a', 'C:\\a')], past: [session(1)] })])
+    expect(html).toMatch(/<div[^>]*data-testid="tab"[^>]*draggable="true"|<div[^>]*draggable="true"[^>]*data-testid="tab"/)
+    expect(html).toMatch(/<button[^>]*draggable="true"[^>]*data-testid="sidebar-session"|<button[^>]*data-testid="sidebar-session"[^>]*draggable="true"/)
+  })
 })

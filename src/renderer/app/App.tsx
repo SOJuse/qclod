@@ -10,7 +10,9 @@ import { REMOTE_OFF } from '../../shared/remote'
 import { projectKey } from '../../shared/projects'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { startLayoutSync } from '../state/layoutSync'
-import { buildSidebar, chatOrder, nextPanes } from '../chat/sidebarModel'
+import { MAX_PANES, buildSidebar, chatOrder, nextPanes } from '../chat/sidebarModel'
+import { SplitView } from './SplitView'
+import { dropOnPane, type DropPayload, type DropWhere } from './paneOps'
 import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { Sidebar } from '../components/sidebar/Sidebar'
 import { ChatPane } from '../components/ChatPane'
@@ -117,7 +119,9 @@ export function App(): JSX.Element {
   // to drive, and finding that out by typing a message is a poor welcome.
   useEffect(recheck, [recheck])
   const paneTabIds = useAppStore((s) => s.paneTabIds)
+  const paneWidths = useAppStore((s) => s.paneWidths)
   const setPanes = useAppStore((s) => s.setPanes)
+  const setPaneWidths = useAppStore((s) => s.setPaneWidths)
   // Main keeps the layout; the window follows it and writes its pane changes back.
   useEffect(() => startLayoutSync(useAppStore, window.qclod), [])
   const split = paneTabIds.length > 1
@@ -164,19 +168,65 @@ export function App(): JSX.Element {
     [setPanes]
   )
 
-  /** Opens the conversation beside this one, or closes the second pane. */
+  /**
+   * Closes the split down to the active pane; with one pane, opens beside it
+   * the next chat of the sidebar's order that is not shown, and moves there.
+   */
   const toggleSplit = useCallback((): void => {
     const state = useAppStore.getState()
     if (state.paneTabIds.length > 1) {
       applyPanes([state.activeTabId])
       return
     }
-    const other = state.tabs.find((t) => t.id !== state.activeTabId)
+    const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject))
+    const at = order.indexOf(state.activeTabId)
+    const other = [...order.slice(at + 1), ...order.slice(0, Math.max(0, at))].find(
+      (id) => id !== state.activeTabId && !state.paneTabIds.includes(id)
+    )
     if (!other) return
-    applyPanes([state.activeTabId, other.id])
-    state.focusPane(other.id)
-    void window.qclod.activateTab(other.id)
-  }, [applyPanes])
+    applyPanes([state.activeTabId, other])
+    focusPane(other)
+  }, [applyPanes, focusPane])
+
+  /** The panes as drawn: before any tab is known, the active id alone. */
+  const shownPanes = useCallback((): string[] => {
+    const state = useAppStore.getState()
+    return state.paneTabIds.length > 0 ? state.paneTabIds : [state.activeTabId]
+  }, [])
+
+  /** `id` let go on pane `index` of the row `before`: it takes its place there and is the active one. */
+  const placeDropped = useCallback(
+    (before: string[], id: string, index: number, where: DropWhere): void => {
+      const next = dropOnPane(before, id, index, where)
+      // On itself, or beside a full row: nothing at all changes.
+      if (next === before) return
+      applyPanes(next)
+      focusPane(id)
+    },
+    [applyPanes, focusPane]
+  )
+
+  /**
+   * A drop on the split. A chat moves or comes in (paneOps.dropOnPane). A past
+   * conversation is opened first, then put where it was let go — into the row
+   * as it was at the drop, whatever main made of the opening meanwhile.
+   */
+  const dropOnSplit = useCallback(
+    (index: number, where: DropWhere, payload: DropPayload): void => {
+      const before = shownPanes()
+      if (payload.kind === 'chat') {
+        if (!useAppStore.getState().tabs.some((t) => t.id === payload.tabId)) return
+        placeDropped(before, payload.tabId, index, where)
+        return
+      }
+      // A full row has no room beside a pane: nothing is opened for nowhere.
+      if (before.length >= MAX_PANES && where !== 'replace') return
+      void window.qclod.openProjectSession(payload.cwd, payload.sessionId, payload.title).then((tab) => {
+        if (tab) placeDropped(before, tab.id, index, where)
+      })
+    },
+    [shownPanes, placeDropped]
+  )
   const settings = useAppStore((s) => s.settings)
   const tabs = useAppStore((s) => s.tabs)
   const activeTabId = useAppStore((s) => s.activeTabId)
@@ -628,9 +678,12 @@ export function App(): JSX.Element {
             onRetryPast={(cwd) => loadProjectHistory(cwd)}
           />
         )}
-        <div className="app-panes">
-          {(paneTabIds.length > 0 ? paneTabIds : [activeTabId]).map((id, index) => (
-            <ErrorBoundary scope="pane" key={id}>
+        <SplitView
+          panes={paneTabIds.length > 0 ? paneTabIds : [activeTabId]}
+          widths={paneWidths}
+          activeTabId={activeTabId}
+          renderPane={(id, index) => (
+            <ErrorBoundary scope="pane">
               {__QCLOD_TEST_SEAMS__ && split && index === 0 && <ThrowInPane />}
               <ChatPane
                 tabId={id}
@@ -653,8 +706,11 @@ export function App(): JSX.Element {
                 }
               />
             </ErrorBoundary>
-          ))}
-        </div>
+          )}
+          onDrop={dropOnSplit}
+          onResize={setPaneWidths}
+          onFocus={focusPane}
+        />
         {showPanel && (
           <SidePanel
             data={panelByTab[activeTabId] ?? EMPTY_PANEL}

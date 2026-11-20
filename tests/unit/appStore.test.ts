@@ -521,4 +521,36 @@ describe('useAppStore: раскладка из main и хвосты сплита
     store.setTabs([t('a'), t('b'), t('c')])
     expect(useAppStore.getState().paneTabIds).toEqual(['a', 'c'])
   })
+
+  test('layout с пятью панелями и активной на пятой: в ряду четыре, активная среди них', () => {
+    const store = useAppStore.getState()
+    store.setTabs(['a', 'b', 'c', 'd', 'e'].map((id) => t(id)))
+    store.setLayout(layout({ panes: ['a', 'b', 'c', 'd', 'e'], active: 'e' }))
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toHaveLength(MAX_PANES)
+    expect(state.paneTabIds).toContain('e')
+    expect(state.activeTabId).toBe('e')
+  })
+
+  test('setPanes([]) оставляет активный чат панелью, а не пустой ряд', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('a'), t('b')])
+    store.setPanes(['a', 'b'])
+    store.focusPane('b')
+    store.setPanes([])
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toEqual(['b'])
+    expect(state.activeTabId).toBe('b')
+  })
+
+  test('setActiveTabId закрытого чата ничего не меняет', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('a'), t('b'), t('c')])
+    store.setPanes(['a', 'b'])
+    store.setTabs([t('a'), t('b')])
+    store.setActiveTabId('c')
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toEqual(['a', 'b'])
+    expect(state.activeTabId).toBe('a')
+  })
 })

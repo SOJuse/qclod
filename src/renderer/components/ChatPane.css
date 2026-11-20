@@ -21,20 +21,6 @@
   pointer-events: auto;
 }
 
-/* With one pane there is nothing to tell apart, so nothing is drawn. */
-.chat-pane + .chat-pane {
-  border-left: 1px solid var(--border);
-}
-
-.app-split .chat-pane {
-  opacity: 0.82;
-  transition: opacity var(--dur) var(--ease);
-}
-
-.app-split .chat-pane.is-focused {
-  opacity: 1;
-}
-
 .chat-pane-title {
   flex: 0 0 auto;
   padding: 6px 14px;
@@ -49,13 +35,6 @@
 .chat-pane.is-focused .chat-pane-title {
   color: var(--accent);
   border-bottom-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-}
-
-.app-panes {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
 }
 
 /* A one-line warning above the input, same width as the input. */

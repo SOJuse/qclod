@@ -100,7 +100,14 @@ export function ProjectGroup({
               onClose={onClose}
             />
           ))}
-          <PastList past={past} shown={shown} onOpen={(s) => onOpenPast(cwd, s)} onRetry={onRetryPast} onMore={onMore} />
+          <PastList
+            cwd={cwd}
+            past={past}
+            shown={shown}
+            onOpen={(s) => onOpenPast(cwd, s)}
+            onRetry={onRetryPast}
+            onMore={onMore}
+          />
         </>
       )}
     </div>
@@ -108,12 +115,14 @@ export function ProjectGroup({
 }
 
 function PastList({
+  cwd,
   past,
   shown,
   onOpen,
   onRetry,
   onMore
 }: {
+  cwd: string
   past: SidebarProject['past']
   shown: number
   onOpen: (session: SessionSummary) => void
@@ -147,7 +156,7 @@ function PastList({
         Прошлые
       </div>
       {past.slice(0, shown).map((session) => (
-        <PastRow key={session.id} session={session} onOpen={onOpen} />
+        <PastRow key={session.id} cwd={cwd} session={session} onOpen={onOpen} />
       ))}
       {past.length > shown && (
         <button

@@ -7,10 +7,13 @@ import type {
   CommandInfo,
   HotkeyRegistration,
   LaunchOverrides,
+  LayoutPatch,
+  LayoutState,
   PanelEvent,
   PanelSnapshot,
   PermissionAnswer,
   PersistedTab,
+  PlanDecision,
   PreparedImage,
   RendererErrorReport,
   ResolvedPath,
@@ -105,11 +108,16 @@ const api = {
     ipcRenderer.invoke(CHANNELS.permissionRules),
   deletePermissionRule: (ruleId: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.permissionRuleDelete, ruleId),
-  answerPlan: (id: TabId, requestId: string, approve: boolean): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.planAnswer, id, requestId, approve),
+  answerPlan: (id: TabId, requestId: string, decision: PlanDecision): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.planAnswer, id, requestId, decision),
 
-  answerQuestion: (id: TabId, toolUseId: string, answers: Record<string, string>): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.questionAnswer, id, toolUseId, answers),
+  /** `notes`: question text -> the user's comment on the chosen option. */
+  answerQuestion: (
+    id: TabId,
+    toolUseId: string,
+    answers: Record<string, string>,
+    notes?: Record<string, string>
+  ): Promise<void> => ipcRenderer.invoke(CHANNELS.questionAnswer, id, toolUseId, answers, notes),
 
   listHistory: (tabId: TabId): Promise<SessionSummary[]> =>
     ipcRenderer.invoke(CHANNELS.historyList, tabId),
@@ -181,7 +189,30 @@ const api = {
   onActivateTab: (cb: (id: TabId) => void) => on(CHANNELS.activateTab, cb),
   onSettingsChanged: (cb: (s: AppSettings) => void) => on(CHANNELS.settingsChanged, cb),
   onCommandsChanged: (cb: (e: { tabId: TabId; commands: CommandInfo[] }) => void) =>
-    on(CHANNELS.commandsChanged, cb)
+    on(CHANNELS.commandsChanged, cb),
+
+  // — этап 2: проекты, раскладка, окно-заглушка. `hostId` is for этап 6 (a
+  // folder on another machine); absent, the folder is local.
+  getLayout: (): Promise<LayoutState> => ipcRenderer.invoke(CHANNELS.layoutGet),
+  setLayout: (patch: LayoutPatch): Promise<LayoutState> => ipcRenderer.invoke(CHANNELS.layoutSet, patch),
+  onLayoutChanged: (cb: (l: LayoutState) => void) => on(CHANNELS.layoutChanged, cb),
+  /** A project's past conversations. */
+  projectHistory: (cwd: string, hostId?: string): Promise<SessionSummary[]> =>
+    ipcRenderer.invoke(CHANNELS.projectHistory, cwd, hostId),
+  /** Opens a past conversation of a project in a chat of its own; null when it could not. */
+  openProjectSession: (
+    cwd: string,
+    sessionId: string,
+    title?: string,
+    hostId?: string
+  ): Promise<TabState | null> =>
+    ipcRenderer.invoke(CHANNELS.projectOpenSession, cwd, sessionId, title, hostId),
+  /** «Убрать из списка»: the project leaves the sidebar. */
+  forgetProject: (cwd: string, hostId?: string): Promise<LayoutState> =>
+    ipcRenderer.invoke(CHANNELS.projectForget, cwd, hostId),
+  /** The window that would not start: try it again. */
+  retryRenderer: (): Promise<void> => ipcRenderer.invoke(CHANNELS.rendererRetry),
+  openLogs: (): Promise<void> => ipcRenderer.invoke(CHANNELS.logsOpen)
 }
 
 export type QclodApi = typeof api

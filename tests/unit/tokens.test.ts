@@ -29,6 +29,20 @@ test('значения токенов совпадают с таблицей', (
   expect(css).toContain('--cat-other: var(--text-faint)')
 })
 
+test('колонка чата и размеры раскладки этапа 2', () => {
+  expect(css).toContain('--content-max-w: 800px')
+  expect(css).toContain('--sidebar-w: 260px')
+  expect(css).toContain('--pane-min-w: 320px')
+  expect(css).toContain('--panel-w: 280px')
+})
+
+test('при prefers-reduced-motion: reduce переходы и анимации выключены', () => {
+  const block = /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?\})\s*\}/.exec(css)?.[1] ?? ''
+  expect(block).toMatch(/\*,\s*\*::before,\s*\*::after\s*\{/)
+  expect(block).toMatch(/transition-duration:\s*0s !important/)
+  expect(block).toMatch(/animation-duration:\s*0s !important/)
+})
+
 test('lucide-react закреплён точной версией', () => {
   expect(pkg.dependencies['lucide-react']).toBe('1.62.0')
 })

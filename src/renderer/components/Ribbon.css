@@ -12,6 +12,7 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding: 16px 20px 24px;
+  padding-bottom: calc(var(--dock-h, 0px) + var(--space-4));
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }

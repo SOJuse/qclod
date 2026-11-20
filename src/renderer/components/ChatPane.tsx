@@ -19,6 +19,8 @@ import { QueueStrip } from './QueueStrip'
 import { StatusLine } from './StatusLine'
 import { ContextBanner } from './ContextBanner'
 import { EmptyTab } from './EmptyTab'
+import { PinnedCards } from './cards/PinnedCards'
+import { cardAnswers } from '../chat/cardAnswers'
 import { StateView } from '../ui/StateView'
 import './ChatPane.css'
 
@@ -102,6 +104,7 @@ export function ChatPane({
     if (enable) onShowPanel()
   }
   const items = ribbonByTab[tabId]
+  const answers = useMemo(() => cardAnswers(tabId), [tabId])
   const sentTexts = useMemo(
     () => (items ?? []).flatMap((item) => (item.kind === 'user' ? [item.text] : [])),
     [items]
@@ -189,18 +192,7 @@ export function ChatPane({
             </div>
           )
         }
-        onAnswerPermission={(requestId, behavior, remember) => {
-          void window.qclod.answerPermission(requestId, {
-            behavior,
-            ...(remember ? { remember: true } : {})
-          })
-        }}
-        onAnswerQuestion={(toolUseId, answers) =>
-          void window.qclod.answerQuestion(tabId, toolUseId, answers)
-        }
-        onAnswerPlan={(requestId, approve) =>
-          void window.qclod.answerPlan(tabId, requestId, approve)
-        }
+        answers={answers}
       />
 
       <TodoStrip items={todoByTab[tabId] ?? []} status={status} />
@@ -221,6 +213,8 @@ export function ChatPane({
           onCompact={() => compactNow(tabId)}
         />
       )}
+
+      <PinnedCards tabId={tabId} items={ribbonByTab[tabId] ?? []} answers={answers} />
 
       <QueueStrip
         queue={panel.queue ?? []}

@@ -7,6 +7,7 @@ import {
   type LaunchOverrides,
   type PermissionAnswer,
   type PermissionMode,
+  type PlanDecision,
   type RendererErrorReport,
   type TabState,
   type UserInput
@@ -227,17 +228,65 @@ export function sanitizeQuestionAnswers(value: unknown): Record<string, string> 
 }
 
 /**
+ * The user's comments on the options chosen in a question card: question text
+ * -> comment. Bounded like the answers themselves; an empty comment is none.
+ */
+export function sanitizeQuestionNotes(value: unknown): Record<string, string> {
+  if (!isPlainObject(value)) return {}
+  const out: Record<string, string> = {}
+  let kept = 0
+  for (const [question, note] of Object.entries(value)) {
+    if (kept >= MAX_ANSWERS) break
+    if (typeof note !== 'string' || note === '' || note.length > MAX_ANSWER) continue
+    if (question.length > MAX_QUESTION) continue
+    out[question] = note
+    kept += 1
+  }
+  return out
+}
+
+/** A comment or a deny reason is a line or two from the person, not a document. */
+const MAX_COMMENT = 2000
+/** A plan the user edited: long, but not unbounded. */
+const MAX_PLAN = 100_000
+
+/** A non-empty string no longer than `max`, or nothing: a longer one is not cut, it is dropped. */
+function boundedText(value: unknown, max: number): string | undefined {
+  return isString(value) && value !== '' && value.length <= max ? value : undefined
+}
+
+/**
+ * What the user decided about a plan. Only a literal true approves; a comment
+ * and an edited plan pass when they are strings of a sane length.
+ */
+export function sanitizePlanDecision(value: unknown): PlanDecision {
+  if (!isPlainObject(value)) return { approve: false }
+  const decision: PlanDecision = { approve: value['approve'] === true }
+  const comment = boundedText(value['comment'], MAX_COMMENT)
+  if (comment !== undefined) decision.comment = comment
+  const plan = boundedText(value['plan'], MAX_PLAN)
+  if (plan !== undefined) decision.plan = plan
+  return decision
+}
+
+/**
  * An answer is allow or deny — anything else is a deny. A malformed payload
  * must never widen a permission, and `updatedInput` never crosses from the
  * window: it would let the window rewrite the tool call it is approving.
+ * «До конца сессии» goes only with an allow, a reason only with a deny.
  */
 export function sanitizeAnswer(value: unknown): PermissionAnswer {
   if (typeof value !== 'object' || value === null) return { behavior: 'deny' }
   const answer = value as Record<string, unknown>
-  return {
-    behavior: answer['behavior'] === 'allow' ? 'allow' : 'deny',
+  const behavior = answer['behavior'] === 'allow' ? 'allow' : 'deny'
+  const out: PermissionAnswer = {
+    behavior,
     ...(answer['remember'] === true ? { remember: true } : {})
   }
+  if (behavior === 'allow' && answer['forSession'] === true) out.forSession = true
+  const message = behavior === 'deny' ? boundedText(answer['message'], MAX_COMMENT) : undefined
+  if (message !== undefined) out.message = message
+  return out
 }
 
 const MAX_ERROR_TEXT = 20_000

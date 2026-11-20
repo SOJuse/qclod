@@ -172,12 +172,23 @@ export type RibbonItem =
       toolName: string
       target: string
       state: 'pending' | 'allowed' | 'denied' | 'elsewhere'
+      /** How it was allowed; absent means `once` (and in a record from before it existed). */
+      scope?: 'once' | 'always' | 'session'
+      /** What the user said with a deny. */
+      reason?: string
+      /** Answered by «авто-да», not by the user. */
+      auto?: true
     })
   | (RibbonBase & {
       kind: 'plan'
       requestId: string
       text: string
       state: 'pending' | 'approved' | 'rejected' | 'elsewhere'
+      /** What the user said with the decision. */
+      comment?: string
+      /** The user edited the plan before approving it; `text` is the edited plan. */
+      edited?: true
+      auto?: true
     })
   | (RibbonBase & {
       kind: 'question'
@@ -187,6 +198,9 @@ export type RibbonItem =
       answers: Record<string, string> | null
       /** Answered on another device (Remote Control): closed, with no answers of ours. */
       elsewhere?: true
+      /** Question text -> the user's comment on the chosen option. */
+      notes?: Record<string, string>
+      auto?: true
     })
   | (RibbonBase & {
       kind: 'compaction'
@@ -410,6 +424,10 @@ export interface PermissionRequest {
 export interface PermissionAnswer {
   behavior: 'allow' | 'deny'
   remember?: boolean
+  /** «Разрешить до конца сессии»: until this tab's process ends; never written to disk. */
+  forSession?: true
+  /** Why the user denied it, for the agent to read. */
+  message?: string
   /**
    * The tool's input as it should run — how a question's answers reach the
    * agent. Set only inside the main process: the window's answer never
@@ -418,6 +436,49 @@ export interface PermissionAnswer {
    */
   updatedInput?: Record<string, unknown>
 }
+
+/** What the user decided about a plan; the window never sends the tool's input itself. */
+export interface PlanDecision {
+  approve: boolean
+  comment?: string
+  /** The plan as the user edited it; absent when it was not edited. */
+  plan?: string
+}
+
+// ------------------------------------------------------- projects and layout
+
+/** A folder in the sidebar. */
+export interface ProjectEntry {
+  cwd: string
+  collapsed: boolean
+  /** этап 6 */
+  hostId?: string
+}
+
+/** The window's layout, kept by main (userData/layout.json): window state, not a setting. */
+export interface LayoutState {
+  /** Left to right, at most 4. */
+  panes: TabId[]
+  active: TabId | null
+  /** Fractions, one per pane, summing to 1. */
+  paneWidths: number[]
+  sidebarCollapsed: boolean
+  /** In the order they first appeared. */
+  projects: ProjectEntry[]
+}
+
+export type LayoutPatch = Partial<Pick<LayoutState, 'panes' | 'paneWidths' | 'sidebarCollapsed'>> & {
+  projectCollapsed?: { cwd: string; collapsed: boolean }
+}
+
+/** Frozen through and through: copy it, never change it in place. */
+export const DEFAULT_LAYOUT: LayoutState = Object.freeze({
+  panes: Object.freeze([]) as unknown as TabId[],
+  active: null,
+  paneWidths: Object.freeze([]) as unknown as number[],
+  sidebarCollapsed: false,
+  projects: Object.freeze([]) as unknown as ProjectEntry[]
+})
 
 export interface AppSettings {
   agentPath: string

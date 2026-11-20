@@ -1,13 +1,16 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFileSync } from 'node:fs'
 import { CHANNELS } from '../shared/channels'
-import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
+import { DEFAULT_LAYOUT, EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
 import type {
   EffortLevel,
   LaunchOverrides,
+  LayoutState,
   PanelSnapshot,
   RibbonSnapshot,
+  SessionSummary,
   TabId,
+  TabState,
   UserInput
 } from '../shared/types'
 import { buildFileIndex } from './files/fileIndex'
@@ -25,6 +28,7 @@ import {
   sanitizeQuestionAnswers,
   sanitizeInput,
   sanitizeOverrides,
+  sanitizePlanDecision,
   sanitizeTabPatch
 } from './tabs/sanitize'
 
@@ -276,19 +280,35 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     broker.answer(requestId, sanitizeAnswer(answer))
   })
 
-  ipcMain.handle(CHANNELS.questionAnswer, (_e, id: unknown, toolUseId: unknown, answers: unknown) => {
-    if (!isString(id) || !isString(toolUseId)) return
-    const clean = sanitizeQuestionAnswers(answers)
-    // Nothing usable is no answer: the card stays open rather than sending an empty one.
-    if (Object.keys(clean).length === 0) return
-    manager.get(id)?.answerQuestion(toolUseId, clean)
+  // The fourth argument, the comments on the chosen options, is taken and not
+  // used yet: the session learns of them in задача 9 (sanitizeQuestionNotes).
+  ipcMain.handle(
+    CHANNELS.questionAnswer,
+    (_e, id: unknown, toolUseId: unknown, answers: unknown, _notes: unknown) => {
+      if (!isString(id) || !isString(toolUseId)) return
+      const clean = sanitizeQuestionAnswers(answers)
+      // Nothing usable is no answer: the card stays open rather than sending an empty one.
+      if (Object.keys(clean).length === 0) return
+      manager.get(id)?.answerQuestion(toolUseId, clean)
+    }
+  )
+
+  // The window sends a whole decision; until задача 9 the session hears only
+  // whether it was approved. Anything but a literal true is not an approval.
+  ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, decision: unknown) => {
+    if (!isString(id) || !isString(requestId)) return
+    manager.get(id)?.answerPlan(requestId, sanitizePlanDecision(decision).approve)
   })
 
-  ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, approve: unknown) => {
-    if (!isString(id) || !isString(requestId)) return
-    // Anything but a literal true is not an approval.
-    manager.get(id)?.answerPlan(requestId, approve === true)
-  })
+  // — этап 2: заглушки до задач 2 и 9. Their arguments (cwd, sessionId, title,
+  // and hostId for этап 6) are checked there, where they are used.
+  ipcMain.handle(CHANNELS.layoutGet, (): LayoutState => DEFAULT_LAYOUT)
+  ipcMain.handle(CHANNELS.layoutSet, (): LayoutState => DEFAULT_LAYOUT)
+  ipcMain.handle(CHANNELS.projectForget, (): LayoutState => DEFAULT_LAYOUT)
+  ipcMain.handle(CHANNELS.projectHistory, (): SessionSummary[] => [])
+  ipcMain.handle(CHANNELS.projectOpenSession, (): TabState | null => null)
+  ipcMain.handle(CHANNELS.rendererRetry, (): void => undefined)
+  ipcMain.handle(CHANNELS.logsOpen, (): void => undefined)
 
   ipcMain.handle(CHANNELS.permissionRules, () => withFault(CHANNELS.permissionRules, () => broker.rules()))
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Brain, Image as ImageIcon, Smartphone } from 'lucide-react'
 import { clockTime, seconds } from '../../shared/format'
 import type { Attachment, RibbonItem as Item } from '../../shared/types'
+import type { CardAnswers } from '../chat/cardAnswers'
 import { PermissionCard } from './PermissionCard'
 import { PlanCard } from './PlanCard'
 import { QuestionCard } from './QuestionCard'
@@ -21,9 +22,8 @@ interface Props {
   /** The permission the keys answer, if any. */
   activePermissionId?: string | null
   onMeasure: (id: string, height: number) => void
-  onAnswerPermission: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
-  onAnswerQuestion: (toolUseId: string, answers: Record<string, string>) => void
-  onAnswerPlan: (requestId: string, approve: boolean) => void
+  /** How the cards answer the agent. */
+  answers: CardAnswers
 }
 
 /** «Думал 12 с»; a block that came whole has no length to print. «Думает…» while it streams. */
@@ -179,9 +179,7 @@ export function RibbonRow({
   tabId,
   activePermissionId = null,
   onMeasure,
-  onAnswerPermission,
-  onAnswerQuestion,
-  onAnswerPlan
+  answers
 }: Props): JSX.Element {
   const host = useRef<HTMLDivElement | null>(null)
 
@@ -283,19 +281,33 @@ export function RibbonRow({
         )
 
       case 'plan':
-        return <PlanCard item={item} onAnswer={onAnswerPlan} />
+        return (
+          <PlanCard item={item} onAnswer={(requestId, approve) => answers.plan(requestId, { approve })} />
+        )
 
       case 'permission':
         return (
           <PermissionCard
             item={item}
             active={item.id === activePermissionId}
-            onAnswer={onAnswerPermission}
+            onAnswer={(requestId, behavior, remember) =>
+              answers.permission(
+                requestId,
+                behavior === 'allow'
+                  ? { behavior: 'allow', scope: remember ? 'always' : 'once' }
+                  : { behavior: 'deny' }
+              )
+            }
           />
         )
 
       case 'question':
-        return <QuestionCard item={item} onAnswer={onAnswerQuestion} />
+        return (
+          <QuestionCard
+            item={item}
+            onAnswer={(toolUseId, given) => answers.question(toolUseId, given, {})}
+          />
+        )
 
       case 'compaction':
         return (

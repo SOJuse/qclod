@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, Pencil, SendHorizontal, Undo2, X } from 'lucide-react'
 import type { PlanDecision } from '../../../shared/types'
 import type { CardAnswers } from '../../chat/cardAnswers'
+import { chorded } from '../../chat/keyChords'
 import { createKeyGuard, heldKeys } from '../../chat/permissionKeyGuard'
 import { resolveComposerKey } from '../../input/keyPrecedence'
 import { Markdown } from '../../markdown/Markdown'
@@ -20,11 +21,6 @@ interface Props {
 
 /** What the card is showing: the plan with its buttons, a refusal being written, or the plan being edited. */
 type Mode = 'plan' | 'reject' | 'edit'
-
-/** Held, auto-repeating or chorded keys never answer. */
-function chorded(ev: React.KeyboardEvent): boolean {
-  return ev.repeat || ev.ctrlKey || ev.altKey || ev.metaKey
-}
 
 function composing(ev: React.KeyboardEvent): boolean {
   return ev.nativeEvent.isComposing || ev.keyCode === 229

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, SendHorizontal } from 'lucide-react'
 import type { CardAnswers } from '../../chat/cardAnswers'
+import { chorded } from '../../chat/keyChords'
 import { createKeyGuard, heldKeys } from '../../chat/permissionKeyGuard'
 import {
   canAdvance,
@@ -26,11 +27,6 @@ interface Props {
 
 /** Options past the ninth have no digit. */
 const DIGITS = 9
-
-/** Held, auto-repeating or chorded keys never answer. */
-function chorded(ev: React.KeyboardEvent): boolean {
-  return ev.repeat || ev.ctrlKey || ev.altKey || ev.metaKey
-}
 
 /** What the field under the options is for right now. */
 function placeholderFor(picked: string[]): string {

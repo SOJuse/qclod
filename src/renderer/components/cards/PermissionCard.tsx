@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, CheckCheck, Clock, SendHorizontal, X } from 'lucide-react'
 import type { CardAnswers, PermissionChoice } from '../../chat/cardAnswers'
+import { chorded } from '../../chat/keyChords'
 import { createKeyGuard, heldKeys } from '../../chat/permissionKeyGuard'
 import { resolveComposerKey } from '../../input/keyPrecedence'
 import { CARD_TEXT_MAX, TextCount } from './TextLimit'
@@ -11,11 +12,6 @@ interface Props {
   answers: CardAnswers
   /** The card in front of the strip: its keys answer it. */
   focused: boolean
-}
-
-/** Held, auto-repeating or chorded keys never answer. */
-function chorded(ev: React.KeyboardEvent): boolean {
-  return ev.repeat || ev.ctrlKey || ev.altKey || ev.metaKey
 }
 
 /**

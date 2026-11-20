@@ -146,6 +146,18 @@ app.whenReady().then(async () => {
       at: Date.now()
     })
   })
+  // A promise nobody caught. Electron only warns about it and the app goes
+  // on, as it still does: listening only quiets the warning, so it is
+  // printed here, and written down.
+  process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled promise rejection in main:', reason)
+    errorLog.write({
+      source: 'main',
+      message: reason instanceof Error ? reason.message : String(reason),
+      stack: reason instanceof Error ? reason.stack : undefined,
+      at: Date.now()
+    })
+  })
   // A repeating or hostile sender must not push the first, most useful error
   // out of the log (system/reportThrottle.ts).
   const reportGate = new ReportThrottle()

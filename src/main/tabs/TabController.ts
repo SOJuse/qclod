@@ -334,6 +334,9 @@ export class TabController {
     const old = this.deps.manager.get(id)
     const seed = old?.successorSeed()
     // Taken before the old session goes: closing it would drop the queue.
+    // Taken, not cancelled in the old CLI: while it is disposed (up to 5 s)
+    // it may still fold them into its own conversation. Acceptable — that
+    // conversation is being let go, and the new session sends them again.
     const queued = old?.takeQueue() ?? []
     // In place before the old session goes: while it closes the tab has no
     // session, and a snapshot taken then must not come back empty.

@@ -3,6 +3,8 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, SETTINGS_FILE } from '@main/store/settingsStore'
+import { mergeDefaults } from '@main/tabs/sanitize'
+import type { AppSettings } from '@shared/types'
 
 function freshDir(): string {
   return mkdtempSync(join(tmpdir(), 'qclod-settings-'))
@@ -68,5 +70,38 @@ describe('settingsStore', () => {
     writeFileSync(join(dir, SETTINGS_FILE), JSON.stringify({ editorCommand: ['rm'] }), 'utf8')
     expect(loadSettings(dir).editorCommand).toBe('')
     rmSync(dir, { recursive: true, force: true })
+  })
+
+  // The fields are read through an allowlist (sanitizeSettingsFields): a new
+  // AppSettings field left out of it would be dropped, on load and on save,
+  // without a word. Typed as AppSettings, so a new field must be added here.
+  const changed: AppSettings = {
+    agentPath: 'C:/tools/claude.exe',
+    globalHotkey: 'Control+Alt+K',
+    notificationsEnabled: false,
+    soundEnabled: false,
+    closeToTray: false,
+    panelOpen: false,
+    editorCommand: 'code -g {path}:{line}',
+    defaults: { permissionMode: 'plan', model: 'm' }
+  }
+
+  test('каждое поле DEFAULT_SETTINGS переживает сохранение и чтение', () => {
+    const keys = Object.keys(DEFAULT_SETTINGS) as Array<keyof AppSettings>
+    expect(Object.keys(changed).sort()).toEqual([...keys].sort())
+    // Each one differs from its default, so a dropped field cannot pass for kept.
+    for (const key of keys) expect(changed[key], key).not.toEqual(DEFAULT_SETTINGS[key])
+    const dir = freshDir()
+    saveSettings(dir, changed)
+    const loaded = loadSettings(dir)
+    for (const key of keys) expect(loaded[key], key).toEqual(changed[key])
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('каждое поле DEFAULT_SETTINGS доходит через патч настроек', () => {
+    const merged = mergeDefaults({ ...DEFAULT_SETTINGS, defaults: { ...DEFAULT_SETTINGS.defaults } }, changed)
+    for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof AppSettings>) {
+      expect(merged[key], key).toEqual(changed[key])
+    }
   })
 })

@@ -222,7 +222,17 @@ export function ChatPane({
         />
       )}
 
-      <QueueStrip queue={panel.queue ?? []} onCancel={(id) => void window.qclod.cancelQueued(tabId, id)} />
+      <QueueStrip
+        queue={panel.queue ?? []}
+        onSendNow={(id) => void window.qclod.sendQueuedNow(tabId, id)}
+        onCancel={(id) => void window.qclod.cancelQueued(tabId, id)}
+        onEdit={(id) =>
+          void window.qclod.cancelQueued(tabId, id).then((input) => {
+            // null: it already reached the agent, or is gone — nothing to take back.
+            if (input) takeBack([input])
+          })
+        }
+      />
 
       <Composer
         tabId={tabId}

@@ -367,9 +367,9 @@ export class TabController {
   /**
    * What a replaced session still owed the user goes to the one taking its
    * place: first what it was given and never got to the agent — on screen
-   * already, so sent again without a second bubble — then its queue, which
-   * goes one message per turn as before. A message must not vanish because
-   * the session under it was swapped (ruling C8).
+   * already, so sent again without a second bubble — then its strip: what the
+   * old agent never read, sent again as if just typed. A message must not
+   * vanish because the session under it was swapped (ruling C8).
    */
   private handOver(
     id: TabId,

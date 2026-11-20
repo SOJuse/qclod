@@ -1744,12 +1744,14 @@ describe('TabController: очередь переходит к новой сес�
     const old = harness.manager.get(id)!
 
     old.send({ text: 'раз', attachments: [] })
+    // Once the CLI has said it keeps a queue, «два» waits on the strip for the agent to read it.
+    await vi.waitFor(() => expect(old.sessionId).toBeTruthy())
     old.send({ text: 'два', attachments: [] })
-    // The agent dies mid-answer, with «два» still waiting.
+    // The agent dies mid-answer, with «два» given to it and still unread.
     ;(old as unknown as { fail: (e: unknown) => void }).fail(new Error('агент умер'))
     expect(old.status).toBe('error')
     expect(old.panel.queue).toHaveLength(1)
-    expect(sentTexts(harness.created[0]!.driver)).toEqual(['раз'])
+    expect(sentTexts(harness.created[0]!.driver)).toEqual(['раз', 'два'])
 
     await harness.controller.restart(id)
     const fresh = harness.created.at(-1)!
@@ -1760,7 +1762,7 @@ describe('TabController: очередь переходит к новой сес�
     await harness.controller.whenSettled()
   })
 
-  test('«Повторить» после «не вошёл» отправляет и неотправленное, и очередь', async () => {
+  test('«Повторить» после «не вошёл» отправляет всё неотправленное, по разу', async () => {
     const options = { notLoggedInOnSend: true }
     const harness = makeController(options)
     writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
@@ -1772,9 +1774,11 @@ describe('TabController: очередь переходит к новой сес�
     dead.send({ text: 'и ещё', attachments: [] })
     await vi.waitFor(() => expect(harness.controller.list()[0]!.canRetry).toBe(true))
     await harness.controller.whenSettled()
-    // The dead session holds the queue and sends nothing from it.
-    expect(dead.panel.queue.map((q) => q.text)).toEqual(['и ещё'])
-    expect(harness.dead[0]!.sent).toHaveLength(1)
+    // Nothing said the CLI keeps a queue (ruling R6): both went at once and
+    // show, and neither reached an agent — both are unsent, none on the strip.
+    expect(dead.panel.queue).toEqual([])
+    expect(dead.sentBeforeInit.map((s) => s.text)).toEqual(['привет', 'и ещё'])
+    expect(harness.dead[0]!.sent).toHaveLength(2)
 
     options.notLoggedInOnSend = false
     await harness.controller.retry('a')

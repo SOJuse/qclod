@@ -257,7 +257,11 @@ export class PanelCollector {
     return this.patch({ projectSettings: info })
   }
 
-  /** What waits to be sent: the session owns the messages, the panel shows them. */
+  /**
+   * The strip: messages the agent has not read yet, with where each one is
+   * (`state`) and whether it can be hurried. The session owns them (its
+   * outbox), the panel shows them.
+   */
   setQueue(queue: QueuedMessage[]): Partial<PanelData> {
     return this.patch({ queue })
   }

@@ -15,7 +15,14 @@ import {
   type UserInput
 } from '../../shared/types'
 import { availabilityFrom, safeRemoteUrl, type RemoteAvailability } from '../../shared/remote'
-import type { AgentDriver, ContextUsage, DriverOptions, RemoteLink } from './driver'
+import type {
+  AgentDriver,
+  ContextUsage,
+  DriverOptions,
+  InterruptReceipt,
+  RemoteLink,
+  SendOptions
+} from './driver'
 import { toPermissionContext } from './permissionContext'
 
 type RemoteCapable = {
@@ -49,7 +56,7 @@ function toLimitWindow(window: UsageWindow): LimitWindow | null {
  * accepts them directly, and v1's write-to-temp-file-then-@-mention dance was
  * both slower and one more thing to clean up (spec 6.3).
  */
-function toSdkMessage(input: UserInput): Record<string, unknown> {
+export function toSdkMessage(input: UserInput, opts?: SendOptions): Record<string, unknown> {
   const images = input.attachments.filter((a) => a.kind === 'image')
 
   const content: Array<Record<string, unknown>> = []
@@ -66,7 +73,12 @@ function toSdkMessage(input: UserInput): Record<string, unknown> {
     type: 'user',
     message: { role: 'user', content: content.length > 0 ? content : '' },
     parent_tool_use_id: null,
-    session_id: ''
+    session_id: '',
+    // Typed by the person, not injected by a tool or a hook.
+    origin: { kind: 'human' },
+    timestamp: new Date().toISOString(),
+    ...(opts?.uuid ? { uuid: opts.uuid } : {}),
+    ...(opts?.priority ? { priority: opts.priority } : {})
   }
 }
 
@@ -150,12 +162,32 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
   return {
     messages: session as AsyncIterable<unknown>,
 
-    send(input: UserInput): void {
-      push(toSdkMessage(input))
+    send(input: UserInput, opts?: SendOptions): void {
+      push(toSdkMessage(input, opts))
     },
 
-    async interrupt(): Promise<void> {
-      await session.interrupt()
+    // cancelAsyncMessage is in sdk.mjs but not on the Query type; an SDK
+    // without it answers null («не умею»), distinct from false («не нашлось»).
+    async cancelQueued(uuid: string): Promise<boolean | null> {
+      const cancel = (
+        session as unknown as { cancelAsyncMessage?: (u: string) => Promise<boolean> }
+      ).cancelAsyncMessage
+      if (typeof cancel !== 'function') return null
+      return await cancel.call(session, uuid)
+    },
+
+    // At runtime interrupt() takes { cancelQueued } and answers
+    // { still_queued, cancelled? }; sdk.d.ts types neither. Old CLIs answer nothing.
+    async interrupt(opts?: { cancelQueued?: boolean }): Promise<InterruptReceipt | undefined> {
+      const raw = await (
+        session as unknown as {
+          interrupt: (
+            o?: { cancelQueued?: boolean }
+          ) => Promise<{ still_queued?: string[]; cancelled?: string[] } | undefined>
+        }
+      ).interrupt(opts?.cancelQueued ? { cancelQueued: true } : undefined)
+      if (!raw || !Array.isArray(raw.still_queued)) return undefined
+      return { stillQueued: raw.still_queued, cancelled: raw.cancelled ?? [] }
     },
 
     async setPermissionMode(mode: string): Promise<void> {

@@ -292,12 +292,20 @@ export interface PanelData {
   backgroundTasks: BackgroundTask[]
 }
 
+/**
+ * waiting — агент ещё запускается, сообщение у Qclod; sending — ушло в CLI, ответа нет;
+ * queued — CLI поставил в очередь; cancelling — просили отменить, ждём ответа.
+ */
+export type QueuedState = 'waiting' | 'sending' | 'queued' | 'cancelling'
+
 /** A message waiting its turn: what the strip above the input field shows of it. */
 export interface QueuedMessage {
   id: string
   text: string
   /** How many files and pictures go with it. */
   attachments: number
+  state: QueuedState
+  canSendNow: boolean
 }
 
 /**

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'vitest'
-import { EMPTY_PANEL, MISSING_TTL_MS, pathSettled, useAppStore } from '../../src/renderer/state/useAppStore'
+import { EMPTY_PANEL, MAX_PANES, MISSING_TTL_MS, pathSettled, useAppStore } from '../../src/renderer/state/useAppStore'
 import type { RibbonItem, TabState } from '../../src/shared/types'
 
 // One store per process: every test starts from the state it was created with.
@@ -292,5 +292,36 @@ describe('useAppStore: команды', () => {
     // A late answer for the closed tab is dropped.
     useAppStore.getState().setCommands('B', [])
     expect(useAppStore.getState().commandsByTab['B']).toBeUndefined()
+  })
+})
+
+describe('useAppStore: панели', () => {
+  const t = (id: string): TabState => ({ id, cwd: 'C:\p', title: id, overrides: {}, status: 'idle', badge: false })
+
+  test('focusPane делает панель активной и не меняет порядок', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('A'), t('B')])
+    store.setPanes(['A', 'B'])
+    store.focusPane('B')
+    expect(useAppStore.getState().activeTabId).toBe('B')
+    expect(useAppStore.getState().paneTabIds).toEqual(['A', 'B'])
+  })
+
+  test('setPanes убирает дубли и обрезает до 4', () => {
+    const store = useAppStore.getState()
+    store.setPanes(['A', 'B', 'A', 'C', 'D', 'E', 'F'])
+    expect(MAX_PANES).toBe(4)
+    expect(useAppStore.getState().paneTabIds).toEqual(['A', 'B', 'C', 'D'])
+  })
+
+  test('закрытая вкладка уходит из paneTabIds, активной становится соседняя', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('A'), t('B'), t('C')])
+    store.setPanes(['A', 'B', 'C'])
+    store.focusPane('B')
+    store.setTabs([t('A'), t('C')])
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toEqual(['A', 'C'])
+    expect(state.activeTabId).toBe('C')
   })
 })

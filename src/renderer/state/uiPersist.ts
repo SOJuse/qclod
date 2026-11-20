@@ -2,7 +2,7 @@ import type { PendingAttachment, PendingImage } from '../input/attachments'
 
 /**
  * What a reloaded window gets back (Ctrl+R): drafts, attachments by path, the
- * second pane and the active tab. It lives in sessionStorage: it survives a
+ * panes and the active tab. It lives in sessionStorage: it survives a
  * reload and goes with the window, and a closed tab's entry is dropped when
  * the store forgets the tab.
  *
@@ -16,11 +16,12 @@ export const UI_KEY = 'qclod.ui'
 export interface PersistedUi {
   draftByTab: Record<string, string>
   attachmentsByTab: Record<string, PendingAttachment[]>
-  splitTabId: string | null
+  /** Panes left to right; [] when none were saved. */
+  paneTabIds: string[]
   activeTabId: string
 }
 
-const EMPTY = (): PersistedUi => ({ draftByTab: {}, attachmentsByTab: {}, splitTabId: null, activeTabId: '' })
+const EMPTY = (): PersistedUi => ({ draftByTab: {}, attachmentsByTab: {}, paneTabIds: [], activeTabId: '' })
 
 export function serializeUi(state: PersistedUi): string {
   const draftByTab: Record<string, string> = {}
@@ -37,7 +38,7 @@ export function serializeUi(state: PersistedUi): string {
   return JSON.stringify({
     draftByTab,
     attachmentsByTab,
-    splitTabId: state.splitTabId,
+    paneTabIds: state.paneTabIds,
     activeTabId: state.activeTabId
   })
 }
@@ -96,8 +97,13 @@ export function loadUi(storage: Pick<Storage, 'getItem'> | null): PersistedUi {
         if (kept.length > 0) out.attachmentsByTab[id] = kept
       }
     }
-    if (typeof parsed['splitTabId'] === 'string') out.splitTabId = parsed['splitTabId']
     if (typeof parsed['activeTabId'] === 'string') out.activeTabId = parsed['activeTabId']
+    if (Array.isArray(parsed['paneTabIds'])) {
+      out.paneTabIds = parsed['paneTabIds'].filter((id): id is string => typeof id === 'string')
+    } else if (typeof parsed['splitTabId'] === 'string') {
+      // Saved before panes were a list: the active tab and the one beside it.
+      out.paneTabIds = [out.activeTabId, parsed['splitTabId']]
+    }
   } catch {
     return EMPTY()
   }

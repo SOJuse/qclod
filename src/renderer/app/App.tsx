@@ -111,8 +111,9 @@ export function App(): JSX.Element {
   // Checked once at start: without Claude Code on the machine there is nothing
   // to drive, and finding that out by typing a message is a poor welcome.
   useEffect(recheck, [recheck])
-  const splitTabId = useAppStore((s) => s.splitTabId)
-  const setSplitTabId = useAppStore((s) => s.setSplitTabId)
+  const paneTabIds = useAppStore((s) => s.paneTabIds)
+  const setPanes = useAppStore((s) => s.setPanes)
+  const split = paneTabIds.length > 1
 
   // The session's subagents, read from the ribbon it already holds.
   const activeRibbon = useAppStore((state) => state.ribbonByTab[state.activeTabId])
@@ -137,27 +138,28 @@ export function App(): JSX.Element {
     [activeRibbon]
   )
 
-  const swapPanes = useCallback((): void => {
+  /** A click on a pane: it becomes the one everything acts on, and no pane moves. */
+  const focusPane = useCallback((id: string): void => {
     const state = useAppStore.getState()
-    const other = state.splitTabId
-    if (!other) return
-    setSplitTabId(state.activeTabId)
-    state.setActiveTabId(other)
+    if (state.activeTabId === id) return
+    state.focusPane(id)
+    void window.qclod.activateTab(id)
     setFocusToken((n) => n + 1)
-  }, [setSplitTabId])
+  }, [])
 
   /** Opens the conversation beside this one, or closes the second pane. */
   const toggleSplit = useCallback((): void => {
     const state = useAppStore.getState()
-    if (state.splitTabId) {
-      setSplitTabId(null)
+    if (state.paneTabIds.length > 1) {
+      setPanes([state.activeTabId])
       return
     }
     const other = state.tabs.find((t) => t.id !== state.activeTabId)
     if (!other) return
-    setSplitTabId(other.id)
+    setPanes([state.activeTabId, other.id])
+    state.focusPane(other.id)
     void window.qclod.activateTab(other.id)
-  }, [setSplitTabId])
+  }, [setPanes])
   const settings = useAppStore((s) => s.settings)
   const tabs = useAppStore((s) => s.tabs)
   const activeTabId = useAppStore((s) => s.activeTabId)
@@ -227,8 +229,8 @@ export function App(): JSX.Element {
     if (activeTabId) loadPanel(activeTabId)
   }, [activeTabId, loadPanel])
   useEffect(() => {
-    if (splitTabId) loadPanel(splitTabId)
-  }, [splitTabId, loadPanel])
+    for (const id of paneTabIds) loadPanel(id)
+  }, [paneTabIds, loadPanel])
 
   /**
    * The panel button. In a wide window it flips the saved setting; in a
@@ -490,8 +492,8 @@ export function App(): JSX.Element {
     if (activeTabId) loadRibbon(activeTabId)
   }, [activeTabId, loadRibbon])
   useEffect(() => {
-    if (splitTabId) loadRibbon(splitTabId)
-  }, [splitTabId, loadRibbon])
+    for (const id of paneTabIds) loadRibbon(id)
+  }, [paneTabIds, loadRibbon])
 
   if (environment && setupNeeded && !setupDismissed) {
     // Settings open over the setup screen; closing them checks again, since
@@ -545,52 +547,36 @@ export function App(): JSX.Element {
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenHistory={openHistory}
         onToggleSplit={toggleSplit}
-        splitOpen={splitTabId !== null}
+        splitOpen={split}
       />
       <UpdateBanner />
-      <div className={`app-body${splitTabId ? ' app-split' : ''}`}>
+      <div className={`app-body${split ? ' app-split' : ''}`}>
         <div className="app-panes">
-          <ErrorBoundary scope="pane" key={activeTabId}>
-            <ThrowInPane />
-          <ChatPane
-            tabId={activeTabId}
-            focused={true}
-            focusToken={focusToken}
-            title={tabs.find((t) => t.id === activeTabId)?.title ?? ''}
-            showTitle={splitTabId !== null}
-            onFocus={() => undefined}
-            onCycleMode={cycleMode}
-            onOpenHistory={openHistory}
-            onOpenSession={openSession}
-            onShowPanel={revealPanel}
-            ribbonError={ribbonErrors[activeTabId] ?? null}
-            onRetryRibbon={() => retryRibbon(activeTabId)}
-            notice={
-              closeGuardTab === activeTabId
-                ? { testId: 'close-guard', text: 'Агент работает — Ctrl+W ещё раз закроет вкладку' }
-                : null
-            }
-          />
-          </ErrorBoundary>
-          {splitTabId && (
-            <ErrorBoundary scope="pane" key={splitTabId}>
-            <ChatPane
-              tabId={splitTabId}
-              focused={false}
-              focusToken={focusToken}
-              title={tabs.find((t) => t.id === splitTabId)?.title ?? ''}
-              showTitle
-              // Clicking the other pane makes it the one everything acts on.
-              onFocus={() => swapPanes()}
-              onCycleMode={cycleMode}
-              onOpenHistory={openHistory}
-              onOpenSession={openSession}
-              onShowPanel={revealPanel}
-              ribbonError={ribbonErrors[splitTabId] ?? null}
-              onRetryRibbon={() => retryRibbon(splitTabId)}
-            />
+          {(paneTabIds.length > 0 ? paneTabIds : [activeTabId]).map((id) => (
+            <ErrorBoundary scope="pane" key={id}>
+              {id === activeTabId && <ThrowInPane />}
+              <ChatPane
+                tabId={id}
+                focused={id === activeTabId}
+                focusToken={focusToken}
+                title={tabs.find((t) => t.id === id)?.title ?? ''}
+                showTitle={split}
+                // Clicking a pane makes it the one everything acts on, in place.
+                onFocus={() => focusPane(id)}
+                onCycleMode={cycleMode}
+                onOpenHistory={openHistory}
+                onOpenSession={openSession}
+                onShowPanel={revealPanel}
+                ribbonError={ribbonErrors[id] ?? null}
+                onRetryRibbon={() => retryRibbon(id)}
+                notice={
+                  id === activeTabId && closeGuardTab === activeTabId
+                    ? { testId: 'close-guard', text: 'Агент работает — Ctrl+W ещё раз закроет вкладку' }
+                    : null
+                }
+              />
             </ErrorBoundary>
-          )}
+          ))}
         </div>
         {showPanel && (
           <SidePanel

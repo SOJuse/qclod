@@ -15,15 +15,23 @@ describe('uiPersist', () => {
       serializeUi({
         draftByTab: { a: 'недописано', b: '' },
         attachmentsByTab: { a: [{ kind: 'file', path: 'C:/x/мой файл.ts' }] },
-        splitTabId: 'b',
+        paneTabIds: ['a', 'b'],
         activeTabId: 'a'
       })
     )
     const back = loadUi(storage)
     expect(back.draftByTab).toEqual({ a: 'недописано' })
     expect(back.attachmentsByTab).toEqual({ a: [{ kind: 'file', path: 'C:/x/мой файл.ts' }] })
-    expect(back.splitTabId).toBe('b')
+    expect(back.paneTabIds).toEqual(['a', 'b'])
     expect(back.activeTabId).toBe('a')
+  })
+
+  test('старое splitTabId читается как две панели', () => {
+    const old = JSON.stringify({ draftByTab: {}, attachmentsByTab: {}, splitTabId: 'b', activeTabId: 'a' })
+    const back = loadUi(memory({ 'qclod.ui': old }))
+    expect(back.paneTabIds).toEqual(['a', 'b'])
+    expect(back.activeTabId).toBe('a')
+    expect(loadUi(memory({ 'qclod.ui': JSON.stringify({ splitTabId: null, activeTabId: 'a' }) })).paneTabIds).toEqual([])
   })
 
   test('картинки из буфера не сохраняются: их содержимое не хранится', () => {
@@ -31,7 +39,7 @@ describe('uiPersist', () => {
     const text = serializeUi({
       draftByTab: {},
       attachmentsByTab: { a: [image, { kind: 'file', path: 'p' }] },
-      splitTabId: null,
+      paneTabIds: [],
       activeTabId: ''
     })
     expect(loadUi(memory({ 'qclod.ui': text })).attachmentsByTab).toEqual({ a: [{ kind: 'file', path: 'p' }] })
@@ -47,7 +55,7 @@ describe('uiPersist', () => {
       height: 1333
     }
     const image = { kind: 'image' as const, mediaType: 'image/png', file: new Blob(['x']) as File, prepared }
-    const text = serializeUi({ draftByTab: {}, attachmentsByTab: { a: [image] }, splitTabId: null, activeTabId: '' })
+    const text = serializeUi({ draftByTab: {}, attachmentsByTab: { a: [image] }, paneTabIds: [], activeTabId: '' })
     expect(loadUi(memory({ 'qclod.ui': text })).attachmentsByTab).toEqual({
       a: [{ kind: 'image', mediaType: 'image/jpeg', prepared }]
     })
@@ -61,7 +69,7 @@ describe('uiPersist', () => {
     const text = serializeUi({
       draftByTab: {},
       attachmentsByTab: { a: [{ kind: 'image', mediaType: 'image/gif', prepared }] },
-      splitTabId: null,
+      paneTabIds: [],
       activeTabId: ''
     })
     expect(loadUi(memory({ 'qclod.ui': text })).attachmentsByTab).toEqual({
@@ -72,7 +80,7 @@ describe('uiPersist', () => {
   test('пустое или битое хранилище — чистое состояние', () => {
     for (const raw of [undefined, '', '{', '[1]', '{"draftByTab":5}']) {
       const back = loadUi(memory(raw === undefined ? {} : { 'qclod.ui': raw }))
-      expect(back).toEqual({ draftByTab: {}, attachmentsByTab: {}, splitTabId: null, activeTabId: '' })
+      expect(back).toEqual({ draftByTab: {}, attachmentsByTab: {}, paneTabIds: [], activeTabId: '' })
     }
   })
 

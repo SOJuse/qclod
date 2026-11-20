@@ -37,6 +37,7 @@ function without(all: Record<string, string>, id: string): Record<string, string
  * e2e only: the first pane of a split throws while drawing (preload reads the
  * flag under the test seams). Only in a split: a lone pane that throws from
  * the start leaves no window to drive and no second pane to see alive.
+ * Rendered only under `__QCLOD_TEST_SEAMS__`, so a release drops it whole.
  */
 function ThrowInPane(): null {
   if (window.qclod.throwInPane) throw new Error('e2e: render error in a pane')
@@ -558,7 +559,7 @@ export function App(): JSX.Element {
         <div className="app-panes">
           {(paneTabIds.length > 0 ? paneTabIds : [activeTabId]).map((id, index) => (
             <ErrorBoundary scope="pane" key={id}>
-              {split && index === 0 && <ThrowInPane />}
+              {__QCLOD_TEST_SEAMS__ && split && index === 0 && <ThrowInPane />}
               <ChatPane
                 tabId={id}
                 focused={id === activeTabId}

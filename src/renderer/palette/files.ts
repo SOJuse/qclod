@@ -25,5 +25,6 @@ export const filesProvider: PaletteProvider = {
         run: () => ctx.run.insertMention(path)
       }
     })
-  }
+  },
+  state: (ctx) => (ctx.filesPending ? { kind: 'loading' } : null)
 }

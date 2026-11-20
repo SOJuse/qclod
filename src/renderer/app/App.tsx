@@ -494,9 +494,10 @@ export function App(): JSX.Element {
       openLayer: (layer) => {
         const state = useAppStore.getState()
         if (state.activeTabId) state.setPaneLayer(state.activeTabId, layer)
-      }
+      },
+      loadHistory: (cwd) => loadProjectHistory(cwd)
     }
-  }, [activate, newChat, openPast, runAction, focusComposer])
+  }, [activate, newChat, openPast, runAction, focusComposer, loadProjectHistory])
 
   /** What Ctrl+K searches, live while it is open: a history read that lands shows at once. */
   const paletteCtx = useMemo(
@@ -505,6 +506,7 @@ export function App(): JSX.Element {
         sidebar,
         activeTabId,
         files: fileIndexByTab[activeTabId] ?? [],
+        filesPending: fileIndexByTab[activeTabId] === undefined,
         commands: withLocalCommands(commandsByTab[activeTabId] ?? []),
         run: paletteRun
       },

@@ -217,6 +217,32 @@ test('у папки без сессий в боковой панели нет н
   }
 })
 
+test('Ctrl+H, пока история читается или не прочиталась, говорит это, а не «Ничего не нашлось»; «Повторить» читает снова', async () => {
+  const { app, profile } = await launch(HISTORY, {
+    QCLOD_FAKE_SLOW: '{"projects:history":1500}',
+    QCLOD_FAKE_FAIL: '{"projects:history":"нет доступа"}',
+    QCLOD_FAKE_FAIL_TIMES: '{"projects:history":1}'
+  })
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+    const palette = win.locator('[data-testid="action-palette"]')
+
+    await win.keyboard.press('Control+H')
+    await expect(palette.locator('[data-state="loading"]')).toContainText('Загружаю…')
+    await expect(palette.locator('[data-state="empty"]')).toHaveCount(0)
+
+    const err = palette.locator('[data-state="error"]')
+    await expect(err).toContainText('Не удалось прочитать историю', { timeout: 10000 })
+    await expect(err).toContainText('нет доступа')
+    await err.getByRole('button', { name: 'Повторить' }).click()
+    await expect(palette.locator('[data-testid="action-item"][data-section="history"]')).toHaveCount(2, { timeout: 10000 })
+    await expect(err).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
 test('/resume из списка команд открывает палитру с прошлыми, а не уходит агенту', async () => {
   const { app, profile } = await launch(HISTORY)
   try {

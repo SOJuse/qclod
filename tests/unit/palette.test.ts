@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
-import { PALETTE_PROVIDERS, searchPalette, sectionTitle } from '../../src/renderer/palette/providers'
+import { PALETTE_PROVIDERS, paletteState, searchPalette, sectionTitle } from '../../src/renderer/palette/providers'
 import { SECTION_CAP, type PaletteContext, type PaletteRunner } from '../../src/renderer/palette/types'
 import { HISTORY_PREFETCH, historyToLoad } from '../../src/renderer/palette/history'
 import { withMention } from '../../src/renderer/palette/files'
@@ -30,7 +30,8 @@ function runner(): PaletteRunner & { [K in keyof PaletteRunner]: ReturnType<type
     insertMention: vi.fn(),
     insertCommand: vi.fn(),
     runAction: vi.fn(),
-    openLayer: vi.fn()
+    openLayer: vi.fn(),
+    loadHistory: vi.fn()
   }
 }
 
@@ -212,5 +213,51 @@ describe('Ctrl+K: поиск по всему', () => {
     expect(asked).toHaveLength(HISTORY_PREFETCH)
     // Asked once already (read, or being read): not again.
     expect(asked[0]).toBe('C:\\p2')
+  })
+})
+
+describe('Ctrl+K: раздел, который ещё читается или не прочитался (Fix round 1)', () => {
+  test('Ctrl+H, пока история читается, — «загрузка», а не «ничего не нашлось»; в общем списке — ничего', () => {
+    const ctx = context({ history: { 'c:\\work\\qclod': 'loading' } })
+    expect(searchPalette('', ctx, 'history')).toEqual([])
+    expect(paletteState('', ctx, 'history')).toEqual({ kind: 'loading' })
+    expect(paletteState('sdk', ctx, 'history')).toEqual({ kind: 'loading' })
+    // The mixed list has other sections: no section speaks for it.
+    expect(paletteState('', ctx)).toBeNull()
+  })
+
+  test('чтение упало — ошибка с причиной, «Повторить» перечитывает каждый упавший проект', () => {
+    const ctx = context({
+      history: {
+        'c:\\work\\qclod': { items: [], error: 'нет доступа' },
+        'c:\\work\\site': { items: [], error: 'диск отключён' }
+      }
+    })
+    const state = paletteState('', ctx, 'history')
+    expect(state).toMatchObject({ kind: 'error', title: 'Не удалось прочитать историю', reason: 'нет доступа' })
+    if (state?.kind === 'error') state.retry()
+    expect(ctx.run.loadHistory.mock.calls).toEqual([['C:\\work\\qclod'], ['C:\\work\\site']])
+  })
+
+  test('всё прочитано и пусто — состояния нет, это «Ничего не нашлось»', () => {
+    const ctx = context({ history: { 'c:\\work\\qclod': { items: [] }, 'c:\\work\\site': { items: [] } } })
+    expect(paletteState('', ctx, 'history')).toBeNull()
+  })
+
+  test('@, пока индекс файлов не пришёл, — «загрузка»', () => {
+    const ctx = { ...context(), filesPending: true }
+    expect(searchPalette('@', ctx)).toEqual([])
+    expect(paletteState('@', ctx)).toEqual({ kind: 'loading' })
+    expect(paletteState('@', { ...ctx, filesPending: false })).toBeNull()
+  })
+
+  test('ё и е ищутся одинаково — и в запросе, и в тексте', () => {
+    const ctx = context()
+    expect(searchPalette('верстка', ctx).filter((i) => i.section === 'chats').map((i) => i.title)).toEqual(['Вёрстка'])
+    expect(searchPalette('ВЁРСТ', ctx).filter((i) => i.section === 'chats').map((i) => i.title)).toEqual(['Вёрстка'])
+    const past = context({
+      history: { 'c:\\work\\qclod': { items: [session('s1', 1, 'Разное', 'пришлёт ли ещё')] } }
+    })
+    expect(searchPalette('пришлет', past).filter((i) => i.section === 'history')).toHaveLength(1)
   })
 })

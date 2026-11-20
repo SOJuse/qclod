@@ -1,9 +1,14 @@
 import { score } from '../../shared/commandFilter'
 import { SECTION_CAP } from './types'
 
+/** Text as the search compares it: lower case, «ё» read as «е». */
+export function fold(text: string): string {
+  return text.toLowerCase().replace(/ё/g, 'е')
+}
+
 /** How well a short text (a title, a name, a path) fits the needle, by its letters in order; null — not at all. */
 export function points(text: string, needle: string): number | null {
-  return score(text.toLowerCase(), needle)
+  return score(fold(text), needle)
 }
 
 /**
@@ -11,7 +16,7 @@ export function points(text: string, needle: string): number | null {
  * scattered across it — those would fit almost any needle. Below any title match.
  */
 export function contains(text: string, needle: string): number | null {
-  return text.toLowerCase().includes(needle) ? 0 : null
+  return fold(text).includes(needle) ? 0 : null
 }
 
 /** The best of several fields; null when none fits. */

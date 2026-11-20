@@ -42,5 +42,22 @@ export const historyProvider: PaletteProvider = {
         run: () => ctx.run.openSession(project.cwd, session)
       })
     )
+  },
+  // Nothing to list yet is not «nothing found»: a read still under way, or one that failed and can be retried.
+  state(ctx) {
+    if (ctx.sidebar.some((p) => p.past === 'loading')) return { kind: 'loading' }
+    const failed = ctx.sidebar.filter(
+      (p): p is SidebarProject & { past: { error: string } } =>
+        p.past !== null && p.past !== 'loading' && !Array.isArray(p.past)
+    )
+    if (failed.length === 0) return null
+    return {
+      kind: 'error',
+      title: 'Не удалось прочитать историю',
+      reason: failed[0]!.past.error,
+      retry: () => {
+        for (const p of failed) ctx.run.loadHistory(p.cwd)
+      }
+    }
   }
 }

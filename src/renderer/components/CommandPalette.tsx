@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { searchPalette, sectionTitle } from '../palette/providers'
+import { paletteState, searchPalette, sectionTitle } from '../palette/providers'
 import type { PaletteContext, PaletteItem, PaletteSection } from '../palette/types'
 import { useModalFocus } from '../ui/modalFocus'
-import { StateView } from '../ui/StateView'
+import { StateView, reasonOf } from '../ui/StateView'
 import './CommandPalette.css'
 
 interface Props {
@@ -34,6 +34,8 @@ export function CommandPalette({ ctx, initialScope, onClose, onFocusLost }: Prop
   useEffect(() => field.current?.focus(), [])
 
   const shown = useMemo(() => searchPalette(query, ctx, scope), [query, ctx, scope])
+  // A section shown alone with nothing yet says why: still read, or failed — not «nothing found».
+  const pending = shown.length === 0 ? paletteState(query, ctx, scope) : null
   const selected = Math.max(0, shown.findIndex((item) => item.key === chosenKey))
 
   useEffect(() => {
@@ -105,7 +107,22 @@ export function CommandPalette({ ctx, initialScope, onClose, onFocusLost }: Prop
             }}
           />
         </div>
-        {shown.length === 0 ? (
+        {pending?.kind === 'loading' ? (
+          <StateView kind="loading" title="Загружаю…" />
+        ) : pending?.kind === 'error' ? (
+          <StateView
+            kind="error"
+            title={pending.title}
+            hint={reasonOf(pending.reason)}
+            action={{
+              label: 'Повторить',
+              onClick: () => {
+                pending.retry()
+                field.current?.focus()
+              }
+            }}
+          />
+        ) : shown.length === 0 ? (
           <StateView kind="empty" title="Ничего не нашлось" />
         ) : (
           <ul className="sheet-body action-palette-list" id="action-palette-list" role="listbox" ref={list}>

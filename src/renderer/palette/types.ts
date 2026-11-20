@@ -30,13 +30,22 @@ export interface PaletteRunner {
   runAction(id: AppActionId, arg?: string): void
   /** Слой поверх ленты активной панели (задача 6). */
   openLayer(layer: PaneLayerState): void
+  /** Reads a project's past conversations again («Повторить» after a failed read). */
+  loadHistory(cwd: string): void
 }
+
+/** Why a section shown by itself has no rows yet: still read, or the read failed. */
+export type PaletteSectionState =
+  | { kind: 'loading' }
+  | { kind: 'error'; title: string; reason: string; retry(): void }
 
 export interface PaletteContext {
   sidebar: SidebarProject[]
   activeTabId: TabId
   /** The active chat's file index. */
   files: string[]
+  /** The file index has not come yet. */
+  filesPending?: boolean
   /** The active chat's slash commands. */
   commands: CommandInfo[]
   run: PaletteRunner
@@ -48,11 +57,13 @@ export interface PaletteProvider {
   /** Typed first, it keeps the search to this section alone: `>` commands, `@` files. */
   prefix?: string
   /**
-   * The rows for `query` — already trimmed and lower-cased, without the prefix.
+   * The rows for `query` — already trimmed, lower-cased and «ё» as «е» (rank.fold), without the prefix.
    * `alone`: the section is shown by itself (Ctrl+H, a prefix), so an empty
    * query may list more of it than the mixed list does.
    */
   items(query: string, ctx: PaletteContext, alone?: boolean): PaletteItem[]
+  /** Shown by itself with no rows: why, instead of «Ничего не нашлось»; null — nothing pending. */
+  state?(ctx: PaletteContext): PaletteSectionState | null
 }
 
 /** At most this many rows per section. */

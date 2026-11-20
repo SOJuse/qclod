@@ -238,9 +238,11 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!session) return
     // The session name the phone shows is the tab's title.
     const title = controller.list().find((tab) => tab.id === id)?.title
-    await session.setRemote(enabled, title)
-    // The person's own switch is what the core keeps on (decision 9).
+    // The person's own switch is what the core keeps on (decision 9) — told
+    // before the CLI answers: that may take a minute, and a first attempt
+    // that fails is the core's to retry.
     deps.autonomy?.remoteWanted(id, enabled)
+    await session.setRemote(enabled, title)
   })
 
   ipcMain.handle(CHANNELS.agentCommands, async (_e, id: unknown) => {

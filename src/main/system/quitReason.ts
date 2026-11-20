@@ -14,3 +14,14 @@ export class QuitReason {
     return !this.interrupted
   }
 }
+
+/**
+ * Windows is ending the session (shutdown, sign-out). before-quit may never
+ * come then, so the cores are stopped here: a CLI that dies before Qclod
+ * must not be restarted in the middle of a shutdown. `working` stays for
+ * the next start (decision 8).
+ */
+export function sessionEnding(reason: QuitReason, autonomy: { quitting(deliberate: boolean): void }): void {
+  reason.markInterrupted()
+  autonomy.quitting(false)
+}

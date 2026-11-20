@@ -28,6 +28,8 @@ const overrides: LaunchOverrides[] = []
 const defaults: LaunchOverrides[] = []
 const models: string[] = []
 const remoteCalls: Array<[boolean, string | undefined]> = []
+/** setRemote: how the CLI answers — at once, never (up to a minute in life), or with a failure. */
+let remoteAnswer: 'ok' | 'hang' | 'fail' = 'ok'
 const resolved: string[][] = []
 const queueCalls: Array<[string, string]> = []
 const autonomyCalls: unknown[][] = []
@@ -44,6 +46,7 @@ beforeEach(() => {
   sendAnswer = true
   for (const list of [sent, overrides, defaults, models, resolved, remoteCalls, queueCalls, autonomyCalls]) list.length = 0
   cancelAnswer = null
+  remoteAnswer = 'ok'
   sendNowAnswer = false
   const session = {
     get panel() {
@@ -57,6 +60,8 @@ beforeEach(() => {
     },
     setRemote: async (enabled: boolean, name?: string) => {
       remoteCalls.push([enabled, name])
+      if (remoteAnswer === 'hang') await new Promise(() => undefined)
+      if (remoteAnswer === 'fail') throw new Error('мост не поднялся')
     },
     cancelQueued: async (queuedId: string) => {
       queueCalls.push(['cancel', queuedId])
@@ -116,7 +121,7 @@ describe('autonomy:* каналы', () => {
     }
   })
 
-  test('agentRemote сообщает remoteWanted после setRemote', async () => {
+  test('agentRemote сообщает remoteWanted и зовёт setRemote', async () => {
     await call(CHANNELS.agentRemote, 't1', true)
     expect(remoteCalls).toEqual([[true, 'проект']])
     expect(autonomyCalls).toEqual([['remoteWanted', 't1', true]])
@@ -127,6 +132,17 @@ describe('autonomy:* каналы', () => {
     await call(CHANNELS.agentRemote, 't1', 'да')
     await call(CHANNELS.agentRemote, 'чужая', true)
     expect(autonomyCalls).toEqual([])
+  })
+
+  test('agentRemote: remoteWanted уходит, не дожидаясь ответа CLI, и при сбое первой попытки', async () => {
+    remoteAnswer = 'hang'
+    void call(CHANNELS.agentRemote, 't1', true)
+    expect(autonomyCalls).toEqual([['remoteWanted', 't1', true]])
+
+    autonomyCalls.length = 0
+    remoteAnswer = 'fail'
+    await Promise.resolve(call(CHANNELS.agentRemote, 't1', true)).catch(() => undefined)
+    expect(autonomyCalls).toEqual([['remoteWanted', 't1', true]])
   })
 })
 

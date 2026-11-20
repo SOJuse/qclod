@@ -63,7 +63,7 @@ import {
 import { AutonomyHost } from './autonomy/autonomyHost'
 import { applyOpenAtLogin } from './system/loginItem'
 import { claimSingleInstance } from './system/singleInstance'
-import { QuitReason } from './system/quitReason'
+import { QuitReason, sessionEnding } from './system/quitReason'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -231,7 +231,7 @@ if (gotLock) void app.whenReady().then(async () => {
   // Why Qclod ends: a session end or an update restart leaves the tabs marked
   // as working for the next start (system/quitReason.ts); before-quit hands it to the host.
   const quitReason = new QuitReason()
-  powerMonitor.on('shutdown', () => quitReason.markInterrupted())
+  powerMonitor.on('shutdown', () => sessionEnding(quitReason, autonomy))
 
   // A repeating or hostile sender must not push the first, most useful error
   // out of the log (system/reportThrottle.ts).
@@ -565,7 +565,7 @@ if (gotLock) void app.whenReady().then(async () => {
 
   mainWindow = createMainWindow()
   watchWindow(mainWindow, (e) => errorLog.write(e))
-  mainWindow.on('session-end', () => quitReason.markInterrupted())
+  mainWindow.on('session-end', () => sessionEnding(quitReason, autonomy))
   loadRenderer(mainWindow)
   onSecondInstance = showWindow
   if (secondPending) showWindow()

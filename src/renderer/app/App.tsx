@@ -33,7 +33,11 @@ function without(all: Record<string, string>, id: string): Record<string, string
   return rest
 }
 
-/** e2e only: the first pane throws while drawing (preload reads the flag under the test seams). */
+/**
+ * e2e only: the first pane of a split throws while drawing (preload reads the
+ * flag under the test seams). Only in a split: a lone pane that throws from
+ * the start leaves no window to drive and no second pane to see alive.
+ */
 function ThrowInPane(): null {
   if (window.qclod.throwInPane) throw new Error('e2e: render error in a pane')
   return null
@@ -552,9 +556,9 @@ export function App(): JSX.Element {
       <UpdateBanner />
       <div className={`app-body${split ? ' app-split' : ''}`}>
         <div className="app-panes">
-          {(paneTabIds.length > 0 ? paneTabIds : [activeTabId]).map((id) => (
+          {(paneTabIds.length > 0 ? paneTabIds : [activeTabId]).map((id, index) => (
             <ErrorBoundary scope="pane" key={id}>
-              {id === activeTabId && <ThrowInPane />}
+              {split && index === 0 && <ThrowInPane />}
               <ChatPane
                 tabId={id}
                 focused={id === activeTabId}

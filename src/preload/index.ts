@@ -36,8 +36,14 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
  * bridge, so the renderer can only reach what is listed here.
  */
 const api = {
-  /** e2e only (QCLOD_E2E_THROW_IN_PANE): false in a release build. */
-  throwInPane: __QCLOD_TEST_SEAMS__ ? process.argv.includes('--QCLOD_E2E_THROW_IN_PANE') : false,
+  /**
+   * e2e only (QCLOD_E2E_THROW_IN_PANE): false in a release build. Chromium on
+   * Windows lowercases switch names, so the renderer sees
+   * `--qclod_e2e_throw_in_pane`; the match ignores case.
+   */
+  throwInPane: __QCLOD_TEST_SEAMS__
+    ? process.argv.some((arg) => arg.toUpperCase() === '--QCLOD_E2E_THROW_IN_PANE')
+    : false,
 
   appVersion: (): Promise<string> => ipcRenderer.invoke(CHANNELS.appVersion),
 

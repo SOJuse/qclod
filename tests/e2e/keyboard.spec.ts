@@ -1,7 +1,7 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 async function launch(
   script: unknown,
@@ -304,5 +304,6 @@ test('Ctrl+R: черновик, вложение и вторая панель в
     await expect(win.locator('[data-testid="composer-chip"]')).toContainText('мой файл.ts')
   } finally {
     await close(app, profile, folder)
+    rmSync(dirname(picked), { recursive: true, force: true })
   }
 })

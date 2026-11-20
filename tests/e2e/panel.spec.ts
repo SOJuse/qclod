@@ -1,7 +1,7 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 async function launch(
   script: unknown,
@@ -119,6 +119,7 @@ test('пустые данные показываются как «Появитс
     await expect(panel).not.toContainText('$0.00')
   } finally {
     await close(app, profile)
+    rmSync(dirname(gone), { recursive: true, force: true })
   }
 })
 

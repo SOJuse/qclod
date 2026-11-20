@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -19,6 +19,7 @@ import { LayoutStore } from '@main/store/layoutStore'
 import { DEFAULT_LAYOUT, type LaunchOverrides, type LayoutState, type UserInput } from '@shared/types'
 
 const USER_DATA = mkdtempSync(join(tmpdir(), 'qclod-agent-ipc-'))
+afterAll(() => rmSync(USER_DATA, { recursive: true, force: true }))
 
 let mode = 'default'
 let sendAnswer = true
@@ -179,10 +180,14 @@ describe('этап 2: проекты и раскладка', () => {
     { id: 't2', cwd: OPEN, title: 'второй' }
   ]
 
+  let layoutDir = ''
+  afterEach(() => rmSync(layoutDir, { recursive: true, force: true }))
+
   beforeEach(() => {
     handlers.clear()
     for (const list of [listed, opened, panes, changes]) list.length = 0
-    layout = new LayoutStore(mkdtempSync(join(tmpdir(), 'qclod-layout-ipc-')), (l) => changes.push(l))
+    layoutDir = mkdtempSync(join(tmpdir(), 'qclod-layout-ipc-'))
+    layout = new LayoutStore(layoutDir, (l) => changes.push(l))
     registerAgentIpc({
       getWindow: () => null,
       controller: {

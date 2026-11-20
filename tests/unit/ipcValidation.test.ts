@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -350,8 +350,15 @@ describe('этап 2: обработчики-заглушки в main', () => {
   const plans: Array<[string, unknown]> = []
   const questions: Array<[string, Record<string, string>, Record<string, string> | undefined]> = []
 
+  const layoutDirs: string[] = []
+  afterEach(() => {
+    for (const dir of layoutDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
   function register(): void {
     handlers.clear()
+    const layoutDir = mkdtempSync(join(tmpdir(), 'qclod-ipc-layout-'))
+    layoutDirs.push(layoutDir)
     plans.length = 0
     questions.length = 0
     const session = {
@@ -371,7 +378,7 @@ describe('этап 2: обработчики-заглушки в main', () => {
       controller: { list: () => [], setPanes: async () => undefined },
       manager: { get: (id: string) => (id === 't1' ? session : undefined) },
       broker: { cancelTab: () => undefined },
-      layout: new LayoutStore(mkdtempSync(join(tmpdir(), 'qclod-ipc-layout-')), () => undefined),
+      layout: new LayoutStore(layoutDir, () => undefined),
       history: { list: async () => [] },
       rememberDefault: () => undefined,
       resolver: { forget: () => undefined },

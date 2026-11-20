@@ -25,7 +25,10 @@ function chorded(ev: React.KeyboardEvent): boolean {
  * ends, 4 (and Esc) asks why first — the reason field opens and its Enter
  * sends the refusal, empty or not (decision 8). The keys work only while the
  * card itself has focus, never from the input line or the reason field: a
- * reply that starts with «1» must not grant anything.
+ * reply that starts with «1» must not grant anything. Once the reason field
+ * is open the refusal is what is being given: the digits answer nothing,
+ * Enter on the card or any of its buttons sends the refusal, and the held
+ * key that opened the field does not type its repeats into it.
  */
 export function PermissionCard({ item, answers, focused }: Props): JSX.Element {
   const card = useRef<HTMLDivElement | null>(null)
@@ -33,6 +36,8 @@ export function PermissionCard({ item, answers, focused }: Props): JSX.Element {
   const guard = useRef(createKeyGuard())
   /** A Space key-down was refused, so its key-up must not click the button. */
   const spaceRefused = useRef(false)
+  /** The key that opened the reason field, until it is let go. */
+  const openedBy = useRef<string | null>(null)
   const [reasonOpen, setReasonOpen] = useState(false)
   const [reason, setReason] = useState('')
   useEffect(() => {
@@ -78,15 +83,34 @@ export function PermissionCard({ item, answers, focused }: Props): JSX.Element {
         ev.preventDefault()
         ev.stopPropagation()
         if (ev.key === ' ') spaceRefused.current = true
-      } else if (ev.key === ' ') {
-        spaceRefused.current = false
+        return
       }
+      if (ev.key === ' ') spaceRefused.current = false
+      if (!reasonOpen) return
+      // A refusal is being written: Enter or Space on any of the card's
+      // buttons sends it, never the button's own allow.
+      ev.preventDefault()
+      ev.stopPropagation()
+      if (ev.key === ' ') spaceRefused.current = true
+      deny()
       return
     }
     if (!focused) return
     // Keys still in flight when the card appeared never answer: only a fresh
     // plain press after it is armed.
     if (chorded(ev) || !guard.current.allows(ev.code || ev.key, performance.now())) return
+    if (reasonOpen) {
+      // While the reason is open the digits answer nothing — focus that went
+      // back to a button must not turn the refusal into an allow. Enter sends
+      // the refusal, Esc goes back to the field.
+      if (ev.nativeEvent.isComposing || ev.keyCode === 229) return
+      if (ev.key === 'Enter' && !ev.shiftKey) deny()
+      else if (ev.key === 'Escape') openReason()
+      else return
+      ev.preventDefault()
+      ev.stopPropagation()
+      return
+    }
     const action = resolveComposerKey(
       {
         key: ev.key,
@@ -110,14 +134,22 @@ export function PermissionCard({ item, answers, focused }: Props): JSX.Element {
     if (action === 'permissionAllow') answer({ behavior: 'allow', scope: 'once' })
     else if (action === 'permissionAllowAll') answer({ behavior: 'allow', scope: 'always' })
     else if (action === 'permissionAllowSession') answer({ behavior: 'allow', scope: 'session' })
-    else if (action === 'permissionReason') openReason()
-    else return
+    else if (action === 'permissionReason') {
+      openedBy.current = ev.code || ev.key
+      openReason()
+    } else return
     ev.preventDefault()
     ev.stopPropagation()
   }
 
   function onReasonKeyDown(ev: React.KeyboardEvent<HTMLInputElement>): void {
     if (ev.nativeEvent.isComposing || ev.keyCode === 229) return
+    // The key that opened the field, still held: its auto-repeat is not text.
+    if (ev.repeat && openedBy.current !== null && (ev.code || ev.key) === openedBy.current) {
+      ev.preventDefault()
+      ev.stopPropagation()
+      return
+    }
     if (ev.key === 'Escape') {
       ev.preventDefault()
       ev.stopPropagation()
@@ -144,6 +176,7 @@ export function PermissionCard({ item, answers, focused }: Props): JSX.Element {
       }}
       onKeyDown={onKeyDown}
       onKeyUp={(ev) => {
+        if ((ev.code || ev.key) === openedBy.current) openedBy.current = null
         if (ev.key !== ' ' || !spaceRefused.current) return
         spaceRefused.current = false
         ev.preventDefault()

@@ -221,6 +221,58 @@ describe('PermissionCard', () => {
     expect(answers.permission).not.toHaveBeenCalled()
   })
 
+  test('пока поле причины открыто, цифра на кнопке ничего не разрешает, Enter на кнопке — отказ с причиной', () => {
+    const answers = fakeAnswers()
+    mount(answers)
+    focusAndArm()
+    press(card(), '4', 'Digit4')
+    typeInto(reasonField()!, 'не трогай main')
+    // Shift+Tab from the field back onto «Запретить»: a digit there is no allow.
+    const denyButton = host.querySelector<HTMLButtonElement>('[data-testid="permission-deny"]')!
+    act(() => denyButton.focus())
+    for (const [key, code] of [['1', 'Digit1'], ['2', 'Digit2'], ['3', 'Digit3']] as const) {
+      press(denyButton, key, code)
+    }
+    const allowButton = host.querySelector<HTMLButtonElement>('[data-testid="permission-allow"]')!
+    act(() => allowButton.focus())
+    press(allowButton, '1', 'Digit1')
+    press(card(), '2', 'Digit2')
+    expect(answers.permission).not.toHaveBeenCalled()
+    expect(reasonField()?.value).toBe('не трогай main')
+
+    // Enter on any of the card's buttons, «Разрешить» too, sends the refusal written.
+    const enter = press(allowButton, 'Enter', 'Enter')
+    expect(enter.defaultPrevented).toBe(true)
+    expect(answers.permission).toHaveBeenCalledTimes(1)
+    expect(answers.permission).toHaveBeenCalledWith('r1', { behavior: 'deny', reason: 'не трогай main' })
+  })
+
+  test('удержанная «4» не печатает свой повтор в поле причины', () => {
+    const answers = fakeAnswers()
+    mount(answers)
+    focusAndArm()
+    act(() => {
+      card().dispatchEvent(new KeyboardEvent('keydown', { key: '4', code: 'Digit4', bubbles: true, cancelable: true }))
+    })
+    const field = reasonField()!
+    expect(document.activeElement).toBe(field)
+    // The key is still held: its auto-repeat lands in the field and must not be typed.
+    for (let i = 0; i < 3; i++) {
+      const again = new KeyboardEvent('keydown', { key: '4', code: 'Digit4', repeat: true, bubbles: true, cancelable: true })
+      act(() => {
+        field.dispatchEvent(again)
+      })
+      expect(again.defaultPrevented).toBe(true)
+    }
+    act(() => {
+      field.dispatchEvent(new KeyboardEvent('keyup', { key: '4', code: 'Digit4', bubbles: true, cancelable: true }))
+    })
+    // Let go and pressed again, a 4 is text; so is another key held down.
+    expect(press(field, '4', 'Digit4').defaultPrevented).toBe(false)
+    expect(press(field, '5', 'Digit5', { repeat: true }).defaultPrevented).toBe(false)
+    expect(answers.permission).not.toHaveBeenCalled()
+  })
+
   test('у длинной причины виден счётчик до предела', () => {
     mount(fakeAnswers())
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="permission-deny"]')!.click())

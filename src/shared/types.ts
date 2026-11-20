@@ -509,3 +509,11 @@ export interface ResolvedPath {
   line?: number
   column?: number
 }
+
+/** An error the window caught in itself, sent to the main process for the log. */
+export interface RendererErrorReport {
+  scope: 'app' | 'pane' | 'window'
+  message: string
+  stack?: string
+  componentStack?: string
+}

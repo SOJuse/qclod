@@ -12,6 +12,7 @@ import type {
   PermissionAnswer,
   PersistedTab,
   PreparedImage,
+  RendererErrorReport,
   ResolvedPath,
   RibbonEvent,
   RibbonSnapshot,
@@ -35,6 +36,9 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
  * bridge, so the renderer can only reach what is listed here.
  */
 const api = {
+  /** e2e only (QCLOD_E2E_THROW_IN_PANE): false in a release build. */
+  throwInPane: __QCLOD_TEST_SEAMS__ ? process.argv.includes('--QCLOD_E2E_THROW_IN_PANE') : false,
+
   appVersion: (): Promise<string> => ipcRenderer.invoke(CHANNELS.appVersion),
 
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke(CHANNELS.settingsGet),
@@ -142,6 +146,8 @@ const api = {
   closeWindow: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowClose),
   zoom: (step: 'in' | 'out' | 'reset'): Promise<void> => ipcRenderer.invoke(CHANNELS.windowZoom, step),
   reloadWindow: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowReload),
+  /** Fire-and-forget: an error the window caught in itself, for the log. */
+  reportError: (report: RendererErrorReport): void => ipcRenderer.send(CHANNELS.rendererError, report),
 
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke(CHANNELS.openExternal, url),
 

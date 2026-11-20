@@ -324,3 +324,21 @@ describe('sanitizeInput: вставленные картинки', () => {
     }
   })
 })
+
+describe('sanitizeErrorReport', () => {
+  test('garbage gives null', async () => {
+    const { sanitizeErrorReport } = await import('@main/tabs/sanitize')
+    for (const v of [null, undefined, 5, 'x', [], {}, { scope: 'nope', message: 'm' }, { scope: 'app' }, { scope: 'app', message: 3 }]) {
+      expect(sanitizeErrorReport(v)).toBeNull()
+    }
+  })
+
+  test('a good report passes and long strings are cut to 20 000', async () => {
+    const { sanitizeErrorReport } = await import('@main/tabs/sanitize')
+    const long = 'a'.repeat(30000)
+    const cut = 'a'.repeat(20000)
+    const r = sanitizeErrorReport({ scope: 'pane', message: long, stack: long, componentStack: long, extra: 1 })
+    expect(r).toEqual({ scope: 'pane', message: cut, stack: cut, componentStack: cut })
+    expect(sanitizeErrorReport({ scope: 'window', message: 'm', stack: 4 })).toEqual({ scope: 'window', message: 'm' })
+  })
+})

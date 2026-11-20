@@ -10,6 +10,7 @@ import { REMOTE_OFF } from '../../shared/remote'
 import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
 import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { ChatPane } from '../components/ChatPane'
+import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { SidePanel } from '../components/SidePanel'
 import { HistoryScreen } from '../components/HistoryScreen'
 import { SetupScreen } from '../components/SetupScreen'
@@ -30,6 +31,12 @@ function without(all: Record<string, string>, id: string): Record<string, string
   if (!(id in all)) return all
   const { [id]: _gone, ...rest } = all
   return rest
+}
+
+/** e2e only: the first pane throws while drawing (preload reads the flag under the test seams). */
+function ThrowInPane(): null {
+  if (window.qclod.throwInPane) throw new Error('e2e: render error in a pane')
+  return null
 }
 
 /**
@@ -543,6 +550,8 @@ export function App(): JSX.Element {
       <UpdateBanner />
       <div className={`app-body${splitTabId ? ' app-split' : ''}`}>
         <div className="app-panes">
+          <ErrorBoundary scope="pane" key={activeTabId}>
+            <ThrowInPane />
           <ChatPane
             tabId={activeTabId}
             focused={true}
@@ -562,7 +571,9 @@ export function App(): JSX.Element {
                 : null
             }
           />
+          </ErrorBoundary>
           {splitTabId && (
+            <ErrorBoundary scope="pane" key={splitTabId}>
             <ChatPane
               tabId={splitTabId}
               focused={false}
@@ -578,6 +589,7 @@ export function App(): JSX.Element {
               ribbonError={ribbonErrors[splitTabId] ?? null}
               onRetryRibbon={() => retryRibbon(splitTabId)}
             />
+            </ErrorBoundary>
           )}
         </div>
         {showPanel && (

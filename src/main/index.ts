@@ -1,7 +1,9 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu } from 'electron'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { APP_ID } from '../shared/appId'
-import { createMainWindow, hardenWebContents, offScreen, RENDERER_ENTRY } from './window'
+import { createMainWindow, hardenWebContents, offScreen, RENDERER_ENTRY, watchRenderer } from './window'
+import { ErrorLog } from './system/errorLog'
 import { registerBaseIpc } from './ipc'
 import { registerAgentIpc } from './agentIpc'
 import { withFault } from './testSeams/ipcFaults'
@@ -17,7 +19,7 @@ import { SessionHistory } from './agent/sessionHistory'
 import { loadTranscript } from './agent/transcript'
 import { TabController } from './tabs/TabController'
 import { pickDefaultCwd } from './tabs/defaultCwd'
-import { mergeDefaults } from './tabs/sanitize'
+import { mergeDefaults, sanitizeErrorReport } from './tabs/sanitize'
 import { notifyIfNeeded, shouldRaiseWindowForPermission } from './notifications'
 import { RendererOutbox } from './rendererOutbox'
 import { PathResolver } from './files/pathResolver'
@@ -116,6 +118,30 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
+
+  // What broke, for whoever has to find out why (system/errorLog.ts). Errors
+  // the main process throws are written down as well as printed.
+  const errorLog = new ErrorLog(join(userData, 'logs'))
+  process.on('uncaughtExceptionMonitor', (err) => {
+    errorLog.write({
+      source: 'main',
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+      at: Date.now()
+    })
+  })
+  ipcMain.on(CHANNELS.rendererError, (_e, raw: unknown) => {
+    const report = sanitizeErrorReport(raw)
+    if (!report) return
+    const stack = [report.stack, report.componentStack].filter(Boolean).join('\n')
+    errorLog.write({
+      source: 'renderer',
+      scope: report.scope,
+      message: report.message,
+      stack: stack || undefined,
+      at: Date.now()
+    })
+  })
   // Old screenshots go before new ones are added, and again every hour: the
   // app may stay open in the tray for weeks.
   cleanupPasteDir(userData)
@@ -345,6 +371,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.updateRestart, () => updates?.restart() ?? false)
 
   mainWindow = createMainWindow()
+  watchRenderer(mainWindow.webContents, { log: (e) => errorLog.write(e) })
   loadRenderer(mainWindow)
 
   const tray = headless
@@ -389,6 +416,7 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createMainWindow()
+      watchRenderer(mainWindow.webContents, { log: (e) => errorLog.write(e) })
       loadRenderer(mainWindow)
     }
   })

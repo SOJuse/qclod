@@ -68,6 +68,9 @@ export const CHANNELS = Object.freeze({
   updateGet: 'update:get',
   updateRestart: 'update:restart',
 
+  // renderer -> main (send, no answer)
+  rendererError: 'renderer:error',
+
   // main -> renderer (events)
   ribbonChanged: 'ribbon:changed',
   panelChanged: 'panel:changed',
@@ -150,3 +153,6 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.setupLoginProgress,
   CHANNELS.updateChanged
 ])
+
+/** Fire-and-forget: the renderer sends, nothing comes back. */
+export const SEND_CHANNELS: readonly ChannelName[] = Object.freeze([CHANNELS.rendererError])

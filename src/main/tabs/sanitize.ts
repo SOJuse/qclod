@@ -7,6 +7,7 @@ import {
   type LaunchOverrides,
   type PermissionAnswer,
   type PermissionMode,
+  type RendererErrorReport,
   type TabState,
   type UserInput
 } from '../../shared/types'
@@ -237,4 +238,21 @@ export function sanitizeAnswer(value: unknown): PermissionAnswer {
     behavior: answer['behavior'] === 'allow' ? 'allow' : 'deny',
     ...(answer['remember'] === true ? { remember: true } : {})
   }
+}
+
+const MAX_ERROR_TEXT = 20_000
+const ERROR_SCOPES: readonly string[] = ['app', 'pane', 'window']
+
+/** An error report from the window: a known scope and a message, strings cut to a sane length; anything else is dropped. */
+export function sanitizeErrorReport(value: unknown): RendererErrorReport | null {
+  if (!isPlainObject(value)) return null
+  const { scope, message, stack, componentStack } = value
+  if (!isString(scope) || !ERROR_SCOPES.includes(scope) || !isString(message)) return null
+  const report: RendererErrorReport = {
+    scope: scope as RendererErrorReport['scope'],
+    message: message.slice(0, MAX_ERROR_TEXT)
+  }
+  if (isString(stack)) report.stack = stack.slice(0, MAX_ERROR_TEXT)
+  if (isString(componentStack)) report.componentStack = componentStack.slice(0, MAX_ERROR_TEXT)
+  return report
 }

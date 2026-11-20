@@ -2,6 +2,7 @@ import { BrowserWindow, shell, type BrowserWindowConstructorOptions, type WebCon
 import { join } from 'node:path'
 import { WINDOW_BG } from '../shared/theme'
 import { isSafeExternalUrl, makeNavigationGuard } from './security'
+import type { ErrorEntry } from './system/errorLog'
 
 export const RENDERER_ENTRY = join(__dirname, '../renderer/index.html')
 
@@ -30,6 +31,10 @@ export function mainWindowOptions(): BrowserWindowConstructorOptions {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // e2e only: tells the preload to make the first pane throw.
+      ...(__QCLOD_TEST_SEAMS__ && process.env['QCLOD_E2E_THROW_IN_PANE'] === '1'
+        ? { additionalArguments: ['--QCLOD_E2E_THROW_IN_PANE'] }
+        : {}),
       // Off screen the page would count as hidden and stall its timers.
       ...(offScreen ? { backgroundThrottling: false } : {})
     }
@@ -70,5 +75,58 @@ export function hardenWebContents(contents: WebContents): void {
 
   contents.on('will-attach-webview', (e) => {
     e.preventDefault()
+  })
+}
+
+const RELOAD_WINDOW_MS = 60_000
+const MAX_RELOADS = 3
+
+/**
+ * A renderer that dies or hangs must not leave the window grey. A crash is
+ * logged and the page reloaded, at most three times a minute so a page that
+ * crashes on load cannot loop. A hang is logged and given `hangMs` to come
+ * back before the renderer is killed and the page reloaded.
+ */
+export function watchRenderer(
+  contents: Pick<WebContents, 'on' | 'reload' | 'forcefullyCrashRenderer'>,
+  opts: { log: (e: ErrorEntry) => void; now?: () => number; hangMs?: number }
+): void {
+  const now = opts.now ?? Date.now
+  const hangMs = opts.hangMs ?? 15_000
+  let reloads: number[] = []
+  let hangTimer: ReturnType<typeof setTimeout> | null = null
+
+  const note = (message: string): void => opts.log({ source: 'main', scope: 'window', message, at: now() })
+  const reload = (why: string): void => {
+    const t = now()
+    reloads = reloads.filter((r) => t - r < RELOAD_WINDOW_MS)
+    if (reloads.length >= MAX_RELOADS) {
+      note(`${why}: not reloading, ${MAX_RELOADS} reloads in the last minute already`)
+      return
+    }
+    reloads.push(t)
+    contents.reload()
+  }
+
+  contents.on('render-process-gone', (_e, details) => {
+    if (details.reason === 'clean-exit') return
+    note(`render-process-gone: ${details.reason}`)
+    reload('render-process-gone')
+  })
+
+  contents.on('unresponsive', () => {
+    note('renderer unresponsive')
+    if (hangTimer) clearTimeout(hangTimer)
+    hangTimer = setTimeout(() => {
+      hangTimer = null
+      note(`renderer still unresponsive after ${hangMs} ms: forcing a restart`)
+      contents.forcefullyCrashRenderer()
+      reload('unresponsive')
+    }, hangMs)
+  })
+
+  contents.on('responsive', () => {
+    if (hangTimer) clearTimeout(hangTimer)
+    hangTimer = null
   })
 }

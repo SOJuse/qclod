@@ -354,10 +354,12 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
 
   ipcMain.handle(
     CHANNELS.projectHistory,
-    async (_e, cwd: unknown, hostId: unknown): Promise<SessionSummary[]> => {
-      const folder = knownFolder(cwd, hostId)
-      return folder === null ? [] : deps.history.list(folder)
-    }
+    (_e, cwd: unknown, hostId: unknown): Promise<SessionSummary[]> =>
+      // e2e sees the sidebar's «Загружаю…» and «Не удалось прочитать историю» through this.
+      withFault(CHANNELS.projectHistory, async () => {
+        const folder = knownFolder(cwd, hostId)
+        return folder === null ? [] : deps.history.list(folder)
+      })
   )
 
   ipcMain.handle(

@@ -122,10 +122,20 @@
 }
 
 /*
- * Too narrow for everything (an 800px window with the panel open leaves ~490px): the least
- * important controls go, in this order: the remote switch, effort and mode, then the model.
- * The panel beside the line holds the model, and the meters never go.
+ * Too narrow for everything: the least important parts go, in this order: the limits' bars
+ * (their names, figures and alerts stay), the remote switch, effort and mode, the model, then
+ * the limits themselves. The panel beside the line holds the model and the limits; the context
+ * meter never goes.
+ *
+ * With the sidebar and the panel open, the default window (1180) leaves the line ~610px and
+ * the smallest one (800) ~230px.
  */
+@container (max-width: 680px) {
+  .status-limits .status-meter-bar {
+    display: none;
+  }
+}
+
 @container (max-width: 540px) {
   .status-remote,
   .status-group > .dropdown:has([data-testid='status-mode']),
@@ -136,6 +146,12 @@
 
 @container (max-width: 470px) {
   .status-group > .dropdown:has([data-testid='status-model']) {
+    display: none;
+  }
+}
+
+@container (max-width: 320px) {
+  .status-limits {
     display: none;
   }
 }

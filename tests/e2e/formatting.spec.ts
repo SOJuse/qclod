@@ -135,8 +135,7 @@ test('вставленное системой не показывается ка
   try {
     const win = await app.firstWindow()
     await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
-    await win.keyboard.press('Control+H')
-    await win.locator('[data-testid="history-item"]').first().click()
+    await win.locator('[data-testid="sidebar-session"]').first().click()
 
     const ribbon = win.locator('[data-testid="ribbon"]')
     await expect(ribbon).toContainText('почини вставку', { timeout: 15000 })
@@ -170,8 +169,7 @@ test('открытая из истории переписка на месте, �
     const input = win.locator('[data-testid="composer-input"]')
     await input.waitFor({ timeout: 15000 })
 
-    await win.keyboard.press('Control+H')
-    await win.locator('[data-testid="history-item"]').first().click()
+    await win.locator('[data-testid="sidebar-session"]').first().click()
 
     const ribbon = win.locator('[data-testid="ribbon"]')
     await expect(ribbon).toContainText('вот что было', { timeout: 15000 })

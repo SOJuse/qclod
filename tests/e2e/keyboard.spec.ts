@@ -105,12 +105,35 @@ test('Ctrl+W на работающей вкладке закрывает тол�
 
     await win.keyboard.press('Control+w')
     const guard = win.locator('[data-testid="close-guard"]')
-    await expect(guard).toContainText('Ctrl+W ещё раз закроет вкладку')
+    await expect(guard).toContainText('Ctrl+W ещё раз закроет чат')
     await expect(tabs(win)).toHaveCount(2)
 
     await win.keyboard.press('Control+w')
     await expect(tabs(win)).toHaveCount(1)
     await expect(guard).toHaveCount(0)
+  } finally {
+    await close(app, profile, folder)
+  }
+})
+
+test('Ctrl+B прячет боковую панель, кнопка в заголовке возвращает её', async () => {
+  const { app, profile, folder } = await launch({ steps: [] })
+  try {
+    const win = await app.firstWindow()
+    await ready(win)
+    const sidebar = win.locator('[data-testid="sidebar"]')
+    const toggle = win.locator('[data-testid="sidebar-toggle"]')
+    await expect(sidebar).toBeVisible()
+    await expect(toggle).toHaveAttribute('aria-label', 'Скрыть боковую панель')
+    expect(await toggle.getAttribute('title')).toContain('Ctrl+B')
+
+    await win.keyboard.press('Control+b')
+    await expect(sidebar).toHaveCount(0)
+    await expect(toggle).toHaveAttribute('aria-label', 'Показать боковую панель')
+
+    await toggle.click()
+    await expect(sidebar).toBeVisible()
+    await expect(tabs(win)).toHaveCount(1)
   } finally {
     await close(app, profile, folder)
   }
@@ -126,7 +149,8 @@ test('Ctrl+K открывает палитру действий; «настр» 
     const palette = win.locator('[data-testid="action-palette"]')
     await expect(palette).toBeVisible()
     await expect(win.locator('[data-testid="action-query"]')).toBeFocused()
-    await expect(win.locator('[data-testid="action-item"]')).toHaveCount(16)
+    // 17: «Показать или скрыть боковую панель» (Ctrl+B) joined the list.
+    await expect(win.locator('[data-testid="action-item"]')).toHaveCount(17)
 
     // Esc closes it and the cursor goes back to the input.
     await win.keyboard.press('Escape')

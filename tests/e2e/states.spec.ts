@@ -23,23 +23,22 @@ const HISTORY = JSON.stringify({
   messages: {}
 })
 
-test('история: загрузка, затем ошибка с причиной и «Повторить»', async () => {
+test('история в боковой панели: загрузка, затем ошибка с причиной и «Повторить»', async () => {
   const { app, win } = await launchQclod({
     env: {
       QCLOD_FAKE_HISTORY: HISTORY,
-      QCLOD_FAKE_SLOW: '{"history:list":1500}',
-      QCLOD_FAKE_FAIL: '{"history:list":"нет доступа"}'
+      QCLOD_FAKE_SLOW: '{"projects:history":1500}',
+      QCLOD_FAKE_FAIL: '{"projects:history":"нет доступа"}'
     }
   })
   try {
-    await win.keyboard.press('Control+H')
-    const loading = win.locator('[data-testid="history-screen"] [data-state="loading"]')
-    await expect(loading).toContainText('Читаю историю…')
+    const sidebar = win.locator('[data-testid="sidebar"]')
+    const loading = sidebar.locator('[data-state="loading"]')
+    await expect(loading).toContainText('Загружаю…')
     await expect(loading).toHaveAttribute('role', 'status')
-    await shownAfterDelay(loading)
     await shot(win, '09-history-loading')
 
-    const err = win.locator('[data-testid="history-screen"] [data-state="error"]')
+    const err = sidebar.locator('[data-state="error"]')
     await expect(err).toContainText('Не удалось прочитать историю', { timeout: 10000 })
     await expect(err).toContainText('нет доступа')
     // Electron's wrapping of the main side's message is not shown.
@@ -52,36 +51,20 @@ test('история: загрузка, затем ошибка с причин�
   }
 })
 
-test('история: «Повторить» читает заново и показывает список', async () => {
-  // The empty tab reads the history once by itself; the screen's first read fails too.
+test('история в боковой панели: «Повторить» читает заново и показывает список', async () => {
   const { app, win } = await launchQclod({
     env: {
       QCLOD_FAKE_HISTORY: HISTORY,
-      QCLOD_FAKE_FAIL: '{"history:list":"нет доступа"}',
-      QCLOD_FAKE_FAIL_TIMES: '{"history:list":2}'
+      QCLOD_FAKE_FAIL: '{"projects:history":"нет доступа"}',
+      QCLOD_FAKE_FAIL_TIMES: '{"projects:history":1}'
     }
   })
   try {
-    await expect(win.locator('[data-testid="empty-tab"]')).toBeVisible({ timeout: 15000 })
-    await win.keyboard.press('Control+H')
-    const err = win.locator('[data-testid="history-screen"] [data-state="error"]')
-    await expect(err).toBeVisible()
+    const err = win.locator('[data-testid="sidebar"] [data-state="error"]')
+    await expect(err).toBeVisible({ timeout: 15000 })
     await err.getByRole('button', { name: 'Повторить' }).click()
-    await expect(win.locator('[data-testid="history-item"]')).toHaveCount(1)
-  } finally {
-    await app.close()
-  }
-})
-
-test('история: поиск без совпадений называет запрос', async () => {
-  const { app, win } = await launchQclod({ env: { QCLOD_FAKE_HISTORY: HISTORY } })
-  try {
-    await win.keyboard.press('Control+H')
-    await expect(win.locator('[data-testid="history-item"]')).toHaveCount(1)
-    await win.locator('[data-testid="history-query"]').fill('zzz')
-    const empty = win.locator('[data-testid="history-screen"] [data-state="empty"]')
-    await expect(empty).toContainText('Ничего не нашлось по «zzz»')
-    await shot(win, '09-history-no-match')
+    await expect(win.locator('[data-testid="sidebar-session"]')).toHaveCount(1)
+    await expect(err).toHaveCount(0)
   } finally {
     await app.close()
   }

@@ -1,45 +1,55 @@
-import { Columns2, TriangleAlert, History, Minus, Settings, Square, X } from 'lucide-react'
+import { Columns2, Minus, PanelLeftClose, PanelLeftOpen, Settings, Square, TriangleAlert, X } from 'lucide-react'
 import { hint } from '../app/shortcuts'
 import { CHROME_ICON_SIZE } from '../ui/icons'
-import { TabStrip } from './TabStrip'
-import type { HotkeyRegistration, TabId, TabState } from '../../shared/types'
+import type { HotkeyRegistration } from '../../shared/types'
 import './TitleBar.css'
 
 interface Props {
-  tabs: TabState[]
-  activeTabId: TabId
-  onActivate: (id: TabId) => void
-  onClose: (id: TabId) => void
-  onCreate: () => void
+  /** The active chat's title; shown in the middle while there is one pane. */
+  chatTitle: string | null
+  sidebarOpen: boolean
+  onToggleSidebar: () => void
   hotkey: HotkeyRegistration | null
   onOpenSettings: () => void
-  onOpenHistory: () => void
   onToggleSplit: () => void
   splitOpen: boolean
 }
 
+/**
+ * The frameless window's bar: the sidebar's button and the mark on the left,
+ * the chat's title in the middle, the split, the settings and the window's
+ * own buttons on the right. The rest of it drags the window.
+ */
 export function TitleBar({
-  tabs,
-  activeTabId,
-  onActivate,
-  onClose,
-  onCreate,
+  chatTitle,
+  sidebarOpen,
+  onToggleSidebar,
   hotkey,
   onOpenSettings,
-  onOpenHistory,
   onToggleSplit,
   splitOpen
 }: Props): JSX.Element {
+  const sidebarLabel = sidebarOpen ? 'Скрыть боковую панель' : 'Показать боковую панель'
+  const SidebarIcon = sidebarOpen ? PanelLeftClose : PanelLeftOpen
   return (
     <header className="title-bar" data-testid="title-bar">
+      <button
+        type="button"
+        className="window-button title-bar-sidebar"
+        data-testid="sidebar-toggle"
+        aria-label={sidebarLabel}
+        title={hint(sidebarLabel, 'toggleSidebar')}
+        onClick={onToggleSidebar}
+      >
+        <SidebarIcon size={CHROME_ICON_SIZE} aria-hidden="true" />
+      </button>
       <span className="title-bar-mark" aria-hidden />
-      <TabStrip
-        tabs={tabs}
-        activeTabId={activeTabId}
-        onActivate={onActivate}
-        onClose={onClose}
-        onCreate={onCreate}
-      />
+      <span className="title-bar-name">Qclod</span>
+      {chatTitle && (
+        <div className="title-bar-title" data-testid="title-bar-chat">
+          {chatTitle}
+        </div>
+      )}
       <div className="title-bar-spacer" />
       {hotkey && !hotkey.ok && (
         <button
@@ -57,21 +67,11 @@ export function TitleBar({
           type="button"
           className={`window-button${splitOpen ? ' is-on' : ''}`}
           data-testid="toggle-split"
-          aria-label="Два разговора рядом"
-          title={hint('Два разговора рядом', 'toggleSplit')}
+          aria-label="Сплит: открыть рядом или закрыть"
+          title={hint('Сплит: открыть рядом или закрыть', 'toggleSplit')}
           onClick={onToggleSplit}
         >
           <Columns2 size={CHROME_ICON_SIZE} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="window-button"
-          data-testid="open-history"
-          aria-label="Прошлые разговоры"
-          title={hint('Прошлые разговоры', 'history')}
-          onClick={onOpenHistory}
-        >
-          <History size={CHROME_ICON_SIZE} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -128,7 +128,7 @@ function WindowButtons(): JSX.Element {
 }
 
 /**
- * The first-run screen has no tabs yet, but the window still has to be dragged,
+ * The first-run screen has no chats yet, but the window still has to be dragged,
  * minimised and closed: a bar with the mark and the window buttons only.
  */
 export function SetupTitleBar(): JSX.Element {

@@ -19,7 +19,7 @@ try {
   console.log('окно открылось')
 
   await win.keyboard.press('Control+H')
-  const items = win.locator('[data-testid="history-item"]')
+  const items = win.locator('[data-testid="sidebar-session"]')
   await items.first().waitFor({ timeout: 20000 })
   console.log('сессий в истории:', await items.count())
   console.log('первая:', (await items.first().innerText()).replace(/\n/g, ' | ').slice(0, 120))

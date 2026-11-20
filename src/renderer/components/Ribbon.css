@@ -309,52 +309,6 @@
 .ribbon {
 }
 
-/* ------------------------------------------------------------- plan mode */
-
-.row-plan {
-  margin: 12px 0;
-  border: 1px solid var(--border-accent);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface-raised));
-  overflow: hidden;
-}
-
-.row-plan-head {
-  padding: 8px 13px;
-  border-bottom: 1px solid var(--border);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-strong);
-  color: var(--text-dim);
-}
-
-.row-plan-text {
-  padding: 12px 14px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: var(--leading-prose);
-  max-height: 420px;
-  overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
-}
-
-.row-plan-actions {
-  display: flex;
-  gap: 8px;
-  padding: 0 14px 12px;
-}
-
-.row-plan-done {
-  padding: 0 14px 12px;
-  font-size: var(--text-sm);
-  color: var(--text-dim);
-}
-
-.row-plan.is-rejected {
-  border-color: var(--border);
-  background: var(--surface-raised);
-}
-
 /* ------------------------------------------------- folded runs and answered cards */
 
 /* Actions sit close together: a run of calls reads as one stretch of work. */

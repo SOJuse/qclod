@@ -21,6 +21,12 @@ export type ComposerKeyAction =
   | 'questionPick'
   /** The question card with focus: on to the next question, or send on the last. */
   | 'questionNext'
+  /** Only ever resolved for the plan card while it has focus: 1 and Enter approve it. */
+  | 'planApprove'
+  /** The plan card with focus, 2: the comment field opens, its Enter sends the refusal. */
+  | 'planReject'
+  /** The plan card with focus, 3: the plan opens for editing. */
+  | 'planEdit'
   | 'submit'
   | 'newline'
   | 'historyPrev'
@@ -50,6 +56,11 @@ export interface ComposerContext {
    * has focus, never by the input line, as with permissions.
    */
   pendingQuestion?: boolean
+  /**
+   * The keys of a plan card are being resolved. Set by the card while IT has
+   * focus, never by the input line, as with permissions.
+   */
+  pendingPlan?: boolean
 }
 
 export interface KeyLike extends PhysicalKeyEvent {
@@ -75,6 +86,13 @@ const PERMISSION_DIGITS = new Map<string, ComposerKeyAction>([
   ['2', 'permissionAllowAll'],
   ['3', 'permissionAllowSession'],
   ['4', 'permissionReason']
+])
+
+/** A plan card's digits — not the permission card's: there is no «всё такое» for a plan. */
+const PLAN_DIGITS = new Map<string, ComposerKeyAction>([
+  ['1', 'planApprove'],
+  ['2', 'planReject'],
+  ['3', 'planEdit']
 ])
 
 /** A question card's digits: its options' numbers. */
@@ -142,6 +160,17 @@ const RULES: Rule[] = [
     !ev.shiftKey &&
     QUESTION_DIGIT.test(physicalKey(ev))
       ? 'questionPick'
+      : undefined,
+
+  // A plan card with focus: 1 and Enter approve, 2 rejects (with a comment
+  // first), 3 edits. With text, as above, they are the text's.
+  (ev, ctx) =>
+    ctx.pendingPlan && ev.key === 'Enter' && !ev.shiftKey && ctx.text === '' && !ctx.hasAttachments
+      ? 'planApprove'
+      : undefined,
+  (ev, ctx) =>
+    ctx.pendingPlan && ctx.text === '' && !ev.ctrlKey && !ev.altKey && !ev.metaKey && !ev.shiftKey
+      ? PLAN_DIGITS.get(physicalKey(ev))
       : undefined,
 
   // Native editing. The field is a plain textarea and the browser does these

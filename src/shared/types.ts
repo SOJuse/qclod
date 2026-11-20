@@ -192,6 +192,12 @@ export type RibbonItem =
        * propose again (a CLI older than 2.1.317, ruling S2-R8).
        */
       edited?: true
+      /**
+       * With `rejected`: the user approved it with an edit or a comment, and a
+       * CLI older than 2.1.317 had it sent back for rework instead (S2-R8) —
+       * not a refusal, though the agent reads one.
+       */
+      sentBack?: true
       auto?: true
     })
   | (RibbonBase & {

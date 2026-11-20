@@ -7,7 +7,6 @@ import type { RowModel } from '../chat/groupRows'
 import { CardSummary } from './cards/CardSummary'
 import { ThinkingRow } from './ThinkingRow'
 import { ToolGroup } from './ToolGroup'
-import { PlanCard } from './PlanCard'
 import { QuestionCard } from './cards/QuestionCard'
 import { NO_STEPS, SubagentCard } from './SubagentCard'
 import { ToolCard } from './ToolCard'
@@ -299,11 +298,6 @@ export function RibbonRow({
         )
 
       case 'plan':
-        if (item.state !== 'pending') return <CardSummary item={item} tabId={tabId} />
-        return (
-          <PlanCard item={item} onAnswer={(requestId, approve) => answers.plan(requestId, { approve })} />
-        )
-
       case 'permission':
         // An open one is pinned above the input (PinnedCards) and never a row.
         return <CardSummary item={item} tabId={tabId} />

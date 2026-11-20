@@ -39,11 +39,14 @@ function questionText(item: Question): string {
 }
 
 function planText(item: Plan): string {
+  const said = item.comment ? ` — «${item.comment}»` : ''
   switch (item.state) {
     case 'approved':
       return item.edited ? 'План принят с правками' : 'План принят'
     case 'rejected':
-      return `План отклонён${item.comment ? ` — «${item.comment}»` : ''}`
+      // Approved with an edit or a comment, and sent back by an older CLI (S2-R8): not a refusal.
+      if (item.sentBack) return `${item.edited ? 'План с правками' : 'План'} отправлен на доработку${said}`
+      return `План отклонён${said}`
     case 'elsewhere':
       return 'Ответили с телефона: план'
     default:

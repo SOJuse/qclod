@@ -63,6 +63,17 @@ describe('CardSummary: текст строки', () => {
     expect(summaryText(plan({ edited: true }))).toBe('План принят с правками')
     expect(summaryText(plan({ state: 'rejected', comment: 'слишком широко' }))).toBe('План отклонён — «слишком широко»')
   })
+  it('план, одобренный с правкой или комментарием на старом CLI, — отправлен на доработку, не отклонён (S2-R8)', () => {
+    expect(summaryText(plan({ state: 'rejected', sentBack: true, comment: 'и тесты' }))).toBe(
+      'План отправлен на доработку — «и тесты»'
+    )
+    expect(summaryText(plan({ state: 'rejected', sentBack: true, edited: true }))).toBe(
+      'План с правками отправлен на доработку'
+    )
+    expect(summaryText(plan({ state: 'rejected', sentBack: true, edited: true, comment: 'коротко' }))).toBe(
+      'План с правками отправлен на доработку — «коротко»'
+    )
+  })
 })
 
 describe('CardSummary: разметка', () => {

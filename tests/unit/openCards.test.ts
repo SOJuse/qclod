@@ -75,10 +75,10 @@ describe('openCards', () => {
     expect(cardIdOf(l!)).toBe('tu-l')
   })
 
-  it('в закреплённой плашке разрешения и вопросы; планы пока остаются в ленте (П2)', () => {
-    expect([...PINNED_KINDS]).toEqual(['permission', 'question'])
-    const items = [perm('p'), question('q'), plan('l'), perm('done', { state: 'allowed' })]
-    expect(items.map((item) => isPinnedCard(item, items))).toEqual([true, true, false, false])
+  it('в закреплённой плашке разрешения, вопросы и планы (П2)', () => {
+    expect([...PINNED_KINDS]).toEqual(['permission', 'question', 'plan'])
+    const items = [perm('p'), question('q'), plan('l'), perm('done', { state: 'allowed' }), plan('m', 'approved')]
+    expect(items.map((item) => isPinnedCard(item, items))).toEqual([true, true, true, false, false])
   })
 
   it('вопрос, от которого разговор ушёл, в плашку не попадает', () => {

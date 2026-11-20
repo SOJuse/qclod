@@ -3215,11 +3215,14 @@ describe('AgentSession: ответы на карточки', () => {
       behavior: 'deny',
       message: 'сначала тесты'
     })
-    expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
+    const item = rec.items.find((i) => i.kind === 'plan')
+    expect(item).toMatchObject({
       state: 'rejected',
       comment: 'сначала тесты',
       text: '1. всё переписать'
     })
+    // Refused, not sent back for rework.
+    expect(item).not.toHaveProperty('sentBack')
     expect(session.panel.permissionMode).toBe('plan')
   })
 
@@ -3349,7 +3352,8 @@ describe('AgentSession: ответы на карточки', () => {
     expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({
       state: 'rejected',
       text: '1. поправить одну функцию',
-      edited: true
+      edited: true,
+      sentBack: true
     })
     expect(session.panel.permissionMode).toBe('plan')
     expect(driver.permissionMode).toBe('plan')
@@ -3379,7 +3383,8 @@ describe('AgentSession: ответы на карточки', () => {
       state: 'rejected',
       text: '1. поправить одну функцию',
       edited: true,
-      comment: 'без миграций'
+      comment: 'без миграций',
+      sentBack: true
     })
     expect(session.panel.permissionMode).toBe('plan')
     expect(driver.sent).toEqual([])
@@ -3401,7 +3406,8 @@ describe('AgentSession: ответы на карточки', () => {
         'план снова через ExitPlanMode.\n\nКомментарий: и потом прогони тесты'
     })
     const item = rec.items.find((i) => i.kind === 'plan')
-    expect(item).toMatchObject({ state: 'rejected', text: '1. шаг', comment: 'и потом прогони тесты' })
+    // Sent back, not refused: the ribbon says so, though the agent reads a refusal.
+    expect(item).toMatchObject({ state: 'rejected', text: '1. шаг', comment: 'и потом прогони тесты', sentBack: true })
     expect(item).not.toHaveProperty('edited')
     expect(session.panel.permissionMode).toBe('plan')
     expect(driver.sent).toEqual([])
@@ -3417,7 +3423,22 @@ describe('AgentSession: ответы на карточки', () => {
 
     expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'allow' })
     expect(rec.items.find((i) => i.kind === 'plan')).toMatchObject({ state: 'approved', text: '1. шаг' })
+    expect(rec.items.find((i) => i.kind === 'plan')).not.toHaveProperty('sentBack')
     expect(session.panel.permissionMode).toBe('acceptEdits')
+  })
+
+  test('старый CLI: отклонение с комментарием — отказ, а не доработка', async () => {
+    const { session, driver } = planSession('1. шаг', OLD_CLI)
+    const rec = watch(session)
+    const plan = await openPlan(session, rec)
+
+    await session.answerPlan(plan.requestId, { approve: false, comment: 'сначала тесты' })
+    await settle(session)
+
+    expect(driver.permissionLog.at(-1)).toEqual({ name: 'ExitPlanMode', behavior: 'deny', message: 'сначала тесты' })
+    const item = rec.items.find((i) => i.kind === 'plan')
+    expect(item).toMatchObject({ state: 'rejected', comment: 'сначала тесты' })
+    expect(item).not.toHaveProperty('sentBack')
   })
 
   // S2-R8.3: nothing of a plan answer goes as a message, so a full queue loses nothing.

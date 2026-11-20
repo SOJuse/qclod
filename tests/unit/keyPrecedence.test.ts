@@ -296,3 +296,27 @@ describe('открытый вопрос', () => {
     ).toBe('insert')
   })
 })
+
+describe('открытый план', () => {
+  test('1 и Enter одобряют, 2 — отклонить, 3 — править', () => {
+    const on = ctx({ pendingPlan: true })
+    expect(resolveComposerKey(key({ key: '1', code: 'Digit1' }), on)).toBe('planApprove')
+    expect(resolveComposerKey(key({ key: 'Enter' }), on)).toBe('planApprove')
+    expect(resolveComposerKey(key({ key: '2', code: 'Digit2' }), on)).toBe('planReject')
+    expect(resolveComposerKey(key({ key: '3', code: 'Numpad3' }), on)).toBe('planEdit')
+  })
+
+  test('4, Shift+Enter и цифра с модификатором — не ответ', () => {
+    const on = ctx({ pendingPlan: true })
+    expect(resolveComposerKey(key({ key: '4', code: 'Digit4' }), on)).toBe('insert')
+    expect(resolveComposerKey(key({ key: 'Enter', shiftKey: true }), on)).toBe('newline')
+    expect(resolveComposerKey(key({ key: '1', code: 'Digit1', ctrlKey: true }), on)).toBe('insert')
+  })
+
+  test('поле ввода чата плана не знает: цифра и Enter — его', () => {
+    expect(
+      resolveComposerKey(key({ key: '1', code: 'Digit1' }), ctx({ text: 'а', pendingPlan: true }))
+    ).toBe('insert')
+    expect(resolveComposerKey(key({ key: 'Enter' }), ctx({ text: 'а', pendingPlan: true }))).toBe('submit')
+  })
+})

@@ -392,17 +392,19 @@ export class RibbonBuilder {
   /**
    * The plan decided. `comment` is what the user said with it; `edited` with
    * `plan` — the plan was approved as the user changed it, and the card shows
-   * that text from now on.
+   * that text from now on. `sentBack` with `rejected` — it was approved so,
+   * and sent back for rework rather than refused (S2-R8).
    */
   resolvePlan(
     requestId: string,
     state: 'approved' | 'rejected' | 'elsewhere',
-    extra: { comment?: string; edited?: true; plan?: string } = {}
+    extra: { comment?: string; edited?: true; plan?: string; sentBack?: true } = {}
   ): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'plan' && i.requestId === requestId)
     if (!item || item.kind !== 'plan') return []
     const patch: Partial<Extract<RibbonItem, { kind: 'plan' }>> = { state }
     if (extra.comment) patch.comment = extra.comment
+    if (extra.sentBack && state === 'rejected') patch.sentBack = true
     if (extra.edited && extra.plan !== undefined) {
       patch.text = extra.plan
       patch.edited = true

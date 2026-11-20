@@ -599,9 +599,9 @@ export class AgentSession {
     }
 
     if ((edited !== undefined || comment) && planEditModeFor(this.cliVersion) === 'sendBack') {
-      // Sent back for rework: the card reads as not approved, with the edit
-      // and the comment that went back.
-      this.emit(this.builder.resolvePlan(requestId, 'rejected', shown))
+      // Sent back for rework: the card reads as not approved — sent back,
+      // not refused — with the edit and the comment that went back.
+      this.emit(this.builder.resolvePlan(requestId, 'rejected', { ...shown, sentBack: true }))
       waiting.resolve({ behavior: 'deny', message: planSendBackText(edited, comment) })
       return
     }

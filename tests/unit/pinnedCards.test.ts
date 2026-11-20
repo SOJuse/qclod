@@ -352,3 +352,66 @@ describe('открытый вопрос, человек печатает в по
     expect(answers.question).toHaveBeenCalledWith('tu-rq3', { 'Продолжать?': 'Нет' }, {})
   })
 })
+
+const planItem = (id: string, text: string, state: 'pending' | 'approved' = 'pending'): RibbonItem => ({
+  id,
+  kind: 'plan',
+  requestId: `req-${id}`,
+  text,
+  state
+})
+
+describe('план в плашке', () => {
+  function windowInFront(): void {
+    now -= FOCUS_BEFORE_MS * 5
+    window.dispatchEvent(new Event('focus'))
+    now += FOCUS_BEFORE_MS * 5
+  }
+
+  test('открытый план закреплён над полем ввода: «План» и карточка плана', () => {
+    render([planItem('l', 'Разобрать модуль на три части')])
+    expect(pinned()).toHaveLength(1)
+    expect(pinned()[0]!.dataset.kind).toBe('plan')
+    expect(pinned()[0]!.querySelector('header')!.textContent).toBe('План')
+    expect(pinned()[0]!.querySelector('[data-testid="plan-text"]')!.textContent).toContain('Разобрать модуль на три части')
+  })
+
+  test('решённый план в плашку не попадает; план и разрешение — по очереди ленты', () => {
+    render([planItem('a', 'старый', 'approved')])
+    expect(host.querySelector('[data-testid="pinned-cards"]')).toBeNull()
+    render([planItem('l', 'Разобрать модуль'), perm('p', 'npm test')])
+    expect(pinned()[0]!.dataset.kind).toBe('plan')
+    expect(host.querySelector('[data-testid="pinned-more"]')?.textContent).toBe('Ещё 1 ждёт ответа')
+  })
+
+  test('цифры в непустом поле ввода не отвечают плану; с пустым план берёт фокус и его 1 одобряет', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    windowInFront()
+    const answers = fakeAnswers()
+    render([], { answers })
+    act(() => input().focus())
+    input().value = '12'
+    render([planItem('l1', 'Разобрать модуль')], { answers })
+    afterEffects()
+    now += ARM_MS + 100
+    expect(document.activeElement).toBe(input())
+    for (const [key, code] of [['1', 'Digit1'], ['2', 'Digit2'], ['3', 'Digit3'], ['Enter', 'Enter']] as const) {
+      press(input(), key, code)
+    }
+    expect(answers.plan).not.toHaveBeenCalled()
+
+    act(() => root.render(null))
+    now += FOCUS_BEFORE_MS * 2
+    render([], { answers })
+    act(() => input().focus())
+    input().value = ''
+    render([planItem('l2', 'Перенести тесты')], { answers })
+    afterEffects()
+    const card = host.querySelector<HTMLElement>('[data-testid="plan-card"]')!
+    expect(document.activeElement).toBe(card)
+    now += ARM_MS + 100
+    press(card, '1', 'Digit1')
+    expect(answers.plan).toHaveBeenCalledTimes(1)
+    expect(answers.plan).toHaveBeenCalledWith('req-l2', { approve: true })
+  })
+})

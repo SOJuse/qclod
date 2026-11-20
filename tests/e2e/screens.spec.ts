@@ -178,6 +178,7 @@ test('«Сохранено» — цвет статуса у галочки, сл
   const { app, win } = await launchQclod()
   try {
     await win.keyboard.press('Control+,')
+    await win.locator('[data-testid="settings-nav-notifications"]').click()
     await win.locator('[data-testid="setting-soundEnabled"]').click()
     const saved = win.locator('[data-testid="settings-saved"]')
     await expect(saved).toBeVisible()
@@ -532,6 +533,7 @@ test.describe('снимки для владельца', () => {
     })
     await take('17-правила', { env: { QCLOD_USER_DATA: dir } }, async (win) => {
       await win.keyboard.press('Control+,')
+      await win.locator('[data-testid="settings-nav-permissions"]').click()
       const rules = win.locator('[data-testid="permission-rules"]')
       await expect(rules.locator('[data-testid="permission-rule"]')).toHaveCount(3)
       await rules.scrollIntoViewIfNeeded()

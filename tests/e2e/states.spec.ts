@@ -120,6 +120,7 @@ test('вкладки и версия не прочитались при стар
     await win.locator('[data-testid="open-settings"]').click()
     await expect(win.locator('[data-testid="settings"]')).toBeVisible()
     // An unknown version is left out, not printed as a gap.
+    await win.locator('[data-testid="settings-nav-about"]').click()
     await expect(win.locator('.settings-version')).toHaveText(/^Qclod · /)
     expect(errors).toEqual([])
   } finally {
@@ -157,6 +158,7 @@ test('настройки: хоткей и правила не прочитали
     await expect(hotkey).toContainText('нет ответа')
     await expect(hotkey.getByRole('button', { name: 'Повторить' })).toBeVisible()
 
+    await win.locator('[data-testid="settings-nav-permissions"]').click()
     const rules = win.locator('[data-testid="rules-error"]')
     await expect(rules).toContainText('Не удалось прочитать правила')
     await expect(rules).toContainText('хранилище закрыто')
@@ -172,6 +174,7 @@ test('настройки: сохранение упало — «Не сохра�
   const { app, win } = await launchQclod({ env: { QCLOD_FAKE_FAIL: '{"settings:set":"диск полон"}' } })
   try {
     await win.locator('[data-testid="open-settings"]').click()
+    await win.locator('[data-testid="settings-nav-notifications"]').click()
     await win.locator('[data-testid="setting-soundEnabled"]').click()
     const failed = win.locator('[data-testid="settings-save-failed"]')
     await expect(failed).toHaveText('Не сохранилось: диск полон')

@@ -34,7 +34,7 @@ async function send(win: Page, text: string): Promise<void> {
   await input.press('Enter')
 }
 
-test('у поля всегда видны контекст и оба лимита', async () => {
+test('у поля всегда виден контекст; лимиты ниже 80 % — в панели и в подсказке, не в строке', async () => {
   const { app, profile } = await launch({ steps: [], contextPercent: 42 })
   try {
     const win = await app.firstWindow()
@@ -43,11 +43,15 @@ test('у поля всегда видны контекст и оба лимит�
     await expect(context).toHaveAttribute('title', /Контекст: 84\s000 из 200\s000 токенов/)
     await expect(context.locator('[data-level]')).toHaveAttribute('data-level', 'ok')
 
-    await expect(win.locator('[data-testid="status-limit-5h"]')).toContainText('5 ч')
-    await expect(win.locator('[data-testid="status-limit-5h"]')).toContainText('13%')
-    await expect(win.locator('[data-testid="status-limit-7d"]')).toContainText('нед')
-    await expect(win.locator('[data-testid="status-limit-7d"]')).toContainText('38%')
-    await expect(win.locator('[data-testid="status-limit-5h"]')).toHaveAttribute('title', /Сброс в \d{2}:\d{2} \(через/)
+    // 13 % and 38 %: the line stays quiet, the panel has them.
+    const limits = win.locator('[data-testid="side-panel"] [data-testid="panel-limits"]')
+    await expect(limits).toContainText('13%')
+    await expect(limits).toContainText('38%')
+    await expect(win.locator('[data-testid="status-limit-alert"]')).toHaveCount(0)
+    await expect(win.locator('[data-testid="status-limit-5h"], [data-testid="status-limit-7d"]')).toHaveCount(0)
+    // A pane without its panel still has them: in the context meter's hint.
+    await expect(context).toHaveAttribute('title', /Лимит на 5 часов: 13 %, сброс через/)
+    await expect(context).toHaveAttribute('title', /Лимит на неделю: 38 %, сброс через/)
 
     // Right by the input, below it — not up in the side panel.
     const line = await win.locator('[data-testid="status-line"]').boundingBox()
@@ -205,25 +209,122 @@ test('усилие, которого новая модель не знает, п
   }
 })
 
-test('окно уже 1100px — панель свёрнута, переключатели в строке статуса', async () => {
+test('панель чата уже 760px — панель свёрнута, открытая вручную выдвигается поверх', async () => {
   const { app, profile } = await launch({ steps: [] })
   try {
     const win = await app.firstWindow()
-    await expect(win.locator('[data-testid="side-panel"]')).toBeVisible({ timeout: 15000 })
+    const panel = win.locator('[data-testid="side-panel"]')
+    await expect(panel).toBeVisible({ timeout: 15000 })
+    await expect(panel).toHaveAttribute('data-mode', 'docked')
 
+    // 1000 wide less the sidebar leaves the pane under 760.
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1000, 760))
-    await expect(win.locator('[data-testid="side-panel"]')).toHaveCount(0)
+    await expect(panel).toHaveCount(0)
     await expect(win.locator('[data-testid="status-model"]')).toBeVisible()
 
-    // Opening it by hand in a narrow window is honoured…
+    // Opening it by hand in a narrow pane is honoured: it slides out over the conversation…
     await win.locator('[data-testid="panel-open"]').click()
-    await expect(win.locator('[data-testid="side-panel"]')).toBeVisible()
+    await expect(panel).toBeVisible()
+    await expect(panel).toHaveAttribute('data-mode', 'drawer')
+    // …Esc puts it away, and so does a press past it.
+    await win.keyboard.press('Escape')
+    await expect(panel).toHaveCount(0)
+    await win.locator('[data-testid="panel-open"]').click()
+    await expect(panel).toHaveAttribute('data-mode', 'drawer')
+    await win.locator('[data-testid="composer-input"]').click()
+    await expect(panel).toHaveCount(0)
 
-    // …and is not written into the settings: widening and narrowing again folds it.
+    // Not written into the settings: widening and narrowing again folds it.
+    await win.locator('[data-testid="panel-open"]').click()
+    await expect(panel).toHaveAttribute('data-mode', 'drawer')
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1200, 760))
-    await expect(win.locator('[data-testid="side-panel"]')).toBeVisible()
+    await expect(panel).toHaveAttribute('data-mode', 'docked')
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1000, 760))
+    await expect(panel).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('лимит от 80 % — одна плашка, большее из окон; в узком окне она остаётся', async () => {
+  const now = Math.floor(Date.now() / 1000)
+  const { app, profile } = await launch({
+    steps: [],
+    rateLimits: { fiveHour: { utilization: 0.85, resetsAt: now + 3600 }, sevenDay: { utilization: 0.91, resetsAt: now + 3 * 86400 } }
+  })
+  try {
+    const win = await app.firstWindow()
+    const chip = win.locator('[data-testid="status-limit-alert"]')
+    await expect(chip).toHaveText('Неделя: 91 %', { timeout: 15000 })
+    await expect(chip).toHaveAttribute('title', /^Лимит на неделю: 91 %, сброс через \d+ дн$/)
+    await expect(chip.locator('[data-level-icon="critical"]')).toHaveCount(1)
+
+    // The smallest window: the panel folds, the line drops its lists — the chip stays.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(800, 600))
     await expect(win.locator('[data-testid="side-panel"]')).toHaveCount(0)
+    await expect(chip).toBeVisible()
+    await expect(win.locator('[data-testid="status-context"]')).toHaveAttribute('title', /Лимит на 5 часов: 85 %/)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+/** Everything that stands above the input at once: todos, the «now» line, the context banner, a queue of three. */
+const FULL_DOCK = {
+  steps: [],
+  contextPercent: 93,
+  turns: [
+    [
+      {
+        kind: 'todo',
+        items: [
+          { content: 'разобрать ленту', status: 'completed', activeForm: 'разбираю ленту' },
+          { content: 'собрать панель', status: 'in_progress', activeForm: 'собираю панель' },
+          { content: 'проверить', status: 'pending', activeForm: 'проверяю' }
+        ]
+      },
+      { kind: 'textStream', pieces: ['думаю ', 'ещё ', 'долго'], pauseMs: 20000 }
+    ]
+  ]
+}
+
+test('S2-R23 (б): в 800×600 док со всем открытым не налезает на шапку, поле и строка статуса видны', async () => {
+  const { app, profile } = await launch(FULL_DOCK)
+  try {
+    const win = await app.firstWindow()
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(800, 600))
+    await send(win, 'сделай фичу')
+    await expect(win.locator('[data-testid="composer-stop"]')).toBeVisible({ timeout: 15000 })
+    for (const text of ['первое в очередь', 'второе в очередь', 'третье в очередь']) await send(win, text)
+    await expect(win.locator('[data-testid="queue-item"]')).toHaveCount(3, { timeout: 15000 })
+    await expect(win.locator('[data-testid="context-banner"]')).toBeVisible()
+    await expect(win.locator('[data-testid="todo-strip"]')).toBeVisible()
+
+    const box = async (sel: string) => (await win.locator(sel).boundingBox())!
+    const fits = async (): Promise<void> => {
+      const header = await box('[data-testid="chat-header"]')
+      const dock = await box('[data-testid="composer-dock"]')
+      const field = await box('.composer-row')
+      const line = await box('[data-testid="status-line"]')
+      const view = await win.evaluate(() => window.innerHeight)
+      // Below the header, and the input and its status line inside the window and the dock.
+      expect(dock.y).toBeGreaterThanOrEqual(header.y + header.height)
+      expect(field.y).toBeGreaterThanOrEqual(dock.y)
+      expect(line.y + line.height).toBeLessThanOrEqual(dock.y + dock.height + 1)
+      expect(line.y + line.height).toBeLessThanOrEqual(view)
+    }
+    await fits()
+
+    // More cards than the pane has room for (этап 2's cards move here): the cards and queue part
+    // scrolls, the dock stays under the header, the input and the status line stay in view.
+    const scroll = win.locator('[data-testid="composer-dock-scroll"]')
+    await scroll.evaluate((el) => {
+      const tall = document.createElement('div')
+      tall.style.height = '900px'
+      el.prepend(tall)
+    })
+    await fits()
+    expect(await scroll.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
   } finally {
     await close(app, profile)
   }

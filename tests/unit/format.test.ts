@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { bytes, clip, compactNumber, lines, plural, seconds, untilReset } from '../../src/shared/format'
+import { bytes, clip, compactNumber, lines, plural, seconds, shortWhen, untilReset } from '../../src/shared/format'
 
 describe('format', () => {
   test('plural: один, несколько, много', () => {
@@ -57,4 +57,16 @@ describe('format: сброс лимита', () => {
     expect(untilReset(now / 1000 + 3 * 86400, now)).toBe('через 3 дн')
   })
   test('прошедший сброс — не отрицательный', () => expect(untilReset(now / 1000 - 600, now)).toBe('через 0 мин'))
+})
+
+describe('format: короткая дата в боковой панели', () => {
+  // Local time, as the person's clock shows it: 20 ноября 2026, 18:00.
+  const now = new Date(2026, 10, 20, 18, 0).getTime()
+  test('тот же день — время', () => expect(shortWhen(new Date(2026, 10, 20, 14, 5).getTime(), now)).toBe('14:05'))
+  test('вчера — «вчера», даже поздно вечером', () =>
+    expect(shortWhen(new Date(2026, 10, 19, 23, 59).getTime(), now)).toBe('вчера'))
+  test('этот год — число и месяц', () => expect(shortWhen(new Date(2026, 10, 12, 10, 0).getTime(), now)).toBe('12 нояб.'))
+  test('другой год — полная дата', () => expect(shortWhen(new Date(2025, 10, 12, 10, 0).getTime(), now)).toBe('12.11.2025'))
+  test('1 января: вчера — это 31 декабря прошлого года', () =>
+    expect(shortWhen(new Date(2025, 11, 31, 9, 0).getTime(), new Date(2026, 0, 1, 8, 0).getTime())).toBe('вчера'))
 })

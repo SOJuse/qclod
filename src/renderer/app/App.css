@@ -24,3 +24,11 @@
 .app-empty {
   flex: 1 1 auto;
 }
+
+/* The sidebar and the row of panes; each pane holds its own right-hand panel. */
+.app-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}

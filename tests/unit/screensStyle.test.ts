@@ -2,11 +2,11 @@ import { basename } from 'node:path'
 import { expect, test } from 'vitest'
 import { cssRules } from './cssTokens'
 
-// The sheets (settings, history, palette), the setup screen, the empty tab and the shared controls.
+// The sheets (settings, palette), the setup screen, the empty tab and the shared controls.
+// The history sheet is gone: past conversations live in the sidebar (stage 2, decision 4).
 const SCREENS = [
   'controls.css',
   'SettingsScreen.css',
-  'HistoryScreen.css',
   'ActionPalette.css',
   'SetupScreen.css',
   'EmptyTab.css'

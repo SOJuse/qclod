@@ -1,26 +1,23 @@
-import { PanelRightOpen } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type {
-  EnvironmentReport,
-  HotkeyRegistration,
-  RemoteInfo,
-  SessionSummary
-} from '../../shared/types'
-import { REMOTE_OFF } from '../../shared/remote'
-import { EMPTY_PANEL, useAppStore } from '../state/useAppStore'
+import type { EnvironmentReport, HotkeyRegistration, SessionSummary } from '../../shared/types'
+import { projectKey } from '../../shared/projects'
+import { useAppStore } from '../state/useAppStore'
+import { startLayoutSync } from '../state/layoutSync'
+import { MAX_PANES, buildSidebar, chatOrder, nextPanes } from '../chat/sidebarModel'
+import { SplitView } from './SplitView'
+import { dropOnPane, type DropPayload, type DropWhere } from './paneOps'
+import { openAndPlace } from './dropSession'
 import { SetupTitleBar, TitleBar } from '../components/TitleBar'
-import { ChatPane } from '../components/ChatPane'
+import { Sidebar } from '../components/sidebar/Sidebar'
+import { ChatPane, type PanelRequest } from '../components/ChatPane'
 import { ErrorBoundary } from '../ui/ErrorBoundary'
-import { SidePanel } from '../components/SidePanel'
-import { HistoryScreen } from '../components/HistoryScreen'
 import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { ActionPalette } from '../components/ActionPalette'
 import { UpdateBanner } from '../components/UpdateBanner'
 import { compactNow } from '../input/slash'
 import { reasonOf } from '../ui/StateView'
-import { hint, resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
-import { PANEL_MIN_WIDTH, nextOverride, panelVisible, type PanelOverride } from './panelVisibility'
+import { resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
 import './App.css'
 
 /** A failed first read of the tabs is asked once more after this long. */
@@ -45,18 +42,15 @@ function ThrowInPane(): null {
 }
 
 /**
- * The window: tabs across the top, the conversation below.
+ * The window: projects and their chats on the left, the conversation beside them.
  *
- * Owns the shortcuts, the panel, the history and settings screens; each
- * conversation is a ChatPane.
+ * Owns the shortcuts, the sidebar and the settings screen; each conversation
+ * is a ChatPane, with its own right-hand panel.
  */
 export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [version, setVersion] = useState('')
   const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
-  const [historyError, setHistoryError] = useState<string | null>(null)
   const [focusToken, setFocusToken] = useState(0)
   /** Where focus goes when a closed sheet's opener is gone: the active tab's input. */
   const focusComposer = useCallback(() => setFocusToken((n) => n + 1), [])
@@ -72,22 +66,13 @@ export function App(): JSX.Element {
   const [closeGuardTab, setCloseGuardTab] = useState<string | null>(null)
   const closeGuardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /**
-   * The window's width, and a panel choice made in a narrow window. That
-   * choice lasts until the window crosses the threshold; it is never saved.
+   * The last Ctrl+\: the active pane opens or closes its own panel. The
+   * number tells a new request from an old one.
    */
-  const [width, setWidth] = useState(() => window.innerWidth)
-  const widthRef = useRef(width)
-  const [panelOverride, setPanelOverride] = useState<PanelOverride>(null)
-  useEffect(() => {
-    const onResize = (): void => {
-      const before = widthRef.current
-      const after = window.innerWidth
-      widthRef.current = after
-      setPanelOverride((override) => nextOverride(override, before, after))
-      setWidth(after)
-    }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+  const [panelRequest, setPanelRequest] = useState<PanelRequest | null>(null)
+  const togglePanel = useCallback((): void => {
+    const tabId = useAppStore.getState().activeTabId
+    if (tabId) setPanelRequest((was) => ({ tabId, n: (was?.n ?? 0) + 1 }))
   }, [])
 
   /** A check is under way: «Проверить снова» says so and waits. */
@@ -117,31 +102,12 @@ export function App(): JSX.Element {
   // to drive, and finding that out by typing a message is a poor welcome.
   useEffect(recheck, [recheck])
   const paneTabIds = useAppStore((s) => s.paneTabIds)
+  const paneWidths = useAppStore((s) => s.paneWidths)
   const setPanes = useAppStore((s) => s.setPanes)
+  const setPaneWidths = useAppStore((s) => s.setPaneWidths)
+  // Main keeps the layout; the window follows it and writes its pane changes back.
+  useEffect(() => startLayoutSync(useAppStore, window.qclod), [])
   const split = paneTabIds.length > 1
-
-  // The session's subagents, read from the ribbon it already holds.
-  const activeRibbon = useAppStore((state) => state.ribbonByTab[state.activeTabId])
-  const agentRuns = useMemo(
-    () =>
-      (activeRibbon ?? [])
-        .filter((item) => item.kind === 'subagent')
-        .map((item) => {
-          const run = item as Extract<typeof item, { kind: 'subagent' }>
-          return {
-            id: run.id,
-            name: run.name,
-            task: run.task,
-            state: run.state,
-            ...(run.tokens ? { tokens: run.tokens } : {}),
-            ...(run.durationMs ? { durationMs: run.durationMs } : {}),
-            ...(run.toolCalls ? { toolCalls: run.toolCalls } : {}),
-            ...(run.lastTool ? { lastTool: run.lastTool } : {}),
-            ...(run.summary ? { summary: run.summary } : {})
-          }
-        }),
-    [activeRibbon]
-  )
 
   /** A click on a pane: it becomes the one everything acts on, and no pane moves. */
   const focusPane = useCallback((id: string): void => {
@@ -152,24 +118,96 @@ export function App(): JSX.Element {
     setFocusToken((n) => n + 1)
   }, [])
 
-  /** Opens the conversation beside this one, or closes the second pane. */
+  /** Sets the panes; when that changes the active chat, main is told, as with a click. */
+  const applyPanes = useCallback(
+    (ids: string[]): void => {
+      const { activate } = nextPanes(useAppStore.getState(), ids)
+      setPanes(ids)
+      if (activate) void window.qclod.activateTab(activate)
+    },
+    [setPanes]
+  )
+
+  /**
+   * Closes the split down to the active pane; with one pane, opens beside it
+   * the next chat of the sidebar's order that is not shown, and moves there.
+   */
   const toggleSplit = useCallback((): void => {
     const state = useAppStore.getState()
     if (state.paneTabIds.length > 1) {
-      setPanes([state.activeTabId])
+      applyPanes([state.activeTabId])
       return
     }
-    const other = state.tabs.find((t) => t.id !== state.activeTabId)
+    const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject))
+    const at = order.indexOf(state.activeTabId)
+    const other = [...order.slice(at + 1), ...order.slice(0, Math.max(0, at))].find(
+      (id) => id !== state.activeTabId && !state.paneTabIds.includes(id)
+    )
     if (!other) return
-    setPanes([state.activeTabId, other.id])
-    state.focusPane(other.id)
-    void window.qclod.activateTab(other.id)
-  }, [setPanes])
+    applyPanes([state.activeTabId, other])
+    focusPane(other)
+  }, [applyPanes, focusPane])
+
+  /** The panes as drawn: before any tab is known, the active id alone. */
+  const shownPanes = useCallback((): string[] => {
+    const state = useAppStore.getState()
+    return state.paneTabIds.length > 0 ? state.paneTabIds : [state.activeTabId]
+  }, [])
+
+  /** `id` let go on pane `index` of the row `before`: it takes its place there and is the active one. */
+  const placeDropped = useCallback(
+    (before: string[], id: string, index: number, where: DropWhere): void => {
+      const next = dropOnPane(before, id, index, where)
+      // On itself, or beside a full row: nothing at all changes.
+      if (next === before) return
+      applyPanes(next)
+      focusPane(id)
+    },
+    [applyPanes, focusPane]
+  )
+
+  /**
+   * A drop on the split. A chat moves or comes in (paneOps.dropOnPane). A past
+   * conversation is opened first, then put where it was let go — into the row
+   * as it was at the drop, whatever main made of the opening meanwhile.
+   */
+  const dropOnSplit = useCallback(
+    (index: number, where: DropWhere, payload: DropPayload): void => {
+      const before = shownPanes()
+      if (payload.kind === 'chat') {
+        if (!useAppStore.getState().tabs.some((t) => t.id === payload.tabId)) return
+        placeDropped(before, payload.tabId, index, where)
+        return
+      }
+      // A full row has no room beside a pane: nothing is opened for nowhere.
+      if (before.length >= MAX_PANES && where !== 'replace') return
+      // Placed only once its chat is in the tab list, whichever of main's messages comes first.
+      void openAndPlace({
+        store: useAppStore,
+        open: () => window.qclod.openProjectSession(payload.cwd, payload.sessionId, payload.title),
+        place: (id) => placeDropped(before, id, index, where)
+      })
+    },
+    [shownPanes, placeDropped]
+  )
   const settings = useAppStore((s) => s.settings)
   const tabs = useAppStore((s) => s.tabs)
   const activeTabId = useAppStore((s) => s.activeTabId)
   const fileIndexByTab = useAppStore((s) => s.fileIndexByTab)
   const panelByTab = useAppStore((s) => s.panelByTab)
+  const layout = useAppStore((s) => s.layout)
+  const historyByProject = useAppStore((s) => s.historyByProject)
+  const loadProjectHistory = useAppStore((s) => s.loadProjectHistory)
+  const sidebar = useMemo(
+    () => buildSidebar(tabs, layout.projects, historyByProject),
+    [tabs, layout.projects, historyByProject]
+  )
+  const sidebarOpen = !layout.sidebarCollapsed
+
+  // A project's past conversations are asked for the first time it is shown open.
+  useEffect(() => {
+    for (const project of sidebar) if (!project.collapsed && project.past === null) loadProjectHistory(project.cwd)
+  }, [sidebar, loadProjectHistory])
 
   const setSettings = useAppStore((s) => s.setSettings)
   const setTabs = useAppStore((s) => s.setTabs)
@@ -237,59 +275,32 @@ export function App(): JSX.Element {
     for (const id of paneTabIds) loadPanel(id)
   }, [paneTabIds, loadPanel])
 
+  const toggleSidebar = useCallback((): void => {
+    void window.qclod.setLayout({ sidebarCollapsed: !useAppStore.getState().layout.sidebarCollapsed })
+  }, [])
+
+  const toggleProject = useCallback(
+    (cwd: string, collapsed: boolean): void => {
+      void window.qclod.setLayout({ projectCollapsed: { cwd, collapsed } })
+      if (!collapsed) loadProjectHistory(cwd)
+    },
+    [loadProjectHistory]
+  )
+
   /**
-   * The panel button. In a wide window it flips the saved setting; in a
-   * narrow one, where the panel folds by itself, it opens or closes it for
-   * this window only.
+   * Ctrl+H and /resume: the active chat's project is shown open, with its past
+   * conversations. (Task 7 moves this to Ctrl+K's history section.)
    */
-  const togglePanel = useCallback((): void => {
-    const setting = useAppStore.getState().settings?.panelOpen === true
-    const visible = panelVisible({ setting, width: widthRef.current, override: panelOverride })
-    if (widthRef.current < PANEL_MIN_WIDTH) {
-      setPanelOverride(visible ? 'closed' : 'open')
-    } else {
-      setPanelOverride(null)
-      void window.qclod.setSettings({ panelOpen: !visible }).then(setSettings)
-    }
-    if (!visible && activeTabId) loadPanel(activeTabId)
-  }, [activeTabId, panelOverride, setSettings, loadPanel])
-
-  /** Opens the panel the way its button does; one already shown stays as it is. */
-  const revealPanel = useCallback((): void => {
-    const setting = useAppStore.getState().settings?.panelOpen === true
-    if (!panelVisible({ setting, width: widthRef.current, override: panelOverride })) togglePanel()
-  }, [panelOverride, togglePanel])
-
-  const remoteOf = (id: string): RemoteInfo => tabs.find((t) => t.id === id)?.remote ?? REMOTE_OFF
-
-  const showPanel = panelVisible({
-    setting: settings?.panelOpen === true,
-    width,
-    override: panelOverride
-  })
-
-  /** Only the latest read may fill the screen; an older answer arriving late is dropped. */
-  const historyRead = useRef(0)
-  const loadHistory = useCallback((): void => {
-    if (!activeTabId) return
-    const read = ++historyRead.current
-    setSessions(null)
-    setHistoryError(null)
-    window.qclod.listHistory(activeTabId).then(
-      (list) => {
-        if (read === historyRead.current) setSessions(list)
-      },
-      (err) => {
-        if (read === historyRead.current) setHistoryError(reasonOf(err))
-      }
-    )
-  }, [activeTabId])
-
-  const openHistory = useCallback((): void => {
-    if (!activeTabId) return
-    setHistoryOpen(true)
-    loadHistory()
-  }, [activeTabId, loadHistory])
+  const showActiveProject = useCallback((): void => {
+    const state = useAppStore.getState()
+    const tab = state.tabs.find((t) => t.id === state.activeTabId)
+    if (!tab) return
+    if (state.layout.sidebarCollapsed) void window.qclod.setLayout({ sidebarCollapsed: false })
+    const key = projectKey(tab.cwd)
+    const entry = state.layout.projects.find((p) => projectKey(p.cwd, p.hostId) === key)
+    if (entry?.collapsed) toggleProject(entry.cwd, false)
+    else loadProjectHistory(tab.cwd)
+  }, [toggleProject, loadProjectHistory])
 
   /** Shift+Tab walks the everyday modes; «без проверок» is not on the ring. */
   const cycleMode = useCallback((): void => {
@@ -319,14 +330,45 @@ export function App(): JSX.Element {
     [activate]
   )
 
-  const newTab = useCallback((): void => {
-    void window.qclod.pickFolder().then((cwd) => {
-      if (!cwd) return
-      void window.qclod.createTab(cwd).then((tab) => {
-        if (tab) activate(tab.id)
+  /** A new chat in this folder; without one, the folder is asked for first. */
+  const newChat = useCallback(
+    (cwd?: string): void => {
+      const create = (folder: string): void => {
+        void window.qclod.createTab(folder).then((tab) => {
+          if (tab) activate(tab.id)
+        })
+      }
+      if (cwd) return create(cwd)
+      void window.qclod.pickFolder().then((picked) => {
+        if (picked) create(picked)
       })
-    })
-  }, [activate])
+    },
+    [activate]
+  )
+
+  /** A past conversation from the sidebar: its own chat, or the open one that already holds it. */
+  const openPast = useCallback(
+    (cwd: string, session: SessionSummary): void => {
+      window.qclod.openProjectSession(cwd, session.id, session.title).then(
+        (tab) => {
+          if (tab) activate(tab.id)
+        },
+        (err: unknown) => console.warn('[sidebar] разговор не открылся:', reasonOf(err))
+      )
+    },
+    [activate]
+  )
+
+  /** Closes a chat; its conversation then belongs under «Прошлые», so the project's history is read again. */
+  const closeChat = useCallback(
+    (id: string): void => {
+      const cwd = useAppStore.getState().tabs.find((t) => t.id === id)?.cwd
+      void window.qclod.closeTab(id).then(() => {
+        if (cwd) loadProjectHistory(cwd, true)
+      })
+    },
+    [loadProjectHistory]
+  )
 
   const clearCloseGuard = useCallback((): void => {
     if (closeGuardTimer.current) clearTimeout(closeGuardTimer.current)
@@ -351,8 +393,8 @@ export function App(): JSX.Element {
       return
     }
     clearCloseGuard()
-    void window.qclod.closeTab(tab.id)
-  }, [clearCloseGuard])
+    closeChat(tab.id)
+  }, [clearCloseGuard, closeChat])
 
   const restartSession = useCallback((): void => {
     const id = useAppStore.getState().activeTabId
@@ -368,14 +410,16 @@ export function App(): JSX.Element {
   const runAction = useCallback(
     (id: AppActionId, index?: number): void => {
       const state = useAppStore.getState()
-      const at = state.tabs.findIndex((t) => t.id === state.activeTabId)
+      // The sidebar's order, top to bottom: what the person sees.
+      const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject))
+      const at = order.indexOf(state.activeTabId)
       const step = (delta: number): void => {
-        if (state.tabs.length < 2 || at < 0) return
-        activate(state.tabs[(at + delta + state.tabs.length) % state.tabs.length]!.id)
+        if (order.length < 2 || at < 0) return
+        activate(order[(at + delta + order.length) % order.length]!)
       }
       switch (id) {
         case 'newTab':
-          return newTab()
+          return newChat()
         case 'closeTab':
           return closeActiveTab()
         case 'nextTab':
@@ -383,7 +427,7 @@ export function App(): JSX.Element {
         case 'prevTab':
           return step(-1)
         case 'tabAt': {
-          const target = tabAtTarget(state.tabs.map((t) => t.id), index)
+          const target = tabAtTarget(order, index)
           if (target) activate(target)
           return
         }
@@ -393,9 +437,11 @@ export function App(): JSX.Element {
         case 'settings':
           return setSettingsOpen(true)
         case 'history':
-          return openHistory()
+          return showActiveProject()
         case 'togglePanel':
           return togglePanel()
+        case 'toggleSidebar':
+          return toggleSidebar()
         case 'toggleSplit':
           return toggleSplit()
         case 'restart':
@@ -415,7 +461,7 @@ export function App(): JSX.Element {
           return void window.qclod.reloadWindow()
       }
     },
-    [activate, newTab, closeActiveTab, openHistory, togglePanel, toggleSplit, restartSession, cycleMode]
+    [activate, newChat, closeActiveTab, showActiveProject, togglePanel, toggleSidebar, toggleSplit, restartSession, cycleMode]
   )
 
   // Window-level shortcuts, by physical key. The handler is registered once and
@@ -540,86 +586,68 @@ export function App(): JSX.Element {
   return (
     <div className="app" data-testid="app-root">
       <TitleBar
-        tabs={tabs}
-        activeTabId={activeTabId}
-        onActivate={activate}
-        onClose={(id) => {
-          clearCloseGuard()
-          void window.qclod.closeTab(id)
-        }}
-        onCreate={newTab}
+        chatTitle={split ? null : (tabs.find((t) => t.id === activeTabId)?.title ?? null)}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={toggleSidebar}
         hotkey={hotkey}
         onOpenSettings={() => setSettingsOpen(true)}
-        onOpenHistory={openHistory}
         onToggleSplit={toggleSplit}
         splitOpen={split}
       />
       <UpdateBanner />
       <div className={`app-body${split ? ' app-split' : ''}`}>
-        <div className="app-panes">
-          {(paneTabIds.length > 0 ? paneTabIds : [activeTabId]).map((id, index) => (
-            <ErrorBoundary scope="pane" key={id}>
+        {sidebarOpen && (
+          <Sidebar
+            projects={sidebar}
+            activeTabId={activeTabId}
+            paneTabIds={paneTabIds}
+            onActivate={activate}
+            onClose={(id) => {
+              clearCloseGuard()
+              closeChat(id)
+            }}
+            onNewChat={newChat}
+            onOpenPast={openPast}
+            onToggleProject={toggleProject}
+            onForget={(cwd) => void window.qclod.forgetProject(cwd)}
+            onRetryPast={(cwd) => loadProjectHistory(cwd)}
+          />
+        )}
+        <SplitView
+          panes={paneTabIds.length > 0 ? paneTabIds : [activeTabId]}
+          widths={paneWidths}
+          activeTabId={activeTabId}
+          renderPane={(id, index) => (
+            <ErrorBoundary scope="pane">
               {__QCLOD_TEST_SEAMS__ && split && index === 0 && <ThrowInPane />}
               <ChatPane
                 tabId={id}
                 focused={id === activeTabId}
                 focusToken={focusToken}
                 title={tabs.find((t) => t.id === id)?.title ?? ''}
-                showTitle={split}
+                split={split}
+                onUnsplit={() => applyPanes(shownPanes().filter((pane) => pane !== id))}
                 // Clicking a pane makes it the one everything acts on, in place.
                 onFocus={() => focusPane(id)}
                 onCycleMode={cycleMode}
-                onOpenHistory={openHistory}
+                onOpenHistory={showActiveProject}
                 onOpenSession={openSession}
-                onShowPanel={revealPanel}
+                panelRequest={panelRequest}
                 ribbonError={ribbonErrors[id] ?? null}
                 onRetryRibbon={() => retryRibbon(id)}
                 notice={
                   id === activeTabId && closeGuardTab === activeTabId
-                    ? { testId: 'close-guard', text: 'Агент работает — Ctrl+W ещё раз закроет вкладку' }
+                    ? { testId: 'close-guard', text: 'Агент работает — Ctrl+W ещё раз закроет чат' }
                     : null
                 }
               />
             </ErrorBoundary>
-          ))}
-        </div>
-        {showPanel && (
-          <SidePanel
-            data={panelByTab[activeTabId] ?? EMPTY_PANEL}
-            agents={agentRuns}
-            started={(tabs.find((t) => t.id === activeTabId)?.status ?? 'stopped') !== 'stopped'}
-            remote={remoteOf(activeTabId)}
-            onRemote={(enabled) => void window.qclod.setRemote(activeTabId, enabled)}
-            onClose={togglePanel}
-          />
-        )}
-        {!showPanel && (
-          <button
-            type="button"
-            className="panel-reopen"
-            data-testid="panel-open"
-            aria-label="Показать панель"
-            title={hint('Показать панель', 'togglePanel')}
-            onClick={togglePanel}
-          >
-            <PanelRightOpen size={14} aria-hidden="true" />
-          </button>
-        )}
-      </div>
-      {historyOpen && (
-        <HistoryScreen
-          cwd={tabs.find((t) => t.id === activeTabId)?.cwd ?? ''}
-          sessions={sessions}
-          error={historyError}
-          onRetry={loadHistory}
-          onClose={() => setHistoryOpen(false)}
-          onFocusLost={focusComposer}
-          onOpen={(session) => {
-            setHistoryOpen(false)
-            openSession(activeTabId, session)
-          }}
+          )}
+          onDrop={dropOnSplit}
+          onResize={setPaneWidths}
+          onFocus={focusPane}
         />
-      )}
+      </div>
       {paletteOpen && (
         <ActionPalette
           onRun={(id) => {

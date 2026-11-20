@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { EMPTY_PANEL, MAX_PANES, MISSING_TTL_MS, pathSettled, useAppStore } from '../../src/renderer/state/useAppStore'
-import type { RibbonItem, TabState } from '../../src/shared/types'
+import type { LayoutState, RibbonItem, TabState } from '../../src/shared/types'
+import { nextPanes } from '../../src/renderer/chat/sidebarModel'
 
 // One store per process: every test starts from the state it was created with.
 const initial = useAppStore.getState()
@@ -343,5 +344,242 @@ describe('useAppStore: панели', () => {
     const after = useAppStore.getState().paneTabIds
     expect(after).not.toBe(before)
     expect(after).toEqual(['A'])
+  })
+})
+
+describe('useAppStore: раскладка из main и хвосты сплита', () => {
+  const t = (id: string, status: TabState['status'] = 'idle'): TabState => ({
+    id,
+    cwd: '/p',
+    title: id,
+    overrides: {},
+    status,
+    badge: false
+  })
+  const layout = (over: Partial<LayoutState>): LayoutState => ({
+    panes: [],
+    active: null,
+    paneWidths: [],
+    sidebarCollapsed: false,
+    projects: [],
+    ...over
+  })
+
+  test('setActiveTabId чата вне панелей заменяет активный слот', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('a'), t('b'), t('c')])
+    store.setPanes(['a', 'b'])
+    store.focusPane('b')
+    store.setActiveTabId('c')
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toEqual(['a', 'c'])
+    expect(state.activeTabId).toBe('c')
+  })
+
+  test('активная вне полного ряда не выталкивает правую панель', () => {
+    const store = useAppStore.getState()
+    const all = ['a', 'b', 'c', 'd', 'e'].map((id) => t(id))
+    store.setTabs(all)
+    store.setPanes(['a', 'b', 'c', 'd'])
+    store.focusPane('b')
+    // The active chat is outside the full row (it came in by the layout).
+    store.setLayout(layout({ panes: ['a', 'b', 'c', 'd'], active: 'e' }))
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toEqual(['a', 'e', 'c', 'd'])
+    expect(state.activeTabId).toBe('e')
+    // And a plain list change with that state keeps it.
+    store.setTabs(all)
+    expect(useAppStore.getState().paneTabIds).toEqual(['a', 'e', 'c', 'd'])
+  })
+
+  test('setTabs: активная вне полного ряда заменяет слот, а не выталкивает четвёртую', () => {
+    const store = useAppStore.getState()
+    const all = ['a', 'b', 'c', 'd', 'e'].map((id) => t(id))
+    store.setTabs(all)
+    store.setPanes(['a', 'b', 'c', 'd'])
+    useAppStore.setState({ activeTabId: 'e' })
+    store.setTabs(all)
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toHaveLength(4)
+    expect(state.paneTabIds).toContain('e')
+    expect(state.paneTabIds).toContain('d')
+    expect(state.activeTabId).toBe('e')
+  })
+
+  test('setTabs без смены статусов оставляет busySinceByTab тем же объектом', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('a', 'busy'), t('b')])
+    const before = useAppStore.getState().busySinceByTab
+    store.setTabs([t('a', 'busy'), t('b')])
+    expect(useAppStore.getState().busySinceByTab).toBe(before)
+    store.setTabs([t('a'), t('b')])
+    expect(useAppStore.getState().busySinceByTab).not.toBe(before)
+  })
+
+  test('nextPanes сообщает о смене активной', () => {
+    expect(nextPanes({ paneTabIds: ['a', 'b'], activeTabId: 'b' }, ['a'])).toEqual({
+      paneTabIds: ['a'],
+      activeTabId: 'a',
+      activate: 'a'
+    })
+    expect(nextPanes({ paneTabIds: ['a', 'b'], activeTabId: 'a' }, ['a']).activate).toBeUndefined()
+  })
+
+  test('layout пришёл раньше вкладок: после setTabs панели, активная и ширины применены', () => {
+    const store = useAppStore.getState()
+    store.setLayout(layout({ panes: ['a', 'b'], active: 'b', paneWidths: [0.3, 0.7] }))
+    expect(useAppStore.getState().layout.panes).toEqual(['a', 'b'])
+    expect(useAppStore.getState().paneTabIds).toEqual([])
+    store.setTabs([t('a'), t('b'), t('c')])
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toEqual(['a', 'b'])
+    expect(state.activeTabId).toBe('b')
+    expect(state.paneWidths).toEqual([0.3, 0.7])
+  })
+
+  test('layout после вкладок применяется сразу, и следующий setTabs его не затирает', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('a'), t('b')])
+    store.setLayout(layout({ panes: ['a', 'b'], active: 'a', paneWidths: [0.5, 0.5] }))
+    expect(useAppStore.getState().paneTabIds).toEqual(['a', 'b'])
+    store.setPanes(['a'])
+    store.setTabs([t('a', 'busy'), t('b')])
+    expect(useAppStore.getState().paneTabIds).toEqual(['a'])
+  })
+
+  test('setPaneWidths, и loadProjectHistory спрашивает одну папку один раз', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('window', {
+      qclod: {
+        projectHistory: async (cwd: string) => {
+          calls.push(cwd)
+          return [{ id: 's', title: 'T', firstMessage: '', updatedAt: 1 }]
+        }
+      }
+    })
+    try {
+      const store = useAppStore.getState()
+      store.setPaneWidths([0.4, 0.6])
+      expect(useAppStore.getState().paneWidths).toEqual([0.4, 0.6])
+      store.loadProjectHistory('/home/u/Proj')
+      expect(useAppStore.getState().historyByProject['/home/u/Proj']).toBe('loading')
+      await vi.waitFor(() => expect(useAppStore.getState().historyByProject['/home/u/Proj']).not.toBe('loading'))
+      store.loadProjectHistory('/home/u/Proj/')
+      expect(calls).toEqual(['/home/u/Proj'])
+      expect(useAppStore.getState().historyByProject['/home/u/Proj']).toEqual({
+        items: [{ id: 's', title: 'T', firstMessage: '', updatedAt: 1 }]
+      })
+      store.loadProjectHistory('/home/u/Proj/', true)
+      expect(calls).toHaveLength(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  test('layout с новой активной, когда окно её уже знает, не добавляет вторую панель', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('a'), t('b')])
+    store.setLayout(layout({ panes: ['a'], active: 'a' }))
+    // The window heard of the activation first, then main's layout still names the old pane.
+    store.setActiveTabId('b')
+    store.setLayout(layout({ panes: ['a'], active: 'b' }))
+    expect(useAppStore.getState().paneTabIds).toEqual(['b'])
+    expect(useAppStore.getState().activeTabId).toBe('b')
+  })
+
+  test('новая вкладка: layout и активация раньше списка не дают второй панели', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('a')])
+    store.setLayout(layout({ panes: ['a'], active: 'a' }))
+    // Main's layout names a chat the list does not hold yet; the activation follows, then the list.
+    store.setLayout(layout({ panes: ['a'], active: 'b' }))
+    store.setActiveTabId('b')
+    store.setTabs([t('a'), t('b')])
+    expect(useAppStore.getState().paneTabIds).toEqual(['b'])
+    expect(useAppStore.getState().activeTabId).toBe('b')
+  })
+
+  test('вкладки приходят частями: сохранённый сплит собирается, когда пришли все', () => {
+    const store = useAppStore.getState()
+    store.setLayout(layout({ panes: ['a', 'b', 'c'], active: 'a', paneWidths: [0.2, 0.3, 0.5] }))
+    store.setTabs([t('a')])
+    expect(useAppStore.getState().paneTabIds).toEqual(['a'])
+    store.setTabs([t('a'), t('b')])
+    expect(useAppStore.getState().paneTabIds).toEqual(['a', 'b'])
+    store.setTabs([t('a'), t('b'), t('c')])
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toEqual(['a', 'b', 'c'])
+    expect(state.paneWidths).toEqual([0.2, 0.3, 0.5])
+    expect(state.activeTabId).toBe('a')
+  })
+
+  test('вкладки частями, но пользователь уже поменял панели: сохранённое их не затирает', () => {
+    const store = useAppStore.getState()
+    store.setLayout(layout({ panes: ['a', 'b'], active: 'a' }))
+    store.setTabs([t('a'), t('c')])
+    store.setPanes(['a', 'c'])
+    store.setTabs([t('a'), t('b'), t('c')])
+    expect(useAppStore.getState().paneTabIds).toEqual(['a', 'c'])
+  })
+
+  test('layout с пятью панелями и активной на пятой: в ряду четыре, активная среди них', () => {
+    const store = useAppStore.getState()
+    store.setTabs(['a', 'b', 'c', 'd', 'e'].map((id) => t(id)))
+    store.setLayout(layout({ panes: ['a', 'b', 'c', 'd', 'e'], active: 'e' }))
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toHaveLength(MAX_PANES)
+    expect(state.paneTabIds).toContain('e')
+    expect(state.activeTabId).toBe('e')
+  })
+
+  test('setPanes([]) оставляет активный чат панелью, а не пустой ряд', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('a'), t('b')])
+    store.setPanes(['a', 'b'])
+    store.focusPane('b')
+    store.setPanes([])
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toEqual(['b'])
+    expect(state.activeTabId).toBe('b')
+  })
+
+  test('setActiveTabId закрытого чата ничего не меняет', () => {
+    const store = useAppStore.getState()
+    store.setTabs([t('a'), t('b'), t('c')])
+    store.setPanes(['a', 'b'])
+    store.setTabs([t('a'), t('b')])
+    store.setActiveTabId('c')
+    const state = useAppStore.getState()
+    expect(state.paneTabIds).toEqual(['a', 'b'])
+    expect(state.activeTabId).toBe('a')
+  })
+})
+
+describe('useAppStore: слой поверх ленты', () => {
+  const tab = (id: string): TabState => ({ id, cwd: 'C:\p', title: id, overrides: {}, status: 'idle', badge: false })
+
+  test('setPaneLayer: один слой на панель', () => {
+    const store = useAppStore.getState()
+    store.setPaneLayer('a', { kind: 'agents' })
+    store.setPaneLayer('b', { kind: 'file', path: 'src/a.ts', line: 3 })
+    expect(useAppStore.getState().layerByTab['a']).toEqual({ kind: 'agents' })
+
+    // A new layer replaces the one before it.
+    useAppStore.getState().setPaneLayer('a', { kind: 'git' })
+    expect(useAppStore.getState().layerByTab['a']).toEqual({ kind: 'git' })
+
+    // null closes it.
+    useAppStore.getState().setPaneLayer('a', null)
+    expect(useAppStore.getState().layerByTab['a']).toBeNull()
+
+    // The other tab's layer is not touched.
+    expect(useAppStore.getState().layerByTab['b']).toEqual({ kind: 'file', path: 'src/a.ts', line: 3 })
+  })
+
+  test('слой закрытой вкладки уходит вместе с ней', () => {
+    useAppStore.getState().setTabs([tab('a'), tab('b')])
+    useAppStore.getState().setPaneLayer('a', { kind: 'agents' })
+    useAppStore.getState().setTabs([tab('b')])
+    expect('a' in useAppStore.getState().layerByTab).toBe(false)
   })
 })

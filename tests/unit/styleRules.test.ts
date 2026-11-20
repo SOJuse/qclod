@@ -78,6 +78,8 @@ test('кольцо фокуса — одно правило в tokens.css, ко�
 // `.diff-no` / `.diff-sign` are gutters of the diff: they stay out of a copied selection.
 const CHROME_SELECTORS = [
   '.title-bar',
+  // Projects and chats on the left: the chrome the tabs in the title bar were.
+  '.sidebar',
   'button',
   "[role='tab']",
   '.tab',

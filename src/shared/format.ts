@@ -77,6 +77,22 @@ export function clockTime(ms: number, nowMs = Date.now(), withSeconds = true): s
   return `${day}, ${time}`
 }
 
+/**
+ * When a past conversation was last touched, as short as a list row allows:
+ * «14:05» today, «вчера», «12 нояб.» this year, «12.11.2025» before it.
+ */
+export function shortWhen(ms: number, nowMs = Date.now()): string {
+  const at = new Date(ms)
+  const now = new Date(nowMs)
+  const sameDay = (a: Date, b: Date): boolean =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  if (sameDay(at, now)) return at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  if (sameDay(at, yesterday)) return 'вчера'
+  if (at.getFullYear() === now.getFullYear()) return at.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
+  return at.toLocaleDateString('ru-RU')
+}
+
 /** «через 2 ч 15 мин», from a unix timestamp in seconds: when a plan limit resets. */
 export function untilReset(resetsAt: number, nowMs = Date.now()): string {
   const minutes = Math.max(0, Math.round((resetsAt * 1000 - nowMs) / 60000))

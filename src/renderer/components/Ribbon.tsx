@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { RibbonItem as Item } from '../../shared/types'
+import type { CardAnswers } from '../chat/cardAnswers'
 import { childrenByParent } from '../chat/children'
 import { oldestPendingPermission } from '../chat/pendingPermission'
 import { RibbonRow } from './RibbonItem'
@@ -11,9 +12,8 @@ interface Props {
   /** The tab's folder, for the tool cards. */
   cwd: string
   tabId: string
-  onAnswerPermission: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
-  onAnswerQuestion: (toolUseId: string, answers: Record<string, string>) => void
-  onAnswerPlan: (requestId: string, approve: boolean) => void
+  /** How the cards in the ribbon answer the agent. */
+  answers: CardAnswers
   /** Drawn over the ribbon while the conversation has nothing in it. */
   whenEmpty?: ReactNode
 }
@@ -40,9 +40,7 @@ export function Ribbon({
   items,
   cwd,
   tabId,
-  onAnswerPermission,
-  onAnswerQuestion,
-  onAnswerPlan,
+  answers,
   whenEmpty
 }: Props): JSX.Element {
   const viewport = useRef<HTMLDivElement | null>(null)
@@ -138,9 +136,7 @@ export function Ribbon({
             tabId={tabId}
             activePermissionId={pendingId}
             onMeasure={measure}
-            onAnswerPermission={onAnswerPermission}
-            onAnswerQuestion={onAnswerQuestion}
-            onAnswerPlan={onAnswerPlan}
+            answers={answers}
           />
         ))}
         <div style={{ height: padBottom }} aria-hidden />

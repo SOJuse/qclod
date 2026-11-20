@@ -80,11 +80,10 @@ const SCREENS: Screen[] = [
     }
   },
   {
-    name: 'история',
+    name: 'история в боковой панели',
     env: () => HISTORY_ENV,
     open: async (win) => {
-      await win.keyboard.press('Control+H')
-      await expect(win.locator('[data-testid="history-item"]')).toHaveCount(3)
+      await expect(win.locator('[data-testid="sidebar-session"]')).toHaveCount(3, { timeout: 15000 })
     }
   },
   {
@@ -227,7 +226,6 @@ test('модальные окна — один лист', async () => {
   try {
     const opens: Array<(w: Page) => Promise<void>> = [
       (w) => w.keyboard.press('Control+,'),
-      (w) => w.keyboard.press('Control+H'),
       (w) => w.keyboard.press('Control+k')
     ]
     for (const open of opens) {
@@ -414,9 +412,8 @@ test.describe('снимки для владельца', () => {
       await button.click()
       await expect(win.locator('[data-testid="now-agents-list"] li')).toHaveCount(2)
       await expect(win.locator('[data-testid="now-agents-list"] li').first()).toContainText('Bash', { timeout: 10000 })
-      // The panel counts calls the way the ribbon does: «1 вызов», not «1 инструментов».
-      await expect(win.locator('[data-testid="side-panel"]')).toContainText('1 вызов')
-      await expect(win.locator('[data-testid="side-panel"]')).not.toContainText('инструментов')
+      // The panel no longer lists subagents (решение 10); nowhere is a call counted as «инструментов».
+      await expect(win.locator('[data-testid="ribbon"]')).not.toContainText('инструментов')
     })
   })
   test('07 полоска задач раскрыта', async () => {
@@ -540,24 +537,19 @@ test.describe('снимки для владельца', () => {
       await rules.scrollIntoViewIfNeeded()
     })
   })
-  test('18 история со списком', async () => {
+  test('18 история в боковой панели', async () => {
     await take('18-история', { env: HISTORY_ENV }, async (win) => {
-      await win.keyboard.press('Control+H')
-      await expect(win.locator('[data-testid="history-item"]')).toHaveCount(3)
+      await expect(win.locator('[data-testid="sidebar-session"]')).toHaveCount(3, { timeout: 15000 })
     })
   })
   test('19 история, загрузка', async () => {
-    await take('19-история-загрузка', { env: { QCLOD_FAKE_SLOW: '{"history:list":6000}' } }, async (win) => {
-      await win.keyboard.press('Control+H')
-      const loading = win.locator('[data-testid="history-screen"] [data-state="loading"]')
-      await expect(loading).toContainText('Читаю историю…')
-      await expect(loading).toHaveCSS('opacity', '1')
+    await take('19-история-загрузка', { env: { QCLOD_FAKE_SLOW: '{"projects:history":6000}' } }, async (win) => {
+      await expect(win.locator('[data-testid="sidebar"] [data-state="loading"]')).toContainText('Загружаю…')
     })
   })
   test('20 история, ошибка', async () => {
-    await take('20-история-ошибка', { env: { QCLOD_FAKE_FAIL: '{"history:list":"нет доступа"}' } }, async (win) => {
-      await win.keyboard.press('Control+H')
-      await expect(win.locator('[data-testid="history-screen"] [data-state="error"]')).toContainText('нет доступа', {
+    await take('20-история-ошибка', { env: { QCLOD_FAKE_FAIL: '{"projects:history":"нет доступа"}' } }, async (win) => {
+      await expect(win.locator('[data-testid="sidebar"] [data-state="error"]')).toContainText('нет доступа', {
         timeout: 10000
       })
     })

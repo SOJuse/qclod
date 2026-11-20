@@ -1,0 +1,92 @@
+/* The row of panes. Too narrow for every pane at its narrowest, it scrolls sideways. */
+.split-row {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* Its share of the row comes inline as flex-grow. */
+.split-pane {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.split-row.is-split > .split-pane {
+  min-width: var(--pane-min-w);
+}
+
+/* With one pane there is nothing to tell apart, so nothing is drawn. */
+.pane-splitter + .split-pane {
+  border-left: 1px solid var(--border);
+}
+
+/* E9: the pane everything acts on is framed; the others are not dimmed. Drawn over the pane's contents. */
+.split-row.is-split > .split-pane.is-active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 0 1px var(--accent);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Takes no room: it straddles the border between two panes. */
+.pane-splitter {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 6px;
+  margin: 0 -3px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.pane-splitter::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.pane-splitter:hover::before,
+.pane-splitter.is-held::before,
+.pane-splitter:focus-visible::before {
+  background: var(--border-accent);
+}
+
+/* Where a dragged chat would land: a pane's outer quarter, or its middle. */
+.split-drop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 4;
+  border: 2px solid var(--border-accent);
+  border-radius: var(--radius-sm);
+}
+
+.split-drop[data-where='before'] {
+  left: 0;
+  width: 25%;
+}
+
+.split-drop[data-where='after'] {
+  right: 0;
+  width: 25%;
+}
+
+.split-drop[data-where='replace'] {
+  left: 25%;
+  right: 25%;
+}

@@ -7,6 +7,7 @@ import { TabController } from '../../src/main/tabs/TabController'
 import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
 import type { AgentDriver } from '../../src/main/agent/driver'
 import { TABS_FILE } from '../../src/main/store/tabsStore'
+import { LAYOUT_FILE, LayoutStore } from '../../src/main/store/layoutStore'
 import { EMPTY_PANEL } from '../../src/main/agent/panelData'
 import { LOGIN_NEEDED_TEXT } from '../../src/main/agent/startFailure'
 import type { PanelEvent, RibbonEvent, StatusEvent, TabState } from '../../src/shared/types'
@@ -31,6 +32,7 @@ afterEach(() => {
 interface Harness {
   controller: TabController
   manager: AgentSessionManager
+  layout: LayoutStore
   changed: TabState[][]
   ribbon: RibbonEvent[]
   resumedWith: Array<string | undefined>
@@ -178,9 +180,11 @@ function makeController(
     }
   })
 
+  const layout = new LayoutStore(store, () => undefined)
   const controller = new TabController({
     manager,
     storeDir: store,
+    layout,
     defaultCwd: projectA,
     getDefaults: () => options.defaults ?? {},
     history: {
@@ -207,11 +211,15 @@ function makeController(
     await controller.whenSettled()
   }
 
-  return { controller, manager, changed, ribbon, resumedWith, transcriptReads, created, dead, speak }
+  return { controller, manager, layout, changed, ribbon, resumedWith, transcriptReads, created, dead, speak }
 }
 
 function writeStoredTabs(tabs: unknown[]): void {
   writeFileSync(join(store, TABS_FILE), JSON.stringify(tabs), 'utf8')
+}
+
+function writeStoredLayout(layout: unknown): void {
+  writeFileSync(join(store, LAYOUT_FILE), JSON.stringify(layout), 'utf8')
 }
 
 describe('TabController', () => {
@@ -777,6 +785,7 @@ describe('TabController: возобновление не ждёт агента',
     const controller = new TabController({
       manager,
       storeDir: store,
+      layout: new LayoutStore(store, () => undefined),
       defaultCwd: projectA,
       getDefaults: () => ({}),
       history: {
@@ -1841,5 +1850,268 @@ describe('TabController: очередь переходит к новой сес�
     expect(harness.manager.get(id)!.status).toBe('error')
     expect(harness.controller.send(id, { text: 'никуда', attachments: [] })).toBe(false)
     expect(harness.controller.send('нет-такой', { text: 'никуда', attachments: [] })).toBe(false)
+  })
+})
+
+describe('TabController: раскладка этапа 2 (layout.json)', () => {
+  const startedFor = (harness: Harness): string[] => {
+    const ids: string[] = []
+    const create = harness.manager.create.bind(harness.manager)
+    vi.spyOn(harness.manager, 'create').mockImplementation((tabId, ...rest) => {
+      ids.push(tabId)
+      return create(tabId, ...rest)
+    })
+    return ids
+  }
+
+  test('restore с устаревшей раскладкой', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    writeStoredLayout({ panes: ['gone', 'b'], active: 'gone', paneWidths: [0.2, 0.3, 0.5] })
+    const { controller, layout } = makeController()
+
+    await controller.restore()
+    await controller.whenSettled()
+
+    // П12: a dead active chat gives way to the first pane still alive.
+    expect(controller.activeTabId).toBe('b')
+    expect(layout.get()).toMatchObject({ panes: ['b'], active: 'b', paneWidths: [1] })
+    expect(JSON.parse(readFileSync(join(store, LAYOUT_FILE), 'utf8'))).toMatchObject({
+      panes: ['b'],
+      active: 'b',
+      paneWidths: [1]
+    })
+  })
+
+  test('restore: живой active из раскладки остаётся активным', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    writeStoredLayout({ active: 'b' })
+    const { controller } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    expect(controller.activeTabId).toBe('b')
+    expect(controller.list()[1]!.status).not.toBe('stopped')
+    expect(controller.list()[0]!.status).toBe('stopped')
+  })
+
+  test('restore: ни active, ни панелей в живых — первая вкладка', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    writeStoredLayout({ panes: ['gone'], active: 'gone' })
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    expect(controller.activeTabId).toBe('a')
+    expect(layout.get()).toMatchObject({ panes: [], active: 'a', paneWidths: [] })
+  })
+
+  test('restore запускает сессии для всех панелей', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} },
+      { id: 'c', cwd: projectB, title: 'C', overrides: {} }
+    ])
+    writeStoredLayout({ panes: ['a', 'b'], active: 'a', paneWidths: [0.5, 0.5] })
+    const harness = makeController()
+    const started = startedFor(harness)
+
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+
+    expect([...started].sort()).toEqual(['a', 'b'])
+    expect(harness.manager.get('c')).toBeUndefined()
+  })
+
+  test('restore: папка активного чата в панели удалена — без сбоя, агента нет, панели и ширины целы', async () => {
+    const gone = join(store, 'удалённая')
+    mkdirSync(gone)
+    rmSync(gone, { recursive: true })
+    writeStoredTabs([
+      { id: 'a', cwd: gone, title: 'Удалённая', overrides: {}, lastSessionId: 's-gone' },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    writeStoredLayout({ panes: ['a', 'b'], active: 'a', paneWidths: [0.4, 0.6] })
+    const harness = makeController()
+    const started = startedFor(harness)
+
+    await expect(harness.controller.restore()).resolves.toHaveLength(2)
+    await harness.controller.whenSettled()
+
+    const ids = harness.controller.list().map((t) => t.id)
+    expect(ids).toContain(harness.controller.activeTabId)
+    expect(harness.controller.list().find((t) => t.id === 'a')).toMatchObject({
+      missingCwd: true,
+      status: 'stopped'
+    })
+    // No agent for a folder that is gone; the other pane gets its own.
+    expect(started).toEqual(['b'])
+    expect(harness.manager.get('a')).toBeUndefined()
+    expect(harness.transcriptReads).toEqual([])
+    const l = harness.layout.get()
+    expect(l.panes.every((id) => ids.includes(id))).toBe(true)
+    expect(l.paneWidths).toHaveLength(l.panes.length)
+    expect(l.paneWidths.reduce((x, y) => x + y, 0)).toBeCloseTo(1, 10)
+    expect(l.active).toBe(harness.controller.activeTabId)
+  })
+
+  test('restore: папки восстановленных чатов становятся проектами', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} },
+      { id: 'c', cwd: projectB, title: 'C', overrides: {} }
+    ])
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    expect(layout.get().projects.map((p) => p.cwd)).toEqual([projectA, projectB])
+  })
+
+  test('без сохранённых вкладок: новая вкладка — активная, её папка — проект', async () => {
+    writeStoredLayout({ panes: ['gone'], active: 'gone' })
+    const { controller, layout } = makeController()
+    await controller.restore()
+    const id = controller.list()[0]!.id
+    expect(layout.get()).toMatchObject({ panes: [], active: id })
+    expect(layout.get().projects.map((p) => p.cwd)).toEqual([projectA])
+    await controller.whenSettled()
+  })
+
+  test('setPanes запоминает живые панели и запускает их сессии', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} },
+      { id: 'c', cwd: projectB, title: 'C', overrides: {} }
+    ])
+    const harness = makeController()
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    const started = startedFor(harness)
+
+    await harness.controller.setPanes(['b', 'нет-такой', 'c'])
+
+    expect(harness.layout.get().panes).toEqual(['b', 'c'])
+    expect(harness.layout.get().paneWidths).toEqual([0.5, 0.5])
+    expect([...started].sort()).toEqual(['b', 'c'])
+    expect(harness.manager.get('b')).toBeDefined()
+    expect(harness.manager.get('c')).toBeDefined()
+    await harness.controller.whenSettled()
+  })
+
+  test('чат, ушедший из панелей, процесс не останавливает (F13)', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    const harness = makeController()
+    await harness.controller.restore()
+    await harness.controller.setPanes(['a', 'b'])
+    await harness.controller.whenSettled()
+    const session = harness.manager.get('b')
+    expect(session).toBeDefined()
+    const close = vi.spyOn(harness.manager, 'close')
+
+    await harness.controller.setPanes(['a'])
+    await harness.controller.whenSettled()
+
+    expect(close).not.toHaveBeenCalled()
+    expect(harness.manager.get('b')).toBe(session)
+  })
+
+  test('activate пишет активный чат в раскладку', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.activate('b')
+    await controller.whenSettled()
+    expect(layout.get().active).toBe('b')
+  })
+
+  test('закрыт последний чат — новый в той же папке', async () => {
+    writeStoredTabs([{ id: 'a', cwd: projectB, title: 'B', overrides: {} }])
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+
+    await controller.close('a')
+    await controller.whenSettled()
+
+    const tabs = controller.list()
+    expect(tabs).toHaveLength(1)
+    expect(tabs[0]!.id).not.toBe('a')
+    expect(tabs[0]!.cwd).toBe(projectB)
+    expect(layout.get().active).toBe(tabs[0]!.id)
+  })
+
+  test('закрытие чата убирает его из панелей и выравнивает ширины', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    writeStoredLayout({ panes: ['a', 'b'], active: 'b', paneWidths: [0.3, 0.7] })
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+
+    await controller.close('b')
+
+    expect(layout.get()).toMatchObject({ panes: ['a'], active: 'a', paneWidths: [1] })
+  })
+
+  test('openSession уже открытой сессии активирует её', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 's0' },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {}, lastSessionId: 's1' }
+    ])
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    expect(controller.activeTabId).toBe('a')
+
+    const tab = controller.openSession(projectB, 's1', 'Вчера')
+    await controller.whenSettled()
+
+    expect(tab.id).toBe('b')
+    expect(controller.list().map((t) => t.id)).toEqual(['a', 'b'])
+    expect(controller.activeTabId).toBe('b')
+    expect(layout.get().active).toBe('b')
+  })
+
+  test('openSession новой сессии открывает её в новом чате; openHistory делает то же', async () => {
+    const { controller, created } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+
+    const first = controller.openSession(projectB, 's2', 'Позавчера')
+    await controller.whenSettled()
+    expect(first.cwd).toBe(projectB)
+    expect(first.lastSessionId).toBe('s2')
+    expect(created.at(-1)!.resume).toBe('s2')
+
+    // The history screen's own path ends up in the same place.
+    expect(controller.openHistory(projectB, 's2').id).toBe(first.id)
+    expect(controller.list()).toHaveLength(2)
+    await controller.whenSettled()
+  })
+
+  test('проект остаётся после закрытия всех его чатов', async () => {
+    const { controller, layout } = makeController()
+    await controller.restore()
+    const inB = controller.create(projectB).id
+    await controller.whenSettled()
+
+    await controller.close(inB)
+
+    expect(controller.list().some((t) => t.cwd === projectB)).toBe(false)
+    expect(layout.get().projects.map((p) => p.cwd)).toEqual([projectA, projectB])
   })
 })

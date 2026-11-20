@@ -16,7 +16,10 @@ async function expectFullPanel(win: Page, panel: Locator): Promise<void> {
   await expect(panel.locator('[data-testid="panel-model"]')).toContainText('Opus 5')
   await expect(win.locator('[data-testid="status-model"]').first()).toHaveAttribute('data-value', 'claude-opus-5')
 
-  const agents = panel.locator('[data-testid="panel-agents"] li')
+  // The subagents are the ribbon's cards; the panel no longer lists them (its «Агенты» layer is этап 4).
+  await expect(panel.locator('[data-testid="panel-agents"]')).toHaveCount(0)
+  const ribbon = win.locator('[data-testid="ribbon"]:visible')
+  const agents = ribbon.locator('[data-testid="subagent-head"]')
   await expect(agents).toHaveCount(4)
   const texts = await agents.allInnerTexts()
   const count = (word: string): number => texts.filter((t) => t.includes(word)).length
@@ -25,7 +28,6 @@ async function expectFullPanel(win: Page, panel: Locator): Promise<void> {
   expect(count('не закончил')).toBe(1)
   expect(texts.find((t) => t.includes('Прогон тестов'))).toContain('93k токенов')
 
-  const ribbon = win.locator('[data-testid="ribbon"]:visible')
   await expect(ribbon.locator('[data-testid="ribbon-user"]').first()).toContainText(
     'найди, где падает вставка',
     { timeout: 15000 }
@@ -102,7 +104,7 @@ test('вторая вкладка до клика уже содержит сво
     await expect(second).toHaveAttribute('title', /не запущена/)
     await second.click()
     const panel = win.locator('[data-testid="side-panel"]')
-    await expect(panel.locator('[data-testid="panel-agents"] li')).toHaveCount(4, { timeout: 3000 })
+    await expect(win.locator('[data-testid="ribbon"]:visible [data-testid="subagent-head"]')).toHaveCount(4, { timeout: 3000 })
     await expectFullPanel(win, panel)
   } finally {
     await cleanup()

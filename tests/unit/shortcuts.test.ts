@@ -80,6 +80,11 @@ describe('resolveAppShortcut', () => {
     ).toEqual({ id: 'toggleSplit' })
   })
 
+  test('Ctrl+B на русской раскладке (и) — показать или скрыть боковую панель', () => {
+    expect(resolveAppShortcut(key({ key: 'и', code: 'KeyB', ctrlKey: true }))).toEqual({ id: 'toggleSidebar' })
+    expect(resolveAppShortcut(key({ key: 'B', code: 'KeyB', ctrlKey: true, shiftKey: true }))).toBeNull()
+  })
+
   test('буква без Ctrl — ничего', () =>
     expect(resolveAppShortcut(key({ key: 't', code: 'KeyT' }))).toBeNull())
 
@@ -97,7 +102,7 @@ describe('resolveAppShortcut', () => {
 
 describe('hint', () => {
   test('подпись и сочетание', () => {
-    expect(hint('Новая вкладка', 'newTab')).toBe('Новая вкладка (Ctrl+T)')
+    expect(hint('Новый чат', 'newTab')).toBe('Новый чат (Ctrl+T)')
     expect(hint('Настройки', 'settings')).toBe('Настройки (Ctrl+,)')
   })
   test('без id или у действия без сочетания — просто подпись', () => {
@@ -112,13 +117,29 @@ describe('APP_ACTIONS', () => {
     expect(new Set(ids).size).toBe(ids.length)
     expect(APP_ACTIONS.find((a) => a.id === 'closeTab')).toEqual({
       id: 'closeTab',
-      label: 'Закрыть вкладку',
+      label: 'Закрыть чат',
       keys: 'Ctrl+W'
     })
     expect(APP_ACTIONS.find((a) => a.id === 'cycleMode')?.keys).toBe('Shift+Tab')
     for (const id of ['zoomIn', 'zoomOut', 'zoomReset'] as const) {
       expect(APP_ACTIONS.some((a) => a.id === id)).toBe(true)
     }
+  })
+})
+
+describe('APP_ACTIONS: чаты, история, боковая панель и сплит', () => {
+  test('подписи и клавиши — строками плана', () => {
+    const row = (id: string) => {
+      const found = APP_ACTIONS.find((a) => a.id === id)
+      return found && { label: found.label, keys: found.keys }
+    }
+    expect(row('newTab')).toEqual({ label: 'Новый чат', keys: 'Ctrl+T' })
+    expect(row('closeTab')).toEqual({ label: 'Закрыть чат', keys: 'Ctrl+W' })
+    expect(row('nextTab')).toEqual({ label: 'Следующий чат', keys: 'Ctrl+Tab' })
+    expect(row('prevTab')).toEqual({ label: 'Предыдущий чат', keys: 'Ctrl+Shift+Tab' })
+    expect(row('history')).toEqual({ label: 'Прошлые разговоры', keys: 'Ctrl+H' })
+    expect(row('toggleSidebar')).toEqual({ label: 'Показать или скрыть боковую панель', keys: 'Ctrl+B' })
+    expect(row('toggleSplit')).toEqual({ label: 'Сплит: открыть рядом или закрыть', keys: 'Ctrl+Shift+Enter' })
   })
 })
 

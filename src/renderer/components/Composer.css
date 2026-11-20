@@ -257,3 +257,41 @@
 .composer-input.is-cyrillic {
   font-family: var(--font-long-cyrillic);
 }
+
+/* --------------------------------------------------------- the microphone */
+
+/* Этап 5's states (MicButton): listening is the accent; a model on its way draws a ring. */
+.composer-mic {
+  position: relative;
+}
+
+.composer-mic[data-state='listening'] {
+  background: var(--accent-fill);
+  color: var(--accent);
+}
+
+.composer-mic[data-state='unavailable'] {
+  color: var(--text-faint);
+}
+
+.composer-mic-progress {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  fill: none;
+  pointer-events: none;
+}
+
+.composer-mic-track {
+  stroke: var(--border-strong);
+  stroke-width: 2;
+}
+
+.composer-mic-sweep {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: stroke-dasharray var(--dur) var(--ease);
+}

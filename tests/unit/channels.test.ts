@@ -71,6 +71,25 @@ describe('ipc channel contract', () => {
     expect(INVOKE_CHANNELS).not.toContain('renderer:error')
   })
 
+  test('этап 2: каналы проектов, раскладки и окна-заглушки', () => {
+    const invoke = {
+      layoutGet: 'layout:get',
+      layoutSet: 'layout:set',
+      projectHistory: 'projects:history',
+      projectOpenSession: 'projects:openSession',
+      projectForget: 'projects:forget',
+      rendererRetry: 'window:rendererRetry',
+      logsOpen: 'logs:open'
+    } as const
+    for (const [key, value] of Object.entries(invoke)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(INVOKE_CHANNELS).toContain(value)
+    }
+    expect(CHANNELS.layoutChanged).toBe('layout:changed')
+    expect(EVENT_CHANNELS).toContain('layout:changed')
+    expect(INVOKE_CHANNELS).not.toContain('layout:changed')
+  })
+
   test('терминальных каналов v1 больше нет', () => {
     // The pty is gone; a channel that outlives its feature is a trap for the
     // next reader.

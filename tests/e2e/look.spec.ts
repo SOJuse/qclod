@@ -201,15 +201,6 @@ const SCREENS: { where: string; open: (win: Page) => Promise<void>; sheet?: stri
     minStops: 4
   },
   {
-    where: 'история',
-    open: async (win) => {
-      await win.keyboard.press('Control+H')
-      await expect(win.locator('[data-testid="history-item"]')).toHaveCount(2)
-    },
-    sheet: '.history',
-    minStops: 4
-  },
-  {
     where: 'палитра',
     // One field; the list follows it by aria-activedescendant. Tab stays put.
     open: async (win) => {
@@ -318,24 +309,6 @@ test('Esc закрывает настройки и возвращает фоку
   }
 })
 
-test('Esc закрывает историю и возвращает фокус на кнопку истории', async () => {
-  const { app, win } = await launchQclod({ env: focusEnv })
-  try {
-    const button = win.locator('[data-testid="open-history"]')
-    await button.focus()
-    await win.keyboard.press('Enter')
-    await expect(win.locator('[data-testid="history-item"]')).toHaveCount(2)
-    // Esc works from a row too, not only from the search field.
-    await win.keyboard.press('Tab')
-    await win.keyboard.press('Escape')
-    await expect(win.locator('[data-testid="history-screen"]')).toHaveCount(0)
-    await expect(button).toBeFocused()
-    await expectFocusRing(win)
-  } finally {
-    await app.close()
-  }
-})
-
 // Two Ctrl+- give zoom level -1 (83%), two Ctrl+= give +1 (120%): the steps nearest 80% and 125%.
 for (const { name, key, level } of [
   { name: '80%', key: 'Control+-', level: -1 },
@@ -367,7 +340,7 @@ for (const { name, key, level } of [
 
 // ---------------------------------------------------------------- selection (Task 7)
 
-test('двойной клик выделяет слово в ленте, выводе и панели, но не во вкладке заголовка', async () => {
+test('двойной клик выделяет слово в ленте, выводе и панели, но не в строке чата слева', async () => {
   const { app, win } = await launchQclod({ script: { steps: [], turns: [ALL_CATEGORIES] } })
   try {
     const input = win.locator('[data-testid="composer-input"]')
@@ -393,17 +366,17 @@ test('двойной клик выделяет слово в ленте, выв�
 
 // ---------------------------------------------------------------- icons (Task 8)
 
-test('значки кнопок окна одного размера', async () => {
+test('значки кнопок окна и боковой панели одного размера', async () => {
   const { app, win } = await launchQclod()
   try {
     const sizes = await win
-      .locator('[data-testid="title-bar"] .window-controls svg')
+      .locator('[data-testid="title-bar"] .window-controls svg, [data-testid="sidebar-toggle"] svg')
       .evaluateAll((s) => s.map((x) => x.getAttribute('width')))
     expect(sizes.length).toBeGreaterThanOrEqual(6)
     expect(new Set(sizes).size).toBe(1)
     // The same line weight too: a square drawn heavier than its neighbours reads as a different size.
     const strokes = await win
-      .locator('[data-testid="title-bar"] .window-controls svg')
+      .locator('[data-testid="title-bar"] .window-controls svg, [data-testid="sidebar-toggle"] svg')
       .evaluateAll((s) => s.map((x) => `${x.getAttribute('stroke-width')}|${getComputedStyle(x).strokeWidth}`))
     expect(new Set(strokes).size).toBe(1)
   } finally {
@@ -504,8 +477,10 @@ test('строка статуса в одну строку при открыто
     await toggle.click()
     await expect(toggle).toHaveAttribute('data-state', 'reconnecting', { timeout: 15000 })
     await expect(win.locator('[data-testid="status-context-alert"]')).toBeVisible({ timeout: 15000 })
-    await expect(win.locator('[data-testid="status-limit-5h-alert"]')).toBeVisible()
-    await expect(win.locator('[data-testid="status-limit-7d-alert"]')).toBeVisible()
+    // Both windows over 80 %: one chip, the fuller one, with its level's icon.
+    const limit = win.locator('[data-testid="status-limit-alert"]')
+    await expect(limit).toHaveText('5 ч: 95 %')
+    await expect(limit.locator('[data-level-icon="critical"]')).toHaveCount(1)
     await expect(win.locator('[data-testid="side-panel"]')).toBeVisible()
 
     // One row: every child of the line shares one vertical band, and the line is one row tall.

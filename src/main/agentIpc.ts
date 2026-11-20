@@ -2,12 +2,16 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFileSync } from 'node:fs'
 import { CHANNELS } from '../shared/channels'
 import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
+import { projectKey } from '../shared/projects'
 import type {
   EffortLevel,
   LaunchOverrides,
+  LayoutState,
   PanelSnapshot,
   RibbonSnapshot,
+  SessionSummary,
   TabId,
+  TabState,
   UserInput
 } from '../shared/types'
 import { buildFileIndex } from './files/fileIndex'
@@ -15,7 +19,8 @@ import { MAX_PER_CALL, type PathResolver } from './files/pathResolver'
 import { openInEditor, openPath, revealPath } from './files/fileActions'
 import { pasteMediaType, pasteRealPath } from './files/imagePaste'
 import { prepareImage } from './files/prepareImage'
-import type { TabController } from './tabs/TabController'
+import type { TabController, TabHistory } from './tabs/TabController'
+import type { LayoutStore } from './store/layoutStore'
 import { EMPTY_PANEL } from './agent/panelData'
 import { withFault } from './testSeams/ipcFaults'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
@@ -24,7 +29,9 @@ import {
   sanitizeAnswer,
   sanitizeQuestionAnswers,
   sanitizeInput,
+  sanitizeLayoutPatch,
   sanitizeOverrides,
+  sanitizePlanDecision,
   sanitizeTabPatch
 } from './tabs/sanitize'
 
@@ -43,6 +50,10 @@ export interface AgentIpcDeps {
   userData: string
   /** Opens Claude Code in a console in this folder. */
   openTerminal: (cwd: string) => void
+  /** userData/layout.json, shared with the controller. */
+  layout: LayoutStore
+  /** Past conversations of a folder, for a project in the sidebar. */
+  history: Pick<TabHistory, 'list'>
 }
 
 function isString(value: unknown): value is string {
@@ -276,19 +287,93 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     broker.answer(requestId, sanitizeAnswer(answer))
   })
 
-  ipcMain.handle(CHANNELS.questionAnswer, (_e, id: unknown, toolUseId: unknown, answers: unknown) => {
-    if (!isString(id) || !isString(toolUseId)) return
-    const clean = sanitizeQuestionAnswers(answers)
-    // Nothing usable is no answer: the card stays open rather than sending an empty one.
-    if (Object.keys(clean).length === 0) return
-    manager.get(id)?.answerQuestion(toolUseId, clean)
+  // The fourth argument, the comments on the chosen options, is taken and not
+  // used yet: the session learns of them in задача 9 (sanitizeQuestionNotes).
+  ipcMain.handle(
+    CHANNELS.questionAnswer,
+    (_e, id: unknown, toolUseId: unknown, answers: unknown, _notes: unknown) => {
+      if (!isString(id) || !isString(toolUseId)) return
+      const clean = sanitizeQuestionAnswers(answers)
+      // Nothing usable is no answer: the card stays open rather than sending an empty one.
+      if (Object.keys(clean).length === 0) return
+      manager.get(id)?.answerQuestion(toolUseId, clean)
+    }
+  )
+
+  // The window sends a whole decision; until задача 9 the session hears only
+  // whether it was approved. Anything but a literal true is not an approval,
+  // and an unusable decision is no answer: the card stays open.
+  ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, given: unknown) => {
+    if (!isString(id) || !isString(requestId)) return
+    const decision = sanitizePlanDecision(given)
+    if (decision === null) return
+    manager.get(id)?.answerPlan(requestId, decision.approve)
   })
 
-  ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, approve: unknown) => {
-    if (!isString(id) || !isString(requestId)) return
-    // Anything but a literal true is not an approval.
-    manager.get(id)?.answerPlan(requestId, approve === true)
+  // — этап 2: проекты и раскладка.
+  const { layout } = deps
+
+  /**
+   * The folder a project request may act on, as main knows it: a project's
+   * first spelling (П13), or the folder of an open chat. Anything else — a
+   * folder the window made up — is null. A folder on another machine
+   * (`hostId`) is none until этап 6 can reach it.
+   */
+  const knownFolder = (cwd: unknown, hostId: unknown): string | null => {
+    if (!isString(cwd) || cwd === '') return null
+    if (hostId !== undefined && hostId !== '') return null
+    const key = projectKey(cwd)
+    const project = layout.get().projects.find((p) => !p.hostId && projectKey(p.cwd) === key)
+    if (project) return project.cwd
+    return controller.list().find((tab) => projectKey(tab.cwd) === key)?.cwd ?? null
+  }
+
+  ipcMain.handle(CHANNELS.layoutGet, (): LayoutState => layout.get())
+
+  // One patch, one write, one layoutChanged: the panes (live chats only, as
+  // setPanes keeps them) and the widths for their new count together. setPanes
+  // then finds them in place and only starts the agents.
+  ipcMain.handle(CHANNELS.layoutSet, async (_e, given: unknown): Promise<LayoutState> => {
+    const patch = sanitizeLayoutPatch(given)
+    if (patch.panes) {
+      const live = new Set(controller.list().map((tab) => tab.id))
+      patch.panes = patch.panes.filter((id) => live.has(id))
+    }
+    layout.patch(patch)
+    if (patch.panes) await controller.setPanes(patch.panes)
+    return layout.get()
   })
+
+  // A project with open chats stays: nothing changes.
+  ipcMain.handle(CHANNELS.projectForget, (_e, cwd: unknown, hostId: unknown): LayoutState => {
+    if (!isString(cwd) || cwd === '' || (hostId !== undefined && !isString(hostId))) return layout.get()
+    const open = controller.list().map((tab) => projectKey(tab.cwd))
+    layout.forgetProject(cwd, open, hostId === '' ? undefined : hostId)
+    return layout.get()
+  })
+
+  ipcMain.handle(
+    CHANNELS.projectHistory,
+    (_e, cwd: unknown, hostId: unknown): Promise<SessionSummary[]> =>
+      // e2e sees the sidebar's «Загружаю…» and «Не удалось прочитать историю» through this.
+      withFault(CHANNELS.projectHistory, async () => {
+        const folder = knownFolder(cwd, hostId)
+        return folder === null ? [] : deps.history.list(folder)
+      })
+  )
+
+  ipcMain.handle(
+    CHANNELS.projectOpenSession,
+    (_e, cwd: unknown, sessionId: unknown, title: unknown, hostId: unknown): TabState | null => {
+      if (!isString(sessionId) || sessionId === '') return null
+      const folder = knownFolder(cwd, hostId)
+      if (folder === null) return null
+      return controller.openSession(folder, sessionId, isString(title) ? title : undefined)
+    }
+  )
+
+  ipcMain.handle(CHANNELS.rendererRetry, (): void => undefined)
+  ipcMain.handle(CHANNELS.logsOpen, (): void => undefined)
 
   ipcMain.handle(CHANNELS.permissionRules, () => withFault(CHANNELS.permissionRules, () => broker.rules()))
 

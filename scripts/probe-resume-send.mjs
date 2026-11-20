@@ -19,8 +19,8 @@ try {
   await input.waitFor({ timeout: 60000 })
 
   await win.keyboard.press('Control+H')
-  await win.locator('[data-testid="history-item"]').first().waitFor({ timeout: 20000 })
-  await win.locator('[data-testid="history-item"]').first().click()
+  await win.locator('[data-testid="sidebar-session"]').first().waitFor({ timeout: 20000 })
+  await win.locator('[data-testid="sidebar-session"]').first().click()
   await win.waitForTimeout(3000)
   console.log('после открытия: строк', await win.locator('[data-testid^="ribbon-"]').count())
 

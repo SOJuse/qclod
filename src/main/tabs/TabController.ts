@@ -18,6 +18,7 @@ import type {
   UserInput
 } from '../../shared/types'
 import { isDirectory, loadTabs, saveTabs, type LoadedTab } from '../store/tabsStore'
+import type { LayoutStore } from '../store/layoutStore'
 import { MAX_QUEUED, seedFromTranscript, type AgentSession, type SessionSeed } from '../agent/AgentSession'
 import { EMPTY_PANEL } from '../agent/panelData'
 import { isRemoteLive } from '../../shared/remote'
@@ -33,6 +34,8 @@ export interface TabHistory {
 export interface TabControllerDeps {
   manager: AgentSessionManager
   storeDir: string
+  /** userData/layout.json: the split, the active chat, the projects. */
+  layout: LayoutStore
   /** Where a tab lands when nothing else is known. */
   defaultCwd: string
   /** Launch options a new tab starts with, from settings. */
@@ -61,9 +64,11 @@ function nextRibbonRev(): number {
 /**
  * Owns the list of tabs and keeps each one's agent in step with it.
  *
- * Two decisions from the spec live here. Only the active tab starts its agent
- * (6.12) — starting every restored tab's would spawn a process per tab at
- * launch, which is what made v1 feel heavy. And a tab remembers which
+ * Two decisions from the spec live here. Only the active tab and the chats in
+ * the split start their agents (6.12, 2.1) — starting every restored tab's
+ * would spawn a process per tab at launch, which is what made v1 feel heavy.
+ * A chat that leaves the split keeps its agent: only «Закрыть чат», «Начать
+ * заново» and quitting stop one. And a tab remembers which
  * conversation it was in, so reopening the app picks it back up instead of
  * losing it (6.9); what is remembered is the id, never the words.
  */
@@ -152,9 +157,11 @@ export class TabController {
   }
 
   async restore(): Promise<TabState[]> {
+    const { layout } = this.deps
     const stored: LoadedTab[] = loadTabs(this.deps.storeDir)
     if (stored.length === 0) {
-      this.create(this.deps.defaultCwd)
+      const tab = this.create(this.deps.defaultCwd)
+      layout.prune([tab.id])
       return this.list()
     }
 
@@ -171,13 +178,25 @@ export class TabController {
       })
     }
 
-    this.activeId = this.tabs[0]?.id ?? null
+    // A tabs.json from before projects existed: its folders become projects,
+    // so closing their last chat does not take them off the list.
+    for (const tab of this.tabs) layout.addProject(tab.cwd)
+
+    // The layout may name chats that are gone. The active one is the saved
+    // one if it is still here, else the first pane still alive, else the
+    // first tab (П12).
+    const ids = this.tabs.map((tab) => tab.id)
+    const saved = layout.get().active
+    layout.prune(ids)
+    const panes = layout.get().panes
+    this.setActiveId(saved !== null && ids.includes(saved) ? saved : (panes[0] ?? ids[0] ?? null))
     this.emit()
     // Every tab shows its conversation straight away, read from the record;
-    // only the active one gets a process (spec 9: an agent starts when its
-    // tab is first visited).
+    // only the active one and those in the split get a process (spec 2.1: an
+    // agent starts when its chat is first seen).
     for (const tab of this.tabs) this.track(this.preview(tab.id))
-    if (this.activeId) this.track(this.ensureSession(this.activeId))
+    const visible = new Set([...(this.activeId ? [this.activeId] : []), ...panes])
+    for (const id of visible) this.track(this.ensureSession(id))
     return this.list()
   }
 
@@ -199,7 +218,9 @@ export class TabController {
       missingCwd: !isDirectory(cwd)
     }
     this.tabs.push(tab)
-    this.activeId = tab.id
+    // A chat's folder is a project from then on, and stays one after it closes.
+    this.deps.layout.addProject(cwd)
+    this.setActiveId(tab.id)
     this.persist()
     this.emit()
     this.track(this.ensureSession(tab.id))
@@ -207,13 +228,20 @@ export class TabController {
   }
 
   /**
-   * Opens a past conversation in its own tab.
+   * Opens a past conversation in its own tab — or, if a chat is in it
+   * already, makes that chat active: two agents on one conversation would
+   * write over each other's transcript.
    *
    * The tab is created already pointing at that session, so the usual resume
    * path brings the ribbon back — there is no second way to load a
    * conversation that could drift from the first.
    */
-  openHistory(cwd: string, sessionId: string, title?: string): TabState {
+  openSession(cwd: string, sessionId: string, title?: string): TabState {
+    const open = this.tabs.find((tab) => tab.lastSessionId === sessionId)
+    if (open) {
+      this.track(this.activate(open.id))
+      return { ...open }
+    }
     // The pointer is set as the tab is made, so the one session it starts is
     // already the right one. Creating a tab and then swapping its session
     // leaves the first one running: an orphan agent whose own init overwrites
@@ -221,9 +249,27 @@ export class TabController {
     return this.create(cwd, {}, title, sessionId)
   }
 
+  /** The empty chat's list of past conversations opens them here. */
+  openHistory(cwd: string, sessionId: string, title?: string): TabState {
+    return this.openSession(cwd, sessionId, title)
+  }
+
+  /**
+   * The chats now side by side in the split. Ids that are no live chat are
+   * dropped; each of the rest gets its agent. One that leaves the split keeps
+   * its agent (F13).
+   */
+  async setPanes(ids: TabId[]): Promise<void> {
+    const alive = ids.filter((id) => this.tabs.some((tab) => tab.id === id))
+    this.deps.layout.patch({ panes: alive })
+    const starting = alive.map((id) => this.ensureSession(id))
+    for (const work of starting) this.track(work)
+    await Promise.all(starting)
+  }
+
   async activate(id: TabId): Promise<void> {
     if (!this.tabs.some((tab) => tab.id === id)) return
-    this.activeId = id
+    this.setActiveId(id)
     this.patch(id, { badge: false })
     // A background tab's agent comes up the moment the user looks at it.
     await this.ensureSession(id)
@@ -232,20 +278,24 @@ export class TabController {
   async close(id: TabId): Promise<void> {
     const index = this.tabs.findIndex((tab) => tab.id === id)
     if (index === -1) return
-    this.tabs.splice(index, 1)
+    const [closed] = this.tabs.splice(index, 1)
     this.previews.delete(id)
     this.ribbonRevs.delete(id)
     await this.deps.manager.close(id)
 
     if (this.activeId === id) {
-      this.activeId = this.tabs[Math.min(index, this.tabs.length - 1)]?.id ?? null
+      this.setActiveId(this.tabs[Math.min(index, this.tabs.length - 1)]?.id ?? null)
     }
-    // Never leave the window with nothing in it.
-    if (this.tabs.length === 0) this.create(this.deps.defaultCwd)
-    else {
+    // Never leave the window with nothing in it: the last chat closed, a new
+    // one opens in the same folder (its project stays). A folder that is gone
+    // could host no agent, so then the default one.
+    if (this.tabs.length === 0) {
+      this.create(closed && !closed.missingCwd ? closed.cwd : this.deps.defaultCwd)
+    } else {
       this.persist()
       this.emit()
     }
+    this.deps.layout.prune(this.tabs.map((tab) => tab.id))
   }
 
   /** «Начать заново»: a new session, and the old conversation is let go. */
@@ -722,6 +772,12 @@ export class TabController {
   }
 
   // -------------------------------------------------------------- plumbing
+
+  /** The active chat, here and in layout.json. */
+  private setActiveId(id: TabId | null): void {
+    this.activeId = id
+    this.deps.layout.setActive(id)
+  }
 
   private emitRibbon(id: TabId, changes: RibbonChange[]): void {
     if (changes.length === 0) return

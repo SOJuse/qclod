@@ -65,3 +65,23 @@ describe('nextPanes', () => {
     })
   })
 })
+
+describe('buildSidebar: прошлые, пока их перечитывают (S2-R18)', () => {
+  test('прежний список стоит, пока идёт перечитывание', () => {
+    const sidebar = buildSidebar([], [project('C:\\p')], {
+      'c:\\p': { items: [session('s1', 10)], reading: true }
+    })
+    const past = sidebar[0]?.past
+    expect(Array.isArray(past) && past.map((s) => s.id)).toEqual(['s1'])
+  })
+
+  test('«Загружаю…» — только когда показать нечего', () => {
+    const sidebar = buildSidebar([tab('a', 'C:\\p', 's1')], [project('C:\\p'), project('C:\\q')], {
+      // The only past one is open: nothing to show while the list is read again.
+      'c:\\p': { items: [session('s1', 10)], reading: true },
+      'c:\\q': { items: [], reading: true }
+    })
+    expect(sidebar[0]?.past).toBe('loading')
+    expect(sidebar[1]?.past).toBe('loading')
+  })
+})

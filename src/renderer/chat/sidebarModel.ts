@@ -1,8 +1,12 @@
 import { projectKey, projectName } from '../../shared/projects'
 import type { ProjectEntry, SessionSummary, TabId, TabState } from '../../shared/types'
 
-/** What the window has learned about one project's past conversations. */
-export type ProjectHistory = { items: SessionSummary[]; error?: string } | 'loading'
+/**
+ * What the window has learned about one project's past conversations:
+ * 'loading' — the first read, nothing known yet; `reading` — read again, the
+ * list it had stays until the answer (S2-R18).
+ */
+export type ProjectHistory = { items: SessionSummary[]; error?: string; reading?: true } | 'loading'
 
 /** How many panes a window can hold. */
 export const MAX_PANES = 4
@@ -50,7 +54,9 @@ export function buildSidebar(
       project.past = { error: found.error }
     } else {
       const open = new Set(project.chats.map((c) => c.lastSessionId).filter((id): id is string => !!id))
-      project.past = found.items.filter((s) => !open.has(s.id)).sort((a, b) => b.updatedAt - a.updatedAt)
+      const past = found.items.filter((s) => !open.has(s.id)).sort((a, b) => b.updatedAt - a.updatedAt)
+      // Read again: what was there stays; «Загружаю…» only when there is nothing to show.
+      project.past = found.reading && past.length === 0 ? 'loading' : past
     }
   }
   return [...byKey.values()]

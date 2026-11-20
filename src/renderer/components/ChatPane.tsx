@@ -23,6 +23,7 @@ import { PinnedCards } from './cards/PinnedCards'
 import { cardAnswers } from '../chat/cardAnswers'
 import { StateView } from '../ui/StateView'
 import { nextOverride, panelMode, panelToggle, type PanelOverride } from '../app/panelVisibility'
+import { restartChat } from '../app/restartChat'
 import { ChatHeader } from './ChatHeader'
 import { PaneLayer } from './PaneLayer'
 import { SidePanel } from './SidePanel'
@@ -411,14 +412,8 @@ export function ChatPane({
               }}
               onInterrupt={() => void window.qclod.interrupt(tabId).then(takeBack)}
               onCycleMode={onCycleMode}
-              onRestart={() => {
-                // The new session's panel replaces the old one's whole: its cost and
-                // limits are not this session's. The snapshot outranks them.
-                void window.qclod
-                  .restartTab(tabId)
-                  .then(() => window.qclod.panel(tabId))
-                  .then((snapshot) => useAppStore.getState().setPanelSnapshot(tabId, snapshot))
-              }}
+              // A new session, its own panel, and the project's history read again.
+              onRestart={() => void restartChat(tabId)}
               canRetry={tab?.canRetry === true}
               onRetry={() => {
                 // The same conversation again; the new session's panel replaces the

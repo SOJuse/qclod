@@ -3,7 +3,7 @@ import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 import { AgentSession, seedFromTranscript } from '../../src/main/agent/AgentSession'
 import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
 import { LOGIN_NEEDED_TEXT } from '../../src/main/agent/startFailure'
-import type { AgentDriver, DriverOptions } from '../../src/main/agent/driver'
+import type { AgentDriver, DriverOptions, SendOptions } from '../../src/main/agent/driver'
 import { toPermissionContext } from '../../src/main/agent/permissionContext'
 import { PermissionBroker } from '../../src/main/agent/permissions'
 import type {
@@ -1884,8 +1884,8 @@ describe('AgentSession: после dispose молчит', () => {
   })
 })
 
-describe('AgentSession: очередь сообщений', () => {
-  /** A first turn long enough to type a second message into. */
+describe('AgentSession: очередь сообщений в CLI', () => {
+  /** A turn long enough to type into. One step, so its one boundary is at its end. */
   const slowTurn: NonNullable<NonNullable<FakeScript>['nextTurn']> = [
     { kind: 'textStream', pieces: ['один ', 'два ', 'три ', 'четыре ', 'пять'], pauseMs: 50 }
   ]
@@ -1894,72 +1894,417 @@ describe('AgentSession: очередь сообщений', () => {
     return rec.panels.filter((p) => p.queue !== undefined).at(-1)?.queue
   }
 
-  test('сообщение во время хода ждёт в очереди и уходит после result', async () => {
+  const bubbles = (items: RibbonItem[]): string[] =>
+    items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text)
+
+  const lost = (items: RibbonItem[]): string[] =>
+    items
+      .filter((i) => i.kind === 'notice' && i.text.includes('не дошло'))
+      .map((i) => (i as { text: string }).text)
+
+  /** The CLI has said it keeps a queue (ruling R6): its frames, then init, have come. */
+  async function cliReady(session: AgentSession): Promise<void> {
+    await vi.waitFor(() => expect(session.sessionId).toBeTruthy(), { timeout: 2000 })
+  }
+
+  /** What each send carried besides the message: its uuid and priority. */
+  function recordOptions(driver: ReturnType<typeof createFakeSdk>): Array<SendOptions | undefined> {
+    const options: Array<SendOptions | undefined> = []
+    const send = driver.send.bind(driver)
+    driver.send = (input, opts) => {
+      options.push(opts)
+      send(input, opts)
+    }
+    return options
+  }
+
+  test('сообщение во время хода уходит в CLI сразу и вливается между шагами', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const options = recordOptions(driver)
+    const rec = watch(session)
+    await session.start()
+
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [] })
+
+    // At the CLI already, not held until the result; no bubble until the agent reads it.
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два'])
+    expect(options[1]).toEqual({ uuid: expect.any(String) })
+    expect(bubbles(rec.items)).toEqual(['раз'])
+    const id = lastQueue(rec)![0]!.id
+    expect(id).toBe(options[1]!.uuid)
+
+    await vi.waitFor(() => expect(bubbles(rec.items)).toEqual(['раз', 'два']), { timeout: 3000 })
+    expect(driver.folded).toEqual([id])
+    expect(session.panel.queue).toEqual([])
+    await settle(session)
+
+    // Read between the steps of the same turn: after what the agent had written, once.
+    expect(bubbles(rec.items)).toEqual(['раз', 'два'])
+    const order = rec.items.filter((i) => i.kind === 'user' || i.kind === 'agentText').map((i) => i.kind)
+    expect(order).toEqual(['user', 'agentText', 'user'])
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('плашка показывает sending, затем queued', async () => {
+    const { session } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [{ kind: 'file', path: 'C:/f.ts' }] })
+
+    expect(lastQueue(rec)).toEqual([
+      { id: expect.any(String), text: 'два', attachments: 1, state: 'sending', canSendNow: true }
+    ])
+    await vi.waitFor(() => expect(lastQueue(rec)?.[0]?.state).toBe('queued'))
+    expect(lastQueue(rec)?.[0]?.canSendNow).toBe(true)
+    await settle(session)
+    await session.dispose()
+  })
+
+  test('отправить сейчас: отмена и повтор с priority now и новым uuid', async () => {
     const { session, driver } = makeSession({
       steps: [],
-      turns: [slowTurn, [{ kind: 'text', text: 'второй ответ' }]]
+      turns: [slowTurn, [{ kind: 'text', text: 'сразу' }]]
+    })
+    const options = recordOptions(driver)
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() => expect(lastQueue(rec)?.[0]?.state).toBe('queued'))
+    const first = lastQueue(rec)![0]!.id
+
+    expect(await session.sendQueuedNow('нет-такого')).toBe(false)
+    expect(await session.sendQueuedNow(first)).toBe(true)
+
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два', 'два'])
+    const again = options.at(-1)!
+    expect(again).toEqual({ uuid: expect.any(String), priority: 'now' })
+    expect(again.uuid).not.toBe(first)
+    // The strip keeps it, under its new uuid, until the agent reads it.
+    expect(session.panel.queue.map((q) => q.id)).toEqual([again.uuid])
+
+    await vi.waitFor(() => expect(texts(rec.items)).toContain('сразу'), { timeout: 3000 })
+    await settle(session)
+    expect(bubbles(rec.items)).toEqual(['раз', 'два'])
+    // The cancel was ours: no «не дошло».
+    expect(lost(rec.items)).toEqual([])
+    expect(session.panel.queue).toEqual([])
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('отменить возвращает input, сообщение не доходит до агента', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({
+      text: 'два',
+      attachments: [{ kind: 'image', mediaType: 'image/png', dataBase64: 'QUJD', path: 'C:/ud/pastes/a.png' }]
+    })
+    await vi.waitFor(() => expect(lastQueue(rec)?.[0]?.state).toBe('queued'))
+    const id = lastQueue(rec)![0]!.id
+
+    expect(await session.cancelQueued('нет-такого')).toBeNull()
+    const cancelling = session.cancelQueued(id)
+    expect(session.panel.queue).toEqual([expect.objectContaining({ state: 'cancelling', canSendNow: false })])
+    // Back to the window without the bytes its copy on disk stands for.
+    expect(await cancelling).toEqual({
+      text: 'два',
+      attachments: [{ kind: 'image', mediaType: 'image/png', dataBase64: '', path: 'C:/ud/pastes/a.png' }]
+    })
+    expect(session.panel.queue).toEqual([])
+
+    await settle(session)
+    await tick()
+    expect(driver.folded).toEqual([])
+    expect(bubbles(rec.items)).toEqual(['раз'])
+    expect(lost(rec.items)).toEqual([])
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('Стоп возвращает все из плашки, ни одно не доходит потом', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [] })
+    session.send({ text: 'три', attachments: [] })
+
+    expect(await session.interrupt()).toEqual([
+      { text: 'два', attachments: [] },
+      { text: 'три', attachments: [] }
+    ])
+    expect(session.panel.queue).toEqual([])
+
+    // The stopped turn plays out to its result; nothing it held comes after.
+    await vi.waitFor(() => expect(rec.panels.some((p) => p.cost)).toBe(true), { timeout: 3000 })
+    await settle(session)
+    await tick()
+    expect(driver.folded).toEqual([])
+    expect(bubbles(rec.items)).toEqual(['раз'])
+    expect(lost(rec.items)).toEqual([])
+    expect(session.panel.queue).toEqual([])
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('сообщение во время открытой карточки разрешения ждёт и вливается после ответа, пузырь один', async () => {
+    let answer!: (a: { behavior: 'allow' }) => void
+    const holder: { session?: AgentSession } = {}
+    const { session, driver } = makeSession(
+      {
+        steps: [],
+        turns: [
+          [
+            { kind: 'askPermission', name: 'Bash', input: { command: 'ls' } },
+            { kind: 'text', text: 'выполнил' }
+          ]
+        ]
+      },
+      {
+        askPermission: (request) => {
+          holder.session!.showPermissionCard(request.requestId, request.toolName, request.target)
+          return new Promise((resolve) => (answer = resolve))
+        }
+      }
+    )
+    holder.session = session
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('waiting'), { timeout: 2000 })
+    await cliReady(session)
+
+    session.send({ text: 'два', attachments: [] })
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два'])
+    // The card still waits on the user, and the tab says so.
+    expect(session.status).toBe('waiting')
+    await vi.waitFor(() => expect(lastQueue(rec)?.[0]?.state).toBe('queued'))
+    await tick()
+    expect(bubbles(rec.items)).toEqual(['раз'])
+
+    answer({ behavior: 'allow' })
+    await vi.waitFor(() => expect(bubbles(rec.items)).toEqual(['раз', 'два']), { timeout: 2000 })
+    await settle(session)
+    expect(bubbles(rec.items)).toEqual(['раз', 'два'])
+    expect(driver.folded).toHaveLength(1)
+    expect(driver.executedTools).toEqual(['Bash'])
+    const order = rec.items.filter((i) => i.kind === 'user' || i.kind === 'permission').map((i) => i.kind)
+    expect(order).toEqual(['user', 'permission', 'user'])
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('старый CLI (lifecycle false): пузырь сразу, плашка пуста', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn], lifecycle: false })
+    const options = recordOptions(driver)
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+
+    session.send({ text: 'два', attachments: [] })
+    expect(bubbles(rec.items)).toEqual(['раз', 'два'])
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два'])
+    // Sent at once, with its uuid: the CLI folds it in by itself.
+    expect(options[1]).toEqual({ uuid: expect.any(String) })
+    expect(session.panel.queue).toEqual([])
+    expect(rec.panels.filter((p) => (p.queue?.length ?? 0) > 0)).toEqual([])
+
+    await settle(session)
+    expect(driver.folded).toHaveLength(1)
+    expect(bubbles(rec.items)).toEqual(['раз', 'два'])
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('смерть процесса: непринятые уходят в новую сессию один раз', async () => {
+    // One step: the agent dies inside it, before any boundary could take «два» in.
+    const dying = makeSession({
+      steps: [],
+      turns: [
+        [
+          {
+            kind: 'subagent',
+            name: 'долгий',
+            steps: [
+              { kind: 'textStream', pieces: ['а', 'б', 'в', 'г', 'д'], pauseMs: 50 },
+              { kind: 'crash', message: 'агент умер' }
+            ]
+          }
+        ]
+      ]
+    })
+    const rec = watch(dying.session)
+    await dying.session.start()
+    dying.session.send({ text: 'раз', attachments: [] })
+    await cliReady(dying.session)
+    dying.session.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() => expect(lastQueue(rec)?.[0]?.state).toBe('queued'))
+
+    await vi.waitFor(() => expect(dying.session.status).toBe('error'), { timeout: 3000 })
+    await tick()
+    // The CLI had it and died with it: the agent never read it.
+    expect(dying.driver.folded).toEqual([])
+    expect(dying.session.panel.queue.map((q) => q.text)).toEqual(['два'])
+    expect(dying.session.sentBeforeInit).toEqual([])
+    const taken = dying.session.takeQueue()
+    expect(taken).toEqual([{ text: 'два', attachments: [] }])
+    expect(dying.session.takeQueue()).toEqual([])
+    expect(dying.session.panel.queue).toEqual([])
+
+    const next = makeSession(
+      { steps: [], nextTurn: [{ kind: 'text', text: 'ответ' }] },
+      { seed: dying.session.successorSeed() }
+    )
+    await next.session.start()
+    next.session.requeue(taken)
+    await vi.waitFor(() => expect(texts(next.session.items)).toContain('ответ'), { timeout: 2000 })
+    await settle(next.session)
+    expect(next.driver.sent.map((s) => s.text)).toEqual(['два'])
+    expect(bubbles(next.session.items)).toEqual(['раз', 'два'])
+    expect(next.session.panel.queue).toEqual([])
+    await next.session.dispose()
+  })
+
+  test('cancelled с чужим uuid игнорируется', async () => {
+    const long: NonNullable<NonNullable<FakeScript>['nextTurn']> = [
+      { kind: 'textStream', pieces: Array.from({ length: 10 }, (_, i) => `${i} `), pauseMs: 60 }
+    ]
+    const { session } = makeSession({
+      steps: [],
+      turns: [long],
+      phoneCancel: { afterMs: 120, uuid: 'с-телефона' }
     })
     const rec = watch(session)
     await session.start()
-
     session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
     session.send({ text: 'два', attachments: [] })
 
-    // Not sent, not in the ribbon — only on the strip above the input.
-    expect(driver.sent).toHaveLength(1)
-    expect(rec.items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text)).toEqual(['раз'])
-    expect(lastQueue(rec)).toEqual([{ id: expect.any(String), text: 'два', attachments: 0, state: 'queued', canSendNow: false }])
-    expect(session.panel.queue).toHaveLength(1)
+    // The phone's frame has come and gone; ours is still waiting, untouched.
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(session.panel.queue.map((q) => q.text)).toEqual(['два'])
+    expect(lost(rec.items)).toEqual([])
+    expect(session.status).toBe('busy')
 
-    await vi.waitFor(() => expect(texts(rec.items)).toContain('второй ответ'), { timeout: 3000 })
-    expect(driver.sent[1]!.text).toBe('два')
-    expect(rec.items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text)).toEqual([
-      'раз',
-      'два'
-    ])
+    await vi.waitFor(() => expect(bubbles(rec.items)).toEqual(['раз', 'два']), { timeout: 3000 })
+    await settle(session)
+    expect(lost(rec.items)).toEqual([])
+    expect(session.status).toBe('idle')
+    await session.dispose()
+  })
+
+  test('CLI сам снял сообщение с очереди — заметка «не дошло» с его текстом', async () => {
+    const { session } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [] })
+    const id = session.panel.queue[0]!.id
+
+    // A turn stopped elsewhere (the phone's «Стоп») drops what it held.
+    session.handle({ type: 'command_lifecycle', command_uuid: id, state: 'cancelled', uuid: 'кадр', session_id: 'x' })
     expect(session.panel.queue).toEqual([])
+    expect(lost(rec.items)).toEqual(['Сообщение не дошло до агента: ход прервали — «два»'])
+    await settle(session)
+    expect(bubbles(rec.items)).toEqual(['раз'])
+    await session.dispose()
+  })
+
+  test('result с queued_turn_count > 0 не переводит вкладку в idle', async () => {
+    const { session } = makeSession({
+      steps: [],
+      turns: [[{ kind: 'tool', name: 'Bash', input: { command: 'sleep 1' }, result: 'ok', pauseMs: 400 }]]
+    })
+    const rec = watch(session)
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    expect(session.status).toBe('busy')
+
+    const result = (queued: number): unknown => ({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      session_id: session.sessionId,
+      queued_turn_count: queued
+    })
+    // The CLI has another turn waiting behind this one: the tab is not free.
+    session.handle(result(1))
+    expect(session.status).toBe('busy')
+    // A message still on the strip holds it too, whatever the count says.
+    session.send({ text: 'два', attachments: [] })
+    session.handle(result(0))
+    expect(session.status).toBe('busy')
+    expect(rec.statuses.slice(rec.statuses.indexOf('busy'))).toEqual(['busy'])
+
+    await vi.waitFor(() => expect(bubbles(rec.items)).toEqual(['раз', 'два']), { timeout: 3000 })
     await settle(session)
     expect(session.status).toBe('idle')
     await session.dispose()
   })
 
-  test('отменённое из очереди не уходит', async () => {
+  test('result без кадров: что в user_message_uuids, то прочитано', async () => {
+    // A CLI that keeps a queue but sent no frame for a message must not leave
+    // it on the strip for ever.
     const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const options = recordOptions(driver)
     const rec = watch(session)
     await session.start()
-
     session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
     session.send({ text: 'два', attachments: [] })
-    const queued = session.panel.queue[0]!
-
-    expect(session.cancelQueued('нет-такого')).toBe(false)
-    expect(session.cancelQueued(queued.id)).toBe(true)
-    expect(lastQueue(rec)).toEqual([])
-
+    session.handle({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      session_id: session.sessionId,
+      user_message_uuids: [options[0]!.uuid, options[1]!.uuid],
+      queued_turn_count: 0
+    })
+    expect(bubbles(rec.items)).toEqual(['раз', 'два'])
+    expect(session.panel.queue).toEqual([])
     await settle(session)
-    await tick()
-    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
-    expect(session.status).toBe('idle')
+    expect(bubbles(rec.items)).toEqual(['раз', 'два'])
     await session.dispose()
   })
 
-  test('Стоп возвращает очередь и очищает её', async () => {
-    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
-    const rec = watch(session)
+  test('отмена после result, задержанного очередью, отпускает вкладку', async () => {
+    const { session } = makeSession({
+      steps: [],
+      turns: [[{ kind: 'tool', name: 'Bash', input: { command: 'sleep 1' }, result: 'ok', pauseMs: 300 }]]
+    })
     await session.start()
-
     session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
     session.send({ text: 'два', attachments: [] })
+    const id = session.panel.queue[0]!.id
+    // The turn ended with «два» still in the CLI's queue, as its own next turn.
+    session.handle({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      session_id: session.sessionId,
+      queued_turn_count: 1
+    })
+    expect(session.status).toBe('busy')
 
-    expect(await session.interrupt()).toEqual([{ text: 'два', attachments: [] }])
-    expect(session.panel.queue).toEqual([])
-    await settle(session)
-    // The fake plays the stopped turn out to its result (its cost lands on
-    // the panel); that result is where a queued message would have gone.
-    await vi.waitFor(() => expect(rec.panels.some((p) => p.cost)).toBe(true), { timeout: 3000 })
-    await tick()
-    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
+    expect(await session.cancelQueued(id)).toEqual({ text: 'два', attachments: [] })
+    // Nothing is left for the CLI to run.
     expect(session.status).toBe('idle')
+    await settle(session)
     await session.dispose()
   })
 
@@ -1967,24 +2312,48 @@ describe('AgentSession: очередь сообщений', () => {
     const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
     await session.start()
     session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
     session.send({ text: 'два', attachments: [] })
 
+    // A CLI without a receipt: «два» is taken back by itself.
     let interrupted!: () => void
     driver.interrupt = () => new Promise<undefined>((resolve) => (interrupted = () => resolve(undefined)))
     const stopping = session.interrupt()
     await vi.waitFor(() => expect(interrupted).toBeDefined())
 
-    // The queue was taken the moment Stop was pressed; this one goes now.
+    // Typed after Stop: meant to be sent, not pulled back too.
     session.send({ text: 'три', attachments: [] })
-    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'три'])
-    expect(session.panel.queue).toEqual([])
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два', 'три'])
+    expect(session.panel.queue.map((q) => q.text)).toEqual(['два'])
 
     interrupted()
     expect(await stopping).toEqual([{ text: 'два', attachments: [] }])
+    expect(session.panel.queue).toEqual([])
     await session.dispose()
   })
 
-  test('ответ на вопрос карточкой во время хода тоже встаёт в очередь', async () => {
+  test('сбой отмены и прерывания в драйвере — не исключение, а «не вышло»', async () => {
+    const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    await session.start()
+    session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
+    session.send({ text: 'два', attachments: [] })
+    const id = session.panel.queue[0]!.id
+
+    driver.cancelQueued = () => Promise.reject(new Error('сессия закрыта'))
+    driver.interrupt = () => {
+      throw new Error('сессия закрыта')
+    }
+    expect(await session.cancelQueued(id)).toBeNull()
+    expect(session.panel.queue).toEqual([expect.objectContaining({ id, state: 'sending' })])
+    // Not taken back: it is with the CLI already, and the turn is stopped for it.
+    expect(await session.sendQueuedNow(id)).toBe(true)
+    expect(await session.interrupt()).toEqual([])
+    expect(session.panel.queue).toEqual([expect.objectContaining({ id })])
+    await session.dispose()
+  })
+
+  test('ответ на вопрос карточкой во время хода тоже уходит в CLI и ждёт на плашке', async () => {
     const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
     const rec = watch(session)
     await session.start()
@@ -1998,43 +2367,32 @@ describe('AgentSession: очередь сообщений', () => {
       }
     })
     session.send({ text: 'раз', attachments: [] })
+    await cliReady(session)
     session.answerQuestion('q-old', { 'Куда?': 'Справа' })
 
-    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'Справа'])
     expect(lastQueue(rec)?.map((q) => q.text)).toEqual(['Справа'])
-    await vi.waitFor(() => expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'Справа']), { timeout: 3000 })
+    await vi.waitFor(() => expect(bubbles(rec.items)).toEqual(['раз', 'Справа']), { timeout: 3000 })
     await settle(session)
     await session.dispose()
   })
 
-  test('упавшая сессия очередь держит и не шлёт', async () => {
-    const { session, driver } = makeSession({
-      steps: [],
-      turns: [[...slowTurn, { kind: 'crash', message: 'агент умер' }]]
-    })
-    await session.start()
-    session.send({ text: 'раз', attachments: [] })
-    session.send({ text: 'два', attachments: [] })
-
-    await vi.waitFor(() => expect(session.status).toBe('error'), { timeout: 3000 })
-    await tick()
-    expect(session.panel.queue).toHaveLength(1)
-    expect(driver.sent).toHaveLength(1)
-    expect(session.takeQueue()).toEqual([{ text: 'два', attachments: [] }])
-    expect(session.panel.queue).toEqual([])
-  })
-
-  test('requeue в свободную сессию отправляет первое, остальное ждёт', async () => {
+  test('requeue в свободную сессию отправляет всё сразу, у каждого один пузырь', async () => {
     const { session, driver } = makeSession({ steps: [], turns: [slowTurn] })
+    const rec = watch(session)
     await session.start()
     session.requeue([
       { text: 'раз', attachments: [] },
       { text: 'два', attachments: [] }
     ])
-    expect(driver.sent.map((s) => s.text)).toEqual(['раз'])
-    expect(session.panel.queue.map((q) => q.text)).toEqual(['два'])
-    await vi.waitFor(() => expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два']), { timeout: 3000 })
+    // Nothing is known yet of the CLI's queue (ruling R6): both go, and show, at once.
+    expect(driver.sent.map((s) => s.text)).toEqual(['раз', 'два'])
+    expect(bubbles(rec.items)).toEqual(['раз', 'два'])
+    expect(session.panel.queue).toEqual([])
     await settle(session)
+    // Sent before the first turn began, «два» is a turn of its own: its echo is not a second bubble.
+    expect(bubbles(rec.items)).toEqual(['раз', 'два'])
+    expect(session.status).toBe('idle')
     await session.dispose()
   })
 })
@@ -2525,16 +2883,29 @@ describe('AgentSession: итоговое ревью этапа 2', () => {
     const starting = slowStart.start()
     await vi.waitFor(() => expect(slowStart.status).toBe('starting'))
 
+    const options: Array<{ uuid?: string } | undefined> = []
+    const send = driver.send.bind(driver)
+    driver.send = (input, opts) => {
+      options.push(opts)
+      send(input, opts)
+    }
+
     expect(slowStart.send({ text: 'пока запускается', attachments: [] })).toBe(true)
+    expect(slowStart.send({ text: 'и это', attachments: [] })).toBe(true)
     expect(driver.sent).toHaveLength(0)
-    expect(slowStart.panel.queue.map((q) => q.text)).toEqual(['пока запускается'])
+    expect(slowStart.panel.queue).toEqual([
+      { id: expect.any(String), text: 'пока запускается', attachments: 0, state: 'waiting', canSendNow: false },
+      { id: expect.any(String), text: 'и это', attachments: 0, state: 'waiting', canSendNow: false }
+    ])
+    const ids = slowStart.panel.queue.map((q) => q.id)
 
     release()
     await starting
-    await vi.waitFor(() => expect(driver.sent.map((s) => s.text)).toEqual(['пока запускается']), {
-      timeout: 2000
-    })
+    // All of it at once, in order, each under the uuid it was given on the strip.
+    expect(driver.sent.map((s) => s.text)).toEqual(['пока запускается', 'и это'])
+    expect(options.map((o) => o?.uuid)).toEqual(ids)
     expect(slowStart.panel.queue).toEqual([])
+    await slowStart.whenIdle()
     await slowStart.dispose()
   })
 
@@ -2553,6 +2924,8 @@ describe('AgentSession: итоговое ревью этапа 2', () => {
     const { session } = makeSession({ steps: [], turns: [slow] })
     await session.start()
     expect(session.send({ text: 'первое', attachments: [] })).toBe(true)
+    // The strip is there once the CLI has said it keeps a queue.
+    await vi.waitFor(() => expect(session.sessionId).toBeTruthy())
     for (let i = 0; i < 20; i++) expect(session.send({ text: `в очередь ${i}`, attachments: [] })).toBe(true)
     expect(session.send({ text: 'лишнее', attachments: [] })).toBe(false)
     expect(session.panel.queue).toHaveLength(20)
@@ -2564,6 +2937,7 @@ describe('AgentSession: итоговое ревью этапа 2', () => {
     const { session } = makeSession({ steps: [], turns: [slow] })
     await session.start()
     session.send({ text: 'раз', attachments: [] })
+    await vi.waitFor(() => expect(session.sessionId).toBeTruthy())
     session.send({
       text: 'два',
       attachments: [

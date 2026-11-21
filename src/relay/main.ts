@@ -19,7 +19,7 @@ import { findClaude, loginShellPath, mergePath } from './env'
 import { createLog } from './log'
 import { relayMethods } from './methods'
 import { BINARY_NAME, relayPaths } from './paths'
-import { relayDriverFactory } from './sdk'
+import { relayDriverFactory, relayListSessions } from './sdk'
 import { UNIT_NAME, setup, startCommand, type Run } from './supervisor'
 
 declare const __QCLOD_RELAY_VERSION__: string
@@ -86,7 +86,7 @@ async function daemon(): Promise<number> {
     supervised,
     spawnSuccessor: spawnDaemon,
     home,
-    methods: relayMethods({ run, version: VERSION, claudePath, home }),
+    methods: relayMethods({ run, version: VERSION, claudePath, home, listSessions: relayListSessions }),
     // The file on disk may be newer than the running daemon: the update the client waits for.
     binaryVersion: () =>
       new Promise((resolve) => {

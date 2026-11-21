@@ -1,8 +1,14 @@
 import { createRequire } from 'node:module'
-import { query } from '@anthropic-ai/claude-agent-sdk'
+import { listSessions, query } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentDriver, DriverFactory, DriverOptions } from '../main/agent/driver'
 import { toPermissionContext } from '../main/agent/permissionContext'
 import { createSdkDriver } from '../main/agent/sdkDriver'
+
+/** The server's past conversations, from the bundled SDK. */
+export const relayListSessions = (options: { dir: string }) =>
+  listSessions(options) as unknown as Promise<
+    Array<{ sessionId: string; summary: string; lastModified: number; customTitle?: string; firstPrompt?: string }>
+  >
 
 /**
  * The relay's driver factory. A release relay has the SDK bundled in

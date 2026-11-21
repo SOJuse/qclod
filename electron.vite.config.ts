@@ -12,7 +12,13 @@ export default defineConfig(({ mode }) => {
       plugins: [externalizeDepsPlugin()],
       define,
       build: {
-        rollupOptions: { input: { index: resolve(__dirname, 'src/main/index.ts') } }
+        // voiceWorker.js is the voice process (utilityProcess.fork in index.ts).
+        rollupOptions: {
+          input: {
+            index: resolve(__dirname, 'src/main/index.ts'),
+            voiceWorker: resolve(__dirname, 'src/main/voice/worker.ts')
+          }
+        }
       }
     },
     preload: {

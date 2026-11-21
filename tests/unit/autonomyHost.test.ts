@@ -543,3 +543,24 @@ describe('AutonomyHost: входы и «не спать»', () => {
 })
 
 vi.setConfig({ testTimeout: 20_000 })
+
+describe('этап 6: серверные вкладки', () => {
+  test('серверная вкладка не получает локальное ядро', () => {
+    const awake: boolean[] = []
+    const host = new AutonomyHost({
+      controller: { list: () => [], revive: async () => false, notice: () => undefined, setAutonomyRecord: () => undefined },
+      manager: { get: () => undefined },
+      autoAnswerMs: () => 5000,
+      alert: () => undefined,
+      onAwakeChange: (needed: boolean) => awake.push(needed)
+    } as unknown as ConstructorParameters<typeof AutonomyHost>[0])
+    host.tabAdded('local', undefined)
+    host.tabAdded('remote', { working: true }, { hostId: 'h1' })
+    const entries = (host as unknown as { entries: Map<string, unknown> }).entries
+    expect(entries.has('local')).toBe(true)
+    // Its core lives in the relay: none here, and nothing here keeps the computer awake for it.
+    expect(entries.has('remote')).toBe(false)
+    host.tabClosed('remote')
+    expect(awake.every((a) => a === false)).toBe(true)
+  })
+})

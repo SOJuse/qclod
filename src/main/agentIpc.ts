@@ -62,6 +62,10 @@ export interface AgentIpcDeps {
   history: Pick<TabHistory, 'list'>
   /** The per-tab autonomy cores (stage 3). */
   autonomy?: Pick<AutonomyHost, 'hold' | 'answerNow' | 'remoteWanted'>
+  /** Stage 6: a server project's past conversations, from its relay. */
+  serverHistory?: (cwd: string, hostId: string) => Promise<SessionSummary[]>
+  /** Stage 6: whether this id is a server Qclod knows. */
+  knownServer?: (hostId: string) => boolean
 }
 
 function isString(value: unknown): value is string {
@@ -356,7 +360,17 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
    */
   const knownFolder = (cwd: unknown, hostId: unknown): string | null => {
     if (!isString(cwd) || cwd === '') return null
-    if (hostId !== undefined && hostId !== '') return null
+    if (hostId !== undefined && hostId !== '') {
+      // Stage 6: a folder on a server — a project of that server, or one of its open chats.
+      if (!isString(hostId) || hostId.length > 200 || !deps.knownServer?.(hostId)) return null
+      const remoteKey = projectKey(cwd, hostId)
+      const remote = layout.get().projects.find((p) => p.hostId === hostId && projectKey(p.cwd, hostId) === remoteKey)
+      if (remote) return remote.cwd
+      return (
+        controller.list().find((tab) => tab.server?.hostId === hostId && projectKey(tab.cwd, hostId) === remoteKey)?.cwd ??
+        null
+      )
+    }
     const key = projectKey(cwd)
     const project = layout.get().projects.find((p) => !p.hostId && projectKey(p.cwd) === key)
     if (project) return project.cwd
@@ -382,7 +396,7 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   // A project with open chats stays: nothing changes.
   ipcMain.handle(CHANNELS.projectForget, (_e, cwd: unknown, hostId: unknown): LayoutState => {
     if (!isString(cwd) || cwd === '' || (hostId !== undefined && !isString(hostId))) return layout.get()
-    const open = controller.list().map((tab) => projectKey(tab.cwd))
+    const open = controller.list().map((tab) => projectKey(tab.cwd, tab.server?.hostId))
     layout.forgetProject(cwd, open, hostId === '' ? undefined : hostId)
     return layout.get()
   })
@@ -393,7 +407,10 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
       // e2e sees the sidebar's «Загружаю…» and «Не удалось прочитать историю» through this.
       withFault(CHANNELS.projectHistory, async () => {
         const folder = knownFolder(cwd, hostId)
-        return folder === null ? [] : deps.history.list(folder)
+        if (folder === null) return []
+        // A server project's history is its relay's (сверка F21).
+        if (isString(hostId) && hostId !== '') return deps.serverHistory ? deps.serverHistory(folder, hostId) : []
+        return deps.history.list(folder)
       })
   )
 
@@ -403,7 +420,8 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
       if (!isString(sessionId) || sessionId === '') return null
       const folder = knownFolder(cwd, hostId)
       if (folder === null) return null
-      return controller.openSession(folder, sessionId, isString(title) ? title : undefined)
+      const host = isString(hostId) && hostId !== '' ? hostId : undefined
+      return controller.openSession(folder, sessionId, isString(title) ? title : undefined, host)
     }
   )
 
@@ -415,11 +433,18 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!controller.list().some((tab) => tab.id === id)) return
     run(id, cardId)
   }
+  // Stage 6 (сверка F5): a server chat's core is its relay's — the card's action goes there.
+  const serverAct = (id: TabId, cardId: string, action: 'hold' | 'answerNow'): boolean => {
+    const session = manager.get(id)
+    if (!session?.hostsAutonomy) return false
+    session.autonomyAct(cardId, action).catch(() => undefined)
+    return true
+  }
   ipcMain.handle(CHANNELS.autonomyHold, (_e, id: unknown, cardId: unknown): void =>
-    autonomyCall(id, cardId, (t, c) => deps.autonomy?.hold(t, c))
+    autonomyCall(id, cardId, (t, c) => (serverAct(t, c, 'hold') ? undefined : deps.autonomy?.hold(t, c)))
   )
   ipcMain.handle(CHANNELS.autonomyAnswerNow, (_e, id: unknown, cardId: unknown): void =>
-    autonomyCall(id, cardId, (t, c) => deps.autonomy?.answerNow(t, c))
+    autonomyCall(id, cardId, (t, c) => (serverAct(t, c, 'answerNow') ? undefined : deps.autonomy?.answerNow(t, c)))
   )
 
   ipcMain.handle(CHANNELS.permissionRules, () => withFault(CHANNELS.permissionRules, () => broker.rules()))

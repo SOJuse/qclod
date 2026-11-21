@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { PersistedTab, TabAutonomyRecord } from '../../shared/types'
+import type { PersistedTab, TabAutonomyRecord, TabServer } from '../../shared/types'
 import { sanitizeAutonomyRecord, sanitizeOverrides } from '../tabs/sanitize'
 
 export const TABS_FILE = 'tabs.json'
@@ -35,7 +35,8 @@ export function saveTabs(dir: string, tabs: PersistedTab[]): void {
     title: tab.title,
     overrides: sanitizeOverrides(tab.overrides),
     ...(typeof tab.lastSessionId === 'string' ? { lastSessionId: tab.lastSessionId } : {}),
-    ...autonomyField(tab.autonomy)
+    ...autonomyField(tab.autonomy),
+    ...serverField(tab.server)
   }))
   writeFileSync(join(dir, TABS_FILE), JSON.stringify(minimal, null, 2), 'utf8')
 }
@@ -63,10 +64,21 @@ export function loadTabs(dir: string): LoadedTab[] {
         ? { lastSessionId: record['lastSessionId'] }
         : {}),
       ...autonomyField(record['autonomy']),
-      missingCwd: !isDirectory(record['cwd'])
+      ...serverField(record['server']),
+      // A server's folder is there, not here (stage 6).
+      missingCwd: serverField(record['server']).server ? false : !isDirectory(record['cwd'])
     })
   }
   return tabs
+}
+
+/** Stage 6: which server a chat runs on, and its relay's session; nothing for a local chat. */
+function serverField(value: unknown): { server?: TabServer } {
+  if (typeof value !== 'object' || value === null) return {}
+  const { hostId, relaySessionId } = value as Record<string, unknown>
+  if (typeof hostId !== 'string' || hostId === '' || hostId.length > 200) return {}
+  const relay = typeof relaySessionId === 'string' && relaySessionId !== '' && relaySessionId.length <= 200 ? relaySessionId : undefined
+  return { server: { hostId, ...(relay ? { relaySessionId: relay } : {}) } }
 }
 
 /** The autonomy record as a spread: nothing at all when there is none to keep. */

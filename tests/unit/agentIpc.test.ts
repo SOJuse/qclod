@@ -38,6 +38,8 @@ let sendNowAnswer = false
 const subagentCalls: unknown[][] = []
 let subagentSendAnswer: unknown = { ok: true }
 let subagentStopAnswer: unknown = 'stopping'
+/** Stage 6: the tab is a server chat, its autonomy core in the relay. */
+let serverTab = false
 
 function call(channel: string, ...args: unknown[]): unknown {
   return handlers.get(channel)!({}, ...args)
@@ -53,7 +55,15 @@ beforeEach(() => {
   cancelAnswer = null
   remoteAnswer = 'ok'
   sendNowAnswer = false
+  serverTab = false
   const session = {
+    get hostsAutonomy() {
+      return serverTab
+    },
+    autonomyAct: async (cardId: string, action: string) => {
+      autonomyCalls.push(['relay', cardId, action])
+      return true
+    },
     get panel() {
       return { permissionMode: mode }
     },
@@ -132,6 +142,16 @@ describe('autonomy:* каналы', () => {
       call(channel, 'чужая', 'card-1')
       expect(autonomyCalls).toEqual([])
     }
+  })
+
+  test('autonomyHold серверной вкладки уходит в RelayDriver.autonomy, а не в AutonomyHost', () => {
+    serverTab = true
+    call(CHANNELS.autonomyHold, 't1', 'tu-q1')
+    call(CHANNELS.autonomyAnswerNow, 't1', 'tu-q1')
+    expect(autonomyCalls).toEqual([
+      ['relay', 'tu-q1', 'hold'],
+      ['relay', 'tu-q1', 'answerNow']
+    ])
   })
 
   test('agentRemote сообщает remoteWanted и зовёт setRemote', async () => {

@@ -11,7 +11,8 @@ import {
   shell
 } from 'electron'
 import { spawn } from 'node:child_process'
-import { homedir } from 'node:os'
+import { existsSync, readFileSync } from 'node:fs'
+import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { APP_ID } from '../shared/appId'
 import { AFTER_HANG, RELOAD_PARAM } from '../shared/reloadReason'
@@ -64,6 +65,18 @@ import { AutonomyHost } from './autonomy/autonomyHost'
 import { applyOpenAtLogin } from './system/loginItem'
 import { claimSingleInstance } from './system/singleInstance'
 import { runAskpassClient } from './ssh/askpassClient'
+import { AskpassServer } from './ssh/askpass'
+import { HostStore } from './ssh/hostStore'
+import { electronSecretBox } from './ssh/secretBox'
+import { readUserConfigHosts } from './ssh/sshConfig'
+import { findSsh, setSshContext } from './ssh/sshRun'
+import { HostManager } from './ssh/hostManager'
+import { RelayClient } from './ssh/relayClient'
+import { createRelayDriver } from './ssh/relayDriver'
+import { sshTransport } from './ssh/transport'
+import { SshPromptBroker } from './ssh/promptBroker'
+import type { RelayManifest } from './ssh/relayInstaller'
+import type { ServerEntry, SessionSummary } from '../shared/types'
 import { QuitReason, sessionEnding } from './system/quitReason'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
@@ -378,7 +391,11 @@ if (gotLock) void app.whenReady().then(async () => {
   // leaving the agent waiting forever.
   const broker = new PermissionBroker({
     loadRules: () => loadRules(userData),
-    saveRules: (rules) => saveRules(userData, rules),
+    saveRules: (rules) => {
+      saveRules(userData, rules)
+      // The servers' relays answer by the same rules (stage 6).
+      void hosts?.syncSettings()
+    },
     ask: (request: PermissionRequest) => {
       const win = mainWindow
       if (!win || win.isDestroyed()) {
@@ -394,9 +411,86 @@ if (gotLock) void app.whenReady().then(async () => {
     }
   })
 
+  // — stage 6: servers over SSH. ssh's questions go to the window (askpass), the
+  // servers and their relays are HostManager's; a server chat's driver is the relay's.
+  const promptBroker = new SshPromptBroker((prompt) => {
+    const win = mainWindow
+    if (!win || win.isDestroyed() || offScreen) return false
+    showWindow()
+    send(CHANNELS.serversPrompt, prompt)
+    return true
+  })
+  const hostStore = new HostStore(userData, electronSecretBox())
+  const askpass = new AskpassServer({
+    platform: process.platform,
+    execPath: process.execPath,
+    userData,
+    ask: (prompt) => promptBroker.ask(prompt),
+    storedPassword: (hostId) => hostStore.password(hostId),
+    onRemember: (hostId, password) => hosts?.rememberPassword(hostId, password),
+    canRemember: () => hostStore.canStorePasswords(),
+    askpassScript: join(__dirname, 'askpass.js'),
+    log: (line) => console.log('[ssh]', line)
+  })
+  const askpassUp = askpass.start().catch((err: unknown) => {
+    console.warn('[askpass]', err instanceof Error ? err.message : String(err))
+  })
+  setSshContext({
+    sshPath: findSsh(),
+    platform: process.platform,
+    userData,
+    ...(typeof process.getuid === 'function' ? { uid: process.getuid() } : {}),
+    askpass
+  })
+  try {
+    hostStore.mergeConfigHosts(readUserConfigHosts())
+  } catch (err) {
+    console.warn('[ssh config]', err instanceof Error ? err.message : String(err))
+  }
+  /** The hashes of the relay this version installs (build/relay-manifest.json, сверка F3); none in a dev run. */
+  const relayManifest = ((): RelayManifest | null => {
+    const file = app.isPackaged ? join(process.resourcesPath, 'relay-manifest.json') : join(app.getAppPath(), 'build', 'relay-manifest.json')
+    try {
+      if (!existsSync(file)) return null
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as RelayManifest
+      return parsed.assets?.x64 && parsed.assets?.arm64 ? parsed : null
+    } catch {
+      return null
+    }
+  })()
+  const targetOf = (e: ServerEntry) => ({
+    target: e.target,
+    ...(e.port !== undefined ? { port: e.port } : {}),
+    ...(e.identityFile ? { identityFile: e.identityFile } : {})
+  })
+  let hosts: HostManager | undefined
+  const relayDriverFactory = async (options: Parameters<typeof createRelayDriver>[0]) => {
+    const server = options.server!
+    await askpassUp
+    const client = (await hosts!.client(server.hostId)) as unknown as RelayClient
+    return createRelayDriver(options, {
+      client,
+      ...(server.relaySessionId ? { relaySessionId: server.relaySessionId } : {}),
+      onSessionId: () => undefined
+    })
+  }
+
   const manager = new AgentSessionManager({
     getAgentPath: () => settings.agentPath,
-    createDriver: createDriverFactory(),
+    createDriver: createDriverFactory({ relay: relayDriverFactory }),
+    onAlert: (id, text) => {
+      const tab = controller.list().find((t) => t.id === id)
+      if (!tab || offScreen) return
+      alertNotification({
+        settings,
+        title: tab.title,
+        body: text,
+        onActivate: () => {
+          showWindow()
+          send(CHANNELS.activateTab, id)
+        }
+      })
+    },
     askPermission: (request, signal) =>
       broker.request(
         request.tabId,
@@ -462,6 +556,7 @@ if (gotLock) void app.whenReady().then(async () => {
       list: (cwd) => history.list(cwd),
       transcript
     },
+    serverHistory: (cwd, hostId) => serverHistory(cwd, hostId),
     onChanged: (tabs) => {
       send(CHANNELS.tabsChanged, tabs)
       tray?.rebuild()
@@ -490,14 +585,47 @@ if (gotLock) void app.whenReady().then(async () => {
     }
   })
 
+  hosts = new HostManager({
+    store: hostStore,
+    askpass,
+    userData,
+    appVersion: app.getVersion(),
+    manifest: relayManifest,
+    onChanged: (views) => send(CHANNELS.serversChanged, views),
+    onProgress: (hostId, steps) => send(CHANNELS.serversConnectProgress, { hostId, steps }),
+    openTab: (cwd, server) => controller.create(cwd, { ...settings.defaults }, undefined, undefined, server),
+    rules: () => broker.rules(),
+    autoAnswerMs,
+    makeClient: (entry) =>
+      new RelayClient({
+        hostId: entry.id,
+        appVersion: app.getVersion(),
+        clientName: `Qclod ${process.platform} ${hostname()}`,
+        transport: sshTransport(targetOf(entry), entry.id, askpass)
+      }),
+    ...(__QCLOD_TEST_SEAMS__ && process.env['QCLOD_RELAY_BINARY_DIR']
+      ? { localRelayDir: process.env['QCLOD_RELAY_BINARY_DIR'] }
+      : {}),
+    log: (line) => console.log('[servers]', line)
+  })
+  const serverHosts = hosts
+  /** A server project's past conversations: the relay's list (сверка F21). */
+  async function serverHistory(cwd: string, hostId: string): Promise<SessionSummary[]> {
+    const client = await serverHosts.client(hostId)
+    return client.call<SessionSummary[]>('history.list', { cwd })
+  }
+
   registerBaseIpc({
     getWindow: () => mainWindow,
     getSettings: () => settings,
     setSettings: (patch) => {
       const previousHotkey = settings.globalHotkey
       const previousLogin = settings.openAtLogin
+      const previousAnswer = settings.autoAnswerMinutes
       settings = mergeDefaults(settings, patch)
       saveSettings(userData, settings)
+      // The relays count the same minutes (stage 6).
+      if (settings.autoAnswerMinutes !== previousAnswer) void serverHosts.syncSettings()
       if (settings.globalHotkey !== previousHotkey) hotkey.apply(settings.globalHotkey)
       if (settings.openAtLogin !== previousLogin) syncLoginItem()
       return settings
@@ -522,6 +650,8 @@ if (gotLock) void app.whenReady().then(async () => {
     resolver: new PathResolver(),
     getEditorCommand: () => settings.editorCommand,
     autonomy,
+    serverHistory,
+    knownServer: (hostId) => hostStore.get(hostId) !== null,
     userData,
     openTerminal: (cwd) => {
       // e2e records the call instead of opening a console (buildFlags.d.ts).
@@ -646,7 +776,15 @@ if (gotLock) void app.whenReady().then(async () => {
     // Before the sessions go down: their ending is no crash and no idle to write down.
     autonomy.quitting(quitReason.deliberate)
     broker.cancelAll()
-    void controller.disposeAll().finally(() => app.quit())
+    promptBroker.cancelAll()
+    // A server chat's agent goes on there: it is let go of, not stopped (Review Focus 3).
+    void controller
+      .disposeAll()
+      .finally(() => {
+        serverHosts.closeAll()
+        return askpass.stop()
+      })
+      .finally(() => app.quit())
   })
 
   app.on('will-quit', () => {

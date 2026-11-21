@@ -21,10 +21,14 @@ import type {
   SubagentSendResult,
   SubagentStopResult,
   TabId,
+  TabServer,
   TaskOutput,
   TodoItem,
   UserInput
 } from '../../shared/types'
+import type { PermResolved } from '../../shared/relayProtocol'
+import type { RelayDriver } from '../ssh/relayDriver'
+import { isRelayNotice, relayNoticeLine, seedInto } from '../ssh/relaySeed'
 import { REMOTE_OFF, explainRemoteError, isRemoteLive, remoteFromMessage } from '../../shared/remote'
 import type { AgentDriver, DriverFactory, DriverOptions, SendPriority } from './driver'
 import { agentRef, relayInstruction, subagentRoute, type RelayMeta } from './subagentRelay'
@@ -106,6 +110,31 @@ export interface AgentSessionOptions {
   seed?: SessionSeed
   /** «Автономность»: minutes before Qclod answers a card by itself, as the «авто-да» line says; 5 when absent. */
   autoAnswerMinutes?: () => number
+  /**
+   * Stage 6: the chat runs on this server, through its relay. No local
+   * claude is looked for; the relay's driver comes from createDriver.
+   */
+  server?: TabServer
+  /** Stage 6: a relay notice that asks for a system notification (alertNotification). */
+  onAlert?: (text: string) => void
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Stage 6: the driver of a server chat — its agent and autonomy core live in the relay. */
+function isRelayDriver(driver: AgentDriver): driver is RelayDriver {
+  return driver.hostsAutonomy === true && 'initial' in driver
+}
+
+/** The answers a relay's autonomy core gave a question, as the card shows them. */
+function answersOf(answer: PermissionAnswer | undefined): Record<string, string> {
+  const given = answer?.updatedInput?.['answers']
+  if (!isObject(given)) return {}
+  const out: Record<string, string> = {}
+  for (const [q, a] of Object.entries(given)) if (typeof a === 'string') out[q] = a
+  return out
 }
 
 /** The default of `autoAnswerMinutes`. */
@@ -250,6 +279,9 @@ export class AgentSession {
   /** What AutonomyCore is fed from this session (stage 3). */
   private readonly autonomyListeners: Array<(input: AutonomyInput) => void> = []
   private disposed = false
+  /** Stage 6: cards the relay closed — by its timer, another client — by card id, until the abort reaches them. */
+  private readonly remoteResolutions = new Map<string, PermResolved>()
+  private relayUnsubscribe: Array<() => void> = []
   /** Whether a driver was ever made; see `launched`. */
   private launchedAgent = false
   /**
@@ -343,6 +375,68 @@ export class AgentSession {
   /** The core's view of this tab — timers, a limit wait — whole, into the panel. */
   setAutonomyView(view: AutonomyView): void {
     this.emitPanel(this.collector.setAutonomy(view))
+  }
+
+  /** Stage 6: this chat's autonomy core is its server's. */
+  get hostsAutonomy(): boolean {
+    return this.driver?.hostsAutonomy === true || this.options.server !== undefined
+  }
+
+  /** Stage 6: «Подождать» / «Ответить сейчас» of a server chat's card go to its relay. False — not a server chat. */
+  async autonomyAct(cardId: string, action: 'hold' | 'answerNow'): Promise<boolean> {
+    const driver = this.driver
+    if (!driver || !isRelayDriver(driver)) return false
+    await driver.autonomy(cardId, action)
+    return true
+  }
+
+  /** Stage 6: the relay's id of this server chat's session. */
+  get relaySessionId(): string | null {
+    const driver = this.driver
+    return driver && isRelayDriver(driver) ? driver.relaySessionId : null
+  }
+
+  /**
+   * A server chat's driver is up: its journal becomes this ribbon (the CLI
+   * there echoes nothing, the journal has every message), and the relay's
+   * view of its cards and timers is followed from now on.
+   */
+  private adoptRelay(driver: RelayDriver): void {
+    const { snapshot, seed } = driver.initial
+    const { changes, panel } = seedInto(this.builder, this.collector, seed)
+    this.emit(changes)
+    if (Object.keys(panel).length > 0) this.emitPanel(panel)
+    if (snapshot.sdkSessionId && snapshot.sdkSessionId !== this.session) {
+      this.session = snapshot.sdkSessionId
+      this.unintroduced = []
+      for (const listener of this.sessionListeners) listener(snapshot.sdkSessionId)
+    }
+    if (snapshot.mode !== this.mode) {
+      this.setMode(snapshot.mode)
+      this.emitPanel(this.collector.setPermissionMode(snapshot.mode))
+    }
+    this.relayUnsubscribe.push(
+      driver.onResolvedRemotely((r) => {
+        const cardId = (r as PermResolved & { toolUseId?: string }).toolUseId ?? r.requestId
+        this.remoteResolutions.set(cardId, r)
+      }),
+      driver.onAutonomyView((view) => this.setAutonomyView(view))
+    )
+  }
+
+  /** How the relay closed this card, if it did; asked once. */
+  private takeRemote(cardId: string): PermResolved | undefined {
+    const r = this.remoteResolutions.get(cardId)
+    this.remoteResolutions.delete(cardId)
+    return r
+  }
+
+  /** A relay's notice: the text is built here, in this machine's time zone (сверка F5). */
+  private onRelayNotice(notice: unknown): void {
+    if (!isRelayNotice(notice)) return
+    const line = relayNoticeLine(notice)
+    this.emit(this.builder.notice(line.text, line.tone))
+    if (line.alert) this.options.onAlert?.(line.text)
   }
 
   /** Every change of `mode` goes through here, so the core hears of it. */
@@ -756,8 +850,9 @@ export class AgentSession {
     // init; the mode is marked as ours so init does not overrule it.
     if (this.mode === 'autoAllow') this.emitPanel(this.collector.setPermissionMode(this.mode))
 
-    let executablePath: string
-    try {
+    let executablePath = ''
+    // A server chat's claude is the server's: the relay finds it (stage 6).
+    if (!this.options.server) try {
       const resolve =
         this.options.resolveAgent ??
         ((p: string) => {
@@ -790,9 +885,11 @@ export class AgentSession {
       cwd: this.options.cwd,
       executablePath,
       model: this.options.overrides.model,
-      permissionMode: sdkPermissionMode(this.mode),
+      // The relay knows Qclod's own modes («авто-да» is its core's): it gets the mode as it is.
+      permissionMode: this.options.server ? this.mode : sdkPermissionMode(this.mode),
       extraArgs: flags.args,
       resume: resumeId,
+      ...(this.options.server ? { server: this.options.server } : {}),
       canUseTool: (toolName, input, opts) => this.onToolPermission(toolName, input, opts)
     }
 
@@ -812,6 +909,7 @@ export class AgentSession {
     }
     this.driver = driver
     this.launchedAgent = true
+    if (isRelayDriver(driver)) this.adoptRelay(driver)
 
     this.pump = this.readMessages(this.driver)
     // The stored effort is asked for first, so the control request is on the
@@ -1246,9 +1344,11 @@ export class AgentSession {
     }
     const was = this.mode
     const driver = this.driver
-    if (driver && sdkPermissionMode(mode) !== sdkPermissionMode(was)) {
+    // A server chat's relay knows «авто-да» itself: it is told every change, as it is.
+    const hosted = driver?.hostsAutonomy === true
+    if (driver && (hosted ? mode !== was : sdkPermissionMode(mode) !== sdkPermissionMode(was))) {
       try {
-        await driver.setPermissionMode(sdkPermissionMode(mode))
+        await driver.setPermissionMode(hosted ? mode : sdkPermissionMode(mode))
       } catch (err) {
         // The CLI refused: the session stays where it was, and says so —
         // a mode that silently did not switch is how «без проверок» kept
@@ -1398,7 +1498,8 @@ export class AgentSession {
     return this.collector.snapshot
   }
 
-  async dispose(): Promise<void> {
+  /** `detachOnly` (stage 6): a server chat lets go of its agent and leaves it running there. */
+  async dispose(opts?: { detachOnly?: boolean }): Promise<void> {
     this.disposed = true
     this.turnRunning = false
     // A late answer about the strip — a cancel the CLI confirms after the
@@ -1411,6 +1512,7 @@ export class AgentSession {
     // messages have nowhere to go. A swap takes it first (`takeQueue`).
     this.stopMcpPolling()
     this.stopPanelRefresh()
+    for (const off of this.relayUnsubscribe.splice(0)) off()
     for (const timer of this.stopWatch.values()) clearTimeout(timer)
     this.stopWatch.clear()
     // A question nobody can answer any more must not hold the agent open.
@@ -1429,8 +1531,9 @@ export class AgentSession {
     const closing = (async () => {
       // The phone is told «выключено» rather than left to time out — briefly:
       // a bridge that does not answer must not hold the close.
-      if (driver && bridgeLive) await this.remoteOffBeforeClose(driver)
-      if (driver) await driver.dispose().catch(() => undefined)
+      // A server chat left running keeps its Remote Control too.
+      if (driver && bridgeLive && !opts?.detachOnly) await this.remoteOffBeforeClose(driver)
+      if (driver) await (opts ? driver.dispose(opts) : driver.dispose()).catch(() => undefined)
       await pump?.catch(() => undefined)
     })()
     await Promise.race([closing, limit])
@@ -1493,6 +1596,7 @@ export class AgentSession {
   }
 
   private onMessage(message: unknown): void {
+    if (isObject(message) && message['type'] === 'qclod_relay_notice') return this.onRelayNotice(message['notice'])
     this.feedAutonomy({ type: 'sdk', message })
     const changes = this.builder.apply(message)
     this.emit(changes)
@@ -1697,8 +1801,15 @@ export class AgentSession {
     if (this.openPermissions.get(requestId) === wait) {
       this.openPermissions.delete(requestId)
       this.leaveWait()
-      const state =
-        sdkAborted && isRemoteLive(this.remoteInfo)
+      // A server chat: the relay says who closed it — its own timer, or another client.
+      const remote = sdkAborted ? this.takeRemote(requestId) : undefined
+      const state = remote
+        ? remote.by === 'autonomy'
+          ? remote.answer?.behavior === 'deny'
+            ? 'denied'
+            : 'allowed'
+          : 'elsewhere'
+        : sdkAborted && isRemoteLive(this.remoteInfo)
           ? 'elsewhere'
           : answer.behavior === 'allow'
             ? 'allowed'
@@ -1740,7 +1851,15 @@ export class AgentSession {
         if (this.pendingPlans.get(requestId)?.resolve !== settle) return
         this.pendingPlans.delete(requestId)
         this.leaveWait()
-        const elsewhere = isRemoteLive(this.remoteInfo)
+        const remote = this.takeRemote(requestId)
+        if (remote?.by === 'autonomy') {
+          // The server's timer approved it (stage 6), as the local one would.
+          const approved = remote.answer?.behavior !== 'deny'
+          this.emit(this.builder.resolvePlan(requestId, approved ? 'approved' : 'rejected', { auto: true }))
+          resolve({ behavior: 'deny' })
+          return
+        }
+        const elsewhere = remote !== undefined || isRemoteLive(this.remoteInfo)
         this.feedAutonomy({ type: 'waitClosed', cardId: requestId, by: elsewhere ? 'elsewhere' : 'stop' })
         this.emit(this.builder.resolvePlan(requestId, elsewhere ? 'elsewhere' : 'rejected'))
         resolve({ behavior: 'deny' })
@@ -1780,7 +1899,14 @@ export class AgentSession {
         if (this.pendingQuestions.get(toolUseId)?.resolve !== settle) return
         this.pendingQuestions.delete(toolUseId)
         this.leaveWait()
-        const elsewhere = isRemoteLive(this.remoteInfo)
+        const remote = this.takeRemote(toolUseId)
+        if (remote?.by === 'autonomy') {
+          // The server's timer answered (stage 6): the card closes «авто», once.
+          this.emit(this.builder.answerQuestion(toolUseId, answersOf(remote.answer), { auto: true }))
+          resolve({ behavior: 'deny' })
+          return
+        }
+        const elsewhere = remote !== undefined || isRemoteLive(this.remoteInfo)
         this.feedAutonomy({ type: 'waitClosed', cardId: toolUseId, by: elsewhere ? 'elsewhere' : 'stop' })
         // Answered on the phone: the card closes rather than waiting for a click.
         if (elsewhere) this.emit(this.builder.closeQuestionElsewhere(toolUseId))

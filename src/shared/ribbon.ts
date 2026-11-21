@@ -574,6 +574,20 @@ export class RibbonBuilder {
     return this.closeOpen()
   }
 
+  /**
+   * Stage 6: a server's journal has been replayed, and its process is still
+   * there. Live from here on — and what still runs stays running: unlike
+   * finishReplay, nothing is closed, the relay's agent will report back.
+   */
+  continueLive(): void {
+    this.replaying = false
+  }
+
+  /** Stage 6: the records that come next are a server's journal, not live events. */
+  beginReplay(): void {
+    this.replaying = true
+  }
+
   apply(message: unknown): RibbonChange[] {
     if (!isObject(message)) return []
     this.previousEventAt = this.lastEventAt
@@ -1338,6 +1352,14 @@ export class RibbonBuilder {
 
   private appendUser(text: string, attachments: Attachment[] = [], at?: number): RibbonChange[] {
     const remote = this.remoteLive && !this.replaying
+    // Stage 6: a server's relay sent it on its own («продолжай» of its autonomy core).
+    const auto = this.current?.['qclod_auto'] === true
+    // Stage 6: the bubble of a message another client sent, built from the relay's journal: a CLI
+    // that echoes it will echo it under the same uuid, and that echo is no second bubble.
+    if (this.current?.['qclod_echo_follows'] === true) {
+      const uuid = this.current['uuid']
+      this.expectEcho(text, typeof uuid === 'string' ? uuid : undefined)
+    }
     return [
       this.append({
         kind: 'user',
@@ -1345,6 +1367,7 @@ export class RibbonBuilder {
         text,
         attachments,
         ...(remote ? { remote: true as const } : {}),
+        ...(auto ? { auto: true as const } : {}),
         ...(at !== undefined ? { at } : {})
       })
     ]

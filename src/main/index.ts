@@ -6,6 +6,7 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
+  net,
   powerMonitor,
   powerSaveBlocker,
   shell
@@ -25,6 +26,7 @@ import {
   watchRenderer
 } from './window'
 import { appMenuTemplate } from './menu'
+import { MacUpdateNotifier, parseFakeAvailable } from './update/macNotifier'
 import { loginShellPath, mergePath } from '../core/shellEnv'
 import { ErrorLog, type ErrorEntry } from './system/errorLog'
 import { installMainErrorHandlers } from './system/mainErrors'
@@ -572,7 +574,28 @@ if (gotLock) void app.whenReady().then(async () => {
         log: (message) => console.warn('[update]', message)
       })
     : null
-  ipcMain.handle(CHANNELS.updateGet, () => updates?.state ?? { kind: 'idle' })
+  // A Mac build only tells that a newer release exists (no signing, so no auto-update).
+  // The e2e build can stand GitHub in with QCLOD_FAKE_UPDATE `{ available: '9.9.9' }`.
+  const fakeAvailable = __QCLOD_TEST_SEAMS__ ? parseFakeAvailable(process.env['QCLOD_FAKE_UPDATE']) : null
+  const macNotifier =
+    process.platform === 'darwin' && (app.isPackaged || fakeAvailable !== null)
+      ? new MacUpdateNotifier({
+          fetchJson: fakeAvailable
+            ? async () => ({
+                tag_name: `v${fakeAvailable}`,
+                html_url: `https://github.com/SOJuse/qclod/releases/tag/v${fakeAvailable}`
+              })
+            : async (url) => {
+                const res = await net.fetch(url, { headers: { Accept: 'application/vnd.github+json' } })
+                if (!res.ok) throw new Error(`HTTP ${res.status}`)
+                return res.json()
+              },
+          currentVersion: app.getVersion(),
+          onState: (state) => send(CHANNELS.updateChanged, state),
+          log: (message) => console.warn('[update]', message)
+        })
+      : null
+  ipcMain.handle(CHANNELS.updateGet, () => macNotifier?.state ?? updates?.state ?? { kind: 'idle' })
   ipcMain.handle(CHANNELS.updateRestart, () => {
     const ready = updates?.state.kind === 'ready'
     if (ready) quitReason.markInterrupted()
@@ -640,6 +663,7 @@ if (gotLock) void app.whenReady().then(async () => {
     void controller.restore()
     tray?.rebuild()
     updates?.start(updateSource?.firstCheckMs)
+    macNotifier?.start(fakeAvailable ? 0 : undefined)
   })
 
   app.on('before-quit', (event) => {

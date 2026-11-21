@@ -223,3 +223,14 @@ describe('createUpdateSource', () => {
     expect((globalThis as { __qclodUpdateRestarts?: number }).__qclodUpdateRestarts).toBe(1)
   })
 })
+
+describe('createUpdateSource на Mac', () => {
+  const real = process.platform
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: real })
+  })
+  test('на darwin автообновления нет', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    expect(createUpdateSource(true)).toBeNull()
+  })
+})

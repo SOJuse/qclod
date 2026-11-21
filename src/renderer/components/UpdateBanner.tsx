@@ -48,7 +48,7 @@ export function UpdateBanner(): JSX.Element | null {
     }
   }, [])
 
-  if (update.kind !== 'ready' || hidden || laterFor(update.version)) return null
+  if (update.kind === 'idle' || hidden || laterFor(update.version)) return null
 
   const later = (): void => {
     try {
@@ -57,6 +57,34 @@ export function UpdateBanner(): JSX.Element | null {
       // Without storage the strip still hides until the window reloads.
     }
     setHidden(true)
+  }
+
+  // A Mac build does not update itself: a link to the release page instead of a restart.
+  if (update.kind === 'available') {
+    const { url, version } = update
+    return (
+      <div className="update-banner" role="status" data-testid="update-banner">
+        <span className="update-banner-icon" aria-hidden="true">
+          <Download size={14} />
+        </span>
+        <div className="update-banner-text">
+          <p className="update-banner-line">Вышла версия {version}.</p>
+        </div>
+        <div className="update-banner-actions">
+          <button
+            type="button"
+            className="update-banner-button is-primary"
+            data-testid="update-download"
+            onClick={() => void window.qclod.openExternal(url)}
+          >
+            Скачать
+          </button>
+          <button type="button" className="update-banner-button" data-testid="update-later" onClick={later}>
+            Позже
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (

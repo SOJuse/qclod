@@ -560,7 +560,14 @@ export type AuthStatus = 'in' | 'out' | 'unknown'
 export type LoginProgress = 'waiting' | 'in' | 'timeout'
 
 /** The app's own update: nothing to say yet, or a new version downloaded and waiting for a restart. */
-export type UpdateState = { kind: 'idle' } | { kind: 'ready'; version: string }
+/**
+ * `ready`: downloaded, installs on restart (Windows). `available`: a newer release exists and the
+ * person downloads it by hand (Mac, no auto-update); `url` is its release page.
+ */
+export type UpdateState =
+  | { kind: 'idle' }
+  | { kind: 'ready'; version: string }
+  | { kind: 'available'; version: string; url: string }
 
 /** What the machine has, for the setup screen. */
 export interface EnvironmentReport {

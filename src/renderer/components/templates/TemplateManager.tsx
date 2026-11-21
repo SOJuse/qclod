@@ -9,6 +9,8 @@ import './TemplateManager.css'
 interface Props {
   /** «Сохранить черновик как шаблон»: the editor opens on a new template with this text. */
   initialBody?: string
+  /** A line on top, such as «Сохранено: 3 шаблона.» after «Собрать». */
+  notice?: string
   onClose(): void
   onHarvest(): void
   /** Closing gives focus back to the opener; this runs when the opener is gone. */
@@ -36,6 +38,7 @@ export function TemplateManager(props: Props): JSX.Element {
 export function TemplateManagerView({
   templates,
   initialBody,
+  notice,
   onClose,
   onHarvest,
   onFocusLost
@@ -140,6 +143,11 @@ export function TemplateManagerView({
         </div>
 
         <div className="sheet-body template-manager-body">
+          {notice && (
+            <p className="template-manager-note is-done" data-testid="tpl-notice" role="status">
+              {notice}
+            </p>
+          )}
           {full && (
             <p className="template-manager-note" data-testid="tpl-limit" role="status">
               Шаблонов уже 500 — удалите ненужные.

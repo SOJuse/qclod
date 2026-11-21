@@ -33,6 +33,10 @@
   line-height: var(--leading);
 }
 
+.template-manager-note.is-done {
+  color: var(--text);
+}
+
 .template-manager-note.is-failed {
   color: var(--status-critical);
 }

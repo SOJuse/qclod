@@ -15,6 +15,7 @@ import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { CommandPalette } from '../components/CommandPalette'
 import { TemplateManager } from '../components/templates/TemplateManager'
+import { HarvestSheet, templatesCount } from '../components/templates/HarvestSheet'
 import { useTemplates } from '../state/useTemplates'
 import { historyToLoad } from '../palette/history'
 import { withMention } from '../palette/files'
@@ -57,9 +58,9 @@ function ThrowInPane(): null {
 export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   /** этап 7: the templates sheet; initialBody — «Сохранить черновик как шаблон». */
-  const [templatesSheet, setTemplatesSheet] = useState<{ initialBody?: string } | null>(null)
+  const [templatesSheet, setTemplatesSheet] = useState<{ initialBody?: string; notice?: string } | null>(null)
   /** этап 7: «Собрать мои шаблоны». */
-  const [, setHarvestOpen] = useState(false)
+  const [harvestOpen, setHarvestOpen] = useState(false)
   const [version, setVersion] = useState('')
   const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
   const [focusToken, setFocusToken] = useState(0)
@@ -733,10 +734,21 @@ export function App(): JSX.Element {
       {templatesSheet && (
         <TemplateManager
           {...(templatesSheet.initialBody === undefined ? {} : { initialBody: templatesSheet.initialBody })}
+          {...(templatesSheet.notice === undefined ? {} : { notice: templatesSheet.notice })}
           onClose={() => setTemplatesSheet(null)}
           onHarvest={() => {
             setTemplatesSheet(null)
             setHarvestOpen(true)
+          }}
+          onFocusLost={focusComposer}
+        />
+      )}
+      {harvestOpen && (
+        <HarvestSheet
+          onClose={() => setHarvestOpen(false)}
+          onSaved={(count) => {
+            setHarvestOpen(false)
+            setTemplatesSheet({ notice: `Сохранено: ${templatesCount(count)}.` })
           }}
           onFocusLost={focusComposer}
         />

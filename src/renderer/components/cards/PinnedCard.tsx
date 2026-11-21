@@ -31,13 +31,17 @@ function mayTakeFocus(card: HTMLElement, arrivedAt: number): boolean {
   if (!document.hasFocus() || !focusedLongEnough(windowFocusedSince(), arrivedAt)) return false
   const pane = card.closest('[data-testid="chat-pane"]')
   if (!pane?.classList.contains('is-focused')) return false
-  if (
-    document.querySelector(
+  // A dialog inside another pane (its agents layer, say) is that pane's
+  // business; one in this pane or over the whole window holds the card back.
+  const blocking = [
+    ...document.querySelectorAll(
       '[role="dialog"], [aria-modal="true"], [data-testid="settings"], [data-testid="action-palette"]'
     )
-  ) {
-    return false
-  }
+  ].some((d) => {
+    const owner = d.closest('[data-testid="chat-pane"]')
+    return owner === null || owner === pane
+  })
+  if (blocking) return false
   const el = document.activeElement
   if (!(el instanceof HTMLElement) || el === document.body) return true
   if (el instanceof HTMLTextAreaElement && el.hasAttribute('data-composer-input')) {

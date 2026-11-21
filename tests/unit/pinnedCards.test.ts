@@ -241,6 +241,50 @@ describe('две открытые карточки, человек печата�
     expect(answers.permission).toHaveBeenCalledTimes(1)
   })
 
+  /** Two panes: this one focused with the strip, the other with or without its layer open. */
+  function renderTwoPanes(items: RibbonItem[], layerIn: 'other' | 'own' | null): void {
+    const layer = createElement('div', { role: 'dialog', 'data-testid': 'pane-layer', 'aria-label': 'Агенты' })
+    act(() => {
+      root.render(
+        createElement(
+          'div',
+          null,
+          createElement(
+            'section',
+            { 'data-testid': 'chat-pane', className: 'chat-pane is-focused' },
+            createElement('div', { 'data-testid': 'ribbon', tabIndex: -1 }),
+            layerIn === 'own' ? layer : null,
+            createElement(PinnedCards, { tabId: 't1', items, answers: fakeAnswers() }),
+            createElement('textarea', { 'data-composer-input': '', defaultValue: '' })
+          ),
+          createElement(
+            'section',
+            { 'data-testid': 'chat-pane', className: 'chat-pane' },
+            createElement('div', { 'data-testid': 'ribbon', tabIndex: -1 }),
+            layerIn === 'other' ? layer : null
+          )
+        )
+      )
+    })
+  }
+
+  test('слой, открытый в другой панели, не мешает карточке этой панели взять фокус; слой своей — мешает', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    windowInFront()
+    const ownRibbon = (): HTMLElement => host.querySelector<HTMLElement>('.is-focused [data-testid="ribbon"]')!
+    renderTwoPanes([], 'other')
+    act(() => ownRibbon().focus())
+    renderTwoPanes([perm('lo1', 'первый')], 'other')
+    afterEffects()
+    expect(document.activeElement).toBe(host.querySelector('[data-testid="permission-card"]'))
+
+    renderTwoPanes([], 'own')
+    act(() => ownRibbon().focus())
+    renderTwoPanes([perm('lo2', 'второй')], 'own')
+    afterEffects()
+    expect(document.activeElement).not.toBe(host.querySelector('[data-testid="permission-card"]'))
+  })
+
   test('с пустым полем следующая карточка берёт фокус (без этого тест выше ничего не доказывает)', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     windowInFront()

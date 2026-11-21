@@ -1,24 +1,31 @@
 import { describe, expect, test } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { makeNavigationGuard } from '@main/security'
 
-const appFile = 'C:\\Users\\user\\qclod\\out\\renderer\\index.html'
-const fallbackFile = 'C:\\Users\\user\\qclod\\out\\renderer\\fallback.html'
+// The guard turns these into real paths of the platform it runs on, so the
+// fixtures are paths of that platform and their URLs are derived from them.
+const renderer =
+  process.platform === 'win32'
+    ? 'C:\\Users\\user\\qclod\\out\\renderer\\'
+    : '/Users/user/qclod/out/renderer/'
+const appFile = renderer + 'index.html'
+const fallbackFile = renderer + 'fallback.html'
 
 describe('makeNavigationGuard (packaged, file://)', () => {
   const allowed = makeNavigationGuard(undefined, [appFile, fallbackFile])
 
   test('the app page itself is allowed', () => {
-    expect(allowed('file:///C:/Users/user/qclod/out/renderer/index.html')).toBe(true)
+    expect(allowed(pathToFileURL(appFile).href)).toBe(true)
   })
 
   test('a hash or query on the app page is allowed', () => {
-    expect(allowed('file:///C:/Users/user/qclod/out/renderer/index.html#/settings')).toBe(true)
+    expect(allowed(`${pathToFileURL(appFile).href}#/settings`)).toBe(true)
   })
 
   test('the fallback page is allowed', () => {
-    expect(allowed('file:///C:/Users/user/qclod/out/renderer/fallback.html')).toBe(true)
+    expect(allowed(pathToFileURL(fallbackFile).href)).toBe(true)
   })
 
   test('another file next to them is rejected', () => {

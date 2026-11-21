@@ -77,7 +77,11 @@ describe('isRunnable', () => {
   })
 })
 
-describe('openPath / revealPath', () => {
+// fileActions is Windows-only by construction: drive-letter long names, explorer.exe, cmd.exe.
+// The real-disk and real-cmd.exe groups below run only there; the pure string tests run anywhere.
+const onWindows = process.platform === 'win32'
+
+describe.skipIf(!onWindows)('openPath / revealPath', () => {
   test('openPath для .exe показывает в проводнике, не запускает', async () => {
     const p = file('setup.exe')
     expect(await openPath(p)).toBe('revealed')
@@ -144,6 +148,7 @@ describe('openPath / revealPath', () => {
   // An 8.3 name (PAYLOA~1.TXT) hides the real extension (.txtzz): the check
   // must look at the long name Windows will actually open.
   const shortName = (() => {
+    if (!onWindows) return null
     const long = file('payload-longname.txtzz')
     const out = spawnSync('cmd.exe', ['/d', '/s', '/c', `"for %I in ("${long}") do @echo %~sI"`], {
       windowsVerbatimArguments: true,
@@ -243,7 +248,7 @@ describe('buildEditorCommand', () => {
  * The editor here is node printing its argv, started through the very cmd.exe
  * line openInEditor would run. What it prints is what an editor would get.
  */
-describe('строка редактора через настоящий cmd.exe', () => {
+describe.skipIf(!onWindows)('строка редактора через настоящий cmd.exe', () => {
   const script = join(DIR, 'argv.js')
   writeFileSync(script, 'console.log(JSON.stringify(process.argv.slice(2)))\n')
   const editor = `"${process.execPath}" "${script}"`

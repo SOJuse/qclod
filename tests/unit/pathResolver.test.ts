@@ -194,7 +194,9 @@ describe('PathResolver', () => {
     expect(resolver.knows('C:\\proj\\a.ts', 't2')).toBe(true)
   })
 
-  test('настоящий диск по умолчанию', async () => {
+  // PathResolver only knows Windows drive paths (win32.resolve, `C:\`); a real
+  // temp dir on macOS/Linux is not one, so every answer is null there.
+  test.skipIf(process.platform !== 'win32')('настоящий диск по умолчанию', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'qclod-paths-'))
     mkdirSync(join(dir, 'src'))
     writeFileSync(join(dir, 'src', 'a.ts'), '')

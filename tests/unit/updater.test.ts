@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { pinPlatform } from './platform'
 import {
   UpdateFlow,
   createUpdateSource,
@@ -182,6 +183,8 @@ describe('restartWarning', () => {
 })
 
 describe('createUpdateSource', () => {
+  // On a Mac there is no updater at all (see the Mac group below), so the Windows source is judged as on Windows.
+  pinPlatform('win32', { beforeEach, afterEach })
   const saved = { ...process.env }
   afterEach(() => {
     for (const key of ['QCLOD_FAKE_UPDATE', 'PORTABLE_EXECUTABLE_DIR']) {

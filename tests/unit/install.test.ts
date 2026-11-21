@@ -69,8 +69,12 @@ async function startTree(): Promise<{
   return { handle, childPid, done, doneCalls: () => calls }
 }
 
+// Cancelling kills the whole tree with taskkill /T. Off Windows the installer is never run by
+// the app (the Mac screen shows a command to copy), and a plain kill leaves the grandchild alone.
+const winTree = test.skipIf(process.platform !== 'win32')
+
 describe('runInstaller', () => {
-  test('отмена убивает и внука, а не только cmd.exe', async () => {
+  winTree('отмена убивает и внука, а не только cmd.exe', async () => {
     const { handle, childPid, done } = await startTree()
     expect(alive(childPid)).toBe(true)
 
@@ -129,7 +133,7 @@ describe('InstallSlot', () => {
     expect(slot.start(fakeInstall().begin)).toBeInstanceOf(Promise)
   })
 
-  test('с настоящим деревом: отмена и тут же вторая установка — вторая ждёт, пока внук не умрёт', async () => {
+  winTree('с настоящим деревом: отмена и тут же вторая установка — вторая ждёт, пока внук не умрёт', async () => {
     const slot = new InstallSlot()
     let childPid = 0
     let resolvePid!: (pid: number) => void

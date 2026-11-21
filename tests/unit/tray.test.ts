@@ -1,4 +1,5 @@
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { pinPlatform } from './platform'
 
 vi.mock('electron', () => ({ app: {}, Menu: {}, nativeImage: {}, nativeTheme: {}, Tray: class {} }))
 
@@ -68,6 +69,8 @@ describe('иконка в трее', () => {
 })
 
 describe('refresh', () => {
+  // The Windows tray: icon by bitmap, no menu-bar title (the Mac one is at the end of the file).
+  pinPlatform('win32', { beforeEach, afterEach })
   test('два одинаковых вызова — один setImage', async () => {
     vi.resetModules()
     const setImage = vi.fn()
@@ -105,6 +108,7 @@ describe('refresh', () => {
 })
 
 describe('«не спать» в меню', () => {
+  pinPlatform('win32', { beforeEach, afterEach })
   async function build(active: boolean, tabs: TabState[]) {
     vi.resetModules()
     const built: Array<Array<{ label?: string; enabled?: boolean }>> = []

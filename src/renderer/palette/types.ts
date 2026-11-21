@@ -1,4 +1,4 @@
-import type { CommandInfo, SessionSummary, TabId } from '../../shared/types'
+import type { CommandInfo, ServerView, SessionSummary, TabId } from '../../shared/types'
 import type { AppActionId } from '../app/shortcuts'
 import type { SidebarProject } from '../chat/sidebarModel'
 import type { PaneLayerState } from '../state/useAppStore'
@@ -48,6 +48,8 @@ export interface PaletteContext {
   filesPending?: boolean
   /** The active chat's slash commands. */
   commands: CommandInfo[]
+  /** Stage 6: the servers Qclod knows. */
+  servers?: ServerView[]
   run: PaletteRunner
 }
 

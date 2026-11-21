@@ -152,7 +152,7 @@ export function App(): JSX.Element {
       applyPanes([state.activeTabId])
       return
     }
-    const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject))
+    const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject, state.servers))
     const at = order.indexOf(state.activeTabId)
     const other = [...order.slice(at + 1), ...order.slice(0, Math.max(0, at))].find(
       (id) => id !== state.activeTabId && !state.paneTabIds.includes(id)
@@ -214,14 +214,16 @@ export function App(): JSX.Element {
   const historyByProject = useAppStore((s) => s.historyByProject)
   const loadProjectHistory = useAppStore((s) => s.loadProjectHistory)
   const sidebar = useMemo(
-    () => buildSidebar(tabs, layout.projects, historyByProject),
-    [tabs, layout.projects, historyByProject]
+    () => buildSidebar(tabs, layout.projects, historyByProject, servers),
+    [tabs, layout.projects, historyByProject, servers]
   )
   const sidebarOpen = !layout.sidebarCollapsed
 
   // A project's past conversations are asked for the first time it is shown open.
   useEffect(() => {
-    for (const project of sidebar) if (!project.collapsed && project.past === null) loadProjectHistory(project.cwd)
+    for (const project of sidebar) {
+      if (!project.collapsed && project.past === null) loadProjectHistory(project.cwd, false, project.remote?.hostId)
+    }
   }, [sidebar, loadProjectHistory])
 
   const setSettings = useAppStore((s) => s.setSettings)
@@ -303,9 +305,9 @@ export function App(): JSX.Element {
   }, [])
 
   const toggleProject = useCallback(
-    (cwd: string, collapsed: boolean): void => {
-      void window.qclod.setLayout({ projectCollapsed: { cwd, collapsed } })
-      if (!collapsed) loadProjectHistory(cwd)
+    (cwd: string, collapsed: boolean, hostId?: string): void => {
+      void window.qclod.setLayout({ projectCollapsed: { cwd, collapsed, ...(hostId ? { hostId } : {}) } })
+      if (!collapsed) loadProjectHistory(cwd, false, hostId)
     },
     [loadProjectHistory]
   )
@@ -323,7 +325,7 @@ export function App(): JSX.Element {
       return setPalette(null)
     }
     const state = useAppStore.getState()
-    const sidebarNow = buildSidebar(state.tabs, state.layout.projects, state.historyByProject)
+    const sidebarNow = buildSidebar(state.tabs, state.layout.projects, state.historyByProject, state.servers)
     for (const cwd of historyToLoad(sidebarNow)) state.loadProjectHistory(cwd)
     setPalette({ ...(scope === undefined ? {} : { scope }), n: (was?.n ?? 0) + 1 })
   }, [])
@@ -381,8 +383,8 @@ export function App(): JSX.Element {
 
   /** A past conversation from the sidebar: its own chat, or the open one that already holds it. */
   const openPast = useCallback(
-    (cwd: string, session: SessionSummary): void => {
-      window.qclod.openProjectSession(cwd, session.id, session.title).then(
+    (cwd: string, session: SessionSummary, hostId?: string): void => {
+      window.qclod.openProjectSession(cwd, session.id, session.title, hostId).then(
         (tab) => {
           if (tab) activate(tab.id)
         },
@@ -443,7 +445,7 @@ export function App(): JSX.Element {
     (id: AppActionId, at?: number | string): void => {
       const state = useAppStore.getState()
       // The sidebar's order, top to bottom: what the person sees.
-      const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject))
+      const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject, state.servers))
       const here = order.indexOf(state.activeTabId)
       const step = (delta: number): void => {
         if (order.length < 2 || here < 0) return
@@ -490,6 +492,16 @@ export function App(): JSX.Element {
           return void window.qclod.zoom('reset')
         case 'reload':
           return void window.qclod.reloadWindow()
+        case 'openServerFolder': {
+          // A new chat on that server: its folder picker, connecting first when it is not on line.
+          if (typeof at !== 'string') return setServersSheet({ kind: 'picker' })
+          const server = state.servers.find((s) => s.id === at)
+          if (!server) return
+          return setServersSheet(server.state === 'online' ? { kind: 'folder', hostId: at } : { kind: 'connect', hostId: at })
+        }
+        case 'openServerTerminal':
+          // The server's terminal is task 26 (H1); until it is merged the row opens nothing.
+          return
       }
     },
     [activate, newChat, closeActiveTab, togglePalette, togglePanel, toggleSidebar, toggleSplit, restartSession, cycleMode]
@@ -531,9 +543,10 @@ export function App(): JSX.Element {
         files: fileIndexByTab[activeTabId] ?? [],
         filesPending: fileIndexByTab[activeTabId] === undefined,
         commands: withLocalCommands(commandsByTab[activeTabId] ?? []),
+        servers,
         run: paletteRun
       },
-    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, paletteRun]
+    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, servers, paletteRun]
   )
 
   // Window-level shortcuts, by physical key. The handler is registered once and
@@ -686,8 +699,8 @@ export function App(): JSX.Element {
             onNewServerChat={() => setServersSheet({ kind: 'picker' })}
             onOpenPast={openPast}
             onToggleProject={toggleProject}
-            onForget={(cwd) => void window.qclod.forgetProject(cwd)}
-            onRetryPast={(cwd) => loadProjectHistory(cwd)}
+            onForget={(cwd, hostId) => void window.qclod.forgetProject(cwd, hostId)}
+            onRetryPast={(cwd, hostId) => loadProjectHistory(cwd, false, hostId)}
           />
         )}
         <SplitView

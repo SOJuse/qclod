@@ -1,5 +1,5 @@
 import { projectKey, projectName } from '../../shared/projects'
-import type { ProjectEntry, SessionSummary, TabId, TabState } from '../../shared/types'
+import type { ProjectEntry, ServerView, SessionSummary, TabId, TabState } from '../../shared/types'
 
 /**
  * What the window has learned about one project's past conversations:
@@ -20,7 +20,7 @@ export interface SidebarProject {
   chats: TabState[]
   /** null: nobody asked yet. */
   past: SessionSummary[] | 'loading' | { error: string } | null
-  /** Stage 6. */
+  /** Stage 6: a folder on a server — its label and colour (a ServerColour, drawn by servers.css). */
   remote?: { hostId: string; label: string; color: string }
 }
 
@@ -31,7 +31,9 @@ export interface SidebarProject {
 export function buildSidebar(
   tabs: TabState[],
   projects: ProjectEntry[],
-  history: Record<string, ProjectHistory>
+  history: Record<string, ProjectHistory>,
+  /** Stage 6: the servers, for a server project's label and colour. */
+  servers: ServerView[] = []
 ): SidebarProject[] {
   const byKey = new Map<string, SidebarProject>()
   const add = (cwd: string, collapsed: boolean, hostId?: string): SidebarProject => {
@@ -39,11 +41,16 @@ export function buildSidebar(
     const known = byKey.get(key)
     if (known) return known
     const made: SidebarProject = { key, cwd, name: projectName(cwd), collapsed, chats: [], past: null }
+    if (hostId) {
+      const server = servers.find((s) => s.id === hostId)
+      made.remote = { hostId, label: server?.label ?? hostId, color: server?.colour ?? '' }
+    }
     byKey.set(key, made)
     return made
   }
   for (const entry of projects) add(entry.cwd, entry.collapsed, entry.hostId)
-  for (const tab of tabs) add(tab.cwd, false).chats.push(tab)
+  // One folder on two servers and here is three projects (сверка F6).
+  for (const tab of tabs) add(tab.cwd, false, tab.server?.hostId).chats.push(tab)
 
   for (const project of byKey.values()) {
     const found = history[project.key]

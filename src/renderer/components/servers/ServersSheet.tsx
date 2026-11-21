@@ -106,6 +106,15 @@ export function ServersSheet({ servers, steps, initial = { kind: 'picker' }, onC
     )
   }
 
+  // Opened straight on a server that is not on line (Ctrl+K «Сервер …»): connect at once.
+  const started = useRef(false)
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    if (initial.kind === 'connect') connect(initial.hostId, initial.path)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const server = mode.kind === 'connect' || mode.kind === 'folder' ? servers.find((s) => s.id === mode.hostId) : undefined
   const title =
     mode.kind === 'add' ? 'Добавить сервер' : mode.kind === 'connect' ? `Подключение: ${server?.label ?? ''}` : 'Новый чат на сервере'

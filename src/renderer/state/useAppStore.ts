@@ -259,7 +259,7 @@ interface AppState {
   setLayout: (layout: LayoutState) => void
   setPaneWidths: (widths: number[]) => void
   /** Asks main for a folder's past conversations; once, unless forced. */
-  loadProjectHistory: (cwd: string, force?: boolean) => void
+  loadProjectHistory: (cwd: string, force?: boolean, hostId?: string) => void
   setTabs: (tabs: TabState[]) => void
   setRibbon: (id: TabId, snapshot: RibbonSnapshot) => void
   applyRibbon: (id: TabId, changes: RibbonChange[], rev: number) => void
@@ -406,8 +406,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     ),
   setPaneWidths: (paneWidths) => set({ paneWidths }),
 
-  loadProjectHistory: (cwd, force = false) => {
-    const key = projectKey(cwd)
+  loadProjectHistory: (cwd, force = false, hostId) => {
+    const key = projectKey(cwd, hostId)
     const running = historyReads.get(key)
     if (running) {
       // The answer on its way may predate what changed (a chat closed meanwhile): one more read follows it.
@@ -426,9 +426,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const done = (entry: ProjectHistory): void => {
       historyReads.delete(key)
       set((state) => ({ historyByProject: { ...state.historyByProject, [key]: entry } }))
-      if (read.again) get().loadProjectHistory(cwd, true)
+      if (read.again) get().loadProjectHistory(cwd, true, hostId)
     }
-    window.qclod.projectHistory(cwd).then(
+    window.qclod.projectHistory(cwd, hostId).then(
       (items) => done({ items }),
       (err: unknown) => done({ items: [], error: err instanceof Error ? err.message : String(err) })
     )

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
+import { OFFLINE_STRIP_TEXT } from '../../shared/serverTexts'
 import type { SessionSummary, UserInput } from '../../shared/types'
 import { EMPTY_PANEL, useAppStore, type PaneLayerState } from '../state/useAppStore'
 import { useHeldDrafts } from '../state/heldDrafts'
@@ -117,6 +118,10 @@ export function ChatPane({
   // A tab with history is not empty just because its ribbon has not arrived yet.
   const ribbonLoaded = useAppStore((s) => s.ribbonRevByTab[tabId] !== undefined)
   const tab = tabs.find((t) => t.id === tabId)
+  // Stage 6: the server this chat runs on, as main last said.
+  const servers = useAppStore((s) => s.servers)
+  const server = tab?.server ? servers.find((s) => s.id === tab.server!.hostId) : undefined
+  const serverAway = server !== undefined && server.state !== 'online' && server.state !== 'connecting'
   const status = tab?.status ?? 'stopped'
   const remote = tab?.remote ?? REMOTE_OFF
   const draft = draftByTab[tabId] ?? ''
@@ -312,6 +317,8 @@ export function ChatPane({
           panelShown={shown}
           onTogglePanel={togglePanel}
           {...(split && onUnsplit ? { onUnsplit } : {})}
+          server={server}
+          {...(server ? { onReconnect: () => void window.qclod.connectServer(server.id) } : {})}
           // этап 4: onOpenAgents={() => setPaneLayer(tabId, { kind: 'agents' })} and agentsCount, the running subagents.
         />
 
@@ -353,6 +360,12 @@ export function ChatPane({
             <TodoStrip items={todoByTab[tabId] ?? []} status={status} />
 
             <NowLine tabId={tabId} status={status} since={busySinceByTab[tabId]} items={ribbonByTab[tabId] ?? []} />
+
+            {serverAway && (
+              <div className="server-offline-strip" data-testid="server-offline" role="status">
+                {OFFLINE_STRIP_TEXT}
+              </div>
+            )}
 
             {notice && (
               <div className="close-guard" data-testid={notice.testId} role="status">

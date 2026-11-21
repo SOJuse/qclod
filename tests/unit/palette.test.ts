@@ -203,6 +203,8 @@ describe('Ctrl+K: поиск по всему', () => {
       ['projects', 'Проекты'],
       ['history', 'Прошлые разговоры'],
       ['files', 'Файлы'],
+      // этап 6: one line in PALETTE_PROVIDERS (сверка F16).
+      ['servers', 'Серверы'],
       ['commands', 'Команды']
     ])
     expect(sectionTitle('history')).toBe('Прошлые разговоры')

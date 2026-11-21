@@ -1,5 +1,6 @@
 import { Bot, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
-import type { SessionStatus } from '../../shared/types'
+import type { ServerView, SessionStatus } from '../../shared/types'
+import { ServerBadge, ServerLink } from './servers/ServerBadge'
 import { hint } from '../app/shortcuts'
 import { STATUS_LABEL } from '../labels'
 import { PANEL_TOGGLE_ATTR } from './SidePanel'
@@ -20,6 +21,10 @@ interface Props {
   onOpenAgents?: () => void
   /** How many subagents are working now (этап 4). */
   agentsCount?: number
+  /** Stage 6: the server this chat runs on — its badge and the channel's state. */
+  server?: ServerView | undefined
+  /** «Повторить» / «Подключиться» of a server that is not on line. */
+  onReconnect?: () => void
 }
 
 /** The folder's own name: the path is in the hint. */
@@ -42,7 +47,9 @@ export function ChatHeader({
   onTogglePanel,
   onUnsplit,
   onOpenAgents,
-  agentsCount = 0
+  agentsCount = 0,
+  server,
+  onReconnect
 }: Props): JSX.Element {
   const panelLabel = panelShown ? 'Скрыть панель' : 'Показать панель'
   // A new chat is named after its folder: the name once is enough.
@@ -59,6 +66,15 @@ export function ChatHeader({
         <span className="chat-header-cwd" title={cwd}>
           {folder}
         </span>
+      )}
+      {server && (
+        <>
+          <ServerBadge server={server} />
+          <ServerLink
+            state={server.state}
+            {...(onReconnect ? { onRetry: onReconnect, onConnect: onReconnect } : {})}
+          />
+        </>
       )}
       <span className="chat-header-status" data-testid="chat-header-status" data-status={status}>
         {STATUS_LABEL[status]}

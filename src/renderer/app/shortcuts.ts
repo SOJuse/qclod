@@ -21,6 +21,9 @@ export type AppActionId =
   | 'zoomOut'
   | 'zoomReset'
   | 'reload'
+  // Stage 6 (сверка F16): actions on a server, its id as runAction's arg; no row of their own here.
+  | 'openServerFolder'
+  | 'openServerTerminal'
 
 export interface AppActionInfo {
   id: AppActionId

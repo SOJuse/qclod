@@ -576,7 +576,8 @@ export interface LayoutState {
 }
 
 export type LayoutPatch = Partial<Pick<LayoutState, 'panes' | 'paneWidths' | 'sidebarCollapsed'>> & {
-  projectCollapsed?: { cwd: string; collapsed: boolean }
+  /** `hostId` (stage 6): a project on that server. */
+  projectCollapsed?: { cwd: string; collapsed: boolean; hostId?: string }
 }
 
 /** Frozen through and through: copy it, never change it in place. */

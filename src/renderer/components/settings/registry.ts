@@ -4,6 +4,7 @@ import { AgentSection } from './AgentSection'
 import { AutonomySection } from './AutonomySection'
 import { NotificationsSection } from './NotificationsSection'
 import { PermissionsSection } from './PermissionsSection'
+import { ServersSection } from './ServersSection'
 import { WindowSection } from './WindowSection'
 
 /**
@@ -17,6 +18,7 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'agent', title: 'Запуск агента', order: 30, Component: AgentSection },
   { id: 'autonomy', title: 'Автономность', order: 35, Component: AutonomySection },
   { id: 'permissions', title: 'Разрешения', order: 40, Component: PermissionsSection },
+  { id: 'servers', title: 'Серверы', order: 60, Component: ServersSection },
   { id: 'about', title: 'О программе', order: 90, Component: AboutSection }
 ]
 

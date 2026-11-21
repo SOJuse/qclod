@@ -18,11 +18,11 @@ export interface SidebarProps {
   onNewChat: (cwd?: string, hostId?: string) => void
   /** Stage 6: «Новый чат» on a server — the servers' sheet. Without it there is no switch. */
   onNewServerChat?: () => void
-  onOpenPast: (cwd: string, session: SessionSummary) => void
-  onToggleProject: (cwd: string, collapsed: boolean) => void
-  onForget: (cwd: string) => void
+  onOpenPast: (cwd: string, session: SessionSummary, hostId?: string) => void
+  onToggleProject: (cwd: string, collapsed: boolean, hostId?: string) => void
+  onForget: (cwd: string, hostId?: string) => void
   /** «Повторить» under a history that could not be read. */
-  onRetryPast: (cwd: string) => void
+  onRetryPast: (cwd: string, hostId?: string) => void
   /** «Показать ещё» was pressed; the sidebar itself shows the next rows. */
   onMore?: (cwd: string) => void
 }
@@ -100,10 +100,10 @@ export function Sidebar({
             onActivate={onActivate}
             onClose={onClose}
             onNewChat={onNewChat}
-            onOpenPast={onOpenPast}
-            onToggle={(collapsed) => onToggleProject(project.cwd, collapsed)}
-            onForget={() => onForget(project.cwd)}
-            onRetryPast={() => onRetryPast(project.cwd)}
+            onOpenPast={(cwd, s) => onOpenPast(cwd, s, project.remote?.hostId)}
+            onToggle={(collapsed) => onToggleProject(project.cwd, collapsed, project.remote?.hostId)}
+            onForget={() => onForget(project.cwd, project.remote?.hostId)}
+            onRetryPast={() => onRetryPast(project.cwd, project.remote?.hostId)}
             onMore={() => {
               setShown((all) => ({ ...all, [project.key]: (all[project.key] ?? PAST_FIRST) + PAST_STEP }))
               onMore?.(project.cwd)

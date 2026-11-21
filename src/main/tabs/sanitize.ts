@@ -402,9 +402,11 @@ export function sanitizeLayoutPatch(value: unknown): LayoutPatch {
 
   const folding = value['projectCollapsed']
   if (isPlainObject(folding)) {
-    const { cwd, collapsed } = folding
+    const { cwd, collapsed, hostId } = folding
     if (isString(cwd) && cwd !== '' && cwd.length <= MAX_LAYOUT_CWD && typeof collapsed === 'boolean') {
-      patch.projectCollapsed = { cwd, collapsed }
+      // Stage 6: a server's project, by that server's id.
+      const host = isString(hostId) && hostId !== '' && hostId.length <= 200 ? hostId : undefined
+      patch.projectCollapsed = { cwd, collapsed, ...(host ? { hostId: host } : {}) }
     }
   }
   return patch

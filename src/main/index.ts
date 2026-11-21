@@ -595,7 +595,16 @@ if (gotLock) void app.whenReady().then(async () => {
     },
     isOurWindow: (id) => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.webContents.id === id,
     micAccess,
-    openMicSettings: () => openMicSettings(process.platform, (url) => shell.openExternal(url))
+    openMicSettings: () =>
+      openMicSettings(process.platform, async (url) => {
+        // e2e records the page instead of opening Windows' settings (buildFlags.d.ts).
+        if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_FAKE_SHELL']) {
+          const g = globalThis as { __qclodShellLog?: unknown[] }
+          ;(g.__qclodShellLog ??= []).push({ action: 'mic-settings', path: url })
+          return
+        }
+        await shell.openExternal(url)
+      })
   })
   modelStore.onChange(() => {
     void voiceSnapshot(modelStore, micAccess).then((s) => send(CHANNELS.voiceModelsChanged, s))

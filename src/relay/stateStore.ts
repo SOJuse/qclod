@@ -12,6 +12,8 @@ export interface RelaySessionRecord {
   /** Qclod's own mode, autoAllow included; the SDK is told sdkPermissionMode(mode). */
   mode: PermissionMode
   model?: string
+  /** CLI flags the chat was opened with, already filtered by Qclod. */
+  extraArgs?: Record<string, string | null>
   remoteControl: boolean
   /** It was working when the daemon went down: it gets «продолжай» on the next start. */
   wasRunning: boolean
@@ -55,11 +57,21 @@ function readSession(raw: unknown): RelaySessionRecord | null {
     sdkSessionId: str(r['sdkSessionId']) ? r['sdkSessionId'] : null,
     mode: r['mode'] as PermissionMode,
     ...(str(r['model']) ? { model: r['model'] } : {}),
+    ...(readFlags(r['extraArgs']) ?? {}),
     remoteControl: r['remoteControl'] === true,
     wasRunning: r['wasRunning'] === true,
     ...(typeof r['closedAt'] === 'number' ? { closedAt: r['closedAt'] } : {}),
     createdAt: r['createdAt']
   }
+}
+
+function readFlags(raw: unknown): { extraArgs: Record<string, string | null> } | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const out: Record<string, string | null> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === null || typeof value === 'string') out[key] = value
+  }
+  return { extraArgs: out }
 }
 
 export function readRules(raw: unknown): PermissionRule[] {

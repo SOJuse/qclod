@@ -70,3 +70,35 @@ export async function until(check: () => boolean, ms = 5000, what = 'услов�
     await new Promise((r) => setTimeout(r, 5))
   }
 }
+
+/** Timers that fire only when the test moves the time on, in order. */
+export function manualClock(start = 1_000_000) {
+  let now = start
+  let next = 1
+  const timers = new Map<number, { at: number; fn: () => void }>()
+  return {
+    now: () => now,
+    setTimeout: (fn: () => void, ms: number): unknown => {
+      const id = next++
+      timers.set(id, { at: now + ms, fn })
+      return id
+    },
+    clearTimeout: (h: unknown): void => {
+      timers.delete(h as number)
+    },
+    get pending(): number {
+      return timers.size
+    },
+    advance(ms: number): void {
+      const end = now + ms
+      for (;;) {
+        const due = [...timers.entries()].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0]
+        if (!due) break
+        timers.delete(due[0])
+        now = Math.max(now, due[1].at)
+        due[1].fn()
+      }
+      now = end
+    }
+  }
+}

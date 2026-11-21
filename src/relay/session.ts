@@ -388,6 +388,7 @@ export class RelaySession {
       ...(r.model ? { model: r.model } : {}),
       permissionMode: sdkPermissionMode(r.mode),
       ...(r.sdkSessionId ? { resume: r.sdkSessionId } : {}),
+      ...(r.extraArgs && Object.keys(r.extraArgs).length > 0 ? { extraArgs: r.extraArgs } : {}),
       env: this.opts.env,
       canUseTool: (toolName, input, ctx) => this.gate.request(toolName, input, ctx)
     }

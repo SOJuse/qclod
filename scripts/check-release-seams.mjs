@@ -14,7 +14,7 @@ function* jsFiles(dir) {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name)
     if (statSync(path).isDirectory()) yield* jsFiles(path)
-    else if (name.endsWith('.js')) yield path
+    else if (name.endsWith('.js') || name.endsWith('.cjs')) yield path
   }
 }
 
@@ -25,11 +25,11 @@ for (const part of RELEASE_DIRS) {
   try {
     found = [...jsFiles(dir)]
   } catch {
-    console.error(`нет сборки в ${relative(root, dir)} — сначала npm run build`)
+    console.error(`нет сборки в ${relative(root, dir)} — сначала npm run build и npm run build:relay`)
     process.exit(1)
   }
   if (found.length === 0) {
-    console.error(`в ${relative(root, dir)} нет ни одного .js — сначала npm run build`)
+    console.error(`в ${relative(root, dir)} нет ни одного .js — сначала npm run build и npm run build:relay`)
     process.exit(1)
   }
   files.push(...found)

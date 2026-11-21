@@ -16,6 +16,13 @@ files:
 asarUnpack:
   - node_modules/@anthropic-ai/claude-agent-sdk/**/*
 
+# Stage 6: the hashes of the relay binaries this version installs on a server
+# (scripts/relay-manifest.mjs; decision 3). The binaries themselves are
+# downloaded from the release, not shipped.
+extraResources:
+  - from: build/relay-manifest.json
+    to: relay-manifest.json
+
 win:
   target:
     - target: nsis

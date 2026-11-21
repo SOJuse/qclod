@@ -10,6 +10,8 @@ import './ui/controls.css'
 import { App } from './app/App'
 import { ErrorBoundary } from './ui/ErrorBoundary'
 
+document.documentElement.dataset.platform = window.qclod.platform
+
 const container = document.getElementById('root')
 if (!container) throw new Error('root container missing')
 

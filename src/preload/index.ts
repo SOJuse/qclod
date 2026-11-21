@@ -39,6 +39,9 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
  * bridge, so the renderer can only reach what is listed here.
  */
 const api = {
+  /** `process.platform` for the window: key labels, the Mac title bar. */
+  platform: process.platform as 'win32' | 'darwin' | 'linux',
+
   /**
    * e2e only (QCLOD_E2E_THROW_IN_PANE): false in a release build. Chromium on
    * Windows lowercases switch names, so the renderer sees

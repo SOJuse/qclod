@@ -22,7 +22,7 @@ import { withLocalCommands } from '../../shared/commandFilter'
 import { UpdateBanner } from '../components/UpdateBanner'
 import { compactNow } from '../input/slash'
 import { reasonOf } from '../ui/StateView'
-import { resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
+import { actionKeys, resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
 import './App.css'
 
 /** A failed first read of the tabs is asked once more after this long. */
@@ -521,7 +521,7 @@ export function App(): JSX.Element {
   paletteRef.current = palette
   useEffect(() => {
     const onKey = (ev: KeyboardEvent): void => {
-      const hit = resolveAppShortcut(ev)
+      const hit = resolveAppShortcut(ev, window.qclod.platform)
       if (!hit) return
       // Always ours, so no default (Close Window, Reload…) sees the key.
       ev.preventDefault()
@@ -686,7 +686,7 @@ export function App(): JSX.Element {
                 onRetryRibbon={() => retryRibbon(id)}
                 notice={
                   id === activeTabId && closeGuardTab === activeTabId
-                    ? { testId: 'close-guard', text: 'Агент работает — Ctrl+W ещё раз закроет чат' }
+                    ? { testId: 'close-guard', text: `Агент работает — ${actionKeys('closeTab')} ещё раз закроет чат` }
                     : null
                 }
               />

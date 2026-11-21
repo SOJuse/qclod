@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Folder, MessageSquare } from 'lucide-react'
 import type { SessionSummary, TabId } from '../../shared/types'
-import { APP_ACTIONS } from '../app/shortcuts'
+import { actionKeys } from '../app/shortcuts'
 import { PathLink } from '../paths/PathLink'
 import { shortWhen } from '../../shared/format'
 import './EmptyTab.css'
@@ -9,7 +9,7 @@ import './EmptyTab.css'
 const RECENT_LIMIT = 5
 
 function keysOf(id: 'actions' | 'cycleMode'): string {
-  return APP_ACTIONS.find((a) => a.id === id)?.keys ?? ''
+  return actionKeys(id) ?? ''
 }
 
 interface Props {

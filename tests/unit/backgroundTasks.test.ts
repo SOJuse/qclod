@@ -62,8 +62,8 @@ describe('BackgroundTracker', () => {
     ])
   })
 
-  test('подагенты и ambient в список не попадают', () => {
-    expect(t.apply(taskStarted({ task_id: 'a1', task_type: 'local_agent', is_backgrounded: true }))).toBeNull()
+  test('ambient и skip_transcript в список не попадают, даже агенты', () => {
+    expect(t.apply(taskStarted({ task_id: 'a1', task_type: 'local_agent', is_backgrounded: true, ambient: true }))).toBeNull()
     expect(t.apply(taskStarted({ task_id: 'm1', task_type: 'monitor', ambient: true }))).toBeNull()
     expect(t.apply(taskStarted({ task_id: 's1', task_type: 'local_bash', skip_transcript: true }))).toBeNull()
     expect(t.tasks).toEqual([])
@@ -199,5 +199,101 @@ describe('BackgroundTracker', () => {
     expect(t.apply(null)).toBeNull()
     expect(t.apply({ type: 'result' })).toBeNull()
     expect(t.apply(notification('нет-такой', 'completed'))).toBeNull()
+  })
+})
+
+function progress(taskId: string, fields: Record<string, unknown>): unknown {
+  return { type: 'system', subtype: 'task_progress', task_id: taskId, description: 'Running x', ...fields }
+}
+
+describe('BackgroundTracker: фоновые агенты (этап 4)', () => {
+  const agent = (fields: Record<string, unknown> = {}): unknown =>
+    taskStarted({
+      task_id: 'ag1',
+      tool_use_id: 'toolu_agent',
+      task_type: 'local_agent',
+      subagent_type: 'Explore',
+      description: 'Обзор',
+      is_backgrounded: true,
+      ...fields
+    })
+
+  test('фоновый агент в списке с kind agent и subagentType', () => {
+    expect(t.apply(agent())).toEqual([
+      expect.objectContaining({
+        taskId: 'ag1',
+        toolUseId: 'toolu_agent',
+        kind: 'agent',
+        subagentType: 'Explore',
+        type: 'local_agent',
+        description: 'Обзор',
+        status: 'running'
+      })
+    ])
+  })
+
+  test('оболочка — kind command и без subagentType', () => {
+    const [task] = t.apply(taskStarted({ task_id: 'b1', task_type: 'local_bash', is_backgrounded: true }))!
+    expect(task).toMatchObject({ kind: 'command' })
+    expect(task).not.toHaveProperty('subagentType')
+  })
+
+  test('агент на переднем плане не в списке, пока не ушёл в фон', () => {
+    expect(t.apply(agent({ is_backgrounded: false }))).toBeNull()
+    expect(t.tasks).toEqual([])
+    const list = t.apply(updated('ag1', { is_backgrounded: true }))
+    expect(list).toEqual([expect.objectContaining({ taskId: 'ag1', kind: 'agent', subagentType: 'Explore' })])
+  })
+
+  test('агент на переднем плане закончил там же — в список не попадал', () => {
+    t.apply(agent({ is_backgrounded: false }))
+    expect(t.apply(updated('ag1', { status: 'completed' }))).toBeNull()
+    expect(t.apply(notification('ag1', 'completed'))).toBeNull()
+    expect(t.tasks).toEqual([])
+  })
+
+  test('summary из task_progress; тот же текст список не меняет', () => {
+    t.apply(agent())
+    expect(t.apply(progress('ag1', { last_tool_name: 'Read' }))).toBeNull()
+    expect(t.apply(progress('ag1', { summary: 'Читает модуль вставки' }))).toEqual([
+      expect.objectContaining({ taskId: 'ag1', summary: 'Читает модуль вставки' })
+    ])
+    expect(t.apply(progress('ag1', { summary: 'Читает модуль вставки' }))).toBeNull()
+    expect(t.apply(progress('ag1', { summary: 'Правит тест' }))![0]!.summary).toBe('Правит тест')
+    expect(t.apply(progress('nobody', { summary: 'x' }))).toBeNull()
+  })
+
+  test('summary, пришедший на переднем плане, остаётся при уходе в фон', () => {
+    t.apply(agent({ is_backgrounded: false }))
+    expect(t.apply(progress('ag1', { summary: 'Ищет' }))).toBeNull()
+    expect(t.apply(updated('ag1', { is_backgrounded: true }))![0]).toMatchObject({ summary: 'Ищет' })
+  })
+
+  test('возобновлённый агент — та же строка снова работает', () => {
+    t.apply(agent())
+    clock = 2000
+    t.apply(notification('ag1', 'completed'))
+    expect(t.tasks[0]).toMatchObject({ status: 'completed', endedAt: 2000 })
+    clock = 3000
+    // SendMessage: the same task_id, a new run, the SendMessage call's tool_use_id.
+    const list = t.apply(agent({ tool_use_id: 'toolu_send', run_id: 'r2' }))!
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ taskId: 'ag1', status: 'running', kind: 'agent' })
+    expect(list[0]).not.toHaveProperty('endedAt')
+  })
+
+  test('агент и оболочка живут в одном списке', () => {
+    t.apply(taskStarted({ task_id: 'b1', task_type: 'local_bash', is_backgrounded: true }))
+    t.apply(agent())
+    expect(t.tasks.map((x) => [x.taskId, x.kind])).toEqual([
+      ['ag1', 'agent'],
+      ['b1', 'command']
+    ])
+    // Gone from background_tasks_changed: the agent ended, the shell stays.
+    t.apply(changed([{ task_id: 'b1' }]))
+    expect(t.tasks.map((x) => [x.taskId, x.status])).toEqual([
+      ['ag1', 'completed'],
+      ['b1', 'running']
+    ])
   })
 })

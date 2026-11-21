@@ -72,6 +72,8 @@ git push --tags
 
 Сборку и публикацию релиза делает workflow `.github/workflows/release.yml`.
 
+Посредник для серверов (`qclod-relay`, Linux x64 и arm64) собирается там же и кладётся в релиз раньше установщика. Сборка до тега (push в `release/**` или `ci/**`) ничего не публикует: `.gz` посредника лежат в артефактах прогона. Чтобы такая сборка поставила посредник на сервер, положите оба `.gz` в папку `relay` данных Qclod (`%APPDATA%\Qclod\relay`, на Mac — `~/Library/Application Support/Qclod/relay`): файл берётся оттуда, если его SHA-256 совпадает с манифестом сборки.
+
 Для тестировщиков. Сборка до выпуска: файлы `qclod-relay-<версия>-linux-x64.gz` и `-arm64.gz` из артефактов прогона CI положите в `%APPDATA%\Qclod\relay\` (Mac: `~/Library/Application Support/Qclod/relay/`).
 
 Автор: SOJuse.

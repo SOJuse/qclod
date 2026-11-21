@@ -23,6 +23,12 @@ describe('проверка релизной сборки на тестовые �
       'QCLOD_E2E_INVISIBLE',
       'QCLOD_E2E_THROW_IN_PANE',
       'QCLOD_HANG_MS',
+      // stage 6: the relay's test build and the e2e ssh seams
+      'QCLOD_RELAY_HOME',
+      'QCLOD_E2E_RELAY',
+      'QCLOD_E2E_SSH',
+      'QCLOD_RELAY_BINARY_DIR',
+      'QCLOD_E2E_TERMINAL',
       '__qclodShellLog',
       '__qclodLoginOpens',
       '__qclodRealAgentStarts',
@@ -39,7 +45,11 @@ describe('проверка релизной сборки на тестовые �
     expect(seamsIn('const userData = app.getPath("userData"); QCLOD_USER_DATA')).toEqual([])
   })
 
-  test('проверяются все три части сборки: main, preload и renderer', () => {
-    expect(RELEASE_DIRS).toEqual(['out/main', 'out/preload', 'out/renderer'])
+  test('проверяются все части сборки: main, preload, renderer и посредник', () => {
+    expect(RELEASE_DIRS).toEqual(['out/main', 'out/preload', 'out/renderer', 'out/relay'])
+  })
+
+  test('PATH-метка посредника и QCLOD_SSH_LOOP_HOST лазейками не считаются', () => {
+    expect(seamsIn('const PATH_MARK = "__QCLOD_PATH__"; process.env.QCLOD_SSH_LOOP_HOST')).toEqual([])
   })
 })

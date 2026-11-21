@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { runAttach } from '../../src/relay/attach'
 import { RelayDaemon, RESTART_EXIT_CODE, type RelayDaemonOptions } from '../../src/relay/daemon'
+import { relayMethods } from '../../src/relay/methods'
 import { relayPaths, type RelayPaths } from '../../src/relay/paths'
 import { loadState } from '../../src/relay/stateStore'
 import {
@@ -347,5 +348,58 @@ describe('attach', () => {
     const t = setup()
     const code = await runAttach(t.paths, { stdin: new PassThrough(), stdout: new PassThrough() }, async () => undefined, 300)
     expect(code).toBe(1)
+  })
+})
+
+describe('файлы, история и аккаунт через сокет', () => {
+  test('fs.list, fs.upload, fs.read, history.list, auth.status, host.info', async () => {
+    const root = tempDir('qclod-daemon-')
+    const t = setup(
+      {},
+      {
+        methods: relayMethods({
+          run: async (_cmd, args) =>
+            args[0] === '--version'
+              ? { code: 0, stdout: '2.1.317 (Claude Code)' }
+              : { code: 0, stdout: '{"loggedIn":true,"email":"a@b.c"}' },
+          version: '1.0.0-test',
+          claudePath: () => '/opt/claude',
+          home: root,
+          listSessions: async ({ dir }) => [{ sessionId: 'old-1', summary: `в ${dir}`, lastModified: 5 }]
+        }),
+        home: root
+      },
+      root
+    )
+    await t.daemon.start()
+    const c = await Client.open(t.paths)
+    const list = await c.ok<{ path: string; entries: Array<{ name: string }> }>('fs.list', { path: '~' })
+    expect(list.path).toBe(root)
+    expect(list.entries.map((e) => e.name)).toContain('.qclod')
+    const up = await c.ok<{ path: string }>('fs.upload', {
+      s: 'sess1',
+      name: 'a.txt',
+      offset: 0,
+      dataBase64: Buffer.from('привет').toString('base64'),
+      final: true
+    })
+    expect(up.path).toBe(join(t.paths.uploads, 'sess1', '1-a.txt'))
+    const read = await c.ok<{ dataBase64: string; eof: boolean }>('fs.read', { path: up.path, offset: 0, length: 1024 })
+    expect(Buffer.from(read.dataBase64, 'base64').toString('utf8')).toBe('привет')
+    expect(read.eof).toBe(true)
+    const tooBig = await c.request('fs.read', { path: up.path, offset: 0, length: 300 * 1024 })
+    expect(!tooBig.ok && tooBig.e.code).toBe('bad_request')
+    expect(await c.ok('history.list', { cwd: '~/app' })).toEqual([
+      { id: 'old-1', title: `в ${join(root, 'app')}`, firstMessage: '', updatedAt: 5 }
+    ])
+    expect(await c.ok('auth.status')).toEqual({
+      loggedIn: true,
+      email: 'a@b.c',
+      claudePath: '/opt/claude',
+      claudeVersion: '2.1.317'
+    })
+    const info = await c.ok<Record<string, unknown>>('host.info')
+    expect(info).toMatchObject({ home: root, relay: '1.0.0-test', linger: 'unknown' })
+    expect(['x64', 'arm64']).toContain(info['arch'])
   })
 })

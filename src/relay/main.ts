@@ -12,6 +12,7 @@ import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir, userInfo } from 'node:os'
 import { join } from 'node:path'
+import { isSea } from 'node:sea'
 import { RELAY_PROTO } from '../shared/relayProtocol'
 import { runAttach } from './attach'
 import { RelayDaemon } from './daemon'
@@ -19,7 +20,7 @@ import { findClaude, loginShellPath, mergePath } from './env'
 import { createLog } from './log'
 import { relayMethods } from './methods'
 import { BINARY_NAME, relayPaths } from './paths'
-import { relayDriverFactory } from './sdk'
+import { relayDriverFactory, relayListSessions } from './sdk'
 import { UNIT_NAME, setup, startCommand, type Run } from './supervisor'
 
 declare const __QCLOD_RELAY_VERSION__: string
@@ -40,11 +41,14 @@ const run: Run = (cmd, args) =>
     })
   })
 
-/** How this very program is started again: the SEA binary alone, or node with the bundle. */
+/**
+ * How this very program is started again: the SEA binary alone, or node with
+ * the bundle. Asked of node:sea, not read from argv[1]: that one is the path
+ * as the caller spelled it, which need not match execPath.
+ */
 function self(): { cmd: string; args: string[] } {
   const script = process.argv[1]
-  const sea = !script || script === process.execPath
-  return sea ? { cmd: process.execPath, args: [] } : { cmd: process.execPath, args: [script] }
+  return isSea() || !script ? { cmd: process.execPath, args: [] } : { cmd: process.execPath, args: [script] }
 }
 
 /** The command line after the program: argv[2] on in both SEA (argv[1] = exe) and node. */
@@ -53,7 +57,7 @@ function command(): string[] {
 }
 
 function spawnDetached(cmd: string, args: string[]): void {
-  const child = spawn(cmd, args, { detached: true, stdio: 'ignore' })
+  const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true })
   child.on('error', () => undefined)
   child.unref()
 }
@@ -86,7 +90,7 @@ async function daemon(): Promise<number> {
     supervised,
     spawnSuccessor: spawnDaemon,
     home,
-    methods: relayMethods({ run, version: VERSION, claudePath, home }),
+    methods: relayMethods({ run, version: VERSION, claudePath, home, listSessions: relayListSessions }),
     // The file on disk may be newer than the running daemon: the update the client waits for.
     binaryVersion: () =>
       new Promise((resolve) => {

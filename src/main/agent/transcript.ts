@@ -280,7 +280,8 @@ async function subagentSteps(
   toolUseId: string,
   path: readonly string[] = []
 ): Promise<Line[]> {
-  if (/[\/]/.test(agentId) || path.includes(agentId)) return []
+  // Either slash: a backslash in the id would lead the read out of subagents/.
+  if (/[\\/]/.test(agentId) || path.includes(agentId)) return []
   const file = join(subagentsDir, `agent-${agentId}.jsonl`)
   if (!isFile(file)) return []
   try {

@@ -66,7 +66,14 @@ export function AgentView({ tabId, card, items, costRates, onBack }: Props): JSX
   return (
     <div className="agent-view" data-testid="agent-view">
       <div className="agent-view-head">
-        <button ref={back} type="button" className="agent-back" aria-label="Назад ко всем агентам" onClick={onBack}>
+        <button
+          ref={back}
+          type="button"
+          className="agent-back"
+          aria-label="Назад ко всем агентам"
+          title="Назад ко всем агентам"
+          onClick={onBack}
+        >
           <ArrowLeft size={14} aria-hidden="true" />
           Все агенты
         </button>
@@ -94,6 +101,7 @@ export function AgentView({ tabId, card, items, costRates, onBack }: Props): JSX
               type="button"
               className="agent-stop"
               data-testid="agent-stop"
+              title="Остановить этого агента; главный агент продолжит"
               disabled={stopping}
               onClick={() => void stop()}
             >

@@ -35,7 +35,14 @@ const msg = (patch: Partial<Msg> = {}): Msg => ({
 const view = (c: Sub, items: RibbonItem[] = [c], costRates: CostRates | null = rates): string =>
   renderToStaticMarkup(createElement(AgentView, { tabId: 't', card: c, items, costRates, onBack: () => undefined }))
 
+/** Every button carries a hint, as everywhere in the app (keyboard.spec: «у каждой видимой кнопки есть подсказка»). */
+const untitled = (html: string): string[] => (html.match(/<button[^>]*>/g) ?? []).filter((tag) => !/ title="[^"]+"/.test(tag))
+
 describe('AgentView', () => {
+  test('у каждой кнопки есть подсказка', () => {
+    expect(untitled(view(card()))).toEqual([])
+  })
+
   test('назад: «Все агенты» с aria-label «Назад ко всем агентам»', () => {
     const html = view(card())
     expect(html).toContain('aria-label="Назад ко всем агентам"')

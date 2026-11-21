@@ -23,7 +23,14 @@ const render = (items: RibbonItem[], costRates: CostRates | null = rates): strin
   renderToStaticMarkup(createElement(AgentsLayer, { tabId: 't', items, costRates }))
 const count = (html: string, needle: string): number => html.split(needle).length - 1
 
+/** Every button carries a hint, as everywhere in the app (keyboard.spec: «у каждой видимой кнопки есть подсказка»). */
+const untitled = (html: string): string[] => (html.match(/<button[^>]*>/g) ?? []).filter((tag) => !/ title="[^"]+"/.test(tag))
+
 describe('AgentsLayer', () => {
+  test('у каждой кнопки есть подсказка', () => {
+    expect(untitled(render([sub('a', { state: 'running', startedAt: Date.now() - 3000 }), sub('b')]))).toEqual([])
+  })
+
   test('пустой слой — «В этом чате ещё не было сабагентов» с подсказкой', () => {
     const html = render([{ kind: 'agentText', id: 'x', text: 'привет', streaming: false }])
     expect(html).toContain('В этом чате ещё не было сабагентов')

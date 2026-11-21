@@ -34,7 +34,14 @@ const list = (tasks: BackgroundTask[], onOpenAgent?: (taskId: string) => void): 
   )
 const count = (html: string, needle: string): number => html.split(needle).length - 1
 
+/** Every button carries a hint, as everywhere in the app (keyboard.spec: «у каждой видимой кнопки есть подсказка»). */
+const untitled = (html: string): string[] => (html.match(/<button[^>]*>/g) ?? []).filter((tag) => !/ title="[^"]+"/.test(tag))
+
 describe('TaskManagerList', () => {
+  test('у каждой кнопки есть подсказка', () => {
+    expect(untitled(list([agent('a1'), command('dev')], () => undefined))).toEqual([])
+  })
+
   test('заголовок «Диспетчер задач»; группы «Агенты» и «Команды»', () => {
     const html = list([agent('a1'), command('dev')], () => undefined)
     expect(html).toContain('Диспетчер задач')

@@ -9,9 +9,9 @@ import { AgentTimeline } from './AgentTimeline'
 import { AgentView } from './AgentView'
 import './AgentsLayer.css'
 
-const VIEWS: Array<{ view: AgentsView; label: string }> = [
-  { view: 'graph', label: 'Граф' },
-  { view: 'timeline', label: 'Таймлайн' }
+const VIEWS: Array<{ view: AgentsView; label: string; hint: string }> = [
+  { view: 'graph', label: 'Граф', hint: 'Кто кого запустил' },
+  { view: 'timeline', label: 'Таймлайн', hint: 'Кто когда работал' }
 ]
 
 interface Props {
@@ -86,7 +86,7 @@ function AgentsOverview({ tabId, items, costRates }: Omit<Props, 'agentId'>): JS
             pick(view === 'graph' ? 'timeline' : 'graph')
           }}
         >
-          {VIEWS.map(({ view: v, label }) => (
+          {VIEWS.map(({ view: v, label, hint }) => (
             <button
               key={v}
               ref={v === view ? selected : undefined}
@@ -96,6 +96,7 @@ function AgentsOverview({ tabId, items, costRates }: Omit<Props, 'agentId'>): JS
               tabIndex={v === view ? 0 : -1}
               className={`agents-tab${v === view ? ' is-selected' : ''}`}
               data-testid={`agents-view-${v}`}
+              title={hint}
               onClick={() => pick(v)}
             >
               {label}

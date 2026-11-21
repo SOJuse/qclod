@@ -150,7 +150,7 @@ export function TaskManagerList({ tabId, tasks, onOpenAgent }: Props): JSX.Eleme
       <div className="bg-list-head">
         <span className="bg-list-title">Диспетчер задач</span>
         {running.length >= 2 && (
-          <button type="button" className="bg-stop" data-testid="bg-stop-all" onClick={stopAll}>
+          <button type="button" className="bg-stop" data-testid="bg-stop-all" title="Остановить все работающие задачи" onClick={stopAll}>
             Остановить все
           </button>
         )}
@@ -220,7 +220,7 @@ function useStop(tabId: TabId, task: BackgroundTask): { stopping: boolean; stopE
 
 function StopButton({ stopping, onStop }: { stopping: boolean; onStop: () => void }): JSX.Element {
   return (
-    <button type="button" className="bg-stop" data-testid="bg-stop" disabled={stopping} onClick={onStop}>
+    <button type="button" className="bg-stop" data-testid="bg-stop" title="Остановить эту задачу" disabled={stopping} onClick={onStop}>
       {stopping ? 'Останавливаю…' : 'Остановить'}
     </button>
   )
@@ -278,7 +278,13 @@ function AgentRow({
             {task.summary}
           </span>
           {onOpenAgent && (
-            <button type="button" className="bg-open" data-testid="bg-open-agent" onClick={() => onOpenAgent(task.taskId)}>
+            <button
+              type="button"
+              className="bg-open"
+              data-testid="bg-open-agent"
+              title="Открыть ленту этого агента в слое «Агенты»"
+              onClick={() => onOpenAgent(task.taskId)}
+            >
               Открыть ленту
             </button>
           )}

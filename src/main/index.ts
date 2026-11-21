@@ -52,6 +52,7 @@ import { alertNotification, notifyIfNeeded, shouldRaiseWindowForPermission } fro
 import { RendererOutbox } from './rendererOutbox'
 import { PathResolver } from './files/pathResolver'
 import { cleanupPasteDir } from './files/imagePaste'
+import { cleanupRemoteFiles } from './ssh/remoteFiles'
 import { createUpdateSource, UpdateFlow } from './update/updater'
 import { openAgentTerminal, startVoiceTyping } from './system/console'
 import { locateAgent } from './setup/findAgent'
@@ -290,6 +291,9 @@ if (gotLock) void app.whenReady().then(async () => {
   // app may stay open in the tray for weeks.
   cleanupPasteDir(userData)
   setInterval(() => cleanupPasteDir(userData), 60 * 60 * 1000).unref()
+  // Server files downloaded to open with a program (stage 6).
+  cleanupRemoteFiles(userData)
+  setInterval(() => cleanupRemoteFiles(userData), 60 * 60 * 1000).unref()
 
   const outbox = new RendererOutbox((channel, payload) => {
     const win = mainWindow
@@ -685,6 +689,7 @@ if (gotLock) void app.whenReady().then(async () => {
     autonomy,
     serverHistory,
     knownServer: (hostId) => hostStore.get(hostId) !== null,
+    serverClient: (hostId) => serverHosts.client(hostId),
     userData,
     openTerminal: (cwd) => {
       // e2e records the call instead of opening a console (buildFlags.d.ts).

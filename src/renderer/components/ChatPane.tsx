@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { TriangleAlert } from 'lucide-react'
 import { OFFLINE_STRIP_TEXT } from '../../shared/serverTexts'
 import { ServerLoginDialog } from './servers/ServerLoginDialog'
-import type { SessionSummary, UserInput } from '../../shared/types'
+import type { FileSource, SessionSummary, TabId, UserInput } from '../../shared/types'
+import { FileViewer } from './viewer/FileViewer'
 import { EMPTY_PANEL, useAppStore, type PaneLayerState } from '../state/useAppStore'
 import { useHeldDrafts } from '../state/heldDrafts'
 import { compactNow, sendCommand } from '../input/slash'
@@ -45,12 +46,21 @@ export interface PanelRequest {
  * What a layer over the ribbon shows, by kind — one line per stage. A kind
  * with nothing to show draws no layer: in этап 2 there is none yet.
  */
-function paneLayerView(layer: PaneLayerState): { title: string; body: ReactNode } | null {
+function paneLayerView(
+  layer: PaneLayerState,
+  ctx: { tabId: TabId; source: FileSource; close: () => void }
+): { title: string; body: ReactNode } | null {
   switch (layer.kind) {
     case 'agents': // этап 4: the pane's subagents, layer.agentId opened
       return null
-    case 'file': // этап 6: layer.path at layer.line
-      return null
+    case 'file': // этап 6: layer.path at layer.line, here or on the chat's server
+      if (!layer.path) return null
+      return {
+        title: layer.path.split(/[\\/]/).pop() || layer.path,
+        body: (
+          <FileViewer tabId={ctx.tabId} source={ctx.source} path={layer.path} line={layer.line} onClose={ctx.close} />
+        )
+      }
     case 'git': // этап 7: the folder's changes
       return null
   }
@@ -248,7 +258,14 @@ export function ChatPane({
   }, [])
 
   const layer = useAppStore((s) => s.layerByTab[tabId] ?? null)
-  const layerView = layer ? paneLayerView(layer) : null
+  const layerSource: FileSource = tab?.server ? { kind: 'remote', hostId: tab.server.hostId } : { kind: 'local' }
+  const layerView = layer
+    ? paneLayerView(layer, {
+        tabId,
+        source: layerSource,
+        close: () => useAppStore.getState().setPaneLayer(tabId, null)
+      })
+    : null
   const items = ribbonByTab[tabId]
   const answers = useMemo(() => cardAnswers(tabId), [tabId])
   const sentTexts = useMemo(

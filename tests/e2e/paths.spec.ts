@@ -79,7 +79,13 @@ test('правый клик — меню; «Скопировать относи�
   await expect(menu).toBeVisible()
   await expect(menu).toHaveAttribute('role', 'menu')
   const items = menu.locator('[data-testid="path-menu-item"]')
-  await expect(items).toHaveText(['Открыть', 'Показать в проводнике', 'Скопировать путь', 'Скопировать относительный путь'])
+  await expect(items).toHaveText([
+    'Открыть',
+    'Показать в проводнике',
+    'Скопировать путь',
+    'Скопировать относительный путь',
+    'Посмотреть'
+  ])
 
   await items.filter({ hasText: 'Скопировать относительный путь' }).click()
   await expect(menu).toBeHidden()
@@ -127,7 +133,7 @@ test('«Открыть в редакторе» есть только с зада
   await expect(link).toBeVisible({ timeout: 15000 })
   await link.click({ button: 'right' })
   const items = win.locator('[data-testid="path-menu-item"]')
-  await expect(items).toHaveCount(4)
+  await expect(items).toHaveCount(5)
   await expect(items.filter({ hasText: 'Открыть в редакторе' })).toHaveCount(0)
   await win.keyboard.press('Escape')
 

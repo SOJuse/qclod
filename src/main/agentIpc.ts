@@ -21,6 +21,8 @@ import { MAX_PER_CALL, type PathResolver } from './files/pathResolver'
 import { openInEditor, openPath, revealPath } from './files/fileActions'
 import { pasteMediaType, pasteRealPath } from './files/imagePaste'
 import { prepareImage } from './files/prepareImage'
+import { viewerAccess } from './files/viewerIpc'
+import type { RelayReader } from './ssh/remoteFiles'
 import type { TabController, TabHistory } from './tabs/TabController'
 import type { LayoutStore } from './store/layoutStore'
 import type { AutonomyHost } from './autonomy/autonomyHost'
@@ -66,6 +68,8 @@ export interface AgentIpcDeps {
   serverHistory?: (cwd: string, hostId: string) => Promise<SessionSummary[]>
   /** Stage 6: whether this id is a server Qclod knows. */
   knownServer?: (hostId: string) => boolean
+  /** Stage 6: a server's relay, raised if need be — a server chat's files are read through it. */
+  serverClient?: (hostId: string) => Promise<RelayReader>
 }
 
 function isString(value: unknown): value is string {
@@ -121,6 +125,15 @@ function lineNumber(value: unknown): number | undefined {
  */
 export function registerAgentIpc(deps: AgentIpcDeps): void {
   const { controller, manager, broker } = deps
+  // Stage 6: the read-only viewer and a server chat's paths (task 24).
+  const viewer = viewerAccess({
+    tab: (id) => controller.list().find((t) => t.id === id),
+    knowsLocal: (absPath, id) => deps.resolver.knows(absPath, id),
+    client: (hostId) =>
+      deps.serverClient ? deps.serverClient(hostId) : Promise.reject(new Error('серверы недоступны')),
+    userData: deps.userData,
+    openPath
+  })
 
   ipcMain.handle(CHANNELS.tabsList, () => withFault(CHANNELS.tabsList, () => controller.list()))
 
@@ -133,6 +146,7 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!isString(id)) return
     broker.cancelTab(id)
     deps.resolver.forget(id)
+    viewer.forget(id)
     await controller.close(id)
   })
 
@@ -483,11 +497,11 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     const tab = controller.list().find((t) => t.id === id)
     if (!tab) return raws.map(() => null)
     const valid = raws.map((r) => isString(r) && r !== '' && r.length <= MAX_RAW_LENGTH)
-    const answers = await deps.resolver.resolve(
-      tab.cwd,
-      raws.filter((_r, i) => valid[i]) as string[],
-      id
-    )
+    const asked = raws.filter((_r, i) => valid[i]) as string[]
+    // A server chat's paths are the server's: one fs.stat through its relay (stage 6).
+    const answers = tab.server
+      ? await viewer.resolveRemote(id, tab.cwd, tab.server.hostId, asked)
+      : await deps.resolver.resolve(tab.cwd, asked, id)
     let next = 0
     return valid.map((ok) => (ok ? (answers[next++] ?? null) : null))
   })
@@ -542,6 +556,10 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
       return { error: 'Не получилось прочитать картинку' }
     }
   })
+
+  // Stage 6: the read-only viewer, here or on the tab's server.
+  ipcMain.handle(CHANNELS.viewerRead, (_e, source: unknown, id: unknown, path: unknown) => viewer.read(source, id, path))
+  ipcMain.handle(CHANNELS.viewerDownloadOpen, (_e, id: unknown, path: unknown) => viewer.downloadOpen(id, path))
 
   ipcMain.handle(
     CHANNELS.filesOpenInEditor,

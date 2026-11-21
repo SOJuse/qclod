@@ -11,7 +11,7 @@ const src = readFileSync(resolve(__dirname, '../../src/main/index.ts'), 'utf8')
  * the flag off (`optional: false`).
  */
 const ORDER: Array<{ mark: string; optional: boolean; stage: string }> = [
-  { mark: 'runAskpassClient(', optional: true, stage: '6' },
+  { mark: 'runAskpassClient(', optional: false, stage: '6' },
   { mark: "app.setPath('userData'", optional: false, stage: '1' },
   { mark: 'installMainErrorHandlers(', optional: false, stage: '2' },
   { mark: 'claimSingleInstance(', optional: false, stage: '3' },

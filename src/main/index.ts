@@ -63,6 +63,7 @@ import {
 import { AutonomyHost } from './autonomy/autonomyHost'
 import { applyOpenAtLogin } from './system/loginItem'
 import { claimSingleInstance } from './system/singleInstance'
+import { runAskpassClient } from './ssh/askpassClient'
 import { QuitReason, sessionEnding } from './system/quitReason'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
@@ -182,10 +183,22 @@ function watchWindow(win: BrowserWindow, log: (e: ErrorEntry) => void): void {
 //   5. command-line switches                         (stage 5, app.commandLine.appendSwitch)
 // and then app.whenReady().
 
+// Windows: ssh runs Qclod.exe itself as SSH_ASKPASS (ssh/askpass.ts). That run
+// only carries one question to the running Qclod and prints the answer: it
+// touches no profile, takes no instance lock (a second instance would raise
+// the window and the question would get no answer) and opens no window.
+const askpassMode = process.env['QCLOD_ASKPASS_PIPE'] !== undefined
+if (askpassMode) {
+  void runAskpassClient(process.argv.slice(1), process.env).then(
+    (code) => app.exit(code),
+    () => app.exit(1)
+  )
+}
+
 // Tests point the app at a throwaway profile so runs cannot affect each other
 // or the real one.
 const userDataOverride = process.env['QCLOD_USER_DATA']
-if (userDataOverride) app.setPath('userData', userDataOverride)
+if (userDataOverride && !askpassMode) app.setPath('userData', userDataOverride)
 
 // What broke, for whoever has to find out why (system/errorLog.ts). Errors the
 // main process throws are written down as well as printed, from here on: one
@@ -199,7 +212,7 @@ installMainErrorHandlers(process, (e) => errorLog.write(e))
 // the second arrives: the raise waits for the window.
 let onSecondInstance: (() => void) | null = null
 let secondPending = false
-const gotLock = claimSingleInstance(app, () => {
+const gotLock = askpassMode ? false : claimSingleInstance(app, () => {
   if (onSecondInstance) onSecondInstance()
   else secondPending = true
 })

@@ -12,7 +12,13 @@ export default defineConfig(({ mode }) => {
       plugins: [externalizeDepsPlugin()],
       define,
       build: {
-        rollupOptions: { input: { index: resolve(__dirname, 'src/main/index.ts') } }
+        // askpass.js: what the Mac's askpass.sh runs (src/main/ssh/askpassEntry.ts).
+        rollupOptions: {
+          input: {
+            index: resolve(__dirname, 'src/main/index.ts'),
+            askpass: resolve(__dirname, 'src/main/ssh/askpassEntry.ts')
+          }
+        }
       }
     },
     preload: {

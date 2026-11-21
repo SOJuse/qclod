@@ -3,6 +3,7 @@ import { TriangleAlert } from 'lucide-react'
 import type { CostRates, RibbonItem, SessionSummary, SubagentItem, UserInput } from '../../shared/types'
 import type { VoiceControls } from '../../shared/voice'
 import { useVoiceControls } from '../voice/voiceStore'
+import { isWindows } from '../voice/platform'
 import { EMPTY_PANEL, useAppStore, type PaneLayerState } from '../state/useAppStore'
 import { useHeldDrafts } from '../state/heldDrafts'
 import { compactNow, sendCommand } from '../input/slash'
@@ -117,8 +118,9 @@ export function ChatPane({
   voice: voiceOverride
 }: Props): JSX.Element {
   // One voice for the pane: the chat's input and a subagent's get the same (сверка F12).
+  // Voice is Windows-only in 1.0 (G11): elsewhere the button stays as этап 2 left it.
   const paneVoice = useVoiceControls(tabId)
-  const voice = voiceOverride ?? paneVoice
+  const voice = voiceOverride ?? (isWindows() ? paneVoice : undefined)
   const tabs = useAppStore((s) => s.tabs)
   const ribbonByTab = useAppStore((s) => s.ribbonByTab)
   const todoByTab = useAppStore((s) => s.todoByTab)

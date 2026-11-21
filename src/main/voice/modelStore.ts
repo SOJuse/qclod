@@ -177,7 +177,8 @@ export class ModelStore {
     await this.jobs.get(id)?.done.catch(() => {})
     const m = this.manifests[id]
     if (!m) return
-    await rm(this.modelDir(m), { recursive: true, force: true })
+    // The voice process may only just have let the files go (host.modelChanged): Windows keeps them locked until it exits.
+    await rm(this.modelDir(m), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     this.transient.delete(id)
     const needed = VOICE_MODEL_IDS.some((other) => other !== id && this.manifests[other] && this.hasMarker(this.manifests[other]))
     if (!needed) await rm(this.vadDir(), { recursive: true, force: true })

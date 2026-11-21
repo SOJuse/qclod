@@ -11,6 +11,7 @@ import type {
   RibbonSnapshot,
   SessionSummary,
   SubagentSendResult,
+  SubagentStopResult,
   TabId,
   TabState,
   UserInput
@@ -296,6 +297,15 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
       const session = manager.get(id)
       if (!session) return { ok: false, reason: 'not-running' }
       return session.sendToSubagent(card, body)
+    }
+  )
+
+  ipcMain.handle(
+    CHANNELS.agentSubagentStop,
+    async (_e, id: unknown, cardId: unknown): Promise<SubagentStopResult> => {
+      const card = sanitizeCardId(cardId)
+      if (!isString(id) || card === null) return 'not-running'
+      return (await manager.get(id)?.stopSubagent(card)) ?? 'not-running'
     }
   )
 

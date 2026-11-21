@@ -19,6 +19,7 @@ import type {
   RibbonItem,
   SessionStatus,
   SubagentSendResult,
+  SubagentStopResult,
   TabId,
   TaskOutput,
   TodoItem,
@@ -145,6 +146,9 @@ function coreQuestions(input: Record<string, unknown>): CoreQuestion[] {
 /** The longest `dispose` waits for the agent process to go away. */
 export const DISPOSE_TIMEOUT_MS = 5000
 
+/** A subagent asked to stop that has not said so by then is reported as not stopping (stage 4). */
+export const SUBAGENT_STOP_WATCH_MS = 10_000
+
 /** The longest a closing tab waits for the bridge to say «выключено» to the phone. */
 export const REMOTE_OFF_TIMEOUT_MS = 1000
 
@@ -267,6 +271,8 @@ export class AgentSession {
   private cliVersion: string | null = null
   /** The last system/init: which tools this CLI has (stage 4, `subagentRoute`). */
   private lastInit: Record<string, unknown> | null = null
+  /** Subagents asked to stop, by task id, until a frame says they have ended. */
+  private readonly stopWatch = new Map<string, ReturnType<typeof setTimeout>>()
   /** Permission questions still waiting on the user; aborting one refuses it. */
   private readonly openPermissions = new Map<string, { controller: AbortController; turn: number }>()
   /**
@@ -963,6 +969,66 @@ export class AgentSession {
     return { ok: true }
   }
 
+  /**
+   * Stops a subagent (stage 4). The window names only the card. One in the
+   * background is stopped where it is. One in the foreground is first moved
+   * to the background — the main agent's call then returns at once and its
+   * turn goes on — and stopped there (probe 05b, 3b); one that cannot be
+   * moved is stopped in place (3a). The card is closed by the CLI's own frame,
+   * not by this call; if none comes within 10 s, the ribbon says so.
+   */
+  async stopSubagent(cardId: string): Promise<SubagentStopResult> {
+    const card = this.builder.subagentCard(cardId)
+    if (!card || card.state !== 'running') return 'not-running'
+    const taskId = card.taskId
+    if (!taskId) return 'not-started'
+    const driver = this.driver
+    if (!driver || this.disposed) return 'not-running'
+    if (card.background !== true) {
+      try {
+        await driver.backgroundTask(card.toolUseId)
+      } catch {
+        // Background tasks are off: it is stopped where it is.
+      }
+    }
+    try {
+      await driver.stopTask(taskId)
+    } catch {
+      return 'failed'
+    }
+    if (this.disposed) return 'stopping'
+    this.watchStop(taskId, card.name)
+    return 'stopping'
+  }
+
+  private watchStop(taskId: string, name: string): void {
+    const was = this.stopWatch.get(taskId)
+    if (was) clearTimeout(was)
+    const timer = setTimeout(() => {
+      this.stopWatch.delete(taskId)
+      if (this.disposed) return
+      this.emit(this.builder.notice(`Агент «${name}» не остановился за 10 секунд.`, 'error'))
+    }, SUBAGENT_STOP_WATCH_MS)
+    this.stopWatch.set(taskId, timer)
+  }
+
+  /** A watched agent ended — stopped, or done before the stop landed: nothing to report. */
+  private settleStopWatch(m: Record<string, unknown>): void {
+    const taskId = typeof m['task_id'] === 'string' ? m['task_id'] : ''
+    const timer = taskId ? this.stopWatch.get(taskId) : undefined
+    if (!timer) return
+    const patch = m['patch']
+    const status =
+      m['subtype'] === 'task_notification'
+        ? m['status']
+        : m['subtype'] === 'task_updated' && typeof patch === 'object' && patch !== null
+          ? (patch as Record<string, unknown>)['status']
+          : undefined
+    if (status !== 'stopped' && status !== 'killed' && status !== 'completed' && status !== 'failed') return
+    clearTimeout(timer)
+    this.stopWatch.delete(taskId)
+  }
+
   /** turn += 1 and the tab working, unless a card is open — or even then (`evenIfWaiting`). */
   private startTurn(opts: { evenIfWaiting?: boolean } = {}): void {
     this.turn += 1
@@ -1345,6 +1411,8 @@ export class AgentSession {
     // messages have nowhere to go. A swap takes it first (`takeQueue`).
     this.stopMcpPolling()
     this.stopPanelRefresh()
+    for (const timer of this.stopWatch.values()) clearTimeout(timer)
+    this.stopWatch.clear()
     // A question nobody can answer any more must not hold the agent open.
     this.cancelWaits()
 
@@ -1461,6 +1529,7 @@ export class AgentSession {
 
     switch (m['type']) {
       case 'system':
+        if (this.stopWatch.size > 0) this.settleStopWatch(m)
         if (m['subtype'] === 'init') this.onInit(m)
         else if (m['subtype'] === 'commands_changed') {
           this.onCommandsChanged(m)

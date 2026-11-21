@@ -846,6 +846,20 @@ export function createFakeSdk(script = {}) {
                 canContinueAgent: true
               }
             }
+            // stopTask() right after backgroundTask(): it ends in the background (probe 05b, 3b).
+            if (rec.stopAfterMove) {
+              rec.phase = 'stopped'
+              yield taskEvent('task_updated', { task_id: rec.agentId, patch: { status: 'killed', end_time: Date.now() } })
+              yield taskEvent('task_notification', {
+                task_id: rec.agentId,
+                tool_use_id: id,
+                status: 'stopped',
+                output_file: agentOutputFile(rec.agentId),
+                summary: step.name
+              })
+              yield backgroundTasksChanged()
+              break
+            }
             afterTurn.push(() => finishAgent(rec, id, report))
             break
           }
@@ -1710,7 +1724,9 @@ export function createFakeSdk(script = {}) {
       if (rec) {
         // In the foreground its end comes in the turn's own stream (probe 05b, 3a).
         if (rec.phase === 'foreground') {
-          if (script.foregroundStop !== 'ignored' && !rec.signal) signalAgent(rec, 'stop')
+          // Being moved to the background: the stop lands there, once it has moved.
+          if (rec.signal === 'background') rec.stopAfterMove = true
+          else if (script.foregroundStop !== 'ignored' && !rec.signal) signalAgent(rec, 'stop')
           return
         }
         if (rec.phase !== 'background' && rec.phase !== 'resuming') return

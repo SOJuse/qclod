@@ -387,3 +387,23 @@ describe('этап 4: сабагенты', () => {
     ])
   })
 })
+
+describe('этап 4: остановить сабагента', () => {
+  test('agentSubagentStop отвергает не-строки и cardId длиннее 64; ответ — тот, что дала сессия', async () => {
+    expect(await call(CHANNELS.agentSubagentStop, 't1', 42)).toBe('not-running')
+    expect(await call(CHANNELS.agentSubagentStop, 't1', { id: 'r1' })).toBe('not-running')
+    expect(await call(CHANNELS.agentSubagentStop, 't1', 'r'.repeat(65))).toBe('not-running')
+    expect(await call(CHANNELS.agentSubagentStop, 't1', '')).toBe('not-running')
+    expect(await call(CHANNELS.agentSubagentStop, null, 'r1')).toBe('not-running')
+    expect(await call(CHANNELS.agentSubagentStop, 'нет-такой', 'r1')).toBe('not-running')
+    expect(subagentCalls).toEqual([])
+
+    expect(await call(CHANNELS.agentSubagentStop, 't1', 'r'.repeat(64))).toBe('stopping')
+    subagentStopAnswer = 'failed'
+    expect(await call(CHANNELS.agentSubagentStop, 't1', 'r2')).toBe('failed')
+    expect(subagentCalls).toEqual([
+      ['stop', 'r'.repeat(64)],
+      ['stop', 'r2']
+    ])
+  })
+})

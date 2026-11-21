@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, open, readdir, realpath, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { lstat, mkdir, open, readdir, realpath, stat, type FileHandle } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { buildFileIndex } from '../core/fileIndex'
 import type { FsEntry } from '../shared/relayProtocol'
 import { RelayError, badRequest } from './errors'
@@ -119,11 +119,33 @@ export async function readChunk(
   }
 }
 
+/**
+ * What every git call of the relay carries: the folder is anybody's, and its
+ * .git/config may name a fsmonitor, a pager, an external diff or a credential
+ * helper — listing its files must run none of them (as GIT_BASE_ARGS of stage 7).
+ */
+export const GIT_SAFE_ARGS = [
+  '--no-pager',
+  '--literal-pathspecs',
+  '-c',
+  'core.quotepath=false',
+  '-c',
+  'core.fsmonitor=false',
+  '-c',
+  'core.untrackedCache=false',
+  '-c',
+  'core.pager=cat',
+  '-c',
+  'diff.external=',
+  '-c',
+  'credential.helper='
+]
+
 function git(root: string, args: string[]): Promise<{ code: number; stdout: string }> {
   return new Promise((done) => {
     execFile(
       'git',
-      ['-C', root, ...args],
+      [...GIT_SAFE_ARGS, '-C', root, ...args],
       {
         maxBuffer: 64 * 1024 * 1024,
         timeout: 15_000,
@@ -153,9 +175,9 @@ export async function indexFiles(root: string, limit: number): Promise<{ files: 
   return { files: files.slice(0, limit), truncated: files.length > limit }
 }
 
-/** [\w.\- ] only, at most 120 characters. */
+/** Letters and digits of any script, `_`, `.`, `-` and the space; at most 120 characters. */
 function cleanName(name: string): string {
-  const clean = name.replace(/[^\w.\- ]/g, '_').slice(0, UPLOAD_NAME_MAX)
+  const clean = [...name.normalize('NFC').replace(/[^\p{L}\p{N}_.\- ]/gu, '_')].slice(0, UPLOAD_NAME_MAX).join('')
   return clean.replace(/^\.+/, (dots) => '_'.repeat(dots.length)) || 'file'
 }
 
@@ -164,11 +186,49 @@ function within(path: string, dir: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !rel.startsWith(sep) && !isAbsolute(rel)
 }
 
+/** A new numbered file in `dir`: created exclusively, so two uploads of one name never share it. */
+async function createNumbered(dir: string, clean: string): Promise<{ path: string; handle: FileHandle }> {
+  const numbers = (await readdir(dir)).map((entry) => /^(\d+)-/.exec(entry)?.[1]).filter((n) => n !== undefined)
+  let next = numbers.reduce((max, n) => Math.max(max, Number(n)), 0) + 1
+  for (let tries = 0; tries < 1000; tries++, next++) {
+    const path = join(dir, `${next}-${clean}`)
+    try {
+      return { path, handle: await open(path, 'wx', 0o600) }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw fsError(error, 'файл загрузки')
+    }
+  }
+  throw new RelayError('internal', 'нет свободного номера загрузки')
+}
+
+/** The file a later chunk names: in uploads/<s>/ itself, a plain file, as long as the offset. */
+async function continued(realDir: string, path: string, offset: number): Promise<string> {
+  if (typeof path !== 'string' || path === '' || !isAbsolute(path)) throw badRequest('нет начала этого файла')
+  const target = resolve(path)
+  let realParent: string
+  try {
+    realParent = await realpath(dirname(target))
+  } catch {
+    throw badRequest('нет начала этого файла')
+  }
+  if (realParent !== realDir || !/^\d+-/.test(basename(target))) throw badRequest('кусок не из этой загрузки')
+  let info
+  try {
+    info = await lstat(target)
+  } catch {
+    throw badRequest('нет начала этого файла')
+  }
+  if (!info.isFile() || info.size !== offset) throw badRequest('кусок не продолжает файл')
+  return target
+}
+
 /**
  * One chunk of a file sent from Qclod, into uploads/<s>/<n>-<name>. A first
- * chunk (offset 0) starts a new numbered file; a later one continues the newest
- * file of that name whose size is its offset. Nothing is written outside
- * uploads/<s>/ — a name with a path in it, or a link that leads out, is refused.
+ * chunk (offset 0) starts a new numbered file and answers its path; every later
+ * chunk names that path, and goes on only if it is a file of uploads/<s>/ as
+ * long as the chunk's offset. Two files of one name uploaded side by side thus
+ * never land in one. Nothing is written outside uploads/<s>/ — a name with a
+ * path in it, a path elsewhere, or a link that leads out, is refused.
  */
 export async function writeUpload(
   uploadsDir: string,
@@ -176,7 +236,8 @@ export async function writeUpload(
   name: string,
   offset: number,
   data: Buffer,
-  _final: boolean
+  _final: boolean,
+  path?: string
 ): Promise<{ path: string }> {
   if (!SESSION_ID.test(s)) throw badRequest('id сессии')
   if (typeof name !== 'string' || name === '' || /[\\/]/.test(name) || name.includes('..')) throw badRequest('имя файла')
@@ -189,28 +250,14 @@ export async function writeUpload(
   const [realRoot, realDir] = await Promise.all([realpath(uploadsDir), realpath(dir)])
   if (!within(realDir, realRoot)) throw badRequest('папка загрузок ведёт наружу')
 
-  const clean = cleanName(name)
-  const numbered = (await readdir(dir))
-    .map((entry) => /^(\d+)-(.*)$/.exec(entry))
-    .filter((m): m is RegExpExecArray => m !== null)
   let target: string
+  let handle: FileHandle
   if (offset === 0) {
-    const next = numbered.reduce((max, m) => Math.max(max, Number(m[1])), 0) + 1
-    target = join(dir, `${next}-${clean}`)
+    ;({ path: target, handle } = await createNumbered(dir, cleanName(name)))
   } else {
-    const same = numbered.filter((m) => m[2] === clean).sort((a, b) => Number(b[1]) - Number(a[1]))[0]
-    if (!same) throw badRequest('нет начала этого файла')
-    target = join(dir, same[0])
-    const info = await lstat(target)
-    if (!info.isFile() || info.size !== offset) throw badRequest('кусок не продолжает файл')
+    target = await continued(realDir, path ?? '', offset)
+    handle = await open(target, 'r+')
   }
-  try {
-    if ((await lstat(target)).isSymbolicLink()) throw badRequest('файл загрузки — ссылка')
-  } catch (error) {
-    if (error instanceof RelayError) throw error
-    // Not there yet: made below.
-  }
-  const handle = await open(target, offset === 0 ? 'w' : 'r+', 0o600)
   try {
     await handle.write(data, 0, data.length, offset)
   } finally {

@@ -379,7 +379,8 @@ export interface ServerAuth {
 //   fs.stat: {cwd, paths: string[]} → Array<{abs, kind} | null> (≤ 200)
 //   fs.read: {path, offset, length} → {dataBase64, size, eof} (length ≤ 256 KiB)
 //   fs.index: {root, limit} → {files: string[], truncated}
-//   fs.upload: {s, name, offset, dataBase64, final} → {path}
+//   fs.upload: {s, name, offset, dataBase64, final, path?} → {path} (an open session only;
+//     every chunk after the first carries the path the first one answered)
 //   history.list: {cwd} → SessionSummary[]
 //   auth.status: {} → ServerAuth
 //   host.info: {} → HostInfo

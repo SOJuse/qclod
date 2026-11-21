@@ -33,6 +33,12 @@ describe('загрузка файла на сервер', () => {
       [2 * UPLOAD_CHUNK, true]
     ])
     expect(calls.every((c) => c['s'] === 's1' && c['name'] === 'data.bin')).toBe(true)
+    // the first chunk names the file on the server; the others go to that very file
+    expect(calls[0]!['path']).toBeUndefined()
+    expect(calls.slice(1).map((c) => c['path'])).toEqual([
+      '/home/u/.qclod/uploads/s1/1-data.bin',
+      '/home/u/.qclod/uploads/s1/1-data.bin'
+    ])
     const sent = Buffer.concat(calls.map((c) => Buffer.from(c['dataBase64'] as string, 'base64')))
     expect(sent.equals(bytes)).toBe(true)
     expect(progress.at(-1)).toBe(bytes.length)

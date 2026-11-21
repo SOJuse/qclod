@@ -32,12 +32,15 @@ export async function uploadFile(
     do {
       const { bytesRead } = await handle.read(buffer, 0, Math.min(UPLOAD_CHUNK, info.size - offset), offset)
       const final = offset + bytesRead >= info.size || bytesRead === 0
+      // Every chunk after the first names the file the first one made: two files
+      // of one name uploaded side by side never land in one.
       const answer = await client.call<{ path: string }>('fs.upload', {
         s,
         name,
         offset,
         dataBase64: buffer.subarray(0, bytesRead).toString('base64'),
-        final
+        final,
+        ...(offset > 0 ? { path } : {})
       })
       path = answer.path
       offset += bytesRead

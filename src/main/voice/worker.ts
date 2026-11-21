@@ -52,5 +52,10 @@ function post(m: FromWorker): void {
   }
 }
 
-const core = new WorkerCore({ makeEngine, makeVad, post })
+/** The packaged app's check: the native engine loads and runs Silero on silence. */
+function selftest(vad: string): void {
+  new SileroVad(vad).accept(new Float32Array(1024))
+}
+
+const core = new WorkerCore({ makeEngine, makeVad, post, selftest })
 port.on('message', (e) => core.handle(e.data as ToWorker))

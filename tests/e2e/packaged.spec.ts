@@ -49,3 +49,29 @@ test('собранное приложение запускается и подн
     rmSync(profile, { recursive: true, force: true })
   }
 })
+
+/**
+ * The native voice engine out of asar: the voice process loads
+ * sherpa-onnx-node with its own onnxruntime.dll and makes a Silero VAD.
+ *   QCLOD_VOICE_SELFTEST=C:\dev\qclod-voice-proto\models\silero_vad.onnx
+ */
+test('собранное приложение грузит голосовой движок', async () => {
+  test.skip(!process.env['QCLOD_VOICE_SELFTEST'], 'задать QCLOD_VOICE_SELFTEST — путь к silero_vad.onnx')
+  const profile = mkdtempSync(join(tmpdir(), 'qclod-packaged-'))
+  const app = await electron.launch({
+    executablePath: exe,
+    args: [],
+    env: { ...process.env, QCLOD_USER_DATA: profile, QCLOD_HEADLESS: '1' } as Record<string, string>
+  })
+  try {
+    await app.firstWindow()
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as { __qclodVoiceSelftest?: unknown }).__qclodVoiceSelftest), {
+        timeout: 30000
+      })
+      .toEqual({ ok: true })
+  } finally {
+    await app.close().catch(() => undefined)
+    rmSync(profile, { recursive: true, force: true })
+  }
+})

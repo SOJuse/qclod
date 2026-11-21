@@ -8,9 +8,11 @@ export interface WorkerDeps {
   makeEngine(p: ModelPaths, threads: number, prompt: string): SpeechEngine
   makeVad(p: ModelPaths): VoiceActivity
   post(m: FromWorker): void
+  /** Loads the native engine and makes a VAD from this model; throws if it cannot. */
+  selftest?(vad: string): void
 }
 
-type SessionMessage = Exclude<ToWorker, { type: 'load' }>
+type SessionMessage = Exclude<ToWorker, { type: 'load' | 'selftest' }>
 type FailCode = Extract<FromWorker, { type: 'failed' }>['code']
 
 interface Session {
@@ -52,6 +54,16 @@ export class WorkerCore {
     if (this.dead) return
     if (m.type === 'load') {
       void this.load(m.paths, m.threads, m.prompt)
+      return
+    }
+    if (m.type === 'selftest') {
+      try {
+        if (this.deps.selftest === undefined) throw new Error('no selftest in this process')
+        this.deps.selftest(m.vad)
+        this.deps.post({ type: 'selftest', ok: true })
+      } catch (err) {
+        this.deps.post({ type: 'selftest', ok: false, error: message(err) })
+      }
       return
     }
     if (m.type === 'audio' && !this.loaded) {

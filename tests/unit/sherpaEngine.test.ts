@@ -1,4 +1,7 @@
-import { describe, expect, test } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, describe, expect, test } from 'vitest'
 import {
   SherpaEngine,
   sherpaConfig,
@@ -7,6 +10,11 @@ import {
   type SherpaPaths
 } from '@main/voice/sherpaEngine'
 import { SileroVad, vadConfig } from '@main/voice/sileroVad'
+
+const TMP = mkdtempSync(join(tmpdir(), 'qclod-vad-'))
+const SILERO = join(TMP, 'silero_vad.onnx')
+writeFileSync(SILERO, '')
+afterAll(() => rmSync(TMP, { recursive: true, force: true }))
 
 const GIGA: SherpaPaths = {
   model: 'gigaam-v3',
@@ -204,7 +212,7 @@ describe('SileroVad', () => {
 
   test('буфер 30 с; куски 100 и 700 сэмплов — sherpa получает ровно по 512', () => {
     const s = stub()
-    const v = new SileroVad('silero.onnx', s.module)
+    const v = new SileroVad(SILERO, s.module)
     expect(s.vadBuffer).toEqual([30])
     v.accept(new Float32Array(100))
     expect(s.vadChunks).toEqual([])
@@ -217,7 +225,7 @@ describe('SileroVad', () => {
 
   test('закрытые сегменты снимаются через front(false) и pop; speaking — isDetected', () => {
     const s = stub()
-    const v = new SileroVad('silero.onnx', s.module)
+    const v = new SileroVad(SILERO, s.module)
     s.segmentsNext = { n: 0, detected: true }
     v.accept(new Float32Array(512))
     expect(v.speaking).toBe(true)
@@ -239,16 +247,24 @@ describe('SileroVad', () => {
       seen.push(x)
       orig.call(this, x)
     }
-    const v = new SileroVad('silero.onnx', s.module)
+    const v = new SileroVad(SILERO, s.module)
     const big = new Float32Array(2048)
     v.accept(big)
     expect(seen).toHaveLength(4)
     for (const w of seen) expect(w.buffer).not.toBe(big.buffer)
   })
 
+  test('нет файла модели — load-failed, sherpa не спрашивается', () => {
+    const s = stub()
+    expect(() => new SileroVad(join(TMP, 'nope.onnx'), s.module)).toThrow(
+      expect.objectContaining({ code: 'load-failed' })
+    )
+    expect(s.vadBuffer).toEqual([])
+  })
+
   test('flush закрывает идущую фразу; reset всё сбрасывает', () => {
     const s = stub()
-    const v = new SileroVad('silero.onnx', s.module)
+    const v = new SileroVad(SILERO, s.module)
     s.segmentsNext = { n: 0, detected: true }
     v.accept(new Float32Array(512))
     v.flush()

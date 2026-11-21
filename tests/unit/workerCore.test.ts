@@ -169,3 +169,28 @@ describe('WorkerCore', () => {
     ])
   })
 })
+
+describe('WorkerCore selftest', () => {
+  test('selftest: движок создан — ok; ошибка — ok: false с текстом', async () => {
+    const posts: FromWorker[] = []
+    const seen: string[] = []
+    let fail = false
+    const core = new WorkerCore({
+      makeEngine: () => new FakeSpeechEngine([]),
+      makeVad: () => new EnergyVad(),
+      post: (m) => posts.push(m),
+      selftest: (vad) => {
+        seen.push(vad)
+        if (fail) throw new Error('requested API version [23] is not available')
+      }
+    })
+    core.handle({ type: 'selftest', vad: 'C:\m\silero_vad.onnx' })
+    fail = true
+    core.handle({ type: 'selftest', vad: 'x' })
+    expect(seen).toEqual(['C:\m\silero_vad.onnx', 'x'])
+    expect(posts).toEqual([
+      { type: 'selftest', ok: true },
+      { type: 'selftest', ok: false, error: 'requested API version [23] is not available' }
+    ])
+  })
+})

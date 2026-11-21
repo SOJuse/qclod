@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import type { VoiceActivity } from './engine'
 import { loadSherpa, sherpaLoadError, type SherpaModule, type SherpaVad } from './sherpaEngine'
 
@@ -34,6 +35,9 @@ export class SileroVad implements VoiceActivity {
 
   constructor(model: string, sherpa?: SherpaModule) {
     try {
+      // sherpa does not throw on a bad config: it prints and hands back a VAD
+      // that never hears anything. A missing file is the likely bad config.
+      if (!existsSync(model)) throw new Error(`Silero VAD model not found: ${model}`)
       const mod = sherpa ?? loadSherpa()
       this.vad = new mod.Vad(vadConfig(model), BUFFER_SECONDS)
     } catch (err) {

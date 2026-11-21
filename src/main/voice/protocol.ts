@@ -12,6 +12,8 @@ export type ToWorker =
   | { type: 'start'; session: string; replacements: VoiceReplacement[] }
   | { type: 'audio'; session: string; pcm: Float32Array }
   | { type: 'stop'; session: string }
+  /** e2e of the packaged app: load sherpa-onnx-node and make a VAD (index.ts). */
+  | { type: 'selftest'; vad: string }
 
 /** voice process → main. */
 export type FromWorker =
@@ -21,6 +23,7 @@ export type FromWorker =
   | { type: 'done'; session: string }
   | { type: 'failed'; code: 'ort-conflict' | 'load-failed' | 'gpu-failed'; message: string }
   | { type: 'pid'; pid: number }
+  | { type: 'selftest'; ok: boolean; error?: string }
 
 /** Sound the voice process (and the host, for a restart) keeps while the model loads. */
 export const LOAD_BUFFER_SAMPLES = 30 * 16_000

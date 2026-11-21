@@ -539,6 +539,23 @@ if (gotLock) void app.whenReady().then(async () => {
       }
     }
   })
+  // e2e of the packaged app (tests/e2e/packaged.spec.ts): the voice process
+  // loads sherpa-onnx-node and makes a VAD from the given silero_vad.onnx.
+  const voiceSelftest = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_VOICE_SELFTEST'] : undefined
+  if (__QCLOD_TEST_SEAMS__ && voiceSelftest) {
+    const g = globalThis as { __qclodVoiceSelftest?: { ok: boolean; error?: string } }
+    const probe = forkVoiceWorker()
+    probe.on('message', (m) => {
+      if (m.type !== 'selftest') return
+      g.__qclodVoiceSelftest = m.error === undefined ? { ok: m.ok } : { ok: m.ok, error: m.error }
+      console.log('[voice] selftest', JSON.stringify(g.__qclodVoiceSelftest))
+      probe.kill()
+    })
+    probe.on('exit', (code) => {
+      g.__qclodVoiceSelftest ??= { ok: false, error: `voice process exited with code ${code}` }
+    })
+    probe.postMessage({ type: 'selftest', vad: voiceSelftest })
+  }
   registerVoiceIpc({
     host: voiceHost,
     store: noModels,

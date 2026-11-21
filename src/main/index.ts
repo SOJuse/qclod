@@ -25,6 +25,7 @@ import {
   watchRenderer
 } from './window'
 import { appMenuTemplate } from './menu'
+import { loginShellPath, mergePath } from '../core/shellEnv'
 import { ErrorLog, type ErrorEntry } from './system/errorLog'
 import { installMainErrorHandlers } from './system/mainErrors'
 import { registerFallbackIpc } from './fallbackIpc'
@@ -230,6 +231,12 @@ if (gotLock) void app.whenReady().then(async () => {
     }
   })
   Menu.setApplicationMenu(appMenu ? Menu.buildFromTemplate(appMenu) : null)
+  // Started from Finder or the Dock, a Mac app has launchd's bare PATH: Claude Code in
+  // ~/.local/bin would not be found. The login shell knows the person's real one.
+  if (process.platform === 'darwin') {
+    const home = homedir()
+    process.env['PATH'] = mergePath(process.env['PATH'] ?? '', await loginShellPath({ home }), home)
+  }
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
   // Start at login: an installed build only, and never from an e2e run.

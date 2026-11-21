@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import type { AuthStatus, LoginProgress } from '../../shared/types'
+import { macCommandFile, openInMacTerminal, shq } from '../system/console'
 import { quoteArg } from './install'
 
 export type { AuthStatus, LoginProgress }
@@ -104,7 +105,16 @@ const LOGIN_LINE_VAR = 'QCLOD_LOGIN_LINE'
  * built it for a single cmd level: quotes around the path keep `&` and `^`
  * literal, and `"^%"` keeps a `%` from starting a variable.
  */
-export function openLoginWindow(agent: string, spawnFn: SpawnLike = spawn): void {
+export function openLoginWindow(
+  agent: string,
+  spawnFn: SpawnLike = spawn,
+  platform: NodeJS.Platform = process.platform
+): void {
+  if (platform === 'darwin') {
+    const program = /\.js$/i.test(agent) ? `node ${shq(agent)}` : shq(agent)
+    openInMacTerminal(macCommandFile([`exec ${program} auth login`]), spawnFn as never)
+    return
+  }
   const child = spawnFn(
     'cmd.exe',
     ['/d', '/v:off', '/c', 'start', '""', 'cmd.exe', '/d', '/v:off', '/s', '/k', `^"%${LOGIN_LINE_VAR}^%^"`],

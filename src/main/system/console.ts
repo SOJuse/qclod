@@ -1,5 +1,40 @@
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { quoteArg } from '../setup/install'
+
+/** One word for a POSIX shell: single quotes, an inner quote written as quote, backslash, quote, quote. */
+export function shq(value: string): string {
+  return "'" + value.split("'").join("'\\''") + "'"
+}
+
+/**
+ * The text of a `.command` file, which Terminal runs when opened. The file deletes
+ * itself first: it is a temporary, and the line that follows may run for hours.
+ */
+export function macCommandFile(lines: string[]): string {
+  return ['#!/bin/zsh', 'rm -f -- "$0"', ...lines, ''].join('\n')
+}
+
+/** The lines that start the agent interactively, in a folder (a Mac terminal). */
+export function macAgentLines(agent: string, cwd: string): string[] {
+  const program = /\.js$/i.test(agent) ? `node ${shq(agent)}` : shq(agent)
+  return [`cd ${shq(cwd)} || exit 1`, `exec ${program}`]
+}
+
+/**
+ * Opens Terminal on a script: written to `<tmp>/qclod-<random>.command` (0700, a
+ * name nobody can guess and no one else can write to) and handed to `open -a Terminal`.
+ */
+export function openInMacTerminal(script: string, spawnFn: ConsoleSpawn = spawn, dir: string = tmpdir()): void {
+  const file = join(dir, `qclod-${randomBytes(8).toString('hex')}.command`)
+  writeFileSync(file, script, { mode: 0o700, flag: 'wx' })
+  const child = spawnFn('open', ['-a', 'Terminal', file], { detached: true, windowsHide: true, stdio: 'ignore' })
+  child.on('error', (e) => console.warn('[terminal]', e.message))
+  child.unref()
+}
 
 /** The environment variable that carries the agent's command line to the inner cmd. */
 const AGENT_LINE_VAR = 'QCLOD_AGENT_LINE'
@@ -28,7 +63,16 @@ export function agentCommandLine(agent: string): string {
  * The line travels the same way as the login window's (auth.ts): through an
  * environment variable, so only the inner cmd ever parses the path.
  */
-export function openAgentTerminal(agent: string, cwd: string, spawnFn: ConsoleSpawn = spawn): void {
+export function openAgentTerminal(
+  agent: string,
+  cwd: string,
+  spawnFn: ConsoleSpawn = spawn,
+  platform: NodeJS.Platform = process.platform
+): void {
+  if (platform === 'darwin') {
+    openInMacTerminal(macCommandFile(macAgentLines(agent, cwd)), spawnFn)
+    return
+  }
   const child = spawnFn(
     'cmd.exe',
     ['/d', '/v:off', '/c', 'start', '""', 'cmd.exe', '/d', '/v:off', '/s', '/k', `^"%${AGENT_LINE_VAR}^%^"`],

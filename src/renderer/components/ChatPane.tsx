@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
-import type { CostRates, RibbonItem, SessionSummary, UserInput } from '../../shared/types'
+import type { CostRates, RibbonItem, SessionSummary, SubagentItem, UserInput } from '../../shared/types'
+import type { VoiceControls } from '../../shared/voice'
 import { EMPTY_PANEL, useAppStore, type PaneLayerState } from '../state/useAppStore'
 import { useHeldDrafts } from '../state/heldDrafts'
 import { compactNow, sendCommand } from '../input/slash'
@@ -30,6 +31,7 @@ import { restartChat } from '../app/restartChat'
 import { ChatHeader } from './ChatHeader'
 import { PaneLayer } from './PaneLayer'
 import { AgentsLayer } from './agents/AgentsLayer'
+import { AgentComposer, SEND_REFUSAL, agentPlaceholder } from './agents/AgentComposer'
 import { SidePanel } from './SidePanel'
 import './ChatPane.css'
 
@@ -52,7 +54,10 @@ function paneLayerView(
 ): { title: string; body: ReactNode } | null {
   switch (layer.kind) {
     case 'agents': // этап 4: the pane's subagents, layer.agentId opened
-      return { title: 'Агенты этого чата', body: <AgentsLayer {...pane} /> }
+      return {
+        title: 'Агенты этого чата',
+        body: <AgentsLayer {...pane} {...(layer.agentId !== undefined ? { agentId: layer.agentId } : {})} />
+      }
     case 'file': // этап 6: layer.path at layer.line
       return null
     case 'git': // этап 7: the folder's changes
@@ -82,6 +87,8 @@ interface Props {
   /** Why the tab's ribbon could not be read; `onRetryRibbon` asks again. */
   ribbonError?: string | null
   onRetryRibbon?: () => void
+  /** Этап 5's voice input, the same for the chat's input and a subagent's (сверка F12). */
+  voice?: VoiceControls
 }
 
 /**
@@ -105,7 +112,8 @@ export function ChatPane({
   notice,
   panelRequest = null,
   ribbonError = null,
-  onRetryRibbon
+  onRetryRibbon,
+  voice
 }: Props): JSX.Element {
   const tabs = useAppStore((s) => s.tabs)
   const ribbonByTab = useAppStore((s) => s.ribbonByTab)
@@ -248,6 +256,11 @@ export function ChatPane({
   const items = ribbonByTab[tabId]
   const layer = useAppStore((s) => s.layerByTab[tabId] ?? null)
   const layerView = layer ? paneLayerView(layer, { tabId, items: items ?? NO_ITEMS, costRates: panel.costRates }) : null
+  /** A subagent's own ribbon open over this pane: its input stands where the chat's does (решение 1). */
+  const agentCard = useMemo(() => {
+    const id = layer?.kind === 'agents' ? layer.agentId : undefined
+    return id === undefined ? undefined : (items ?? NO_ITEMS).find((i): i is SubagentItem => i.kind === 'subagent' && i.id === id)
+  }, [layer, items])
   /** «Агенты (3)»: the subagents working now. */
   const agentsCount = useMemo(
     () => (items ?? NO_ITEMS).reduce((n, item) => (item.kind === 'subagent' && item.state === 'running' ? n + 1 : n), 0),
@@ -417,7 +430,18 @@ export function ChatPane({
               />
             </div>
 
+            {agentCard ? (
+              <AgentComposer
+                key={agentCard.id}
+                tabId={tabId}
+                cardId={agentCard.id}
+                disabledReason={status === 'stopped' ? SEND_REFUSAL['not-running'] : null}
+                placeholder={agentPlaceholder(agentCard.state)}
+                {...(voice ? { voice } : {})}
+              />
+            ) : (
             <Composer
+              {...(voice ? { voice } : {})}
               tabId={tabId}
               status={status}
               draft={draft}
@@ -474,6 +498,7 @@ export function ChatPane({
                 })
               }}
             />
+            )}
 
             <StatusLine
               tabId={tabId}

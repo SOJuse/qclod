@@ -370,6 +370,231 @@
   color: var(--text-dim);
 }
 
+/* ------------------------------------------------------------ one agent's own ribbon */
+
+/* Fills the layer above the dock: the ribbon in it scrolls by itself. */
+.agent-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+  min-height: 0;
+}
+
+.agent-view-head {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.agent-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  margin-left: calc(-1 * var(--space-2));
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.agent-back:hover {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.agent-view-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-md);
+}
+
+.agent-view-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.agent-view-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.agent-view-state.is-running {
+  color: var(--text);
+}
+
+.agent-view-state.is-done svg {
+  color: var(--status-ok);
+}
+
+.agent-view-state.is-failed svg {
+  color: var(--status-critical);
+}
+
+.agent-view-details {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.agent-view-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.agent-stop {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--button-sm-gap);
+  padding: var(--button-sm-pad);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--button-sm-radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.agent-stop:hover:not(:disabled) {
+  border-color: var(--critical-border);
+  background: var(--critical-fill);
+}
+
+.agent-stop:disabled {
+  cursor: default;
+  color: var(--text-dim);
+}
+
+.agent-stop-error {
+  font-size: var(--text-xs);
+  color: var(--status-critical);
+}
+
+.agent-prompt {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-size: var(--text-sm);
+}
+
+.agent-prompt > summary {
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.agent-prompt-text {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 0 var(--space-3) var(--space-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.agent-view-ribbon {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* The layer already keeps room for the dock under it. */
+.agent-view-ribbon .ribbon {
+  padding-bottom: var(--space-4);
+}
+
+/* ------------------------------------------------------------ messages to and from a subagent */
+
+.agent-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-width: min(80%, var(--prose-max-w));
+  margin: var(--space-3) 0;
+}
+
+.agent-message.is-person {
+  margin-left: auto;
+  align-items: flex-end;
+}
+
+.agent-message.is-main {
+  margin-right: auto;
+  align-items: flex-start;
+}
+
+.agent-message-text {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--text-md);
+  line-height: var(--leading-prose);
+}
+
+.agent-message.is-person .agent-message-text {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
+}
+
+.agent-message.is-main .agent-message-text {
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.agent-message.is-cancelled .agent-message-text {
+  color: var(--text-dim);
+}
+
+.agent-message-caption {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+/* In the main ribbon: a message the person wrote to a subagent. */
+.row-user-relay {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------ the subagent's input */
+
+.agent-composer-foot {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2) 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.agent-composer-reason {
+  color: var(--status-warn);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-node.is-running::after,
   .agent-node {

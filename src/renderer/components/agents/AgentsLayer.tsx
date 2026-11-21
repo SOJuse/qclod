@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { CostRates, RibbonItem } from '../../../shared/types'
+import { useEffect, useMemo, useRef } from 'react'
+import type { CostRates, RibbonItem, SubagentItem } from '../../../shared/types'
 import { agentNodes } from '../../agents/agentModel'
+import { useNow } from '../../agents/useNow'
 import { useAppStore, type AgentsView } from '../../state/useAppStore'
 import { StateView } from '../../ui/StateView'
 import { AgentGraph } from './AgentGraph'
 import { AgentTimeline } from './AgentTimeline'
+import { AgentView } from './AgentView'
 import './AgentsLayer.css'
 
 const VIEWS: Array<{ view: AgentsView; label: string }> = [
@@ -12,39 +14,34 @@ const VIEWS: Array<{ view: AgentsView; label: string }> = [
   { view: 'timeline', label: 'Таймлайн' }
 ]
 
-/**
- * The time, once a second while `active` and the window is in view; otherwise
- * it stands. A hidden window does not tick: nobody reads the clock there.
- */
-export function useNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!active) return
-    let timer: ReturnType<typeof setInterval> | null = null
-    const start = (): void => {
-      if (timer !== null || document.visibilityState !== 'visible') return
-      setNow(Date.now())
-      timer = setInterval(() => setNow(Date.now()), 1000)
-    }
-    const stop = (): void => {
-      if (timer !== null) clearInterval(timer)
-      timer = null
-    }
-    const onVisibility = (): void => (document.visibilityState === 'visible' ? start() : stop())
-    start()
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => {
-      stop()
-      document.removeEventListener('visibilitychange', onVisibility)
-    }
-  }, [active])
-  return now
-}
-
 interface Props {
   tabId: string
   items: RibbonItem[]
   costRates: CostRates | null
+  /** The card whose own ribbon is open (layerByTab[tabId].agentId); absent — all the agents. */
+  agentId?: string
+}
+
+/**
+ * The layer's body: one agent's own ribbon if `agentId` names a subagent card
+ * of this chat, otherwise all of them. A card that is gone (a new session)
+ * falls back to all of them.
+ */
+export function AgentsLayer({ agentId, ...rest }: Props): JSX.Element {
+  const card = useMemo(
+    () => (agentId === undefined ? undefined : rest.items.find((i): i is SubagentItem => i.kind === 'subagent' && i.id === agentId)),
+    [agentId, rest.items]
+  )
+  if (card) {
+    return (
+      <AgentView
+        {...rest}
+        card={card}
+        onBack={() => useAppStore.getState().openAgents(rest.tabId)}
+      />
+    )
+  }
+  return <AgentsOverview {...rest} />
 }
 
 /**
@@ -53,7 +50,7 @@ interface Props {
  * cards and the input stay in view under it; Esc and «Закрыть» are the
  * layer's own (PaneLayer).
  */
-export function AgentsLayer({ tabId, items, costRates }: Props): JSX.Element {
+function AgentsOverview({ tabId, items, costRates }: Omit<Props, 'agentId'>): JSX.Element {
   const nodes = useMemo(() => agentNodes(items), [items])
   const running = nodes.reduce((n, node) => (node.state === 'running' ? n + 1 : n), 0)
   const view = useAppStore((s) => s.agentsView)

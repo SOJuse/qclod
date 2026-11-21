@@ -72,4 +72,6 @@ git push --tags
 
 Сборку и публикацию релиза делает workflow `.github/workflows/release.yml`.
 
+Для тестировщиков. Сборка до выпуска: файлы `qclod-relay-<версия>-linux-x64.gz` и `-arm64.gz` из артефактов прогона CI положите в `%APPDATA%\Qclod\relay\` (Mac: `~/Library/Application Support/Qclod/relay/`).
+
 Автор: SOJuse.

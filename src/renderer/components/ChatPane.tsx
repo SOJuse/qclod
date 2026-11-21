@@ -29,6 +29,9 @@ import { nextOverride, panelMode, panelToggle, type PanelOverride } from '../app
 import { restartChat } from '../app/restartChat'
 import { ChatHeader } from './ChatHeader'
 import { PaneLayer } from './PaneLayer'
+import { GitLayer, gitTitle } from './git/GitLayer'
+import { useGitStatus } from './git/useGitStatus'
+import { FileViewer } from './viewer/FileViewer'
 import { SidePanel } from './SidePanel'
 import './ChatPane.css'
 
@@ -39,18 +42,44 @@ export interface PanelRequest {
   n: number
 }
 
+/** A path's last part, with either slash. */
+function baseName(path: string): string {
+  return path.split(/[\\/]/).pop() || path
+}
+
 /**
  * What a layer over the ribbon shows, by kind — one line per stage. A kind
- * with nothing to show draws no layer: in этап 2 there is none yet.
+ * with nothing to show draws no layer.
  */
-function paneLayerView(layer: PaneLayerState): { title: string; body: ReactNode } | null {
+function paneLayerView(
+  layer: PaneLayerState,
+  ctx: { tabId: string; cwd: string; git: ReturnType<typeof useGitStatus>; close: () => void }
+): { title: string; body: ReactNode } | null {
   switch (layer.kind) {
     case 'agents': // этап 4: the pane's subagents, layer.agentId opened
       return null
-    case 'file': // этап 6: layer.path at layer.line
-      return null
+    case 'file': // этап 6 brings remote files; a local one is read here (этап 7, задача 14)
+      if (!layer.path) return null
+      return {
+        title: baseName(layer.path),
+        body: (
+          <FileViewer tabId={ctx.tabId} source={{ kind: 'local' }} path={layer.path} line={layer.line} onClose={ctx.close} />
+        )
+      }
     case 'git': // этап 7: the folder's changes
-      return null
+      return {
+        title: gitTitle(ctx.git.status),
+        body: (
+          <GitLayer
+            tabId={ctx.tabId}
+            source={{ kind: 'local' }}
+            cwd={ctx.cwd}
+            status={ctx.git.status}
+            refresh={ctx.git.refresh}
+            refreshNow={ctx.git.refreshNow}
+          />
+        )
+      }
   }
 }
 
@@ -240,7 +269,19 @@ export function ChatPane({
   }, [])
 
   const layer = useAppStore((s) => s.layerByTab[tabId] ?? null)
-  const layerView = layer ? paneLayerView(layer) : null
+  const git = useGitStatus(tabId)
+  const layerView = layer
+    ? paneLayerView(layer, {
+        tabId,
+        cwd: tab?.cwd ?? '',
+        git,
+        close: () => useAppStore.getState().setPaneLayer(tabId, null)
+      })
+    : null
+  const gitState =
+    git.status?.kind === 'notRepo' || git.status?.kind === 'noGit' || git.status?.kind === 'unavailable'
+      ? git.status.kind
+      : 'ok'
   const items = ribbonByTab[tabId]
   const answers = useMemo(() => cardAnswers(tabId), [tabId])
   const sentTexts = useMemo(
@@ -312,6 +353,10 @@ export function ChatPane({
           panelShown={shown}
           onTogglePanel={togglePanel}
           {...(split && onUnsplit ? { onUnsplit } : {})}
+          onOpenGit={() => useAppStore.getState().setPaneLayer(tabId, { kind: 'git' })}
+          gitBadge={git.status?.kind === 'ok' ? git.status.changes.length : null}
+          gitState={gitState}
+          {...(git.status?.kind === 'unavailable' ? { gitHint: git.status.reason } : {})}
           // этап 4: onOpenAgents={() => setPaneLayer(tabId, { kind: 'agents' })} and agentsCount, the running subagents.
         />
 

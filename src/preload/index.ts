@@ -36,6 +36,7 @@ import type {
   PromptTemplate,
   TemplateDraft
 } from '../shared/types'
+import type { ViewerFile } from '../shared/viewerFile'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: unknown, payload: T): void => cb(payload)
@@ -253,7 +254,10 @@ const api = {
   gitCommit: (tabId: string, paths: string[], message: string): Promise<CommitResult> =>
     ipcRenderer.invoke(CHANNELS.gitCommit, tabId, paths, message),
   /** Full-text search over past conversations (Ctrl+K «В разговорах»). */
-  historySearch: (query: string): Promise<HistoryHit[]> => ipcRenderer.invoke(CHANNELS.historySearch, query)
+  historySearch: (query: string): Promise<HistoryHit[]> => ipcRenderer.invoke(CHANNELS.historySearch, query),
+  /** A local text file for the viewer; the tab names it, main checks it is the tab's own to show. */
+  viewerRead: (tabId: string, absPath: string): Promise<ViewerFile> =>
+    ipcRenderer.invoke(CHANNELS.filesViewerRead, tabId, absPath)
 }
 
 export type QclodApi = typeof api

@@ -1,4 +1,4 @@
-import { Bot, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
+import { Bot, GitBranch, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
 import type { SessionStatus } from '../../shared/types'
 import { hint } from '../app/shortcuts'
 import { STATUS_LABEL } from '../labels'
@@ -20,6 +20,22 @@ interface Props {
   onOpenAgents?: () => void
   /** How many subagents are working now (этап 4). */
   agentsCount?: number
+  /** Opens the Git layer (этап 7); without it there is no button. */
+  onOpenGit?: () => void
+  /** How many changes the folder has; nothing is shown for 0 or null. */
+  gitBadge?: number | null
+  /** What the button can do: only `ok` opens the layer. */
+  gitState?: 'ok' | 'notRepo' | 'noGit' | 'unavailable'
+  /** Why the button is off when `gitState` is `unavailable`. */
+  gitHint?: string
+}
+
+/** The Git button's hint, by state. */
+export function gitButtonTitle(state: 'ok' | 'notRepo' | 'noGit' | 'unavailable', hint?: string): string {
+  if (state === 'notRepo') return 'Папка не под Git'
+  if (state === 'noGit') return 'Git не найден'
+  if (state === 'unavailable') return hint ?? 'Git сейчас недоступен'
+  return 'Изменения в папке проекта'
 }
 
 /** The folder's own name: the path is in the hint. */
@@ -42,7 +58,11 @@ export function ChatHeader({
   onTogglePanel,
   onUnsplit,
   onOpenAgents,
-  agentsCount = 0
+  agentsCount = 0,
+  onOpenGit,
+  gitBadge = null,
+  gitState = 'ok',
+  gitHint
 }: Props): JSX.Element {
   const panelLabel = panelShown ? 'Скрыть панель' : 'Показать панель'
   // A new chat is named after its folder: the name once is enough.
@@ -68,6 +88,24 @@ export function ChatHeader({
         <button type="button" className="chat-header-button is-text" data-testid="open-agents" onClick={onOpenAgents}>
           <Bot size={14} aria-hidden="true" />
           <span>{agentsCount > 0 ? `Агенты (${agentsCount})` : 'Агенты'}</span>
+        </button>
+      )}
+      {onOpenGit && (
+        <button
+          type="button"
+          className="chat-header-button is-text"
+          data-testid="git-open"
+          title={gitButtonTitle(gitState, gitHint)}
+          disabled={gitState !== 'ok'}
+          onClick={onOpenGit}
+        >
+          <GitBranch size={14} aria-hidden="true" />
+          <span>Git</span>
+          {gitBadge !== null && gitBadge > 0 && (
+            <span className="chat-header-badge" data-testid="git-badge">
+              {gitBadge}
+            </span>
+          )}
         </button>
       )}
       {onUnsplit && (

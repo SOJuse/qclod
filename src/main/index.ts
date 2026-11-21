@@ -64,6 +64,7 @@ import { AutonomyHost } from './autonomy/autonomyHost'
 import { GitService } from './git/GitService'
 import { localGitRunner, type GitRunner } from './git/gitRunner'
 import { registerGitIpc } from './gitIpc'
+import { registerViewerReadIpc } from './files/viewerRead'
 import { applyOpenAtLogin } from './system/loginItem'
 import { claimSingleInstance } from './system/singleInstance'
 import { QuitReason, sessionEnding } from './system/quitReason'
@@ -502,6 +503,11 @@ if (gotLock) void app.whenReady().then(async () => {
     ;(globalThis as { __qclodShellLog?: unknown[] }).__qclodShellLog = []
   }
 
+  const pathResolver = new PathResolver()
+  registerViewerReadIpc({
+    tabs: () => controller.list().map((t) => ({ id: t.id, cwd: t.cwd })),
+    knows: (absPath, tabId) => pathResolver.knows(absPath, tabId)
+  })
   registerAgentIpc({
     getWindow: () => mainWindow,
     controller,
@@ -509,7 +515,7 @@ if (gotLock) void app.whenReady().then(async () => {
     broker,
     layout,
     history,
-    resolver: new PathResolver(),
+    resolver: pathResolver,
     getEditorCommand: () => settings.editorCommand,
     autonomy,
     userData,

@@ -78,3 +78,25 @@
   background: var(--hover-fill);
   color: var(--text);
 }
+
+.chat-header-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.chat-header-button:disabled:hover {
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.chat-header-badge {
+  min-width: 1.4em;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--hover-fill);
+  color: var(--text);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}

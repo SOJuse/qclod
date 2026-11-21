@@ -114,6 +114,8 @@ export const CHANNELS = Object.freeze({
   gitDiff: 'git:diff',
   gitCommit: 'git:commit',
   historySearch: 'history:search',
+  // этап 7 (H2), пока нет чтения файлов этапа 6: текст локального файла для FileViewer
+  filesViewerRead: 'files:viewerRead',
   // main -> renderer (event)
   templatesChanged: 'templates:changed'
 } as const)
@@ -196,7 +198,8 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.gitStatus,
   CHANNELS.gitDiff,
   CHANNELS.gitCommit,
-  CHANNELS.historySearch
+  CHANNELS.historySearch,
+  CHANNELS.filesViewerRead
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([

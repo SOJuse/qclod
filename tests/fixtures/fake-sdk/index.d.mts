@@ -192,6 +192,8 @@ export interface FakeScript {
   foregroundStop?: 'ignored'
   /** What an agent answers a SendMessage with; «продолжил: <текст>» by default. */
   resumeReply?: string
+  /** How long a resumed agent works before it answers; 0 by default. */
+  resumeHoldMs?: number
   /** false: the model ignores a relay instruction; it stays plain text. */
   relay?: boolean
   /** system/init.tools without SendMessage. */

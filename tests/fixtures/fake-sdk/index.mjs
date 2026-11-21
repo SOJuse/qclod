@@ -342,6 +342,9 @@ export function createFakeSdk(script = {}) {
       prompt: message
     })
     if (rec.phase !== 'background') return
+    // resumeHoldMs: it works a while before it answers, so a test sees it running again.
+    await pause(script.resumeHoldMs)
+    if (rec.phase !== 'background') return
     const reply = replyTo(message)
     yield subagentFrame(assistant([{ type: 'text', text: reply }]), rec)
     yield agentProgress(rec, sendId, { tokens: 0, toolUses: 0, durationMs: 0 })

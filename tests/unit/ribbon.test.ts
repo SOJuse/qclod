@@ -1626,3 +1626,89 @@ describe('RibbonBuilder: этап 4 — сабагенты по своим ка�
     await driver.dispose()
   })
 })
+
+describe('RibbonBuilder: этап 4 — переписка с сабагентом', () => {
+  function withAgent(now = (): number => 1000): { b: RibbonBuilder; card: SubagentCard } {
+    const b = new RibbonBuilder({ now })
+    b.apply(agentCall('tA', { description: 'счётчик', name: 'counter' }))
+    b.apply(taskStarted({ task_id: 'aA', tool_use_id: 'tA', is_backgrounded: true }))
+    return { b, card: cardOf(b, 'tA') }
+  }
+  const messagesIn = (b: RibbonBuilder, cardId: string): Array<Extract<RibbonItem, { kind: 'agentMessage' }>> =>
+    only(b.items, 'agentMessage').filter((m) => m.parentId === cardId)
+  const sendMessage = (id: string, input: Record<string, unknown>): unknown =>
+    assistant([{ type: 'tool_use', id, name: 'SendMessage', input }])
+
+  test('addRelay кладёт сообщение человека в карточку, state sent', () => {
+    const { b, card } = withAgent(() => 4242)
+    const changes = b.addRelay(card.id, 'проверь тесты', 'rel-1')
+    expect(changes).toHaveLength(1)
+    expect(messagesIn(b, card.id)).toEqual([
+      expect.objectContaining({ kind: 'agentMessage', from: 'person', text: 'проверь тесты', relayId: 'rel-1', state: 'sent', at: 4242, parentId: card.id })
+    ])
+    expect(b.addRelay('нет такой', 'x', 'rel-2')).toEqual([])
+  })
+
+  test('SendMessage к агенту переводит старейшее sent/read в passed', () => {
+    const { b, card } = withAgent()
+    b.addRelay(card.id, 'первое', 'rel-1')
+    b.addRelay(card.id, 'второе', 'rel-2')
+    b.markRelay('rel-1', 'read')
+    b.apply(sendMessage('s1', { to: 'aA', message: 'первое' }))
+    expect(messagesIn(b, card.id).map((m) => [m.relayId, m.state])).toEqual([
+      ['rel-1', 'passed'],
+      ['rel-2', 'sent']
+    ])
+    // Addressed by its name too.
+    b.apply(sendMessage('s2', { to: 'counter', message: 'второе' }))
+    expect(messagesIn(b, card.id).map((m) => m.state)).toEqual(['passed', 'passed'])
+    // The tool card stays in the main ribbon.
+    expect(only(b.items, 'tool').filter((t) => t.name === 'SendMessage' && !t.parentId)).toHaveLength(2)
+    expect(messagesIn(b, card.id).some((m) => m.from === 'main')).toBe(false)
+  })
+
+  test('SendMessage без поручения добавляет сообщение main с текстом message', () => {
+    const { b, card } = withAgent(() => 777)
+    b.apply(sendMessage('s1', { to: 'aA', message: 'сам решил\nвторая строка' }))
+    b.apply(sendMessage('s2', { to: 'aA', content: 'через content' }))
+    b.apply(sendMessage('s3', { to: 'aA', message: { kind: 'json', n: 1 } }))
+    const got = messagesIn(b, card.id)
+    expect(got.map((m) => m.from)).toEqual(['main', 'main', 'main'])
+    expect(got[0]).toMatchObject({ text: 'сам решил\nвторая строка', at: 777 })
+    expect(got[0]!.relayId).toBeUndefined()
+    expect(got[0]!.state).toBeUndefined()
+    expect(got[1]!.text).toBe('через content')
+    expect(got[2]!.text).toBe('{"kind":"json","n":1}')
+  })
+
+  test('SendMessage к незнакомому — только карточка инструмента', () => {
+    const { b } = withAgent()
+    b.apply(sendMessage('s1', { to: 'кто-то', message: 'привет' }))
+    expect(only(b.items, 'agentMessage')).toHaveLength(0)
+    expect(only(b.items, 'tool').find((t) => t.toolUseId === 's1')).toMatchObject({ name: 'SendMessage', target: '→ кто-то' })
+  })
+
+  test('markRelay cancelled после passed ничего не меняет', () => {
+    const { b, card } = withAgent()
+    b.addRelay(card.id, 'текст', 'rel-1')
+    expect(b.markRelay('rel-1', 'read')).toHaveLength(1)
+    b.apply(sendMessage('s1', { to: 'aA', message: 'текст' }))
+    expect(b.markRelay('rel-1', 'cancelled')).toEqual([])
+    expect(messagesIn(b, card.id)[0]!.state).toBe('passed')
+    expect(b.markRelay('нет', 'read')).toEqual([])
+
+    b.addRelay(card.id, 'другое', 'rel-2')
+    expect(b.markRelay('rel-2', 'cancelled')).toEqual([{ kind: 'update', id: messagesIn(b, card.id)[1]!.id, patch: { state: 'cancelled' } }])
+    expect(b.markRelay('rel-2', 'read')).toEqual([])
+  })
+
+  test('addUser с relay кладёт пузырь с relay', () => {
+    const { b, card } = withAgent()
+    b.addUser('проверь тесты', [], null, 'u1', { relay: { cardId: card.id, agent: 'Explore' } })
+    const bubble = only(b.items, 'user').at(-1)!
+    expect(bubble).toMatchObject({ text: 'проверь тесты', relay: { cardId: card.id, agent: 'Explore' } })
+    expect(bubble.parentId).toBeUndefined()
+    b.addUser('обычное')
+    expect(only(b.items, 'user').at(-1)!.relay).toBeUndefined()
+  })
+})

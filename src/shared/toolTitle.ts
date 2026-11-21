@@ -27,6 +27,7 @@ const TOOL_TITLE: Record<string, string> = {
   NotebookEdit: 'Правка блокнота',
   Agent: 'Подагент',
   Task: 'Подагент',
+  SendMessage: 'Сообщение агенту',
   TodoWrite: 'Список дел',
   AskUserQuestion: 'Вопрос',
   EnterPlanMode: 'Переход в план',

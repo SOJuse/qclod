@@ -2,6 +2,7 @@ import type {
   Attachment,
   NoticeAction,
   QuestionView,
+  RelayState,
   RibbonChange,
   RibbonItem,
   SubagentItem,
@@ -69,6 +70,10 @@ function basename(path: string): string {
  * the command, the pattern — the detail lives behind the click.
  */
 export function toolTarget(name: string, input: Record<string, unknown>): string {
+  if (name === 'SendMessage') {
+    const to = str(input['to'])
+    return to ? `→ ${clip(to)}` : ''
+  }
   const path = str(input['file_path']) || str(input['path']) || str(input['notebook_path'])
   if (path) return basename(path)
   if (name === 'Bash') return clip(str(input['command']))
@@ -355,13 +360,14 @@ export class RibbonBuilder {
     attachments: Attachment[] = [],
     echoKey: string | null = text,
     uuid?: string,
-    opts: { auto?: boolean } = {}
+    opts: { auto?: boolean; relay?: { cardId: string; agent: string } } = {}
   ): RibbonChange[] {
     // What is shown and what will be echoed are not always the same string:
     // an attached file reaches the agent as an @-mention appended to the text.
     // null: no echo is coming (a message the CLI folded into a turn).
     if (echoKey !== null) this.expectEcho(echoKey, uuid)
     // `auto`: sent by Qclod itself («продолжай»), not by the person.
+    // `relay`: written to a subagent; the bubble shows the person's words, not the instruction.
     return [
       this.append({
         kind: 'user',
@@ -369,9 +375,40 @@ export class RibbonBuilder {
         text,
         attachments,
         at: this.now(),
-        ...(opts.auto ? { auto: true as const } : {})
+        ...(opts.auto ? { auto: true as const } : {}),
+        ...(opts.relay ? { relay: { cardId: opts.relay.cardId, agent: opts.relay.agent } } : {})
       })
     ]
+  }
+
+  /**
+   * What the person wrote to a subagent, in that agent's ribbon: `sent` until
+   * the main agent reads it, then `read`, `passed` when it calls SendMessage
+   * to that agent, `cancelled` when it never went.
+   */
+  addRelay(cardId: string, text: string, relayId: string): RibbonChange[] {
+    if (!this.subagentCard(cardId)) return []
+    return [
+      this.append({
+        kind: 'agentMessage',
+        id: this.nextId(),
+        from: 'person',
+        text,
+        at: this.now(),
+        relayId,
+        state: 'sent',
+        parentId: cardId
+      })
+    ]
+  }
+
+  /** Moves a relayed message on; nothing once it has been passed on or cancelled. */
+  markRelay(relayId: string, state: RelayState): RibbonChange[] {
+    const item = this.list.find((i) => i.kind === 'agentMessage' && i.relayId === relayId)
+    if (!item || item.kind !== 'agentMessage') return []
+    if (item.state === 'passed' || item.state === 'cancelled' || item.state === state) return []
+    item.state = state
+    return [this.update(item.id, { state })]
   }
 
   /**
@@ -762,6 +799,9 @@ export class RibbonBuilder {
 
         case 'tool_use':
           changes.push(...this.onToolUse(block, parentId, this.messageTime(message)))
+          if (block['name'] === 'SendMessage' && !parentId) {
+            changes.push(...this.onSendMessage(block, this.messageTime(message)))
+          }
           break
 
         default:
@@ -769,6 +809,46 @@ export class RibbonBuilder {
       }
     }
     return changes
+  }
+
+  /**
+   * The main agent writes to a subagent. If the person had asked it to, the
+   * oldest of their messages still on the way is now passed on; otherwise it
+   * is the main agent's own word, and the agent's ribbon shows it as such.
+   * The call keeps its ordinary card in the main ribbon either way.
+   */
+  private onSendMessage(block: Record<string, unknown>, at: number | undefined): RibbonChange[] {
+    const input = isObject(block['input']) ? block['input'] : {}
+    const to = str(input['to'])
+    if (!to) return []
+    const card = this.list.find(
+      (i): i is SubagentItem => i.kind === 'subagent' && (i.agentId === to || i.taskId === to || i.label === to)
+    )
+    if (!card) return []
+    const waiting = this.list.find(
+      (i) =>
+        i.kind === 'agentMessage' &&
+        i.parentId === card.id &&
+        i.from === 'person' &&
+        (i.state === 'sent' || i.state === 'read')
+    )
+    if (waiting && waiting.kind === 'agentMessage') {
+      waiting.state = 'passed'
+      return [this.update(waiting.id, { state: 'passed' })]
+    }
+    const said = [input['message'], input['content'], input['text']].find((v) => typeof v === 'string')
+    const raw = said ?? input['message'] ?? input['content'] ?? input['text']
+    const text = typeof said === 'string' ? said : raw === undefined ? '' : clip(JSON.stringify(raw), 2000)
+    return [
+      this.append({
+        kind: 'agentMessage',
+        id: this.nextId(),
+        from: 'main',
+        text,
+        ...(at !== undefined ? { at } : {}),
+        parentId: card.id
+      })
+    ]
   }
 
   private onToolUse(block: Record<string, unknown>, parentId: string | undefined, at?: number): RibbonChange[] {

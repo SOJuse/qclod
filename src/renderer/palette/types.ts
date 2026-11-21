@@ -1,4 +1,4 @@
-import type { CommandInfo, SessionSummary, TabId } from '../../shared/types'
+import type { CommandInfo, PromptTemplate, SessionSummary, TabId } from '../../shared/types'
 import type { AppActionId } from '../app/shortcuts'
 import type { SidebarProject } from '../chat/sidebarModel'
 import type { PaneLayerState } from '../state/useAppStore'
@@ -26,6 +26,8 @@ export interface PaletteRunner {
   openSession(cwd: string, s: SessionSummary): void
   insertMention(path: string): void
   insertCommand(name: string): void
+  /** этап 7: a template's text into the active chat's input at the caret; no active chat — nothing. */
+  insertTemplate(body: string): void
   /** Действие окна; arg — для действий с объектом (например, id сервера у этапа 6). */
   runAction(id: AppActionId, arg?: string): void
   /** Слой поверх ленты активной панели (задача 6). */
@@ -48,6 +50,8 @@ export interface PaletteContext {
   filesPending?: boolean
   /** The active chat's slash commands. */
   commands: CommandInfo[]
+  /** этап 7: the owner's prompt templates. */
+  templates?: PromptTemplate[]
   run: PaletteRunner
 }
 

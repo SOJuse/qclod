@@ -240,6 +240,8 @@ interface AppState {
   layerByTab: Record<TabId, PaneLayerState | null>
   /** Each pane's own panel choice (S2-R23): open or closed by hand; absent — the setting decides. In memory only. */
   panelChoiceByTab: Record<TabId, PanelOverride>
+  /** этап 7: text for a pane's input, put in at its caret (a template from Ctrl+K); nonce — each request once. */
+  composerInsert: { tabId: TabId; text: string; nonce: number } | null
 
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
@@ -267,6 +269,7 @@ interface AppState {
   /** A new layer replaces the one before it; null closes it. */
   setPaneLayer: (tabId: TabId, layer: PaneLayerState | null) => void
   setPanelChoice: (tabId: TabId, choice: PanelOverride) => void
+  requestComposerInsert: (tabId: TabId, text: string) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -353,6 +356,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   recentCommands: [],
   layerByTab: {},
   panelChoiceByTab: {},
+  composerInsert: null,
 
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
@@ -548,7 +552,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       (state.panelChoiceByTab[tabId] ?? null) === choice
         ? state
         : { panelChoiceByTab: { ...state.panelChoiceByTab, [tabId]: choice } }
-    )
+    ),
+  requestComposerInsert: (tabId, text) =>
+    set((state) => ({ composerInsert: { tabId, text, nonce: (state.composerInsert?.nonce ?? 0) + 1 } }))
 }))
 
 // Written on change, so a reload (Ctrl+R) at any moment finds the latest.

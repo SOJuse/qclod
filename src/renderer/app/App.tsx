@@ -490,6 +490,10 @@ export function App(): JSX.Element {
       openSession: focused(openPast),
       insertMention: focused((path: string) => intoDraft((draft) => withMention(draft, path))),
       insertCommand: focused((name: string) => intoDraft((draft) => withCommand(draft, name))),
+      insertTemplate: focused((body: string) => {
+        const state = useAppStore.getState()
+        if (state.activeTabId) state.requestComposerInsert(state.activeTabId, body)
+      }),
       runAction: focused((id: AppActionId, arg?: string) => runAction(id, arg)),
       openLayer: (layer) => {
         const state = useAppStore.getState()

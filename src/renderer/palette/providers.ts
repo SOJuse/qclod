@@ -4,6 +4,7 @@ import { filesProvider } from './files'
 import { historyProvider } from './history'
 import { projectsProvider } from './projects'
 import { fold } from './rank'
+import { templatesProvider } from './templates'
 import {
   SECTION_CAP,
   type PaletteContext,
@@ -23,7 +24,8 @@ export const PALETTE_PROVIDERS: PaletteProvider[] = [
   projectsProvider,
   historyProvider,
   filesProvider,
-  commandsProvider
+  commandsProvider,
+  templatesProvider
 ]
 
 /** A section's heading; the id itself for a section nobody provides. */

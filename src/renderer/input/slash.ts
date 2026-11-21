@@ -1,7 +1,8 @@
-import { EFFORT_LEVELS, type CommandInfo, type EffortLevel, type ModelOption } from '../../shared/types'
+import { EFFORT_LEVELS, type CommandInfo, type EffortLevel, type ModelOption, type PromptTemplate } from '../../shared/types'
 import { filterCommands, isLocalCommand, needsArgument } from '../../shared/commandFilter'
 import { EFFORT_LABEL } from '../labels'
 import type { InlineMenuItem } from '../components/InlineMenu'
+import { TEMPLATE_ITEM_PREFIX, templateItems } from './templates'
 
 /**
  * Slash commands, typed straight into the input.
@@ -39,6 +40,8 @@ export type SlashOutcome =
   | { kind: 'history' }
   /** Show the second list (/model, /effort), with this text in the field. */
   | { kind: 'step'; step: SlashStep; text: string }
+  /** Put a template's text in place of «/запрос», its first {{…}} selected; nothing is sent. */
+  | { kind: 'template'; body: string }
 
 /**
  * Enter on a command. Qclod's own commands are decided by name first — the
@@ -164,4 +167,22 @@ export function sendCommand(tabId: string, text: string): void {
  */
 export function compactNow(tabId: string): void {
   sendCommand(tabId, '/compact')
+}
+
+/** The `/` list: Claude Code's commands, then the owner's templates (`tpl:<id>`). */
+export function slashItems(
+  commands: CommandInfo[],
+  templates: PromptTemplate[],
+  query: string,
+  recent: string[]
+): InlineMenuItem[] {
+  return [...commandItems(commands, query, recent), ...templateItems(templates, query)]
+}
+
+/** Enter or Tab on a `tpl:` row; `none` for any other row, which is then a command. */
+export function acceptTemplate(templates: PromptTemplate[], itemId: string): SlashOutcome {
+  if (!itemId.startsWith(TEMPLATE_ITEM_PREFIX)) return { kind: 'none' }
+  const id = itemId.slice(TEMPLATE_ITEM_PREFIX.length)
+  const template = templates.find((t) => t.id === id)
+  return template ? { kind: 'template', body: template.body } : { kind: 'none' }
 }

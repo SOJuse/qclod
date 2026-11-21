@@ -184,6 +184,9 @@ export class LineDecoder {
   private droppedLines = 0
   private invalidLines = 0
 
+  /** `onInvalid` hears each line that was no frame — the daemon answers a request it cannot read. */
+  constructor(private readonly onInvalid?: (line: string) => void) {}
+
   /** Lines over MAX_FRAME_BYTES. */
   get dropped(): number {
     return this.droppedLines
@@ -217,9 +220,13 @@ export class LineDecoder {
       this.parts = []
       this.size = 0
       if (line.length === 0) continue
-      const frame = parseFrame(line.toString('utf8'))
+      const text = line.toString('utf8')
+      const frame = parseFrame(text)
       if (frame) out.push(frame)
-      else this.invalidLines++
+      else {
+        this.invalidLines++
+        this.onInvalid?.(text)
+      }
     }
     if (start < bytes.length && !this.skipping) {
       const rest = bytes.subarray(start)

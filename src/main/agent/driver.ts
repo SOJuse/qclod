@@ -120,6 +120,8 @@ export interface DriverOptions {
   ) => Promise<PermissionAnswer>
   /** Stage 6: the tab's agent runs on this server, through its relay. */
   server?: TabServer | undefined
+  /** Stage 6, the relay: claude's environment (the login shell's PATH). Absent — the process's own. */
+  env?: Record<string, string | undefined> | undefined
 }
 
 export type DriverFactory = (options: DriverOptions) => AgentDriver | Promise<AgentDriver>

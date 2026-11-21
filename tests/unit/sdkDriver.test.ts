@@ -25,11 +25,16 @@ const sdk = vi.hoisted(() => {
       }
     }
   }
-  return { calls, extra, fakeQuery }
+  /** How many times sdkDriver reached for the package. */
+  const imports = { count: 0 }
+  return { calls, extra, fakeQuery, imports }
 })
 
 vi.mock('../../src/main/esm', () => ({
-  importEsm: async () => ({ query: sdk.fakeQuery })
+  importEsm: async () => {
+    sdk.imports.count++
+    return { query: sdk.fakeQuery }
+  }
 }))
 
 type SdkCanUseTool = (
@@ -617,5 +622,33 @@ describe('sdkQueryOptions и увод в фон (этап 4)', () => {
     const driver = await createSdkDriver(allowAll())
     expect(await driver.backgroundTask('toolu_1')).toBeNull()
     await driver.dispose()
+  })
+})
+
+describe('sdkDriver: query посредника', () => {
+  test('с deps.query пакет не импортируется, env уходит в options', async () => {
+    mockQuery()
+    const calls: Array<{ options: Record<string, unknown> }> = []
+    const own = ((args: { prompt: unknown; options: Record<string, unknown> }) => {
+      calls.push(args)
+      return sdk.fakeQuery(args)
+    }) as never
+    sdk.calls.length = 0
+    const importsBefore = sdk.imports.count
+    const driver = await createSdkDriver(
+      { ...driverOptions(async () => ({ behavior: 'allow' })), env: { PATH: '/home/u/.local/bin:/usr/bin' } },
+      { query: own }
+    )
+    expect(calls).toHaveLength(1)
+    expect(sdk.imports.count).toBe(importsBefore)
+    expect(calls[0]!.options['env']).toEqual({ PATH: '/home/u/.local/bin:/usr/bin' })
+    await driver.dispose()
+  })
+
+  test('без env поля env в options нет', () => {
+    const options = sdkQueryOptions(driverOptions(async () => ({ behavior: 'allow' })), (async () => ({
+      behavior: 'allow'
+    })) as never)
+    expect('env' in options).toBe(false)
   })
 })

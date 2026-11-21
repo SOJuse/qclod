@@ -21,6 +21,9 @@ test('меню с «Правка», красная кнопка прячет о�
     env: {
       ...process.env,
       QCLOD_USER_DATA: profile,
+      // The playwright config makes runs headless and off screen; this one is the real window.
+      QCLOD_HEADLESS: '0',
+      QCLOD_E2E_INVISIBLE: '0',
       QCLOD_FAKE_SDK_SCRIPT: JSON.stringify({ steps: [], nextTurn: [{ kind: 'text', text: 'ok' }] })
     } as Record<string, string>
   })

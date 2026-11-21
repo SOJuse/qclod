@@ -20,6 +20,8 @@
     "dist": "npm run icon && npm run art && npm run build && npm run check:seams && electron-builder --win --x64 --publish never",
     "release": "npm run icon && npm run art && npm run build && npm run check:seams && electron-builder --win --x64 --publish always",
     "dist:e2e": "npm run icon && npm run art && npm run build:e2e && electron-builder --win dir --x64 -c.directories.output=dist-e2e --publish never",
+    "dist:mac": "npm run icon && npm run art && npm run build && npm run check:seams && electron-builder --mac --arm64 --publish never",
+    "dist:e2e:mac": "npm run icon && npm run art && npm run build:e2e && electron-builder --mac dir --arm64 -c.directories.output=dist-e2e --publish never",
     "icon": "node scripts/make-icon.mjs",
     "art": "node scripts/make-installer-art.mjs"
   },

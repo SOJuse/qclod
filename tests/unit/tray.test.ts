@@ -2,7 +2,8 @@ import { describe, expect, test, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: {}, Menu: {}, nativeImage: {}, nativeTheme: {}, Tray: class {} }))
 
-import { TRAY_TOOLTIP, trayBitmap, trayStatus } from '../../src/main/tray'
+import { nativeImage } from 'electron'
+import { TRAY_TOOLTIP, trayBitmap, trayImageFor, trayStatus, trayTitleFor } from '../../src/main/tray'
 import type { SessionStatus, TabState } from '../../src/shared/types'
 
 const tab = (status: SessionStatus): TabState => ({ status }) as TabState
@@ -154,5 +155,35 @@ describe('подсказки', () => {
     expect(TRAY_TOOLTIP.working).toBe('Qclod — работает')
     expect(TRAY_TOOLTIP.waiting).toBe('Qclod — ждёт тебя')
     expect(TRAY_TOOLTIP.error).toBe('Qclod — ошибка')
+  })
+})
+
+describe('значок в строке меню Mac', () => {
+  test('на darwin — файл …Template.png из tray/, setTemplateImage(true)', () => {
+    const setTemplateImage = vi.fn()
+    const createFromPath = vi.fn(() => ({ setTemplateImage }))
+    Object.assign(nativeImage, { createFromPath })
+    trayImageFor('darwin', 'idle', '/res')
+    expect(createFromPath).toHaveBeenCalledTimes(1)
+    const path = (createFromPath.mock.calls[0] as unknown as [string])[0].split('\\').join('/')
+    expect(path).toBe('/res/tray/trayTemplate.png')
+    expect(path.endsWith('Template.png')).toBe(true)
+    expect(setTemplateImage).toHaveBeenCalledWith(true)
+  })
+
+  test('статус на Mac — заголовком, а не цветом', () => {
+    expect(trayTitleFor('idle')).toBe('')
+    expect(trayTitleFor('working')).toBe('•')
+    expect(trayTitleFor('waiting')).toBe('!')
+    expect(trayTitleFor('error')).toBe('!')
+  })
+
+  test('на Windows файлов нет: рисованный битмап', () => {
+    const createFromPath = vi.fn()
+    const addRepresentation = vi.fn()
+    Object.assign(nativeImage, { createFromPath, createEmpty: () => ({ addRepresentation }) })
+    trayImageFor('win32', 'working', '/res')
+    expect(createFromPath).not.toHaveBeenCalled()
+    expect(addRepresentation).toHaveBeenCalledTimes(3)
   })
 })

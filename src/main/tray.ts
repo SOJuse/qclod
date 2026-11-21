@@ -1,4 +1,5 @@
 import { app, Menu, nativeImage, Tray, type BrowserWindow } from 'electron'
+import { join } from 'node:path'
 import type { TabId, TabState } from '../shared/types'
 import { TRAY_GLYPH } from './brand/trayGlyph'
 
@@ -88,7 +89,8 @@ export function trayBitmap(size: 16 | 24 | 32, tone: TrayTone, status: TrayStatu
  * present. Not an SVG: Electron reads only PNG and JPEG from a data URL, and
  * an SVG one came out as an empty image — the tray had no icon at all.
  * 16 px plus 1.5x and 2x copies, so it stays sharp at any display scale.
- * TODO(stage6): on macOS a template image (setTemplateImage(true)), no colour dot.
+
+ * The Mac does not use it: see trayImageFor.
  */
 function trayIcon(tone: TrayTone, status: TrayStatus): Electron.NativeImage {
   const image = nativeImage.createEmpty()
@@ -100,6 +102,37 @@ function trayIcon(tone: TrayTone, status: TrayStatus): Electron.NativeImage {
     image.addRepresentation({ scaleFactor, width: size, height: size, buffer: trayBitmap(size, tone, status) })
   }
   return image
+}
+
+/** The Mac's menu-bar mark: black with alpha, the system tints it for light and dark bars. */
+export const MAC_TRAY_FILE = 'trayTemplate.png'
+
+/**
+ * The icon for a platform. A Mac gets a template image from `<resourcesDir>/tray/`
+ * (the @2x neighbour is picked up by name), which carries no colour: the status is
+ * the title beside it (trayTitleFor). Elsewhere the drawn bitmap with its colour dot.
+ */
+export function trayImageFor(
+  platform: NodeJS.Platform,
+  status: TrayStatus,
+  resourcesDir: string,
+  tone: TrayTone = 'dark'
+): Electron.NativeImage {
+  if (platform !== 'darwin') return trayIcon(tone, status)
+  const image = nativeImage.createFromPath(join(resourcesDir, 'tray', MAC_TRAY_FILE))
+  image.setTemplateImage(true)
+  return image
+}
+
+/** The text next to the menu-bar mark: nothing at rest, a dot while working, «!» when it needs the person. */
+export function trayTitleFor(status: TrayStatus): string {
+  if (status === 'idle') return ''
+  return status === 'working' ? '•' : '!'
+}
+
+/** Where the tray files are: next to the app when packaged, in the build folder in development. */
+function trayResourcesDir(): string {
+  return app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'build')
 }
 
 export function trayMenuTemplate(
@@ -125,8 +158,12 @@ export function trayMenuTemplate(
 }
 
 export function createTray(deps: TrayDeps): Tray & { rebuild: () => void; refresh: () => void } {
-  const tray = new Tray(trayIcon(deps.getTone(), trayStatus(deps.getTabs())))
+  const mac = process.platform === 'darwin'
+  const iconFor = (tone: TrayTone, status: TrayStatus): Electron.NativeImage =>
+    trayImageFor(process.platform, status, mac ? trayResourcesDir() : '', tone)
+  const tray = new Tray(iconFor(deps.getTone(), trayStatus(deps.getTabs())))
   tray.setToolTip(TRAY_TOOLTIP[trayStatus(deps.getTabs())])
+  if (mac) tray.setTitle(trayTitleFor(trayStatus(deps.getTabs())))
 
   /** Icon and tooltip: the status or the taskbar theme changed. Skipped when neither did. */
   let shown = `${deps.getTone()}/${trayStatus(deps.getTabs())}`
@@ -136,8 +173,9 @@ export function createTray(deps: TrayDeps): Tray & { rebuild: () => void; refres
     const key = `${tone}/${status}`
     if (key === shown) return
     shown = key
-    tray.setImage(trayIcon(tone, status))
+    tray.setImage(iconFor(tone, status))
     tray.setToolTip(TRAY_TOOLTIP[status])
+    if (mac) tray.setTitle(trayTitleFor(status))
   }
 
   const rebuild = (): void => {

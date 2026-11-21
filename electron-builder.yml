@@ -58,6 +58,13 @@ publish:
   repo: qclod
   releaseType: release
 
+# The Mac's menu-bar template image (main/tray.ts reads resources/tray/).
+extraResources:
+  - from: build/tray
+    to: tray
+    filter:
+      - '*.png'
+
 # macOS arrives in stage 6; the icon is ready for it.
 mac:
   icon: build/icon.icns

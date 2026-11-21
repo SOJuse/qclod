@@ -71,6 +71,7 @@ describe('PathResolver: macOS / POSIX', () => {
 })
 
 describe('PathResolver', () => {
+  pinPlatform('win32', { beforeEach, afterEach })
   test('несуществующее — null, существующее — абсолютный путь от cwd', async () => {
     const stat = fakeStat(['C:\\proj\\src\\a.ts'])
     const resolver = new PathResolver({ stat })

@@ -315,6 +315,8 @@ describe.skipIf(!onWindows)('строка редактора через наст
 })
 
 describe('openInEditor', () => {
+  pinPlatform('win32', { beforeEach, afterEach })
+
   test('запускает cmd.exe с готовой строкой, отвязанно и без окна', () => {
     expect(openInEditor('code -g {path}:{line}', { path: 'C:\\a b\\x.ts', line: 3 })).toBeNull()
     expect(spawn).toHaveBeenCalledTimes(1)

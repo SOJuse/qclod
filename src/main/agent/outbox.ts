@@ -1,4 +1,6 @@
 import type { QueuedMessage, QueuedState, UserInput } from '../../shared/types'
+import type { SendPriority } from './driver'
+import type { RelayMeta } from './subagentRelay'
 
 /**
  * A message of the user's that the agent has not read yet: held by Qclod while
@@ -19,6 +21,10 @@ export interface OutboxEntry {
   requestedCancel: boolean
   /** Sent by Qclod itself («продолжай»): its bubble is marked «авто» when the agent reads it. */
   auto?: true
+  /** Stage 4: the person's message to a subagent; `input` is the instruction for the main agent. */
+  relay?: RelayMeta
+  /** Held while the agent starts: the priority it goes with once it is up. */
+  priority?: SendPriority
 }
 
 /** What the strip above the input shows: the user's messages the agent has not read yet. */
@@ -61,10 +67,12 @@ export class Outbox {
   view(canSendNow: boolean): QueuedMessage[] {
     return this.pending().map((entry) => ({
       id: entry.uuid,
-      text: entry.input.text,
+      // A message to a subagent shows as the person wrote it, to whom — not the instruction.
+      text: entry.relay ? `→ агенту ${entry.relay.agent}: ${entry.relay.text}` : entry.input.text,
       attachments: entry.input.attachments.length,
       state: entry.state,
-      canSendNow: canSendNow && (entry.state === 'sending' || entry.state === 'queued')
+      canSendNow: canSendNow && (entry.state === 'sending' || entry.state === 'queued'),
+      ...(entry.relay ? { relay: true as const } : {})
     }))
   }
 }

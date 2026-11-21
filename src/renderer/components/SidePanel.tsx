@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import type { LimitWindow, McpServerInfo, PanelData, RemoteInfo } from '../../shared/types'
-import { plural, untilReset } from '../../shared/format'
+import { plural, untilReset, usd } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
 import { LevelIcon, levelLabel } from '../ui/icons'
 import { ContextBreakdown } from './ContextBreakdown'
@@ -63,10 +63,6 @@ const MCP_ORDER: Record<McpServerInfo['status'], number> = {
   pending: 3,
   disabled: 4,
   connected: 5
-}
-
-function money(value: number): string {
-  return `$${value.toFixed(value < 1 ? 4 : 2)}`
 }
 
 /**
@@ -165,7 +161,7 @@ export function SidePanel({ data, started, remote, onRemote, mode, active, onClo
             {data.cost && (
               // A resumed conversation is counted by the CLI from when it was opened.
               <span data-testid="panel-cost" className="panel-dim" title={data.cost.sinceOpen ? 'С момента открытия' : 'За сессию'}>
-                {money(data.cost.session)}
+                {usd(data.cost.session)}
               </span>
             )}
           </div>

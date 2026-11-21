@@ -99,7 +99,26 @@ export const CHANNELS = Object.freeze({
   // stage 3: autonomy
   // renderer -> main (invoke)
   autonomyHold: 'autonomy:hold',
-  autonomyAnswerNow: 'autonomy:answerNow'
+  autonomyAnswerNow: 'autonomy:answerNow',
+
+  // Stage 5: voice (voiceStart, Win+H, stays above)
+  voiceModels: 'voice:models',
+  voiceDownload: 'voice:download',
+  voiceCancelDownload: 'voice:cancelDownload',
+  voiceDelete: 'voice:delete',
+  voiceBegin: 'voice:begin',
+  voiceEnd: 'voice:end',
+  voiceOpenMicSettings: 'voice:openMicSettings',
+  voiceOpenVcRedist: 'voice:openVcRedist',
+  // renderer -> main (send)
+  voiceAudio: 'voice:audio',
+  // main -> renderer (events)
+  voiceEvent: 'voice:event',
+  voiceModelsChanged: 'voice:modelsChanged',
+  // этап 4: сабагенты
+  // renderer -> main (invoke)
+  agentSubagentSend: 'agent:subagentSend',
+  agentSubagentStop: 'agent:subagentStop'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -168,7 +187,19 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.logsOpen,
   // stage 3: autonomy
   CHANNELS.autonomyHold,
-  CHANNELS.autonomyAnswerNow
+  CHANNELS.autonomyAnswerNow,
+  // Stage 5: voice
+  CHANNELS.voiceModels,
+  CHANNELS.voiceDownload,
+  CHANNELS.voiceCancelDownload,
+  CHANNELS.voiceDelete,
+  CHANNELS.voiceBegin,
+  CHANNELS.voiceEnd,
+  CHANNELS.voiceOpenMicSettings,
+  CHANNELS.voiceOpenVcRedist,
+  // этап 4: сабагенты
+  CHANNELS.agentSubagentSend,
+  CHANNELS.agentSubagentStop
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
@@ -183,8 +214,15 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.setupLoginProgress,
   CHANNELS.updateChanged,
   // — этап 2: проекты, раскладка, окно-заглушка
-  CHANNELS.layoutChanged
+  CHANNELS.layoutChanged,
+  // Stage 5: voice
+  CHANNELS.voiceEvent,
+  CHANNELS.voiceModelsChanged
 ])
 
 /** Fire-and-forget: the renderer sends, nothing comes back. */
-export const SEND_CHANNELS: readonly ChannelName[] = Object.freeze([CHANNELS.rendererError])
+export const SEND_CHANNELS: readonly ChannelName[] = Object.freeze([
+  CHANNELS.rendererError,
+  // Stage 5: voice
+  CHANNELS.voiceAudio
+])

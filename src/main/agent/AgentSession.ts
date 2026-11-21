@@ -18,13 +18,16 @@ import type {
   RibbonChange,
   RibbonItem,
   SessionStatus,
+  SubagentSendResult,
+  SubagentStopResult,
   TabId,
   TaskOutput,
   TodoItem,
   UserInput
 } from '../../shared/types'
 import { REMOTE_OFF, explainRemoteError, isRemoteLive, remoteFromMessage } from '../../shared/remote'
-import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
+import type { AgentDriver, DriverFactory, DriverOptions, SendPriority } from './driver'
+import { agentRef, relayInstruction, subagentRoute, type RelayMeta } from './subagentRelay'
 import type { AskedQuestion as CoreQuestion, AutonomyInput } from '../../core/autonomy/types'
 import type { ToolPermissionContext } from './permissionContext'
 import { parseExtraFlags } from './launchFlags'
@@ -108,13 +111,14 @@ export interface AgentSessionOptions {
 /** The default of `autoAnswerMinutes`. */
 const AUTO_ANSWER_MINUTES = 5
 
-/**
- * How a message is sent — one object for stages 3 and 4 (cross-plan check F18).
- * Stage 4 (task 10) adds `priority?: SendPriority` and `relay?: RelayMeta` here.
- */
+/** How a message is sent — one object for stages 3 and 4 (cross-plan check F18). */
 export interface SendOptions {
   /** Sent by Qclod itself («продолжай»): the bubble says «авто», and it is not the person acting. */
   auto?: boolean
+  /** Stage 4: how soon the CLI takes it; 'next' when absent. */
+  priority?: SendPriority
+  /** Stage 4: the person's message to a subagent, which this instruction carries. */
+  relay?: RelayMeta
 }
 
 /** The questions of an AskUserQuestion input as the core reads them: labels as they came. */
@@ -141,6 +145,9 @@ function coreQuestions(input: Record<string, unknown>): CoreQuestion[] {
 
 /** The longest `dispose` waits for the agent process to go away. */
 export const DISPOSE_TIMEOUT_MS = 5000
+
+/** A subagent asked to stop that has not said so by then is reported as not stopping (stage 4). */
+export const SUBAGENT_STOP_WATCH_MS = 10_000
 
 /** The longest a closing tab waits for the bridge to say «выключено» to the phone. */
 export const REMOTE_OFF_TIMEOUT_MS = 1000
@@ -262,6 +269,10 @@ export class AgentSession {
   >()
   /** `claude_code_version` from system/init: how a card's comments and edits can reach this CLI. */
   private cliVersion: string | null = null
+  /** The last system/init: which tools this CLI has (stage 4, `subagentRoute`). */
+  private lastInit: Record<string, unknown> | null = null
+  /** Subagents asked to stop, by task id, until a frame says they have ended. */
+  private readonly stopWatch = new Map<string, ReturnType<typeof setTimeout>>()
   /** Permission questions still waiting on the user; aborting one refuses it. */
   private readonly openPermissions = new Map<string, { controller: AbortController; turn: number }>()
   /**
@@ -302,7 +313,8 @@ export class AgentSession {
       remember: (sent, opts) => this.remember(sent, opts),
       emitQueue: (view) => this.emitPanel(this.collector.setQueue(view)),
       notice: (text, tone) => this.emit(this.builder.notice(text, tone)),
-      cancelWaits: (scope) => this.cancelWaits(scope)
+      cancelWaits: (scope) => this.cancelWaits(scope),
+      relayCancelled: (relay) => this.emit(this.builder.markRelay(relay.relayId, 'cancelled'))
     })
   }
 
@@ -900,15 +912,151 @@ export class AgentSession {
     const auto = opts.auto === true
     const starting = !this.driver && this.state === 'starting'
     if (!this.driver && !starting) return false
+    const how = {
+      ...(auto ? { auto } : {}),
+      ...(opts.priority ? { priority: opts.priority } : {}),
+      ...(opts.relay ? { relay: opts.relay } : {})
+    }
     if (starting) {
       if (this.queue.size >= MAX_QUEUED) return false
-      this.queue.hold(input, auto ? { auto } : {})
+      this.queue.hold(input, how)
     } else {
       if (this.queue.wouldOverflow()) return false
-      this.queue.submit(input, auto ? { auto } : {})
+      this.queue.submit(input, how)
     }
     if (!auto) this.feedAutonomy({ type: 'personActed' })
     return true
+  }
+
+  /**
+   * Writes to a subagent through the main agent (stage 4, decisions 4, 5, 9).
+   * The window names only the card; the agent's id comes from this ribbon.
+   * A foreground agent holds the main agent's turn, so it is first moved to
+   * the background and the message goes as 'next'; if it cannot be moved, as
+   * 'now' — the CLI moves what it can by itself. The person's message shows
+   * in the agent's ribbon at once, and moves on from `sent` as the main
+   * agent reads it and passes it on.
+   */
+  async sendToSubagent(cardId: string, text: string): Promise<SubagentSendResult> {
+    const body = text.trim()
+    if (body === '') return { ok: false, reason: 'empty' }
+    if (this.disposed) return { ok: false, reason: 'not-running' }
+    const card = this.builder.subagentCard(cardId)
+    if (!card) return { ok: false, reason: 'unknown-agent' }
+    const ref = agentRef(card)
+    if (ref === null) return { ok: false, reason: 'not-started' }
+    if (subagentRoute(this.lastInit) === 'none') return { ok: false, reason: 'no-send-message' }
+
+    // Every top-level agent in the foreground holds the main agent's turn, not
+    // only this one: they all go to the background, or the step boundary the
+    // 'next' message waits for comes only after the last of them.
+    const holding = this.items.filter(
+      (i): i is Extract<RibbonItem, { kind: 'subagent' }> =>
+        i.kind === 'subagent' &&
+        i.id !== card.id &&
+        i.state === 'running' &&
+        i.background !== true &&
+        i.parentId === undefined &&
+        i.toolUseId !== ''
+    )
+    const moving = card.state === 'running' && card.background !== true ? [card, ...holding] : holding
+    let priority: SendPriority = 'next'
+    if (moving.length > 0) {
+      const driver = this.driver
+      const results = await Promise.all(
+        moving.map(async (c): Promise<boolean | null> => {
+          try {
+            return driver ? await driver.backgroundTask(c.toolUseId) : null
+          } catch {
+            return null
+          }
+        })
+      )
+      if (this.disposed) return { ok: false, reason: 'not-running' }
+      // null — it cannot be moved: 'now', and the CLI moves what it can. false —
+      // nothing of that call is in the foreground any more: no reason to cut
+      // the main agent's step short.
+      if (results.includes(null)) priority = 'now'
+    }
+
+    const relay: RelayMeta = { relayId: randomUUID(), cardId, agent: card.name, text: body }
+    this.emit(this.builder.addRelay(cardId, body, relay.relayId))
+    const taken = this.send({ text: relayInstruction(ref, body), attachments: [] }, { priority, relay })
+    if (!taken) {
+      this.emit(this.builder.markRelay(relay.relayId, 'cancelled'))
+      return { ok: false, reason: 'not-running' }
+    }
+    return { ok: true }
+  }
+
+  /**
+   * Stops a subagent (stage 4). The window names only the card. One in the
+   * background is stopped where it is. One in the foreground is first moved
+   * to the background — the main agent's call then returns at once and its
+   * turn goes on — and stopped there (probe 05b, 3b); one that cannot be
+   * moved is stopped in place (3a). The card is closed by the CLI's own frame,
+   * not by this call; if none comes within 10 s, the ribbon says so.
+   */
+  async stopSubagent(cardId: string): Promise<SubagentStopResult> {
+    const card = this.builder.subagentCard(cardId)
+    if (!card || card.state !== 'running') return 'not-running'
+    const taskId = card.taskId
+    if (!taskId) return 'not-started'
+    const driver = this.driver
+    if (!driver || this.disposed) return 'not-running'
+    if (card.background !== true) {
+      try {
+        await driver.backgroundTask(card.toolUseId)
+      } catch {
+        // Background tasks are off: it is stopped where it is.
+      }
+    }
+    if (this.disposed) return 'not-running'
+    // Watched before the call: the CLI's killed/stopped frames may be read
+    // before stopTask() returns, and they are what settles the watch.
+    this.watchStop(taskId, cardId, card.name)
+    try {
+      await driver.stopTask(taskId)
+    } catch {
+      this.unwatchStop(taskId)
+      return 'failed'
+    }
+    return 'stopping'
+  }
+
+  private watchStop(taskId: string, cardId: string, name: string): void {
+    this.unwatchStop(taskId)
+    const timer = setTimeout(() => {
+      this.stopWatch.delete(taskId)
+      if (this.disposed) return
+      // Ended by a frame the watch did not read: nothing to report either.
+      if (this.builder.subagentCard(cardId)?.state !== 'running') return
+      this.emit(this.builder.notice(`Агент «${name}» не остановился за 10 секунд.`, 'error'))
+    }, SUBAGENT_STOP_WATCH_MS)
+    this.stopWatch.set(taskId, timer)
+  }
+
+  private unwatchStop(taskId: string): void {
+    const was = this.stopWatch.get(taskId)
+    if (was) clearTimeout(was)
+    this.stopWatch.delete(taskId)
+  }
+
+  /** A watched agent ended — stopped, or done before the stop landed: nothing to report. */
+  private settleStopWatch(m: Record<string, unknown>): void {
+    const taskId = typeof m['task_id'] === 'string' ? m['task_id'] : ''
+    const timer = taskId ? this.stopWatch.get(taskId) : undefined
+    if (!timer) return
+    const patch = m['patch']
+    const status =
+      m['subtype'] === 'task_notification'
+        ? m['status']
+        : m['subtype'] === 'task_updated' && typeof patch === 'object' && patch !== null
+          ? (patch as Record<string, unknown>)['status']
+          : undefined
+    if (status !== 'stopped' && status !== 'killed' && status !== 'completed' && status !== 'failed') return
+    clearTimeout(timer)
+    this.stopWatch.delete(taskId)
   }
 
   /** turn += 1 and the tab working, unless a card is open — or even then (`evenIfWaiting`). */
@@ -935,8 +1083,21 @@ export class AgentSession {
     input: UserInput,
     composed: string,
     echoOf: string | null,
-    opts: { auto?: boolean } = {}
+    opts: { auto?: boolean; relay?: RelayMeta } = {}
   ): void {
+    // A message to a subagent: the bubble is what the person wrote, marked
+    // with whom it is for; the instruction is only the agent's to read. The
+    // echo, if one comes, is of the instruction.
+    const relay = opts.relay
+    if (relay) {
+      this.emit(
+        this.builder.addUser(relay.text, [], echoOf === null ? null : composed, echoOf ?? undefined, {
+          relay: { cardId: relay.cardId, agent: relay.agent }
+        })
+      )
+      this.emit(this.builder.markRelay(relay.relayId, 'read'))
+      return
+    }
     // The ribbon shows an image by its thumbnail, or by its copy on disk when
     // there is none (a large GIF or WebP); the full bytes (up to ~5 MB of
     // base64) would otherwise ride along in every snapshot.
@@ -1280,6 +1441,8 @@ export class AgentSession {
     // messages have nowhere to go. A swap takes it first (`takeQueue`).
     this.stopMcpPolling()
     this.stopPanelRefresh()
+    for (const timer of this.stopWatch.values()) clearTimeout(timer)
+    this.stopWatch.clear()
     // A question nobody can answer any more must not hold the agent open.
     this.cancelWaits()
 
@@ -1396,6 +1559,7 @@ export class AgentSession {
 
     switch (m['type']) {
       case 'system':
+        if (this.stopWatch.size > 0) this.settleStopWatch(m)
         if (m['subtype'] === 'init') this.onInit(m)
         else if (m['subtype'] === 'commands_changed') {
           this.onCommandsChanged(m)
@@ -1428,6 +1592,7 @@ export class AgentSession {
   }
 
   private onInit(m: Record<string, unknown>): void {
+    this.lastInit = m
     this.queue.onInit(m)
     if (typeof m['claude_code_version'] === 'string') this.cliVersion = m['claude_code_version']
     const id = typeof m['session_id'] === 'string' ? m['session_id'] : null

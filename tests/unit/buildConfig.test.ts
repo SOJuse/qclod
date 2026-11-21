@@ -24,6 +24,22 @@ describe('сборка', () => {
   })
 })
 
+describe('голос', () => {
+  test('нативный голосовой движок распакован из asar', () => {
+    const unpack = yml.split(/^asarUnpack:\n/m)[1]?.split(/^\S/m)[0] ?? ''
+    for (const glob of [
+      'node_modules/sherpa-onnx-node/**/*',
+      'node_modules/sherpa-onnx-win-x64/**/*',
+      'node_modules/sherpa-onnx-darwin-arm64/**/*'
+    ]) {
+      expect(unpack).toContain(`  - ${glob}\n`)
+    }
+  })
+  test('sherpa-onnx-node закреплён точно на 2.0.2', () => {
+    expect(pkg.dependencies['sherpa-onnx-node']).toBe('2.0.2')
+  })
+})
+
 describe('иконка', () => {
   test('electron-builder берёт ICO для Windows и ICNS для macOS', () => {
     const win = yml.split(/^win:\n/m)[1]?.split(/^\S/m)[0] ?? ''

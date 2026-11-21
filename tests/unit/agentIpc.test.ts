@@ -35,6 +35,9 @@ const queueCalls: Array<[string, string]> = []
 const autonomyCalls: unknown[][] = []
 let cancelAnswer: UserInput | null = null
 let sendNowAnswer = false
+const subagentCalls: unknown[][] = []
+let subagentSendAnswer: unknown = { ok: true }
+let subagentStopAnswer: unknown = 'stopping'
 
 function call(channel: string, ...args: unknown[]): unknown {
   return handlers.get(channel)!({}, ...args)
@@ -44,7 +47,9 @@ beforeEach(() => {
   handlers.clear()
   mode = 'default'
   sendAnswer = true
-  for (const list of [sent, overrides, defaults, models, resolved, remoteCalls, queueCalls, autonomyCalls]) list.length = 0
+  for (const list of [sent, overrides, defaults, models, resolved, remoteCalls, queueCalls, autonomyCalls, subagentCalls]) list.length = 0
+  subagentSendAnswer = { ok: true }
+  subagentStopAnswer = 'stopping'
   cancelAnswer = null
   remoteAnswer = 'ok'
   sendNowAnswer = false
@@ -70,6 +75,14 @@ beforeEach(() => {
     sendQueuedNow: async (queuedId: string) => {
       queueCalls.push(['now', queuedId])
       return sendNowAnswer
+    },
+    sendToSubagent: async (cardId: string, text: string) => {
+      subagentCalls.push(['send', cardId, text])
+      return subagentSendAnswer
+    },
+    stopSubagent: async (cardId: string) => {
+      subagentCalls.push(['stop', cardId])
+      return subagentStopAnswer
     }
   }
   registerAgentIpc({
@@ -348,5 +361,49 @@ describe('этап 2: проекты и раскладка', () => {
       projects: [{ cwd: OPEN, collapsed: false }]
     })
     expect(await call(CHANNELS.projectForget, 9)).toEqual(layout.get())
+  })
+})
+
+describe('этап 4: сабагенты', () => {
+  test('agentSubagentSend отвергает не-строки, пустой текст и cardId длиннее 64; ответ — тот, что дала сессия', async () => {
+    const empty = { ok: false, reason: 'empty' }
+    expect(await call(CHANNELS.agentSubagentSend, 't1', 42, 'привет')).toEqual(empty)
+    expect(await call(CHANNELS.agentSubagentSend, 't1', 'r1', 42)).toEqual(empty)
+    expect(await call(CHANNELS.agentSubagentSend, 't1', 'r1', { text: 'x' })).toEqual(empty)
+    expect(await call(CHANNELS.agentSubagentSend, 't1', 'r1', '   \n ')).toEqual(empty)
+    expect(await call(CHANNELS.agentSubagentSend, 't1', 'r1', 'я'.repeat(50_001))).toEqual(empty)
+    expect(await call(CHANNELS.agentSubagentSend, 't1', 'r'.repeat(65), 'привет')).toEqual(empty)
+    expect(await call(CHANNELS.agentSubagentSend, 't1', '', 'привет')).toEqual(empty)
+    expect(await call(CHANNELS.agentSubagentSend, 42, 'r1', 'привет')).toEqual(empty)
+    expect(subagentCalls).toEqual([])
+
+    expect(await call(CHANNELS.agentSubagentSend, 'нет-такой', 'r1', 'привет')).toEqual({ ok: false, reason: 'not-running' })
+    expect(await call(CHANNELS.agentSubagentSend, 't1', 'r'.repeat(64), '  проверь тесты  ')).toEqual({ ok: true })
+    subagentSendAnswer = { ok: false, reason: 'not-started' }
+    expect(await call(CHANNELS.agentSubagentSend, 't1', 'r2', 'ещё')).toEqual({ ok: false, reason: 'not-started' })
+    expect(subagentCalls).toEqual([
+      ['send', 'r'.repeat(64), 'проверь тесты'],
+      ['send', 'r2', 'ещё']
+    ])
+  })
+})
+
+describe('этап 4: остановить сабагента', () => {
+  test('agentSubagentStop отвергает не-строки и cardId длиннее 64; ответ — тот, что дала сессия', async () => {
+    expect(await call(CHANNELS.agentSubagentStop, 't1', 42)).toBe('not-running')
+    expect(await call(CHANNELS.agentSubagentStop, 't1', { id: 'r1' })).toBe('not-running')
+    expect(await call(CHANNELS.agentSubagentStop, 't1', 'r'.repeat(65))).toBe('not-running')
+    expect(await call(CHANNELS.agentSubagentStop, 't1', '')).toBe('not-running')
+    expect(await call(CHANNELS.agentSubagentStop, null, 'r1')).toBe('not-running')
+    expect(await call(CHANNELS.agentSubagentStop, 'нет-такой', 'r1')).toBe('not-running')
+    expect(subagentCalls).toEqual([])
+
+    expect(await call(CHANNELS.agentSubagentStop, 't1', 'r'.repeat(64))).toBe('stopping')
+    subagentStopAnswer = 'failed'
+    expect(await call(CHANNELS.agentSubagentStop, 't1', 'r2')).toBe('failed')
+    expect(subagentCalls).toEqual([
+      ['stop', 'r'.repeat(64)],
+      ['stop', 'r2']
+    ])
   })
 })

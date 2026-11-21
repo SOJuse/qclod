@@ -65,7 +65,13 @@ export function ChatHeader({
       </span>
       <span className="chat-header-gap" />
       {onOpenAgents && (
-        <button type="button" className="chat-header-button is-text" data-testid="open-agents" onClick={onOpenAgents}>
+        <button
+          type="button"
+          className="chat-header-button is-text"
+          data-testid="open-agents"
+          title="Сабагенты этого чата: граф и таймлайн"
+          onClick={onOpenAgents}
+        >
           <Bot size={14} aria-hidden="true" />
           <span>{agentsCount > 0 ? `Агенты (${agentsCount})` : 'Агенты'}</span>
         </button>

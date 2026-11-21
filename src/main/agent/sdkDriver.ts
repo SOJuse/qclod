@@ -1,4 +1,5 @@
 import type {
+  CanUseTool,
   query as queryFn,
   SDKControlGetUsageResponse
 } from '@anthropic-ai/claude-agent-sdk'
@@ -83,6 +84,61 @@ export function toSdkMessage(input: UserInput, opts?: SendOptions): Record<strin
 }
 
 /**
+ * The `options` of `query()`: one place, so the server-side broker (stage 6)
+ * starts the SDK with exactly the same subagent fields.
+ */
+export function sdkQueryOptions(
+  options: DriverOptions,
+  canUseTool: CanUseTool
+): Record<string, unknown> {
+  return {
+    cwd: options.cwd,
+    pathToClaudeCodeExecutable: options.executablePath,
+    // The user's own CLI, not the one pinned inside the SDK package: it is
+    // the build they are logged into and the one their settings fit.
+    includePartialMessages: true,
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.permissionMode
+      ? { permissionMode: sdkPermissionMode(options.permissionMode) as 'default' }
+      : {}),
+    // Without it the CLI refuses bypassPermissions — at start and on every
+    // later switch — and the refusal used to be swallowed, so «без проверок»
+    // went on asking about everything. It only makes the mode reachable:
+    // Qclod's own confirmation (AgentSession.allowMode) is the gate.
+    allowDangerouslySkipPermissions: true,
+    ...(options.resume ? { resume: options.resume } : {}),
+    ...(options.extraArgs && Object.keys(options.extraArgs).length > 0
+      ? { extraArgs: options.extraArgs }
+      : {}),
+    // Project settings load with no trust gate — the user's explicit choice,
+    // recorded in spec §5 with its consequence.
+    settingSources: ['user', 'project', 'local'],
+    canUseTool,
+    // Subagents: their text and steps come through the stream, the CLI writes
+    // a one-line progress summary per agent, and the stop button is drawn per
+    // task, so «Стоп» ends the turn and leaves background agents running
+    // (sdk.d.ts). A CLI that does not know a field ignores it.
+    forwardSubagentText: true,
+    agentProgressSummaries: true,
+    perTaskStopAffordance: true
+  }
+}
+
+/** DriverOptions.canUseTool in the SDK's shape. */
+function sdkCanUseTool(options: DriverOptions): CanUseTool {
+  return async (toolName, input, opts) => {
+    const answer = await options.canUseTool(toolName, input, toPermissionContext(opts))
+    // updatedInput is how an AskUserQuestion answer travels
+    // (AskUserQuestionInput.answers in sdk-tools.d.ts). A refusal's
+    // message is what the agent reads: the user's reason, put in words
+    // by the session.
+    return answer.behavior === 'allow'
+      ? { behavior: 'allow', updatedInput: answer.updatedInput ?? input }
+      : { behavior: 'deny', message: answer.message || 'Отклонено в Qclod' }
+  }
+}
+
+/**
  * The real session: the Agent SDK's `query()` in streaming-input mode.
  *
  * Streaming input is what makes one long-lived conversation possible — the
@@ -114,39 +170,7 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
 
   const session = query({
     prompt: prompt(),
-    options: {
-      cwd: options.cwd,
-      pathToClaudeCodeExecutable: options.executablePath,
-      // The user's own CLI, not the one pinned inside the SDK package: it is
-      // the build they are logged into and the one their settings fit.
-      includePartialMessages: true,
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.permissionMode
-        ? { permissionMode: sdkPermissionMode(options.permissionMode) as 'default' }
-        : {}),
-      // Without it the CLI refuses bypassPermissions — at start and on every
-      // later switch — and the refusal used to be swallowed, so «без проверок»
-      // went on asking about everything. It only makes the mode reachable:
-      // Qclod's own confirmation (AgentSession.allowMode) is the gate.
-      allowDangerouslySkipPermissions: true,
-      ...(options.resume ? { resume: options.resume } : {}),
-      ...(options.extraArgs && Object.keys(options.extraArgs).length > 0
-        ? { extraArgs: options.extraArgs }
-        : {}),
-      // Project settings load with no trust gate — the user's explicit choice,
-      // recorded in spec §5 with its consequence.
-      settingSources: ['user', 'project', 'local'],
-      canUseTool: async (toolName, input, opts) => {
-        const answer = await options.canUseTool(toolName, input, toPermissionContext(opts))
-        // updatedInput is how an AskUserQuestion answer travels
-        // (AskUserQuestionInput.answers in sdk-tools.d.ts). A refusal's
-        // message is what the agent reads: the user's reason, put in words
-        // by the session.
-        return answer.behavior === 'allow'
-          ? { behavior: 'allow', updatedInput: answer.updatedInput ?? input }
-          : { behavior: 'deny', message: answer.message || 'Отклонено в Qclod' }
-      }
-    }
+    options: sdkQueryOptions(options, sdkCanUseTool(options)) as never
   })
 
   // enableRemoteControl is in sdk.mjs but not in sdk.d.ts, so it is looked for.
@@ -299,6 +323,20 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
 
     async stopTask(taskId: string): Promise<void> {
       await session.stopTask(taskId)
+    },
+
+    // backgroundTasks(toolUseId) moves one foreground task to the background;
+    // true when it did. An SDK without it, or one that throws, answers null
+    // («не вышло»), distinct from false («нечего уводить»).
+    async backgroundTask(toolUseId: string): Promise<boolean | null> {
+      const move = (session as unknown as { backgroundTasks?: (id: string) => Promise<boolean> })
+        .backgroundTasks
+      if (typeof move !== 'function') return null
+      try {
+        return (await move.call(session, toolUseId)) === true
+      } catch {
+        return null
+      }
     },
 
     async remoteAvailability(): Promise<RemoteAvailability> {

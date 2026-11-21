@@ -14,6 +14,8 @@ import {
   sanitizeInput,
   sanitizeLayoutPatch,
   sanitizeOverrides,
+  sanitizePcm,
+  sanitizeVoiceSettings,
   sanitizePlanDecision,
   sanitizeQuestionAnswers,
   sanitizeQuestionNotes,
@@ -474,6 +476,7 @@ describe('mergeDefaults', () => {
     editorCommand: '',
     autoAnswerMinutes: 5,
     openAtLogin: true,
+    voice: { model: 'gigaam-v3', replacements: null },
     defaults: { permissionMode: 'acceptEdits' }
   }
 
@@ -598,5 +601,61 @@ describe('sanitizeErrorReport', () => {
     const r = sanitizeErrorReport({ scope: 'pane', message: long, stack: long, componentStack: long, extra: 1 })
     expect(r).toEqual({ scope: 'pane', message: cut, stack: cut, componentStack: cut })
     expect(sanitizeErrorReport({ scope: 'window', message: 'm', stack: 4 })).toEqual({ scope: 'window', message: 'm' })
+  })
+})
+
+describe('голос: проверки в main', () => {
+  test('sanitizePcm: длина, тип, NaN, зажим, копия', () => {
+    expect(sanitizePcm(new Float32Array(4801))).toBeNull()
+    expect(sanitizePcm(new Float32Array(0))).toBeNull()
+    expect(sanitizePcm([0.1])).toBeNull()
+    expect(sanitizePcm(new Float64Array(10))).toBeNull()
+    const src = new Float32Array([NaN, 2, -3, Infinity, -Infinity, 0.5])
+    const out = sanitizePcm(src)!
+    expect(Array.from(out)).toEqual([0, 1, -1, 0, 0, 0.5])
+    expect(out).not.toBe(src)
+    expect(out.buffer).not.toBe(src.buffer)
+    expect(sanitizePcm(new Float32Array(4800))).not.toBeNull()
+  })
+
+  test('sanitizeVoiceSettings: лимит, пустой from, null, дубли, управляющие', () => {
+    const many = Array.from({ length: 301 }, (_, i) => ({ from: 'a' + i, to: 'b' }))
+    expect(sanitizeVoiceSettings({ replacements: many })).toEqual({})
+    expect(sanitizeVoiceSettings({ replacements: many.slice(0, 300) }).replacements).toHaveLength(300)
+    expect(
+      sanitizeVoiceSettings({ replacements: [{ from: '  ', to: 'x' }, { from: 'клод', to: 'Claude' }] })
+    ).toEqual({ replacements: [{ from: 'клод', to: 'Claude' }] })
+    expect(sanitizeVoiceSettings({ replacements: null })).toEqual({ replacements: null })
+    expect(
+      sanitizeVoiceSettings({ replacements: [{ from: 'ёж', to: '1' }, { from: 'ЕЖ', to: '2' }] }).replacements
+    ).toEqual([{ from: 'ёж', to: '1' }])
+    expect(
+      sanitizeVoiceSettings({
+        replacements: [{ from: 'a\u0000b', to: 'x' }, { from: 'q', to: 'x'.repeat(61) }, { from: 'q', to: 5 }]
+      }).replacements
+    ).toEqual([])
+    expect(sanitizeVoiceSettings({ model: 'whisper-turbo-cuda' })).toEqual({ model: 'whisper-turbo-cuda' })
+    expect(sanitizeVoiceSettings('x')).toEqual({})
+  })
+
+  test('mergeDefaults с патчем {voice: {model: "x"}} модель не меняет', () => {
+    const base = {
+      agentPath: 'claude',
+      globalHotkey: 'x',
+      notificationsEnabled: true,
+      soundEnabled: true,
+      closeToTray: true,
+      panelOpen: true,
+      editorCommand: '',
+      autoAnswerMinutes: 5,
+      openAtLogin: true,
+      voice: { model: 'gigaam-v3', replacements: null },
+      defaults: {}
+    } as AppSettings
+    expect(mergeDefaults(base, { voice: { model: 'x' } } as never).voice.model).toBe('gigaam-v3')
+    expect(mergeDefaults(base, { voice: { model: 'parakeet-v3' } } as never).voice).toEqual({
+      model: 'parakeet-v3',
+      replacements: null
+    })
   })
 })

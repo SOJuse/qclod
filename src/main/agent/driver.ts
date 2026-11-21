@@ -48,6 +48,8 @@ export interface AgentDriver {
    */
   taskOutput(taskId: string): Promise<TaskOutput | null>
   stopTask(taskId: string): Promise<void>
+  /** Уводит в фон задачу этого tool_use. true — увёл; false — нет такой на переднем плане; null — этот SDK/CLI не умеет или фон выключен. */
+  backgroundTask(toolUseId: string): Promise<boolean | null>
   /** Whether this SDK, CLI and login can run Remote Control, and if not, why. */
   remoteAvailability(): Promise<RemoteAvailability>
   /**

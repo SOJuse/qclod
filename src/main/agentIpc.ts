@@ -10,6 +10,8 @@ import type {
   PanelSnapshot,
   RibbonSnapshot,
   SessionSummary,
+  SubagentSendResult,
+  SubagentStopResult,
   TabId,
   TabState,
   UserInput
@@ -34,7 +36,9 @@ import {
   sanitizeOverrides,
   sanitizePlanDecision,
   sanitizeQuestionNotes,
-  sanitizeTabPatch
+  sanitizeTabPatch,
+  sanitizeCardId,
+  sanitizeSubagentText
 } from './tabs/sanitize'
 
 export interface AgentIpcDeps {
@@ -280,6 +284,30 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!isString(id) || !isString(taskId) || taskId === '') return
     await manager.get(id)?.stopTask(taskId)
   })
+
+  // — этап 4: сабагенты. The window names only a card of the ribbon and
+  // the text; the session finds the agent behind the card in its own ribbon,
+  // so a made-up id never reaches the agent.
+  ipcMain.handle(
+    CHANNELS.agentSubagentSend,
+    async (_e, id: unknown, cardId: unknown, text: unknown): Promise<SubagentSendResult> => {
+      const card = sanitizeCardId(cardId)
+      const body = sanitizeSubagentText(text)
+      if (!isString(id) || card === null || body === null) return { ok: false, reason: 'empty' }
+      const session = manager.get(id)
+      if (!session) return { ok: false, reason: 'not-running' }
+      return session.sendToSubagent(card, body)
+    }
+  )
+
+  ipcMain.handle(
+    CHANNELS.agentSubagentStop,
+    async (_e, id: unknown, cardId: unknown): Promise<SubagentStopResult> => {
+      const card = sanitizeCardId(cardId)
+      if (!isString(id) || card === null) return 'not-running'
+      return (await manager.get(id)?.stopSubagent(card)) ?? 'not-running'
+    }
+  )
 
   // Claude Code itself, in a console in the tab's folder: for the commands
   // that exist only in the terminal. The folder is the tab's, never the window's.

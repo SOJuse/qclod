@@ -15,6 +15,11 @@ files:
 # its own files from node_modules, so it must stay outside the asar archive.
 asarUnpack:
   - node_modules/@anthropic-ai/claude-agent-sdk/**/*
+  # The voice engine: a native module and its DLLs, which load from disk only
+  # and must stay side by side, as the packages lay them out (stage 5).
+  - node_modules/sherpa-onnx-node/**/*
+  - node_modules/sherpa-onnx-win-x64/**/*
+  - node_modules/sherpa-onnx-darwin-arm64/**/*
 
 win:
   target:

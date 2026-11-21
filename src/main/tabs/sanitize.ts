@@ -14,6 +14,12 @@ import {
   type TabState,
   type UserInput
 } from '../../shared/types'
+import {
+  VOICE_MODEL_IDS,
+  type VoiceModelId,
+  type VoiceReplacement,
+  type VoiceSettings
+} from '../../shared/voice'
 import { isInsidePasteDir } from '../files/imagePaste'
 
 const MAX_TITLE = 200
@@ -97,6 +103,63 @@ const BOOLEAN_SETTINGS = [
 const AUTO_ANSWER_MINUTES_MIN = 1
 const AUTO_ANSWER_MINUTES_MAX = 60
 
+// Stage 5: voice
+const MAX_REPLACEMENTS = 300
+const MAX_REPLACEMENT_TEXT = 60
+const MAX_PCM_SAMPLES = 4800
+
+export function sanitizeModelId(v: unknown): VoiceModelId | null {
+  return typeof v === 'string' && (VOICE_MODEL_IDS as readonly string[]).includes(v)
+    ? (v as VoiceModelId)
+    : null
+}
+
+function replacementText(v: unknown): string | null {
+  if (!isString(v)) return null
+  const t = v.trim()
+  // eslint-disable-next-line no-control-regex
+  if (t.length < 1 || t.length > MAX_REPLACEMENT_TEXT || /[\u0000-\u001f\u007f]/.test(t)) return null
+  return t
+}
+
+/** The voice part of a settings patch: a known model, a bounded dictionary or null. */
+export function sanitizeVoiceSettings(v: unknown): Partial<VoiceSettings> {
+  if (!isPlainObject(v)) return {}
+  const out: Partial<VoiceSettings> = {}
+  const model = sanitizeModelId(v['model'])
+  if (model !== null) out.model = model
+  const list = v['replacements']
+  if (list === null) {
+    out.replacements = null
+  } else if (Array.isArray(list) && list.length <= MAX_REPLACEMENTS) {
+    const seen = new Set<string>()
+    const entries: VoiceReplacement[] = []
+    for (const item of list) {
+      if (!isPlainObject(item)) continue
+      const from = replacementText(item['from'])
+      const to = replacementText(item['to'])
+      if (from === null || to === null) continue
+      const key = from.toLowerCase().replace(/ё/g, 'е')
+      if (seen.has(key)) continue
+      seen.add(key)
+      entries.push({ from, to })
+    }
+    out.replacements = entries
+  }
+  return out
+}
+
+/** One chunk of microphone sound: at most 4800 samples, finite and within [-1, 1]; a copy. */
+export function sanitizePcm(v: unknown): Float32Array | null {
+  if (!(v instanceof Float32Array) || v.length < 1 || v.length > MAX_PCM_SAMPLES) return null
+  const out = new Float32Array(v.length)
+  for (let i = 0; i < v.length; i++) {
+    const x = v[i]
+    out[i] = Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : 0
+  }
+  return out
+}
+
 /**
  * The plain fields of a settings patch, each of its own type, and nothing
  * else: an unknown key or a wrong type is dropped, never stored. `defaults`
@@ -104,9 +167,9 @@ const AUTO_ANSWER_MINUTES_MAX = 60
  */
 export function sanitizeSettingsFields(
   value: unknown
-): Partial<Omit<AppSettings, 'defaults' | 'editorCommand'>> {
+): Partial<Omit<AppSettings, 'defaults' | 'editorCommand' | 'voice'>> {
   if (!isPlainObject(value)) return {}
-  const out: Partial<Omit<AppSettings, 'defaults' | 'editorCommand'>> = {}
+  const out: Partial<Omit<AppSettings, 'defaults' | 'editorCommand' | 'voice'>> = {}
   const agentPath = value['agentPath']
   if (isString(agentPath) && agentPath.length <= MAX_AGENT_PATH && !agentPath.includes('\0')) {
     out.agentPath = agentPath
@@ -163,6 +226,10 @@ export function mergeDefaults(settings: AppSettings, patch: Partial<AppSettings>
     ...settings,
     ...rest,
     editorCommand: sanitizeEditorCommand(editorCommand) ?? settings.editorCommand,
+    voice: {
+      ...settings.voice,
+      ...sanitizeVoiceSettings(isPlainObject(patch) ? patch['voice'] : undefined)
+    },
     defaults: merged
   }
 }
@@ -278,6 +345,24 @@ function personText(value: unknown, max: number): string | undefined {
   if (!isString(value)) return undefined
   const text = value.trim()
   return text !== '' && text.length <= max ? text : undefined
+}
+
+/** What the person writes to a subagent: as long as a message can sensibly be. */
+const MAX_SUBAGENT_TEXT = 50_000
+
+/**
+ * A message to a subagent (stage 4), trimmed: null when it is not a string,
+ * empty after trimming, or longer than 50 000 characters.
+ */
+export function sanitizeSubagentText(value: unknown): string | null {
+  return personText(value, MAX_SUBAGENT_TEXT) ?? null
+}
+
+/** A ribbon card's id from the window (stage 4): a short string, never an SDK id. */
+const MAX_CARD_ID = 64
+
+export function sanitizeCardId(value: unknown): string | null {
+  return isString(value) && value !== '' && value.length <= MAX_CARD_ID ? value : null
 }
 
 /**

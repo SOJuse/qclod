@@ -1,0 +1,41 @@
+{
+  "vad": {
+    "dir": "silero-vad",
+    "file": {
+      "name": "silero_vad.onnx",
+      "size": 643854,
+      "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+    }
+  },
+  "models": {
+    "gigaam-v3": {
+      "version": 1,
+      "dir": "gigaam-v3",
+      "files": [
+        { "name": "encoder.int8.onnx", "size": 224570820, "sha256": "369f35a71bf288d3b8e0391fabd8dba5f2314088d440bca474056b7b4b6e66bf", "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/main/encoder.int8.onnx" },
+        { "name": "decoder.onnx", "size": 4600132, "sha256": "38fc7475443ea2a26f63211ca350f73ac50fff824ab7a3876ee2bd610c53bbc4", "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/main/decoder.onnx" },
+        { "name": "joiner.onnx", "size": 2712896, "sha256": "602ff7017a93311aad34df1437c8d7f49911353c13d6eae7a6ee7b041339465c", "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/main/joiner.onnx" },
+        { "name": "tokens.txt", "size": 13354, "sha256": "39abae20e692998290c574e606f11a9edef2902a1995463fcff63d1490cf22b7", "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/main/tokens.txt" }
+      ]
+    },
+    "parakeet-v3": {
+      "version": 1,
+      "dir": "parakeet-v3",
+      "files": [
+        { "name": "encoder.int8.onnx", "size": 652282294, "sha256": "1afbe69c1ffdabee94755f42e4daf1d93549131a3da11356bda84fcef0f2c479", "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/encoder.int8.onnx" },
+        { "name": "decoder.int8.onnx", "size": 11845274, "sha256": "0222a86147299d4dee90edf95b6d13827edb42ad8b7c9cf0b2582f030937c0b5", "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/decoder.int8.onnx" },
+        { "name": "joiner.int8.onnx", "size": 6355277, "sha256": "cbd02f3696e9944970111fb439d9c3fd365a80374565f13f2b9c7007d253fc98", "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/joiner.int8.onnx" },
+        { "name": "tokens.txt", "size": 93939, "sha256": "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d", "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/tokens.txt" }
+      ]
+    },
+    "whisper-turbo-cuda": {
+      "version": 1,
+      "dir": "whisper-turbo-cuda",
+      "files": [
+        { "name": "ggml-large-v3-turbo-q5_0.bin", "size": 574041195, "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2", "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin" },
+        { "name": "whisper-bin-win-cuda-12.4.0-x64.zip", "size": 684913404, "sha256": "afef0b881c500958921c3f5523b50e59ee2ec9b6f5cbd25b324c51ed308a957a", "url": "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-win-cuda-12.4.0-x64.zip", "unpack": "zip" }
+      ]
+    }
+  }
+}

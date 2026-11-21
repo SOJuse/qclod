@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import './PaneLayer.css'
 
@@ -15,17 +15,22 @@ interface Props {
  */
 export function PaneLayer({ title, onClose, children }: Props): JSX.Element {
   const self = useRef<HTMLDivElement | null>(null)
+  // The opener, read on the first render: the body's own effects run before
+  // this component's and move the focus into the layer.
+  const [before] = useState(() =>
+    typeof document === 'undefined' ? null : (document.activeElement as HTMLElement | null)
+  )
   useEffect(() => {
-    const before = document.activeElement as HTMLElement | null
     const node = self.current
-    node?.focus()
+    // A body that put the focus on a control of its own (the agents' switch) keeps it.
+    if (!node?.contains(document.activeElement)) node?.focus()
     return () => {
       // Back to the opener if it is still there and nothing else took the focus meanwhile.
       const active = document.activeElement
       const lost = !active || active === document.body || node?.contains(active) === true
       if (lost && before && before.isConnected) before.focus()
     }
-  }, [])
+  }, [before])
   return (
     <div
       ref={self}

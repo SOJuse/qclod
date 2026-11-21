@@ -22,6 +22,8 @@ interface Props {
   onFocusLost?: () => void
   /** A field to start in, selected: the setup screen opens settings for the agent path. */
   focusField?: 'agentPath'
+  /** The section to open on (`SettingsSectionDef.id`), when it is in the list. */
+  initialSection?: string
 }
 
 /**
@@ -38,10 +40,15 @@ export function SettingsScreen({
   onPatch: save,
   onClose,
   onFocusLost,
-  focusField
+  focusField,
+  initialSection
 }: Props): JSX.Element {
   const sections = sortedSections()
-  const [active, setActive] = useState(() => (focusField === 'agentPath' ? 'agent' : sections[0]?.id))
+  const [active, setActive] = useState(() =>
+    focusField === 'agentPath'
+      ? 'agent'
+      : (sections.find((s) => s.id === initialSection) ?? sections[0])?.id
+  )
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const savedTimer = useRef<ReturnType<typeof setTimeout>>()

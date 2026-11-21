@@ -35,6 +35,27 @@ describe('проверка релизной сборки на тестовые �
     for (const name of names) expect(seamsIn(`x = process.env['${name}'];`)).toEqual([name])
   })
 
+  test('лазейки голоса: длинные имена целиком, а не по префиксу', () => {
+    expect(
+      seamsIn('QCLOD_FAKE_SPEECH QCLOD_FAKE_MIC_ACCESS QCLOD_FAKE_VOICE_MANIFEST __qclodVoiceSelftest e2e: fake speech').sort()
+    ).toEqual(
+      ['QCLOD_FAKE_SPEECH', 'QCLOD_FAKE_MIC_ACCESS', 'QCLOD_FAKE_VOICE_MANIFEST', '__qclodVoiceSelftest', 'e2e: fake speech'].sort()
+    )
+    for (const name of [
+      'QCLOD_FAKE_SPEECH_CRASH',
+      'QCLOD_FAKE_SPEECH',
+      'QCLOD_FAKE_MIC_ACCESS',
+      'QCLOD_FAKE_MIC',
+      'QCLOD_FAKE_NVIDIA',
+      'QCLOD_FAKE_VOICE_MANIFEST',
+      'QCLOD_VOICE_SELFTEST',
+      '__qclodVoiceStarts',
+      '__qclodVoiceSelftest'
+    ]) {
+      expect(seamsIn(`x = process.env['${name}'];`)).toEqual([name])
+    }
+  })
+
   test('обычный код лазейкой не считается', () => {
     expect(seamsIn('const userData = app.getPath("userData"); QCLOD_USER_DATA')).toEqual([])
   })

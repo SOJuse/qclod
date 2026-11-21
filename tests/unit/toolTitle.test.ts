@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test } from 'vitest'
 import { toolTitle } from '../../src/shared/toolTitle'
+import { toolTarget } from '../../src/shared/ribbon'
 import { cardOutcome, toolView, type ToolCardItem } from '../../src/shared/toolView'
 
 const SDK_TOOLS = resolve(__dirname, '../../node_modules/@anthropic-ai/claude-agent-sdk/sdk-tools.d.ts')
@@ -76,4 +77,10 @@ test('голое «ok» в открытой карточке тоже читае
     type: 'generic',
     text: 'Launching skill: review'
   })
+})
+
+test('этап 4: SendMessage — «Сообщение агенту», цель — «→ адресат»', () => {
+  expect(toolTitle('SendMessage')).toBe('Сообщение агенту')
+  expect(toolTarget('SendMessage', { to: 'a1', message: 'привет' })).toBe('→ a1')
+  expect(toolTarget('SendMessage', { message: 'без адреса' })).toBe('')
 })

@@ -85,6 +85,7 @@ describe('settingsStore', () => {
     editorCommand: 'code -g {path}:{line}',
     autoAnswerMinutes: 12,
     openAtLogin: false,
+    voice: { model: 'parakeet-v3', replacements: [{ from: 'клод', to: 'Claude' }] },
     defaults: { permissionMode: 'plan', model: 'm' }
   }
 
@@ -116,6 +117,20 @@ describe('settingsStore', () => {
     expect(sanitizeSettingsFields({ openAtLogin: false })).toEqual({ openAtLogin: false })
     expect(sanitizeSettingsFields({ openAtLogin: 'false' })).toEqual({})
     expect(sanitizeSettingsFields({ openAtLogin: 0 })).toEqual({})
+  })
+
+  test('файл без voice читается с голосом по умолчанию', () => {
+    const dir = freshDir()
+    writeFileSync(join(dir, SETTINGS_FILE), JSON.stringify({ soundEnabled: false }), 'utf8')
+    expect(loadSettings(dir).voice).toEqual({ model: 'gigaam-v3', replacements: null })
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('чужая модель в файле отбрасывается', () => {
+    const dir = freshDir()
+    writeFileSync(join(dir, SETTINGS_FILE), JSON.stringify({ voice: { model: 'evil', replacements: [] } }), 'utf8')
+    expect(loadSettings(dir).voice).toEqual({ model: 'gigaam-v3', replacements: [] })
+    rmSync(dir, { recursive: true, force: true })
   })
 
   test('каждое поле DEFAULT_SETTINGS переживает сохранение и чтение', () => {

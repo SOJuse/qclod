@@ -21,6 +21,7 @@ export type AppActionId =
   | 'zoomOut'
   | 'zoomReset'
   | 'reload'
+  | 'voice'
 
 export interface AppActionInfo {
   id: AppActionId
@@ -43,6 +44,7 @@ export const APP_ACTIONS: AppActionInfo[] = [
   { id: 'restart', label: 'Перезапустить сессию' },
   { id: 'compact', label: 'Сжать контекст' },
   { id: 'cycleMode', label: 'Сменить режим', keys: 'Shift+Tab' },
+  { id: 'voice', label: 'Голосовой ввод', keys: 'Ctrl+Пробел' },
   { id: 'zoomIn', label: 'Крупнее', keys: 'Ctrl+=' },
   { id: 'zoomOut', label: 'Мельче', keys: 'Ctrl+-' },
   { id: 'zoomReset', label: 'Обычный масштаб', keys: 'Ctrl+0' },

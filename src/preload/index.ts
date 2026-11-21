@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { CHANNELS } from '../shared/channels'
+import type { VoiceErrorCode, VoiceEvent, VoiceModelId, VoiceModelsSnapshot } from '../shared/voice'
 import type {
   EnvironmentReport,
   LoginProgress,
@@ -18,6 +19,8 @@ import type {
   RendererErrorReport,
   ResolvedPath,
   RibbonEvent,
+  SubagentSendResult,
+  SubagentStopResult,
   RibbonSnapshot,
   SessionSummary,
   StatusEvent,
@@ -220,7 +223,33 @@ const api = {
     ipcRenderer.invoke(CHANNELS.autonomyHold, tabId, cardId),
   /** «Ответить сейчас»: what the running timer would do, done at once. */
   autonomyAnswerNow: (tabId: string, cardId: string): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.autonomyAnswerNow, tabId, cardId)
+    ipcRenderer.invoke(CHANNELS.autonomyAnswerNow, tabId, cardId),
+
+  // — Stage 5: voice
+  voice: {
+    models: (): Promise<VoiceModelsSnapshot> => ipcRenderer.invoke(CHANNELS.voiceModels),
+    download: (id: VoiceModelId): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceDownload, id),
+    cancelDownload: (id: VoiceModelId): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.voiceCancelDownload, id),
+    remove: (id: VoiceModelId): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceDelete, id),
+    begin: (tabId: TabId): Promise<{ session: string } | { error: VoiceErrorCode }> =>
+      ipcRenderer.invoke(CHANNELS.voiceBegin, tabId),
+    end: (session: string): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceEnd, session),
+    audio: (session: string, pcm: Float32Array): void =>
+      ipcRenderer.send(CHANNELS.voiceAudio, session, pcm),
+    openMicSettings: (): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceOpenMicSettings),
+    /** Microsoft's VC++ Redistributable download, for Whisper (I4). */
+    openVcRedist: (): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceOpenVcRedist),
+    onEvent: (cb: (e: VoiceEvent) => void) => on(CHANNELS.voiceEvent, cb),
+    onModelsChanged: (cb: (s: VoiceModelsSnapshot) => void) => on(CHANNELS.voiceModelsChanged, cb)
+  },
+  // — этап 4: сабагенты. Из окна — только id карточки ленты и текст.
+  /** Пишет сабагенту этой карточки через главного агента. */
+  sendToSubagent: (tabId: TabId, cardId: string, text: string): Promise<SubagentSendResult> =>
+    ipcRenderer.invoke(CHANNELS.agentSubagentSend, tabId, cardId, text),
+  /** Останавливает сабагента этой карточки. */
+  stopSubagent: (tabId: TabId, cardId: string): Promise<SubagentStopResult> =>
+    ipcRenderer.invoke(CHANNELS.agentSubagentStop, tabId, cardId)
 }
 
 export type QclodApi = typeof api

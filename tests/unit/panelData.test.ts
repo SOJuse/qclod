@@ -458,3 +458,50 @@ describe('PanelCollector: автономность', () => {
     expect(collector.rev).toBeGreaterThan(before)
   })
 })
+
+describe('PanelCollector: ставки стоимости (этап 4)', () => {
+  const modelUsage = (cost: number): Record<string, unknown> => ({
+    'claude-haiku-5-5': {
+      inputTokens: 1000,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      costUSD: cost
+    }
+  })
+
+  test('result с modelUsage даёт costRates', () => {
+    const collector = new PanelCollector()
+    expect(collector.data.costRates).toBeNull()
+    const patch = collector.apply({
+      type: 'result',
+      subtype: 'success',
+      total_cost_usd: 0.001,
+      modelUsage: modelUsage(0.001)
+    })
+    expect(patch?.costRates?.byModel['claude-haiku-5-5']).toBe(0.000001)
+    expect(collector.data.costRates?.average).toBe(0.000001)
+  })
+
+  test('ставки берутся из последнего result', () => {
+    const collector = new PanelCollector()
+    collector.apply({ type: 'result', subtype: 'success', total_cost_usd: 0.001, modelUsage: modelUsage(0.001) })
+    collector.apply({ type: 'result', subtype: 'success', total_cost_usd: 0.004, modelUsage: modelUsage(0.004) })
+    expect(collector.data.costRates?.byModel['claude-haiku-5-5']).toBe(0.000004)
+  })
+
+  test('ставки приходят и без суммы; те же ставки повторно — не изменение', () => {
+    const collector = new PanelCollector()
+    const result = { type: 'result', subtype: 'success', modelUsage: modelUsage(0.001) }
+    expect(collector.apply(result)?.costRates).not.toBeNull()
+    expect(collector.data.cost).toBeNull()
+    expect(collector.apply(result)).toBeNull()
+  })
+
+  test('result без modelUsage ставки не трогает', () => {
+    const collector = new PanelCollector()
+    collector.apply({ type: 'result', subtype: 'success', total_cost_usd: 0.001, modelUsage: modelUsage(0.001) })
+    collector.apply({ type: 'result', subtype: 'success', total_cost_usd: 0.002 })
+    expect(collector.data.costRates?.byModel['claude-haiku-5-5']).toBe(0.000001)
+  })
+})

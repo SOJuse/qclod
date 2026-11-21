@@ -38,6 +38,7 @@ import { longFieldClasses } from '../ui/longText'
 import { InlineMenu, type InlineMenuItem } from './InlineMenu'
 import { SlashMenu } from './SlashMenu'
 import { MicButton } from './composer/MicButton'
+import { useVoiceCaret, VoiceMenu, VoiceTentative } from './composer/VoiceParts'
 import type { VoiceControls } from './composer/voice'
 import './Composer.css'
 
@@ -203,7 +204,15 @@ export function Composer({
 }: Props): JSX.Element {
   const field = useRef<HTMLTextAreaElement | null>(null)
   const histories = useRef(new Map<string, InputHistory>())
-  const [caret, setCaret] = useState(0)
+  const [caret, setCaretState] = useState(0)
+  // The voice hears where the caret is: its next phrase goes there (этап 5).
+  const voiceRef = useRef(voice)
+  voiceRef.current = voice
+  const setCaret = useCallback((at: number): void => {
+    setCaretState(at)
+    voiceRef.current?.caretMoved(at)
+  }, [])
+  useVoiceCaret(voice, field, setCaretState)
   /** Where the caret goes once a text we set ourselves is in the field. */
   const pendingCaret = useRef<number | null>(null)
   /** The row picked with the arrows, remembered for the list it was picked in. */
@@ -641,6 +650,7 @@ export function Composer({
             void window.qclod.startVoice()
           }}
         />
+        <VoiceMenu voice={voice} field={field} />
 
         <textarea
           ref={field}
@@ -695,6 +705,7 @@ export function Composer({
         >
           {busy ? <Square size={12} fill="currentColor" aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
         </button>
+        <VoiceTentative voice={voice} />
       </div>
     </div>
   )

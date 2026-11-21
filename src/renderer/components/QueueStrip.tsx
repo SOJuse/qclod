@@ -54,17 +54,20 @@ export function QueueStrip({ queue, onSendNow, onCancel, onEdit }: Props): JSX.E
                 <SendHorizontal size={14} aria-hidden="true" />
               </button>
             )}
-            <button
-              type="button"
-              className="queue-action"
-              data-testid="queue-edit"
-              aria-label={`Изменить: ${what}`}
-              title="Изменить"
-              disabled={cancelling}
-              onClick={() => onEdit(item.id)}
-            >
-              <Pencil size={14} aria-hidden="true" />
-            </button>
+            {/* A message to a subagent (этап 4) is the main agent's errand: back in the field it would read «Передай агенту…». */}
+            {!item.relay && (
+              <button
+                type="button"
+                className="queue-action"
+                data-testid="queue-edit"
+                aria-label={`Изменить: ${what}`}
+                title="Изменить"
+                disabled={cancelling}
+                onClick={() => onEdit(item.id)}
+              >
+                <Pencil size={14} aria-hidden="true" />
+              </button>
+            )}
             <button
               type="button"
               className="queue-action"

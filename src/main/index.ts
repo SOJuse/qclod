@@ -9,7 +9,9 @@ import {
   powerMonitor,
   powerSaveBlocker,
   session,
-  shell
+  shell,
+  utilityProcess,
+  webContents
 } from 'electron'
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
@@ -67,8 +69,47 @@ import { claimSingleInstance } from './system/singleInstance'
 import { installMediaPermissions } from './voice/micAccess'
 import { QuitReason, sessionEnding } from './system/quitReason'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
+import { VOICE_MODEL_IDS, VOICE_MODEL_INFO, type VoiceModelsSnapshot } from '../shared/voice'
+import { VoiceHost, type WorkerLike } from './voice/voiceHost'
+import { registerVoiceIpc, type ModelStoreLike } from './voice/voiceIpc'
+import type { FromWorker } from './voice/protocol'
 
 let mainWindow: BrowserWindow | null = null
+
+/**
+ * The voice process (voice/worker.ts). Its output goes to our console, marked:
+ * the process has no log of its own.
+ */
+function forkVoiceWorker(): WorkerLike {
+  const child = utilityProcess.fork(join(__dirname, 'voiceWorker.js'), [], {
+    serviceName: 'Qclod voice',
+    stdio: 'pipe'
+  })
+  child.stdout?.on('data', (d: Buffer) => console.log('[voice]', String(d).trimEnd()))
+  child.stderr?.on('data', (d: Buffer) => console.warn('[voice]', String(d).trimEnd()))
+  return {
+    postMessage: (m) => child.postMessage(m),
+    on: (e: 'message' | 'exit', f: ((m: FromWorker) => void) | ((code: number) => void)) => {
+      child.on(e as 'exit', f as (code: number) => void)
+    },
+    kill: () => child.kill()
+  } as WorkerLike
+}
+
+/** Until the models' store (task 6) is wired in (task 9): every model absent. */
+const noModels: ModelStoreLike = {
+  snapshot: (): VoiceModelsSnapshot => ({
+    models: VOICE_MODEL_IDS.map((id) => ({
+      id,
+      state: { kind: 'absent' },
+      available: VOICE_MODEL_INFO[id].platforms.includes(process.platform)
+    })),
+    micAccess: 'unknown'
+  }),
+  download: async () => {},
+  cancel: () => {},
+  remove: async () => {}
+}
 
 /**
  * Asks, in a window the renderer cannot script, whether the user really means
@@ -484,16 +525,46 @@ if (gotLock) void app.whenReady().then(async () => {
     }
   })
 
+  // Voice input on a local model (voice/voiceHost.ts): the voice process starts
+  // on the first press. Models, the microphone and its settings page are stubs
+  // until task 9 wires the models' store and micAccess in.
+  const voiceHost = new VoiceHost({
+    fork: forkVoiceWorker,
+    pathsFor: () => null,
+    settings: () => settings.voice,
+    micAccess: () => 'unknown',
+    emit: (owner, e) => {
+      const contents = webContents.fromId(owner)
+      if (contents && !contents.isDestroyed()) contents.send(CHANNELS.voiceEvent, e)
+    },
+    log: (e) => errorLog.write(e),
+    killPid: (pid) => {
+      try {
+        process.kill(pid)
+      } catch {
+        // Already gone.
+      }
+    }
+  })
+  registerVoiceIpc({
+    host: voiceHost,
+    store: noModels,
+    isOurWindow: (id) => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.webContents.id === id,
+    openMicSettings: async () => {}
+  })
+
   registerBaseIpc({
     getWindow: () => mainWindow,
     getSettings: () => settings,
     setSettings: (patch) => {
       const previousHotkey = settings.globalHotkey
       const previousLogin = settings.openAtLogin
+      const previousVoiceModel = settings.voice.model
       settings = mergeDefaults(settings, patch)
       saveSettings(userData, settings)
       if (settings.globalHotkey !== previousHotkey) hotkey.apply(settings.globalHotkey)
       if (settings.openAtLogin !== previousLogin) syncLoginItem()
+      if (settings.voice.model !== previousVoiceModel) voiceHost.modelChanged()
       return settings
     },
     // Tabs that stopped for want of a login carry on by themselves.
@@ -639,6 +710,7 @@ if (gotLock) void app.whenReady().then(async () => {
     quitting = true
     event.preventDefault()
     hotkey.release()
+    voiceHost.dispose()
     // Before the sessions go down: their ending is no crash and no idle to write down.
     autonomy.quitting(quitReason.deliberate)
     broker.cancelAll()

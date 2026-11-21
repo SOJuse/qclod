@@ -58,6 +58,7 @@ export function BackgroundTasks({ tabId, tasks, onOpenAgent }: Props): JSX.Eleme
   const [open, setOpen] = useState(false)
   const [, setTick] = useState(0)
   const self = useRef<HTMLSpanElement | null>(null)
+  const counter = useRef<HTMLButtonElement | null>(null)
   const running = tasks.filter((t) => t.status === 'running').length
 
   // Running times tick only while someone can see them.
@@ -98,6 +99,7 @@ export function BackgroundTasks({ tabId, tasks, onOpenAgent }: Props): JSX.Eleme
   return (
     <span className="bg" ref={self}>
       <button
+        ref={counter}
         type="button"
         className={`bg-counter${open ? ' is-open' : ''}${running > 0 ? ' is-running' : ''}`}
         data-testid="status-bg"
@@ -118,6 +120,9 @@ export function BackgroundTasks({ tabId, tasks, onOpenAgent }: Props): JSX.Eleme
           {...(onOpenAgent
             ? {
                 onOpenAgent: (taskId: string) => {
+                  // The row's button goes with the list: the counter is what
+                  // the layer gives the focus back to when it closes.
+                  counter.current?.focus()
                   setOpen(false)
                   onOpenAgent(taskId)
                 }
@@ -139,10 +144,28 @@ export function TaskManagerList({ tabId, tasks, onOpenAgent }: Props): JSX.Eleme
   const agents = tasks.filter((t) => t.kind === 'agent')
   const commands = tasks.filter((t) => t.kind !== 'agent')
   const running = tasks.filter((t) => t.status === 'running')
+  // The tasks «Остановить все» was pressed for: it is in progress while one of them still runs.
+  const [stoppingAll, setStoppingAll] = useState<ReadonlySet<string>>(() => new Set())
+  const allInProgress = running.some((t) => stoppingAll.has(t.taskId))
+
+  useEffect(() => {
+    if (!allInProgress && stoppingAll.size > 0) setStoppingAll(new Set())
+  }, [allInProgress, stoppingAll])
 
   const stopAll = (): void => {
-    // Each row's own stop says why, if one refuses; here nothing is held up by it.
-    for (const task of running) void window.qclod.stopTask(tabId, task.taskId).catch(() => undefined)
+    if (allInProgress) return
+    const ids = running.map((t) => t.taskId)
+    setStoppingAll(new Set(ids))
+    // Each row's own stop says why, if one refuses; a refused one is simply no longer waited for.
+    for (const id of ids) {
+      void window.qclod.stopTask(tabId, id).catch(() =>
+        setStoppingAll((was) => {
+          const next = new Set(was)
+          next.delete(id)
+          return next
+        })
+      )
+    }
   }
 
   return (
@@ -150,8 +173,15 @@ export function TaskManagerList({ tabId, tasks, onOpenAgent }: Props): JSX.Eleme
       <div className="bg-list-head">
         <span className="bg-list-title">Диспетчер задач</span>
         {running.length >= 2 && (
-          <button type="button" className="bg-stop" data-testid="bg-stop-all" title="Остановить все работающие задачи" onClick={stopAll}>
-            Остановить все
+          <button
+            type="button"
+            className="bg-stop"
+            data-testid="bg-stop-all"
+            title="Остановить все работающие задачи"
+            disabled={allInProgress}
+            onClick={stopAll}
+          >
+            {allInProgress ? 'Останавливаю…' : 'Остановить все'}
           </button>
         )}
       </div>

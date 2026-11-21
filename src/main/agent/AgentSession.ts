@@ -947,16 +947,36 @@ export class AgentSession {
     if (ref === null) return { ok: false, reason: 'not-started' }
     if (subagentRoute(this.lastInit) === 'none') return { ok: false, reason: 'no-send-message' }
 
+    // Every top-level agent in the foreground holds the main agent's turn, not
+    // only this one: they all go to the background, or the step boundary the
+    // 'next' message waits for comes only after the last of them.
+    const holding = this.items.filter(
+      (i): i is Extract<RibbonItem, { kind: 'subagent' }> =>
+        i.kind === 'subagent' &&
+        i.id !== card.id &&
+        i.state === 'running' &&
+        i.background !== true &&
+        i.parentId === undefined &&
+        i.toolUseId !== ''
+    )
+    const moving = card.state === 'running' && card.background !== true ? [card, ...holding] : holding
     let priority: SendPriority = 'next'
-    if (card.state === 'running' && card.background !== true) {
-      let moved: boolean | null = null
-      try {
-        moved = this.driver ? await this.driver.backgroundTask(card.toolUseId) : null
-      } catch {
-        moved = null
-      }
+    if (moving.length > 0) {
+      const driver = this.driver
+      const results = await Promise.all(
+        moving.map(async (c): Promise<boolean | null> => {
+          try {
+            return driver ? await driver.backgroundTask(c.toolUseId) : null
+          } catch {
+            return null
+          }
+        })
+      )
       if (this.disposed) return { ok: false, reason: 'not-running' }
-      if (moved !== true) priority = 'now'
+      // null — it cannot be moved: 'now', and the CLI moves what it can. false —
+      // nothing of that call is in the foreground any more: no reason to cut
+      // the main agent's step short.
+      if (results.includes(null)) priority = 'now'
     }
 
     const relay: RelayMeta = { relayId: randomUUID(), cardId, agent: card.name, text: body }
@@ -991,25 +1011,35 @@ export class AgentSession {
         // Background tasks are off: it is stopped where it is.
       }
     }
+    if (this.disposed) return 'not-running'
+    // Watched before the call: the CLI's killed/stopped frames may be read
+    // before stopTask() returns, and they are what settles the watch.
+    this.watchStop(taskId, cardId, card.name)
     try {
       await driver.stopTask(taskId)
     } catch {
+      this.unwatchStop(taskId)
       return 'failed'
     }
-    if (this.disposed) return 'stopping'
-    this.watchStop(taskId, card.name)
     return 'stopping'
   }
 
-  private watchStop(taskId: string, name: string): void {
-    const was = this.stopWatch.get(taskId)
-    if (was) clearTimeout(was)
+  private watchStop(taskId: string, cardId: string, name: string): void {
+    this.unwatchStop(taskId)
     const timer = setTimeout(() => {
       this.stopWatch.delete(taskId)
       if (this.disposed) return
+      // Ended by a frame the watch did not read: nothing to report either.
+      if (this.builder.subagentCard(cardId)?.state !== 'running') return
       this.emit(this.builder.notice(`Агент «${name}» не остановился за 10 секунд.`, 'error'))
     }, SUBAGENT_STOP_WATCH_MS)
     this.stopWatch.set(taskId, timer)
+  }
+
+  private unwatchStop(taskId: string): void {
+    const was = this.stopWatch.get(taskId)
+    if (was) clearTimeout(was)
+    this.stopWatch.delete(taskId)
   }
 
   /** A watched agent ended — stopped, or done before the stop landed: nothing to report. */

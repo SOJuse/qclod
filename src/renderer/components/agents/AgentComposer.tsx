@@ -1,5 +1,5 @@
 import './AgentsLayer.css'
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { ArrowUp } from 'lucide-react'
 import type { SubagentSendResult, SubagentState } from '../../../shared/types'
 import type { VoiceControls } from '../../../shared/voice'
@@ -50,6 +50,14 @@ export function AgentComposer({ tabId, cardId, disabledReason, placeholder, voic
   const disabled = disabledReason !== null
   useVoiceCaret(voice, field)
 
+  // The field grows with its content, as the chat's does (Composer).
+  useLayoutEffect(() => {
+    const el = field.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight + el.offsetHeight - el.clientHeight, 260)}px`
+  }, [draft])
+
   async function submit(): Promise<void> {
     const text = draft
     if (disabled || sending || text.trim() === '') return
@@ -89,6 +97,7 @@ export function AgentComposer({ tabId, cardId, disabledReason, placeholder, voic
           ref={field}
           className="composer-input ring-on-parent"
           data-testid="agent-composer-input"
+          data-composer-input=""
           rows={1}
           disabled={disabled}
           placeholder={placeholder}

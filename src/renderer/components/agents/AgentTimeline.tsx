@@ -42,6 +42,7 @@ export function AgentTimeline({
             type="button"
             className="agent-row"
             data-testid="agent-row"
+            data-node-id={row.id}
             data-state={node.state}
             title={`${node.name} · ${stateWithTime(node, now)}`}
             onClick={() => onOpen(row.id)}

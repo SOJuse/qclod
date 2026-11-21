@@ -52,6 +52,7 @@ export function AgentNodeView({
       type="button"
       className={`agent-node is-${node.state}`}
       data-testid="agent-node"
+      data-node-id={node.id}
       data-state={node.state}
       title={title}
       style={style}

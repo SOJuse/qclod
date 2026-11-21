@@ -12,10 +12,19 @@
   min-height: 100%;
 }
 
+/* Stays at the top while a tall graph (10–15 agents) scrolls under it. */
 .agents-layer-bar {
+  /* It reaches up over the layer body's top padding, so nothing shows above it once stuck. */
+  position: sticky;
+  top: calc(-1 * var(--space-3));
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  margin-top: calc(-1 * var(--space-3));
+  padding-top: calc(var(--space-3) + var(--space-1));
+  padding-bottom: var(--space-1);
+  background: var(--surface);
   font-size: var(--text-sm);
   color: var(--text-dim);
 }
@@ -146,7 +155,7 @@
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  box-shadow: 0 0 0 2px var(--accent);
+  box-shadow: inset 0 0 0 2px var(--accent);
   opacity: 0;
   pointer-events: none;
   animation: agent-breathe 2.4s ease-in-out infinite;

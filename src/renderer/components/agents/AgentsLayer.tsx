@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { CostRates, RibbonItem, SubagentItem } from '../../../shared/types'
 import { agentNodes } from '../../agents/agentModel'
+import { scrollTarget } from '../../agents/graphLayout'
 import { useNow } from '../../agents/useNow'
 import { useAppStore, type AgentsView } from '../../state/useAppStore'
 import { StateView } from '../../ui/StateView'
@@ -66,6 +67,21 @@ function AgentsOverview({ tabId, items, costRates }: Omit<Props, 'agentId'>): JS
     opened.current = true
   }, [view])
 
+  // Opened or switched: the first working agent in view — with 10–15 of them
+  // it may be well below the fold — or the main agent when none works. Not on
+  // every step after that: the person may have scrolled away on purpose.
+  const viewBox = useRef<HTMLDivElement | null>(null)
+  const target = useRef<string | null>(null)
+  target.current = scrollTarget(nodes)
+  useEffect(() => {
+    const box = viewBox.current
+    if (!box) return
+    const id = target.current
+    const node = id === null ? undefined : [...box.querySelectorAll('[data-node-id]')].find((el) => el.getAttribute('data-node-id') === id)
+    const el = node ?? box.querySelector('[data-testid="agent-graph-root"]') ?? box.firstElementChild
+    el?.scrollIntoView({ block: 'center', inline: 'nearest' })
+  }, [view])
+
   const open = (id: string): void => useAppStore.getState().openAgents(tabId, id)
   const pick = (next: AgentsView): void => useAppStore.getState().setAgentsView(next)
 
@@ -113,7 +129,7 @@ function AgentsOverview({ tabId, items, costRates }: Omit<Props, 'agentId'>): JS
           testId="agents-empty"
         />
       ) : (
-        <div className="agents-layer-view" role="tabpanel">
+        <div ref={viewBox} className="agents-layer-view" role="tabpanel">
           {view === 'graph' ? (
             <AgentGraph nodes={nodes} now={now} costRates={costRates} onOpen={open} />
           ) : (

@@ -49,16 +49,27 @@ export function AgentView({ tabId, card, items, costRates, onBack }: Props): JSX
   // The node that opened it is gone with the graph: the focus starts on the way back.
   useEffect(() => back.current?.focus(), [card.id])
 
+  // «Останавливаю…» lasts until the card itself stops running (or another card is shown).
+  useEffect(() => {
+    setStopping(false)
+    setStopError(null)
+  }, [card.id, running])
+
   async function stop(): Promise<void> {
+    if (stopping) return
     setStopping(true)
     setStopError(null)
+    let result: SubagentStopResult
     try {
-      const result = await window.qclod.stopSubagent(tabId, card.id)
-      setStopError(STOP_REFUSAL[result] ?? null)
+      result = await window.qclod.stopSubagent(tabId, card.id)
     } catch {
-      setStopError(STOP_REFUSAL.failed!)
-    } finally {
+      result = 'failed'
+    }
+    // 'stopping': the CLI's frame will end the card; 'not-running': the card is about to follow.
+    const refusal = STOP_REFUSAL[result]
+    if (refusal) {
       setStopping(false)
+      setStopError(refusal)
     }
   }
 

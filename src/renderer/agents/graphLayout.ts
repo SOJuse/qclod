@@ -18,6 +18,15 @@ export interface GraphLayout {
 const ROW = NODE_H + ROW_GAP
 
 /**
+ * Where the layer scrolls when it opens or its view changes: the first
+ * working agent in ribbon order — with 10–15 of them it may be far down or
+ * right — or, with none working, the main agent (null).
+ */
+export function scrollTarget(nodes: AgentNode[]): string | null {
+  return nodes.find((n) => n.state === 'running')?.id ?? null
+}
+
+/**
  * A tree laid out left to right (решение автора плана 2: it is always a tree,
  * so no general graph library). The column is the depth, the main agent is
  * column 0; leaves take rows one after another in depth-first ribbon order;

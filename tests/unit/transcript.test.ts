@@ -477,6 +477,25 @@ describe('transcript: время и вложенные агенты (этап 4)
     ])
   })
 
+  test('agentId с косой (прямой или обратной) не выводит чтение из папки subagents', async () => {
+    const configDir = tempDir()
+    const main = [
+      say('m1', null, 'начали', 1, 'user'),
+      call('m2', 'm1', 'toolu_back', 2),
+      reply('m3', 'm2', 'toolu_back', 'x\\..\\..\\evil', 3),
+      call('m4', 'm3', 'toolu_fwd', 4),
+      reply('m5', 'm4', 'toolu_fwd', 'x/../../evil', 5)
+    ]
+    // A real agent makes the subagents folder exist.
+    const path = writeTranscript(configDir, cwd, sessionId, main, {
+      aaa: { meta: { agentType: 'Explore', toolUseId: 'toolu_other' }, lines: [] }
+    })
+    const evil = join(configDir, 'projects', encodeProjectDir(cwd), sessionId, 'evil.jsonl')
+    writeFileSync(evil, JSON.stringify(say('e1', null, 'чужой файл', 9, 'user')) + '\n')
+    const messages = (await readTranscript(path)) as Message[]
+    expect(messages.some((m) => text(m) === 'чужой файл')).toBe(false)
+  })
+
   test('цикл agentId не зацикливает чтение', async () => {
     const messages = (await readTranscript(nested(true))) as Message[]
     // The inner agent «calls» the outer one again: that call is kept as a

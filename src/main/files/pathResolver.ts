@@ -1,5 +1,6 @@
 import { stat as fsStat } from 'node:fs/promises'
-import { win32 } from 'node:path'
+import { homedir } from 'node:os'
+import { posix, win32 } from 'node:path'
 import { splitLineSuffix } from '../../shared/pathCandidates'
 import type { ResolvedPath } from '../../shared/types'
 
@@ -41,6 +42,26 @@ function namesDevice(abs: string): boolean {
     .split('\\')
     .slice(1)
     .some((segment) => DEVICE_NAME.test(segment.replace(/[. ]+$/, '').split('.')[0]!.trimEnd()))
+}
+
+/** Never looked up on POSIX: devices and kernel files, where a stat or a read can block or leak. */
+const POSIX_FORBIDDEN_ROOTS = ['/dev', '/proc', '/sys']
+
+/**
+ * POSIX counterpart of the drive-path rules: an absolute path (`/…`, `~/…`, or
+ * relative to the tab's folder) with no NUL, no `//` prefix and nothing under
+ * the device/kernel trees. A tab folder that is not absolute is not a place.
+ */
+function posixAbsolute(cwd: string, path: string): string | null {
+  if (path === '' || path.includes('\0') || cwd.includes('\0')) return null
+  if (path.startsWith('//')) return null
+  if (!posix.isAbsolute(cwd)) return null
+  let p = path
+  if (p === '~' || p.startsWith('~/')) p = posix.join(homedir(), p.slice(1))
+  else if (/^[A-Za-z]:[\\/]/.test(p)) return null
+  const abs = posix.resolve(cwd, p)
+  const forbidden = POSIX_FORBIDDEN_ROOTS.some((root) => abs === root || abs.startsWith(root + '/'))
+  return forbidden ? null : abs
 }
 
 /** Map order is insertion order: re-inserting keeps the oldest first, then trims. */
@@ -114,6 +135,7 @@ export class PathResolver {
   }
 
   private absolute(cwd: string, path: string): string | null {
+    if (process.platform !== 'win32') return posixAbsolute(cwd, path)
     if (path === '' || path.startsWith('\\\\') || path.startsWith('//')) return null
     // `C:foo` is relative to drive C's own current folder, not the tab's.
     if (/^[A-Za-z]:(?![\\/])/.test(path)) return null

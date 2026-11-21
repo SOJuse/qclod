@@ -1,8 +1,14 @@
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PathResolver } from '@main/files/pathResolver'
+import { pinPlatform } from './platform'
+
+vi.mock('node:os', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:os')>()),
+  homedir: () => '/Users/me'
+}))
 
 const CWD = 'C:\\proj'
 
@@ -14,6 +20,55 @@ function fakeStat(files: string[], dirs: string[] = []) {
     throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
   })
 }
+
+describe('PathResolver: macOS / POSIX', () => {
+  pinPlatform('darwin', { beforeEach, afterEach })
+  const MAC = '/Users/me/proj'
+
+  test('относительный, абсолютный, ~/ и :строка:колонка', async () => {
+    const stat = fakeStat(['/Users/me/proj/src/a.ts', '/etc/hosts', '/Users/me/notes.md'], ['/Users/me/docs'])
+    const resolver = new PathResolver({ stat })
+    const out = await resolver.resolve(
+      MAC,
+      ['src/a.ts:3:2', '/etc/hosts', '~/notes.md:7', '~/docs', 'src/нет.ts', '../proj/src/a.ts'],
+      't1'
+    )
+    expect(out).toEqual([
+      { raw: 'src/a.ts:3:2', absPath: '/Users/me/proj/src/a.ts', isDir: false, line: 3, column: 2 },
+      { raw: '/etc/hosts', absPath: '/etc/hosts', isDir: false },
+      { raw: '~/notes.md:7', absPath: '/Users/me/notes.md', isDir: false, line: 7 },
+      { raw: '~/docs', absPath: '/Users/me/docs', isDir: true },
+      null,
+      { raw: '../proj/src/a.ts', absPath: '/Users/me/proj/src/a.ts', isDir: false }
+    ])
+    expect(resolver.knows('/Users/me/proj/src/a.ts', 't1')).toBe(true)
+    expect(resolver.knows('/Users/me/proj/src/a.ts', 't2')).toBe(false)
+  })
+
+  test.each(['//server/share/x.txt', '/dev/null', '/dev/disk0', '/proc/self/environ', '/sys/kernel', 'a\0b.ts', '', 'C:\\x.ts'])(
+    'отказ без обращения к диску: %s',
+    async (raw) => {
+      const stat = vi.fn(async () => ({ isDirectory: () => false }))
+      const resolver = new PathResolver({ stat })
+      expect(await resolver.resolve(MAC, [raw], 't1')).toEqual([null])
+      expect(stat).not.toHaveBeenCalled()
+    }
+  )
+
+  test('вкладка с неабсолютной папкой и пути /dev/../ не проверяются', async () => {
+    const stat = vi.fn(async () => ({ isDirectory: () => false }))
+    const resolver = new PathResolver({ stat })
+    expect(await resolver.resolve('C:\\proj',['a.ts'], 't1')).toEqual([null])
+    expect(await resolver.resolve(MAC, ['/tmp/../dev/zero', '../../../../proc/1/mem'], 't1')).toEqual([null, null])
+    expect(stat).not.toHaveBeenCalled()
+  })
+
+  test('похожее на /dev имя остаётся путём', async () => {
+    const resolver = new PathResolver({ stat: vi.fn(async () => ({ isDirectory: () => false })) })
+    const out = await resolver.resolve(MAC, ['/devtools/a.ts', '/Users/me/proc/x.ts'], 't1')
+    expect(out.every((r) => r !== null)).toBe(true)
+  })
+})
 
 describe('PathResolver', () => {
   test('несуществующее — null, существующее — абсолютный путь от cwd', async () => {

@@ -164,4 +164,11 @@ describe('терминал сервера (этап 6, задача 26)', () => 
     expect(pkg.dependencies['@xterm/addon-fit']).toBeTruthy()
     expect(yml).toMatch(/^asarUnpack:\n(?: {2}.*\n|#.*\n| {2}#.*\n)*? {2}- node_modules\/node-pty\/\*\*$/m)
   })
+
+  test('node-pty не пересобирается: его N-API prebuilds годятся Electron, компилятора на раннерах нет', () => {
+    expect(yml).toMatch(/^npmRebuild: false$/m)
+    for (const target of ['win32-x64', 'darwin-arm64', 'darwin-x64']) {
+      expect(existsSync(resolve('node_modules', 'node-pty', 'prebuilds', target, 'pty.node'))).toBe(true)
+    }
+  })
 })

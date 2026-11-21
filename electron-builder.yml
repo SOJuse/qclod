@@ -18,6 +18,11 @@ asarUnpack:
   # Stage 6: the server terminal's native module (task 26) loads from a real file.
   - node_modules/node-pty/**
 
+# node-pty is N-API and ships its prebuilds (win32/darwin, x64/arm64), which
+# Electron loads as they are; a rebuild would need a C++ toolchain the CI
+# runners do not have, and it is the only native dependency.
+npmRebuild: false
+
 # Stage 6: the hashes of the relay binaries this version installs on a server
 # (scripts/relay-manifest.mjs; decision 3). The binaries themselves are
 # downloaded from the release, not shipped.

@@ -8,6 +8,7 @@ import {
   nativeTheme,
   powerMonitor,
   powerSaveBlocker,
+  session,
   shell
 } from 'electron'
 import { spawn } from 'node:child_process'
@@ -63,6 +64,7 @@ import {
 import { AutonomyHost } from './autonomy/autonomyHost'
 import { applyOpenAtLogin } from './system/loginItem'
 import { claimSingleInstance } from './system/singleInstance'
+import { installMediaPermissions } from './voice/micAccess'
 import { QuitReason, sessionEnding } from './system/quitReason'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 
@@ -213,6 +215,11 @@ app.setAppUserModelId(APP_ID)
 // Windows would report an off-screen window as covered, and Chromium would
 // stop painting it (window.ts).
 if (offScreen) app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
+// Fake microphone for e2e (stage 5): Chromium plays a WAV file instead of a device.
+if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_FAKE_MIC']) {
+  app.commandLine.appendSwitch('use-fake-device-for-media-stream')
+  app.commandLine.appendSwitch('use-file-for-fake-audio-capture', process.env['QCLOD_FAKE_MIC'] + '%noloop')
+}
 
 app.on('web-contents-created', (_e, contents) => {
   hardenWebContents(contents)
@@ -563,6 +570,8 @@ if (gotLock) void app.whenReady().then(async () => {
     return updates?.restart() ?? false
   })
 
+  // Microphone: audio for our own window only (voice/micAccess.ts); before the window exists.
+  installMediaPermissions(session.defaultSession, (wc) => !!wc && wc === mainWindow?.webContents)
   mainWindow = createMainWindow()
   watchWindow(mainWindow, (e) => errorLog.write(e))
   mainWindow.on('session-end', () => sessionEnding(quitReason, autonomy))

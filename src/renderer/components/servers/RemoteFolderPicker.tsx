@@ -111,7 +111,8 @@ export function RemoteFolderView({
           onClick={() => onGo(parentPath(here))}
         >
           <ArrowUp size={14} aria-hidden="true" />
-          Вверх
+          {/* In a span: a bare text node beside the icon left the button the square of an icon-only one. */}
+          <span>Вверх</span>
         </button>
       </form>
       <nav className="remote-crumbs" aria-label="Путь">

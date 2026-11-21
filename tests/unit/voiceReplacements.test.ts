@@ -53,6 +53,15 @@ describe('словарь замен', () => {
     expect(applyReplacements('текст', [{ from: '  ', to: 'x' }])).toBe('текст')
   })
 
+  test('«Claud» у Whisper становится «Claude» (S5-R1), верное «Claude» не трогается', () => {
+    expect(apply('Попроси Claud переписать этот компонент на TypeScript.')).toBe(
+      'Попроси Claude переписать этот компонент на TypeScript.'
+    )
+    expect(apply('Спроси claud')).toBe('Спроси Claude')
+    expect(apply('Попроси Claude и Claude Code')).toBe('Попроси Claude и Claude Code')
+    expect(apply('клауд и Claudia')).toBe('клауд и Claudia')
+  })
+
   test('текст Whisper не меняется', () => {
     expect(apply('Сделай git push')).toBe('Сделай git push')
   })

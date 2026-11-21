@@ -16,6 +16,7 @@ import { CHANNELS } from '@shared/channels'
 
 const OUR = 5
 let calls: Array<[string, ...unknown[]]>
+let mic: 'granted' | 'denied' | 'unknown' = 'unknown'
 
 function setup(): void {
   handlers.clear()
@@ -30,7 +31,7 @@ function setup(): void {
     audio: (...a: unknown[]) => calls.push(['audio', ...a])
   } as unknown as VoiceHost
   const store: ModelStoreLike = {
-    snapshot: () => ({ models: [], micAccess: 'unknown' }),
+    snapshot: () => [{ id: 'gigaam-v3', state: { kind: 'ready' }, available: true }],
     download: async (id) => void calls.push(['download', id]),
     cancel: (id) => void calls.push(['cancel', id]),
     remove: async (id) => void calls.push(['remove', id])
@@ -39,6 +40,7 @@ function setup(): void {
     host,
     store,
     isOurWindow: (id) => id === OUR,
+    micAccess: () => mic,
     openMicSettings: async () => void calls.push(['mic'])
   })
 }
@@ -109,8 +111,33 @@ describe('registerVoiceIpc', () => {
     expect(calls).toEqual([])
   })
 
-  test('models и openMicSettings', async () => {
-    expect(await invoke(CHANNELS.voiceModels, OUR)).toEqual({ models: [], micAccess: 'unknown' })
+  test('voiceModels отдаёт снимок хранилища с micAccess', async () => {
+    mic = 'denied'
+    expect(await invoke(CHANNELS.voiceModels, OUR)).toEqual({
+      models: [{ id: 'gigaam-v3', state: { kind: 'ready' }, available: true }],
+      micAccess: 'denied'
+    })
+    mic = 'unknown'
+  })
+
+  test('отказ скачивания не уходит в окно: состояние ошибки скажет само', async () => {
+    handlers.clear()
+    registerVoiceIpc({
+      host: {} as VoiceHost,
+      store: {
+        snapshot: () => [],
+        download: () => Promise.reject(new Error('network')),
+        cancel: () => {},
+        remove: async () => {}
+      },
+      isOurWindow: () => true,
+      micAccess: () => 'unknown',
+      openMicSettings: async () => {}
+    })
+    await expect(invoke(CHANNELS.voiceDownload, OUR, 'gigaam-v3')).resolves.toBeUndefined()
+  })
+
+  test('openMicSettings', async () => {
     await invoke(CHANNELS.voiceOpenMicSettings, OUR)
     expect(calls).toEqual([['mic']])
   })

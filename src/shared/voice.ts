@@ -24,6 +24,9 @@ export interface VoiceControls {
   caretMoved(caret: number): void
   /** После вставки: куда поставить курсор; rev растёт с каждой вставкой. */
   caretAfterInsert?: { at: number; rev: number }
+  /** Этап 5: the press opened the menu (download, unavailable); the composer draws it while true. */
+  menuOpen?: boolean
+  closeMenu?(): void
 }
 
 // — Stage 5: voice contract (models, events, settings, texts).
@@ -123,6 +126,7 @@ export interface VoiceModelInfo {
   title: string
   blurb: string
   meta: string
+  /** Decimal bytes (МБ = 10^6), as the models' store and its messages count. */
   downloadBytes: number
   needsNvidia: boolean
   platforms: readonly string[]
@@ -136,7 +140,7 @@ export const VOICE_MODEL_INFO: Record<VoiceModelId, VoiceModelInfo> = {
     blurb:
       'По умолчанию. Лучший русский, ставит знаки препинания и заглавные. Английские слова пишет по-русски — их поправит словарь ниже.',
     meta: '232 МБ · процессор · около 0,3 ГБ памяти',
-    downloadBytes: 232 * 1024 * 1024,
+    downloadBytes: 232e6,
     needsNvidia: false,
     platforms: ALL_PLATFORMS
   },
@@ -145,7 +149,7 @@ export const VOICE_MODEL_INFO: Record<VoiceModelId, VoiceModelInfo> = {
     blurb:
       'Точнее на русском и чаще пишет английские термины латиницей. Тяжелее и медленнее на длинных фразах.',
     meta: '670 МБ · процессор · около 0,9 ГБ памяти',
-    downloadBytes: 670 * 1024 * 1024,
+    downloadBytes: 670e6,
     needsNvidia: false,
     platforms: ALL_PLATFORMS
   },
@@ -153,7 +157,7 @@ export const VOICE_MODEL_INFO: Record<VoiceModelId, VoiceModelInfo> = {
     title: 'Whisper large-v3-turbo',
     blurb: 'Точнее с английскими терминами (нужна видеокарта NVIDIA)',
     meta: 'скачать 1,3 ГБ · на диске 2,3 ГБ · видеокарта',
-    downloadBytes: Math.round(1.3 * 1024 * 1024 * 1024),
+    downloadBytes: 1.3e9,
     needsNvidia: true,
     platforms: ['win32']
   }

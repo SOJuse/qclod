@@ -6,6 +6,7 @@ import type { VoiceControls } from '../../../shared/voice'
 import { hintKeys } from '../../app/shortcuts'
 import { useAppStore } from '../../state/useAppStore'
 import { MicButton } from '../composer/MicButton'
+import { useVoiceCaret, VoiceMenu, VoiceTentative } from '../composer/VoiceParts'
 
 type Refusal = Exclude<Extract<SubagentSendResult, { ok: false }>['reason'], 'empty'>
 
@@ -47,6 +48,7 @@ export function AgentComposer({ tabId, cardId, disabledReason, placeholder, voic
   const [refusal, setRefusal] = useState<string | null>(null)
   const field = useRef<HTMLTextAreaElement | null>(null)
   const disabled = disabledReason !== null
+  useVoiceCaret(voice, field)
 
   async function submit(): Promise<void> {
     const text = draft
@@ -82,6 +84,7 @@ export function AgentComposer({ tabId, cardId, disabledReason, placeholder, voic
             void window.qclod.startVoice()
           }}
         />
+        <VoiceMenu voice={voice} field={field} />
         <textarea
           ref={field}
           className="composer-input ring-on-parent"
@@ -91,6 +94,7 @@ export function AgentComposer({ tabId, cardId, disabledReason, placeholder, voic
           placeholder={placeholder}
           aria-label={placeholder}
           value={draft}
+          onSelect={(ev) => voice?.caretMoved(ev.currentTarget.selectionStart)}
           onChange={(ev) => {
             setRefusal(null)
             useAppStore.getState().setAgentDraft(key, ev.target.value)
@@ -112,6 +116,7 @@ export function AgentComposer({ tabId, cardId, disabledReason, placeholder, voic
         >
           <ArrowUp size={16} aria-hidden="true" />
         </button>
+        <VoiceTentative voice={voice} />
       </div>
       <div className="agent-composer-foot">
         <span className="agent-composer-via">через главного агента</span>

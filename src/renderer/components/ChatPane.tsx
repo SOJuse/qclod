@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { TriangleAlert } from 'lucide-react'
 import type { CostRates, RibbonItem, SessionSummary, SubagentItem, UserInput } from '../../shared/types'
 import type { VoiceControls } from '../../shared/voice'
+import { useVoiceControls } from '../voice/voiceStore'
 import { EMPTY_PANEL, useAppStore, type PaneLayerState } from '../state/useAppStore'
 import { useHeldDrafts } from '../state/heldDrafts'
 import { compactNow, sendCommand } from '../input/slash'
@@ -113,8 +114,11 @@ export function ChatPane({
   panelRequest = null,
   ribbonError = null,
   onRetryRibbon,
-  voice
+  voice: voiceOverride
 }: Props): JSX.Element {
+  // One voice for the pane: the chat's input and a subagent's get the same (сверка F12).
+  const paneVoice = useVoiceControls(tabId)
+  const voice = voiceOverride ?? paneVoice
   const tabs = useAppStore((s) => s.tabs)
   const ribbonByTab = useAppStore((s) => s.ribbonByTab)
   const todoByTab = useAppStore((s) => s.todoByTab)
@@ -437,11 +441,11 @@ export function ChatPane({
                 cardId={agentCard.id}
                 disabledReason={status === 'stopped' ? SEND_REFUSAL['not-running'] : null}
                 placeholder={agentPlaceholder(agentCard.state)}
-                {...(voice ? { voice } : {})}
+                voice={voice}
               />
             ) : (
             <Composer
-              {...(voice ? { voice } : {})}
+              voice={voice}
               tabId={tabId}
               status={status}
               draft={draft}

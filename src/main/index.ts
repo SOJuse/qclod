@@ -6,14 +6,17 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
+  net,
   powerMonitor,
   powerSaveBlocker,
   session,
   shell,
+  systemPreferences,
   utilityProcess,
   webContents
 } from 'electron'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { statfs } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { APP_ID } from '../shared/appId'
@@ -66,13 +69,15 @@ import {
 import { AutonomyHost } from './autonomy/autonomyHost'
 import { applyOpenAtLogin } from './system/loginItem'
 import { claimSingleInstance } from './system/singleInstance'
-import { installMediaPermissions } from './voice/micAccess'
+import { installMediaPermissions, micAccessStatus, openMicSettings } from './voice/micAccess'
 import { QuitReason, sessionEnding } from './system/quitReason'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
-import { VOICE_MODEL_IDS, VOICE_MODEL_INFO, type VoiceModelsSnapshot } from '../shared/voice'
 import { VoiceHost, type WorkerLike } from './voice/voiceHost'
-import { registerVoiceIpc, type ModelStoreLike } from './voice/voiceIpc'
+import { registerVoiceIpc, voiceSnapshot } from './voice/voiceIpc'
 import type { FromWorker } from './voice/protocol'
+import { ModelStore } from './voice/modelStore'
+import { modelsRoot } from './voice/modelsRoot'
+import { cudaReady, detectNvidia } from './voice/nvidia'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -96,19 +101,23 @@ function forkVoiceWorker(): WorkerLike {
   } as WorkerLike
 }
 
-/** Until the models' store (task 6) is wired in (task 9): every model absent. */
-const noModels: ModelStoreLike = {
-  snapshot: (): VoiceModelsSnapshot => ({
-    models: VOICE_MODEL_IDS.map((id) => ({
-      id,
-      state: { kind: 'absent' },
-      available: VOICE_MODEL_INFO[id].platforms.includes(process.platform)
-    })),
-    micAccess: 'unknown'
-  }),
-  download: async () => {},
-  cancel: () => {},
-  remove: async () => {}
+/** Whisper's archive for the card, unpacked by Windows' own tar by its full path (decision 13). */
+function extractZip(zip: string, dest: string): Promise<void> {
+  const tar = join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'tar.exe')
+  return new Promise((resolve, reject) => {
+    execFile(tar, ['-xf', zip, '-C', dest], { windowsHide: true }, (err) => (err ? reject(err) : resolve()))
+  })
+}
+
+async function freeBytes(dir: string): Promise<number> {
+  const s = await statfs(dir)
+  return s.bavail * s.bsize
+}
+
+/** The card is asked once a run: nvidia-smi takes a while, and a card does not come and go. */
+function nvidiaOnce(): () => Promise<{ ok: true } | { ok: false; reason: string }> {
+  let answer: Promise<{ ok: true } | { ok: false; reason: string }> | null = null
+  return () => (answer ??= detectNvidia().then(cudaReady, () => cudaReady(null)))
 }
 
 /**
@@ -526,13 +535,22 @@ if (gotLock) void app.whenReady().then(async () => {
   })
 
   // Voice input on a local model (voice/voiceHost.ts): the voice process starts
-  // on the first press. Models, the microphone and its settings page are stubs
-  // until task 9 wires the models' store and micAccess in.
+  // on the first press. The models live in userData (or a path sherpa can read,
+  // voice/modelsRoot.ts) and come over the system's proxy (net.fetch).
+  const modelStore = new ModelStore({
+    root: modelsRoot(userData),
+    fetch: net.fetch as unknown as typeof fetch,
+    platform: process.platform,
+    freeBytes,
+    extractZip,
+    nvidia: nvidiaOnce()
+  })
+  const micAccess = (): 'granted' | 'denied' | 'unknown' => micAccessStatus(systemPreferences)
   const voiceHost = new VoiceHost({
     fork: forkVoiceWorker,
-    pathsFor: () => null,
+    pathsFor: (id) => modelStore.paths(id),
     settings: () => settings.voice,
-    micAccess: () => 'unknown',
+    micAccess,
     emit: (owner, e) => {
       const contents = webContents.fromId(owner)
       if (contents && !contents.isDestroyed()) contents.send(CHANNELS.voiceEvent, e)
@@ -565,9 +583,22 @@ if (gotLock) void app.whenReady().then(async () => {
   }
   registerVoiceIpc({
     host: voiceHost,
-    store: noModels,
+    store: {
+      snapshot: () => modelStore.snapshot(),
+      download: (id) => modelStore.download(id),
+      cancel: (id) => modelStore.cancel(id),
+      // The process lets the model's files go first (now, or once its session is done).
+      remove: (id) => {
+        voiceHost.modelChanged()
+        return modelStore.remove(id)
+      }
+    },
     isOurWindow: (id) => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.webContents.id === id,
-    openMicSettings: async () => {}
+    micAccess,
+    openMicSettings: () => openMicSettings(process.platform, (url) => shell.openExternal(url))
+  })
+  modelStore.onChange(() => {
+    void voiceSnapshot(modelStore, micAccess).then((s) => send(CHANNELS.voiceModelsChanged, s))
   })
 
   registerBaseIpc({

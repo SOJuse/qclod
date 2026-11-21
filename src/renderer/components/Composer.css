@@ -295,3 +295,60 @@
   stroke-linecap: round;
   transition: stroke-dasharray var(--dur) var(--ease);
 }
+
+/* Этап 5: the grey line of the phrase being said, a line of its own inside the frame (decision 4). */
+.composer-row:has(.composer-voice-tentative) {
+  flex-wrap: wrap;
+}
+
+.composer-row:has(.composer-voice-tentative) .composer-input {
+  flex-basis: 0;
+  min-width: 0;
+}
+
+.composer-voice-tentative {
+  order: 10;
+  flex: 0 0 100%;
+  padding: 0 6px 2px;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-style: italic;
+  color: var(--text-faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The microphone's menu (download, unavailable), over the input like the @ and / lists. */
+.voice-menu {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-width: 260px;
+  padding: var(--space-1);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-menu);
+}
+
+.voice-menu-item {
+  height: var(--menu-row-h);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.voice-menu-item:hover,
+.voice-menu-item:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text);
+}

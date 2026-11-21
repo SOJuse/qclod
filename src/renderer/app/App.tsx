@@ -10,6 +10,8 @@ import { restartChat } from './restartChat'
 import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { Sidebar } from '../components/sidebar/Sidebar'
 import { ChatPane, type PanelRequest } from '../components/ChatPane'
+import { useVoiceHotkey } from '../voice/useVoiceHotkey'
+import { toggleVoice } from '../voice/voiceStore'
 import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
@@ -54,6 +56,8 @@ function ThrowInPane(): null {
  */
 export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
+  /** The section the settings open on, when something asked for one («Настройки голоса»). */
+  const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
   const [version, setVersion] = useState('')
   const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
   const [focusToken, setFocusToken] = useState(0)
@@ -467,6 +471,10 @@ export function App(): JSX.Element {
           return void window.qclod.zoom('reset')
         case 'reload':
           return void window.qclod.reloadWindow()
+        case 'voice':
+          // A short press on the active pane: start, or stop (этап 5).
+          if (state.activeTabId) toggleVoice(state.activeTabId)
+          return
       }
     },
     [activate, newChat, closeActiveTab, togglePalette, togglePanel, toggleSidebar, toggleSplit, restartSession, cycleMode]
@@ -534,6 +542,15 @@ export function App(): JSX.Element {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // Voice into the input (этап 5): Ctrl+Space in this window only; the menu's «Настройки голоса» opens «Голос».
+  useVoiceHotkey({
+    openSettings: () => {
+      setSettingsSection('voice')
+      setSettingsOpen(true)
+    },
+    focusField: focusComposer
+  })
 
   // The file index backs @-mentions; it is per folder, so it is fetched once
   // per tab rather than on every keystroke.
@@ -718,7 +735,11 @@ export function App(): JSX.Element {
             setSettings(next)
             return next
           }}
-          onClose={() => setSettingsOpen(false)}
+          {...(settingsSection !== undefined ? { initialSection: settingsSection } : {})}
+          onClose={() => {
+            setSettingsOpen(false)
+            setSettingsSection(undefined)
+          }}
           onFocusLost={focusComposer}
         />
       )}

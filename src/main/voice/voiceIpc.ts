@@ -1,12 +1,12 @@
 import { ipcMain } from 'electron'
 import { CHANNELS } from '../../shared/channels'
-import type { VoiceModelId, VoiceModelsSnapshot } from '../../shared/voice'
+import type { VoiceModelId, VoiceModelsSnapshot, VoiceModelView } from '../../shared/voice'
 import { sanitizeModelId, sanitizePcm } from '../tabs/sanitize'
 import type { VoiceHost } from './voiceHost'
 
 /** What the IPC needs of the models' store (the ModelStore of task 6). */
 export interface ModelStoreLike {
-  snapshot(): VoiceModelsSnapshot | Promise<VoiceModelsSnapshot>
+  snapshot(): VoiceModelView[] | Promise<VoiceModelView[]>
   download(id: VoiceModelId): Promise<void>
   cancel(id: VoiceModelId): void
   remove(id: VoiceModelId): Promise<void>
@@ -16,7 +16,16 @@ export interface VoiceIpcDeps {
   host: VoiceHost
   store: ModelStoreLike
   isOurWindow(id: number): boolean
+  micAccess(): VoiceModelsSnapshot['micAccess']
   openMicSettings(): Promise<void>
+}
+
+/** What the window is told about voice: the models, and whether the system lets us have the microphone. */
+export async function voiceSnapshot(
+  store: Pick<ModelStoreLike, 'snapshot'>,
+  micAccess: () => VoiceModelsSnapshot['micAccess']
+): Promise<VoiceModelsSnapshot> {
+  return { models: await store.snapshot(), micAccess: micAccess() }
 }
 
 const MAX_ID = 100
@@ -38,11 +47,12 @@ interface Sender {
 export function registerVoiceIpc(deps: VoiceIpcDeps): void {
   const { host, store } = deps
 
-  ipcMain.handle(CHANNELS.voiceModels, () => store.snapshot())
+  ipcMain.handle(CHANNELS.voiceModels, () => voiceSnapshot(store, deps.micAccess))
 
   ipcMain.handle(CHANNELS.voiceDownload, async (_e, id: unknown) => {
     const model = sanitizeModelId(id)
-    if (model !== null) await store.download(model)
+    // A failed download is told by the model's state (error, in words), not by a rejection.
+    if (model !== null) await store.download(model).catch(() => {})
   })
 
   ipcMain.handle(CHANNELS.voiceCancelDownload, (_e, id: unknown) => {

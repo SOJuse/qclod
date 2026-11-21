@@ -5,6 +5,8 @@ const R = (from: string, to: string): VoiceReplacement => ({ from, to })
 /** The standard dictionary (decision 10: settings keep `null` until the person edits it). */
 export const DEFAULT_REPLACEMENTS: readonly VoiceReplacement[] = Object.freeze([
   R('клод', 'Claude'),
+  // Whisper writes «Claud» even with «Claude» in its prompt (S5-R1).
+  R('claud', 'Claude'),
   R('тайп скрипт', 'TypeScript'),
   R('джава скрипт', 'JavaScript'),
   R('гит пуш', 'git push'),

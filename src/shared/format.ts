@@ -48,6 +48,13 @@ export function bytes(n: number): string {
   return `${decimal(n / (1024 * 1024))} МБ`
 }
 
+/** A model's size as the voice speaks of it: «232 МБ», «1,3 ГБ» — decimal, as the models' store counts (modelStore.formatSize). */
+export function formatSizeRu(n: number): string {
+  const mb = n / 1e6
+  if (mb < 1000) return `${Math.max(1, Math.round(mb))} МБ`
+  return `${(mb / 1000).toFixed(1).replace('.', ',')} ГБ`
+}
+
 /** The first line of a text, cut to `max` characters with an ellipsis. */
 export function clip(text: string, max = 80): string {
   const line = text.split('\n')[0] ?? ''

@@ -1,3 +1,4 @@
+import { createElement } from 'react'
 import type { SettingsSectionDef } from './types'
 import { AboutSection } from './AboutSection'
 import { AgentSection } from './AgentSection'
@@ -5,6 +6,8 @@ import { AutonomySection } from './AutonomySection'
 import { NotificationsSection } from './NotificationsSection'
 import { PermissionsSection } from './PermissionsSection'
 import { WindowSection } from './WindowSection'
+import { VoiceSection } from './VoiceSection'
+import { isWindows } from '../../voice/platform'
 
 /**
  * Every section of the settings screen, one line each. Stages 3, 5 and 6 add theirs here:
@@ -17,6 +20,8 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'agent', title: 'Запуск агента', order: 30, Component: AgentSection },
   { id: 'autonomy', title: 'Автономность', order: 35, Component: AutonomySection },
   { id: 'permissions', title: 'Разрешения', order: 40, Component: PermissionsSection },
+  // Voice is Windows-only in 1.0 (G11); этап 6 (task 1) checks window.qclod.platform === 'win32' instead.
+  ...(isWindows() ? [{ id: 'voice', title: 'Голос', order: 50, Component: () => createElement(VoiceSection) }] : []),
   { id: 'about', title: 'О программе', order: 90, Component: AboutSection }
 ]
 

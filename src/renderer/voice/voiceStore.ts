@@ -144,7 +144,8 @@ function missingModel(s: VoiceState): { id: VoiceModelId; progress?: number } | 
   return { id }
 }
 
-async function refreshModels(): Promise<void> {
+/** Asks main for the models and the microphone again («Голос» on open). */
+export async function refreshModels(): Promise<void> {
   try {
     const models = await window.qclod.voice.models()
     useVoice.setState({ models })

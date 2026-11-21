@@ -394,9 +394,14 @@ export class RelayClient {
 
   /** Follows a session from after `after`; the records after it come next, then live events. */
   attach(s: string, after: number, sink: SessionSink): Promise<AttachResult> {
-    return this.request<AttachResult>('session.attach', { s, after }, undefined, () => {
+    return this.request<AttachResult>('session.attach', { s, after }, undefined, (r) => {
       const known = this.subs.get(s)
-      this.subs.set(s, { lastSeq: known && known.sink === sink ? Math.max(known.lastSeq, after) : after, sink })
+      let lastSeq = known && known.sink === sink ? Math.max(known.lastSeq, after) : after
+      // The relay's journal is behind what was seen here (lost on its side): a gap, and its numbers from there on.
+      const res = r as AttachResult | null
+      const theirs = res?.snapshot?.lastSeq
+      if (res?.gap && typeof theirs === 'number' && theirs < lastSeq) lastSeq = theirs
+      this.subs.set(s, { lastSeq, sink })
     })
   }
 

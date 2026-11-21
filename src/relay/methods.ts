@@ -5,7 +5,7 @@ import type { SessionHistoryOptions } from '../main/agent/sessionHistory'
 import type { HostInfo, RelayMethod } from '../shared/relayProtocol'
 import { authStatus } from './auth'
 import type { ExtraMethod } from './daemon'
-import { badRequest } from './errors'
+import { RelayError, badRequest } from './errors'
 import { expandHome, indexFiles, listDir, readChunk, statMany, writeUpload } from './fsOps'
 import { relayHistory } from './history'
 import { SETUP_FILE, type Run, type SetupResult } from './supervisor'
@@ -76,13 +76,18 @@ export function relayMethods(deps: MethodDeps): Partial<Record<RelayMethod, Extr
     'fs.upload': async (p, { daemon }) => {
       const data = p['dataBase64']
       if (typeof data !== 'string' || data.length > (UPLOAD_CHUNK_MAX / 3) * 4 + 4) throw badRequest('dataBase64')
+      const s = text(p, 's')
+      // Only into a chat that is open here: no folder of uploads for a session that is not.
+      if (!daemon.isOpen(s)) throw new RelayError('not_found', 'нет такой сессии')
+      if (p['path'] !== undefined && typeof p['path'] !== 'string') throw badRequest('path')
       return writeUpload(
         daemon.paths.uploads,
-        text(p, 's'),
+        s,
         text(p, 'name'),
         int(p, 'offset'),
         Buffer.from(data, 'base64'),
-        p['final'] === true
+        p['final'] === true,
+        typeof p['path'] === 'string' ? p['path'] : undefined
       )
     }
   }

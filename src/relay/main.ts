@@ -16,7 +16,7 @@ import { isSea } from 'node:sea'
 import { RELAY_PROTO } from '../shared/relayProtocol'
 import { runAttach } from './attach'
 import { RelayDaemon } from './daemon'
-import { findClaude, loginShellPath, mergePath } from './env'
+import { cachedBinaryVersion, findClaude, loginShellPath, mergePath, successorEnv } from './env'
 import { createLog } from './log'
 import { relayMethods } from './methods'
 import { BINARY_NAME, relayPaths } from './paths'
@@ -57,25 +57,41 @@ function command(): string[] {
 }
 
 function spawnDetached(cmd: string, args: string[]): void {
-  const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true })
+  const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true, env: successorEnv(process.env) })
   child.on('error', () => undefined)
   child.unref()
 }
 
-/** The next daemon, outside this process's session: tmux or a plain detached one. */
+/** The next daemon, outside this process's session: a plain detached one. */
 function spawnDaemon(): void {
   const { cmd, args } = self()
   spawnDetached(cmd, [...args, 'daemon'])
+}
+
+const unitFile = (): string => join(homedir(), '.config', 'systemd', 'user', `${UNIT_NAME}.service`)
+
+/** `<binary> version`, run: its version, or null if it said none. */
+function askVersion(binary: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(binary, ['version'], { timeout: 5000 }, (error, stdout) => {
+      try {
+        const version = error ? null : (JSON.parse(String(stdout)) as { version?: unknown }).version
+        resolve(typeof version === 'string' ? version : null)
+      } catch {
+        resolve(null)
+      }
+    })
+  })
 }
 
 async function daemon(): Promise<number> {
   const p = paths()
   const log = createLog(p.logs)
   const home = homedir()
-  const fromShell = await loginShellPath({ home })
-  const PATH = mergePath(process.env['PATH'] ?? '', fromShell, home)
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH }
   const supervised = typeof process.env['INVOCATION_ID'] === 'string'
+  // Filled in once the lock is ours: the login shell is asked only by the daemon that stays.
+  let PATH = process.env['PATH'] ?? ''
+  let env: NodeJS.ProcessEnv = { ...process.env }
   // A test build on the fake SDK needs no claude on the machine (the CI runner has none).
   const fakeClaude = __QCLOD_TEST_SEAMS__ && process.env['QCLOD_FAKE_SDK'] ? 'claude' : null
   const claudePath = (): string | null => findClaude(PATH, home) ?? fakeClaude
@@ -85,28 +101,25 @@ async function daemon(): Promise<number> {
     version: VERSION,
     createDriver: relayDriverFactory(),
     claudePath,
-    env,
+    env: () => env,
     log,
     supervised,
-    spawnSuccessor: spawnDaemon,
+    // Under tmux or plain; a unit set up since (Linger turned on) takes the next daemon.
+    spawnSuccessor: () => (existsSync(unitFile()) ? spawnDetached('systemctl', ['--user', 'start', UNIT_NAME]) : spawnDaemon()),
     home,
     methods: relayMethods({ run, version: VERSION, claudePath, home, listSessions: relayListSessions }),
     // The file on disk may be newer than the running daemon: the update the client waits for.
-    binaryVersion: () =>
-      new Promise((resolve) => {
-        if (!existsSync(binary)) {
-          resolve(VERSION)
-          return
-        }
-        execFile(binary, ['version'], { timeout: 5000 }, (error, stdout) => {
-          try {
-            resolve(error ? VERSION : String((JSON.parse(String(stdout)) as { version?: unknown }).version ?? VERSION))
-          } catch {
-            resolve(VERSION)
-          }
-        })
-      })
+    binaryVersion: cachedBinaryVersion(binary, VERSION, askVersion)
   })
+  // The lock first: a second daemon (a unit started beside a running one) leaves
+  // at once, exit 0 — the unit's Restart=on-failure does not bring it back.
+  if (!(await d.acquire())) {
+    log.info('второй демон: уже работает другой')
+    return 0
+  }
+  const fromShell = await loginShellPath({ home })
+  PATH = mergePath(process.env['PATH'] ?? '', fromShell, home)
+  env = { ...process.env, PATH }
   if (!(await d.start())) return 0
   const quit = (): void => {
     void d.stop().then(() => process.exit(0))
@@ -122,7 +135,7 @@ async function daemon(): Promise<number> {
 
 async function attach(): Promise<number> {
   const p = paths()
-  const unit = join(homedir(), '.config', 'systemd', 'user', `${UNIT_NAME}.service`)
+  const unit = unitFile()
   return runAttach(p, { stdin: process.stdin, stdout: process.stdout }, async () => {
     if (existsSync(unit)) {
       const { cmd, args } = startCommand('systemd')

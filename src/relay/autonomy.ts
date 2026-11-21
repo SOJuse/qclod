@@ -241,13 +241,33 @@ export function attachAutonomy(
       }
       case 'approvePlan': {
         const requestId = cards.get(command.cardId)
-        if (!requestId || !session.pending().some((p) => p.requestId === requestId)) return
+        const pending = requestId ? session.pending().find((p) => p.requestId === requestId) : undefined
+        if (!requestId || !pending) return
+        // Still this very card, still open: anyone may have answered while the mode was changing.
+        const stillOpen = (): boolean => session.pending().some((p) => p === pending)
+        if (session.record.mode !== 'plan') {
+          session.resolve(requestId, { behavior: 'allow' }, 'autonomy')
+          return
+        }
         // In plan mode an approval leaves it, as a person's does; «авто-да» stays.
-        const leave =
-          session.record.mode === 'plan'
-            ? session.call('setPermissionMode', ['acceptEdits']).catch(() => undefined)
-            : Promise.resolve()
-        void leave.then(() => session.resolve(requestId, { behavior: 'allow' }, 'autonomy'))
+        let denied = false
+        const off = session.onEvent((e) => {
+          if (e.type === 'resolved' && e.resolved.requestId === requestId) denied = e.resolved.answer?.behavior !== 'allow'
+        })
+        void session
+          .call('setPermissionMode', ['acceptEdits'])
+          .catch(() => undefined)
+          .then(() => {
+            off()
+            if (stillOpen()) {
+              session.resolve(requestId, { behavior: 'allow' }, 'autonomy')
+              return
+            }
+            // Turned down meanwhile (or gone with the process): the plan was not approved, plan mode stays.
+            if (denied && session.record.mode === 'acceptEdits') {
+              session.call('setPermissionMode', ['plan']).catch(() => undefined)
+            }
+          })
         return
       }
       case 'sendContinue':

@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, posix } from 'node:path'
 import { privateMode } from './journal'
@@ -8,15 +8,26 @@ export type Supervisor = 'systemd' | 'tmux' | 'plain'
 
 export const UNIT_NAME = 'qclod-relay'
 
-/** ~/.config/systemd/user/qclod-relay.service — the one file Qclod writes outside ~/.qclod. */
+/**
+ * ~/.config/systemd/user/qclod-relay.service — the one file Qclod writes outside ~/.qclod.
+ *
+ * Restart=on-failure with 75 forced: a crash (SIGKILL, OOM) and a restart asked
+ * for (exit 75) bring the daemon back; exit 0 — another daemon already serves —
+ * does not, so the unit never loops on a busy lock. KillMode=mixed: a stop
+ * signals the daemon alone, which suspends its agents itself and marks the
+ * working ones for «продолжай» before they go.
+ */
 export const UNIT_TEXT = [
   '[Unit]',
   'Description=Qclod relay',
   '',
   '[Service]',
   `ExecStart=%h/.qclod/bin/${BINARY_NAME} daemon`,
-  'Restart=always',
+  'Restart=on-failure',
+  'RestartForceExitStatus=75',
   'RestartSec=2',
+  'KillMode=mixed',
+  'TimeoutStopSec=20',
   '',
   '[Install]',
   'WantedBy=default.target',
@@ -70,40 +81,52 @@ async function succeeds(run: Run, cmd: string, args: string[]): Promise<boolean>
 }
 
 /**
- * Makes the daemon outlive the ssh session that installed it: a systemd user
- * unit where `systemctl --user` works, else a tmux session, else a plain
- * detached process. Linger (user services running with nobody logged in) is
- * read and, if off, asked for once without sudo.
+ * Makes the daemon outlive the ssh session that installed it. Linger (user
+ * services running with nobody logged in) is read first and, if off, asked for
+ * once without sudo. A systemd user unit only with Linger on — without it the
+ * user's manager, and the agents with it, stop when the last ssh session ends
+ * (the Mac closed) — and only if `enable --now` really took. Else a tmux
+ * session, else a plain detached process; a unit of an earlier setup is then
+ * taken away, so attach does not start the daemon under it. setup run again
+ * once Linger is on moves the daemon to systemd.
  */
 export async function setup(run: Run, paths: RelayPaths, user: string): Promise<SetupResult> {
   const bin = binaryPath(paths)
-  let supervisor: Supervisor
-  if (await succeeds(run, 'systemctl', ['--user', 'show-environment'])) {
-    supervisor = 'systemd'
-    const unitDir = join(dirname(paths.root), '.config', 'systemd', 'user')
-    mkdirSync(unitDir, { recursive: true })
-    writeFileSync(join(unitDir, `${UNIT_NAME}.service`), UNIT_TEXT, { mode: 0o644 })
-    await run('systemctl', ['--user', 'daemon-reload'])
-    await run('systemctl', ['--user', 'enable', '--now', UNIT_NAME])
-  } else if (await succeeds(run, 'tmux', ['-V'])) {
-    supervisor = 'tmux'
-    // A tmux session of that name already there is a daemon already running.
-    if (!(await succeeds(run, 'tmux', ['has-session', '-t', UNIT_NAME]))) {
-      const { cmd, args } = startCommand('tmux', bin)
-      await run(cmd, args)
-    }
-  } else {
-    supervisor = 'plain'
-    const { cmd, args } = startCommand('plain', bin)
-    await run(cmd, args)
-  }
-
   let linger = await lingerOf(run, user)
   let lingerTried = false
   if (linger === 'no') {
     lingerTried = true
     await succeeds(run, 'loginctl', ['enable-linger', user])
     linger = await lingerOf(run, user)
+  }
+
+  const unitDir = join(dirname(paths.root), '.config', 'systemd', 'user')
+  const unitFile = join(unitDir, `${UNIT_NAME}.service`)
+  const systemd = await succeeds(run, 'systemctl', ['--user', 'show-environment'])
+  let supervisor: Supervisor | null = null
+  if (systemd && linger === 'yes') {
+    mkdirSync(unitDir, { recursive: true })
+    writeFileSync(unitFile, UNIT_TEXT, { mode: 0o644 })
+    await run('systemctl', ['--user', 'daemon-reload'])
+    if (await succeeds(run, 'systemctl', ['--user', 'enable', '--now', UNIT_NAME])) supervisor = 'systemd'
+  }
+  if (supervisor === null && systemd && existsSync(unitFile)) {
+    await succeeds(run, 'systemctl', ['--user', 'disable', UNIT_NAME])
+    rmSync(unitFile, { force: true })
+    await succeeds(run, 'systemctl', ['--user', 'daemon-reload'])
+  }
+  if (supervisor === null && (await succeeds(run, 'tmux', ['-V']))) {
+    supervisor = 'tmux'
+    // A tmux session of that name already there is a daemon already running.
+    if (!(await succeeds(run, 'tmux', ['has-session', '-t', UNIT_NAME]))) {
+      const { cmd, args } = startCommand('tmux', bin)
+      await run(cmd, args)
+    }
+  }
+  if (supervisor === null) {
+    supervisor = 'plain'
+    const { cmd, args } = startCommand('plain', bin)
+    await run(cmd, args)
   }
 
   const result: SetupResult = { supervisor, linger, lingerTried }

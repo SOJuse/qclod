@@ -233,6 +233,37 @@ describe('ядро автономности в посреднике', () => {
     expect(t.session.snapshot().mode).toBe('autoAllow')
   })
 
+  test('одобрение плана: человек отказал, пока посредник выходил из plan — не одобрено, plan остаётся', async () => {
+    const t = setup({ nextTurn: [{ kind: 'plan', plan: 'сделать всё' }] }, { mode: 'autoAllow' })
+    await t.session.start()
+    const driver = t.fake.drivers[0]! as unknown as { setPermissionMode: (mode: string) => Promise<void> }
+    const original = driver.setPermissionMode.bind(driver)
+    let changing = 0
+    driver.setPermissionMode = async (mode: string) => {
+      changing++
+      await new Promise((r) => setTimeout(r, 50))
+      return original(mode)
+    }
+    await t.session.call('send', [{ text: 'план', attachments: [] }])
+    await until(() => t.asked().length === 1, 5000, 'план')
+    // The core's timer ran in «авто-да», but by the time its command runs the chat reads as plan
+    // mode (a switch landed in between): the record says plan while the session is in autoAllow.
+    const real = Object.getOwnPropertyDescriptor(RelaySession.prototype, 'record')!.get!
+    Object.defineProperty(t.session, 'record', {
+      get(this: RelaySession) {
+        const r = real.call(this) as RelaySessionRecord
+        return r.mode === 'autoAllow' ? { ...r, mode: 'plan' } : r
+      }
+    })
+    t.clock.advance(AUTO_MS)
+    await until(() => changing === 1, 5000, 'смена режима')
+    // the person turns the plan down while the relay is leaving plan mode
+    expect(t.session.answer(t.asked()[0]!.requestId, { behavior: 'deny', message: 'нет' })).toBe(true)
+    await until(() => changing === 2, 5000, 'режим plan вернулся')
+    await until(() => t.session.snapshot().mode === 'plan', 5000, 'режим plan')
+    expect(t.resolved().map((r) => r.by)).toEqual(['client'])
+  })
+
   test('после старта демона сессия с wasRunning получает продолжай', async () => {
     const t = setup({}, { wasRunning: true, sdkSessionId: 'sdk-old' })
     await t.session.start()

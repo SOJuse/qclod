@@ -167,6 +167,41 @@ describe('сессия посредника', () => {
     expect(session.snapshot().status).toBe('idle')
   })
 
+  test('диск заполнен: поток идёт дальше, смерть — died и dispose, claude не сирота', async () => {
+    const fake = fakeFactory({ nextTurn: [{ kind: 'crash', message: 'boom' }] })
+    const errors: unknown[] = []
+    const full = Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' })
+    const journal = Journal.open(join(tempDir(), 's1'), {
+      write: () => {
+        throw full
+      },
+      onError: (e) => errors.push(e)
+    })
+    const session = new RelaySession({
+      id: 's1',
+      record: record('s1'),
+      claudePath: '/bin/claude',
+      env: {},
+      createDriver: fake.factory,
+      journal,
+      rules: () => []
+    })
+    const frames: Out[] = []
+    session.subscribe((f) => frames.push(f))
+    const events: string[] = []
+    session.onEvent((e) => events.push(e.type))
+    await session.start()
+    await session.call('send', [{ text: 'го', attachments: [] }])
+    await until(() => events.includes('died'), 5000, 'died')
+    // the stream was not cut by the disk: the message and the death notice still went out live
+    expect(frames.some((f) => f.t === 'ev' && f.k === 'sent')).toBe(true)
+    expect(frames.some((f) => f.t === 'ev' && f.k === 'notice')).toBe(true)
+    await until(() => fake.drivers[0]!.disposed, 5000, 'dispose')
+    expect(session.snapshot().status).toBe('error')
+    // said once, not on every record
+    expect(errors).toEqual([full])
+  })
+
   test('restart(true) продолжает тот же разговор, restart(false) — новый', async () => {
     const { fake, session, frames } = setup({ sessionId: 'sdk-9' })
     await session.start()

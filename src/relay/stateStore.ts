@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { PermissionRule } from '../main/agent/permissionStore'
 import { PERMISSION_MODES, type PermissionMode } from '../shared/types'
@@ -133,15 +133,28 @@ export function saveState(path: string, state: RelayState): void {
   renameSync(tmp, path)
 }
 
-/** Sessions closed more than 30 days ago go, with their folders. */
-export function pruneClosed(state: RelayState, sessionsDir: string, now: number): RelayState {
+/** Sessions closed more than 30 days ago go, with their journals and their uploads. */
+export function pruneClosed(state: RelayState, sessionsDir: string, now: number, uploadsDir?: string): RelayState {
   const keep: RelaySessionRecord[] = []
   for (const session of state.sessions) {
     if (session.closedAt !== undefined && now - session.closedAt > CLOSED_KEEP_MS) {
       rmSync(join(sessionsDir, session.s), { recursive: true, force: true })
+      if (uploadsDir) rmSync(join(uploadsDir, session.s), { recursive: true, force: true })
     } else {
       keep.push(session)
     }
   }
   return { ...state, sessions: keep }
+}
+
+/** Folders of uploads/ that belong to no open session: a chat closed, or one the state no longer knows. */
+export function pruneUploads(uploadsDir: string, open: ReadonlySet<string>): void {
+  let names: string[]
+  try {
+    names = readdirSync(uploadsDir)
+  } catch {
+    return
+  }
+  // A link among them goes as a link: rm does not follow it.
+  for (const name of names) if (!open.has(name)) rmSync(join(uploadsDir, name), { recursive: true, force: true })
 }

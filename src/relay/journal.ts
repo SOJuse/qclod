@@ -1,10 +1,12 @@
 import {
   chmodSync,
   closeSync,
+  ftruncateSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
+  rmSync,
   truncateSync,
   writeFileSync,
   writeSync
@@ -78,21 +80,35 @@ function readLines(file: string): { lines: Line[]; bytes: number; size: number }
  * the file. Past `maxBytes` the file is rewritten with the newer half of its
  * records, and `firstSeq` moves on: a client further behind sees a gap.
  */
+export interface JournalOptions {
+  maxBytes?: number
+  now?: () => number
+  /** A record not written (a full disk): once, until a write succeeds again. */
+  onError?: (error: unknown) => void
+  /** How a line reaches the file; writeSync by default (tests put a full disk here). */
+  write?: (fd: number, line: Buffer) => void
+}
+
 export class Journal {
   private fd: number
   private bytes: number
   private first: number
   private last: number
+  private failing = false
   private readonly file: string
   private readonly maxBytes: number
   private readonly now: () => number
+  private readonly write: (fd: number, line: Buffer) => void
+  private readonly onError: (error: unknown) => void
 
-  private constructor(dir: string, opts: { maxBytes?: number; now?: () => number }) {
+  private constructor(dir: string, opts: JournalOptions) {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     privateMode(dir, 0o700)
     this.file = join(dir, JOURNAL_FILE)
     this.maxBytes = opts.maxBytes ?? JOURNAL_MAX_BYTES
     this.now = opts.now ?? Date.now
+    this.write = opts.write ?? ((fd, line) => void writeSync(fd, line))
+    this.onError = opts.onError ?? (() => undefined)
     const { lines, bytes, size } = readLines(this.file)
     // A cut-off tail goes, so the next line does not land glued to it.
     if (size > bytes) truncateSync(this.file, bytes)
@@ -103,7 +119,7 @@ export class Journal {
     this.last = lines[lines.length - 1]?.record.q ?? 0
   }
 
-  static open(dir: string, opts: { maxBytes?: number; now?: () => number } = {}): Journal {
+  static open(dir: string, opts: JournalOptions = {}): Journal {
     return new Journal(dir, opts)
   }
 
@@ -115,14 +131,31 @@ export class Journal {
     return this.last
   }
 
+  /**
+   * Never throws for the disk: a record that cannot be written (ENOSPC, EIO)
+   * still gets its number and goes out live — the stream is not cut, only a
+   * later catch-up misses it. onError says so once, until a write succeeds.
+   */
   append(k: JournalKind, d: unknown): JournalRecord {
     const record: JournalRecord = { q: this.last + 1, at: this.now(), k, d }
     const line = Buffer.from(JSON.stringify(record) + '\n', 'utf8')
-    writeSync(this.fd, line)
-    this.bytes += line.length
     if (this.last === 0) this.first = record.q
     this.last = record.q
-    if (this.bytes > this.maxBytes) this.compact()
+    try {
+      this.write(this.fd, line)
+      this.bytes += line.length
+      this.failing = false
+    } catch (error) {
+      this.failed(error)
+      return record
+    }
+    if (this.bytes > this.maxBytes) {
+      try {
+        this.compact()
+      } catch (error) {
+        this.failed(error)
+      }
+    }
     return record
   }
 
@@ -153,12 +186,33 @@ export class Journal {
       text = kept.map((l) => l.text + '\n').join('')
     }
     const tmp = this.file + '.tmp'
-    writeFileSync(tmp, text, { mode: 0o600 })
+    try {
+      writeFileSync(tmp, text, { mode: 0o600 })
+    } catch (error) {
+      // A full disk: the long file stays as it is.
+      rmSync(tmp, { force: true })
+      throw error
+    }
     // Windows will not rename over an open file.
     closeSync(this.fd)
-    renameSync(tmp, this.file)
-    this.fd = openSync(this.file, 'a', 0o600)
-    this.bytes = Buffer.byteLength(text, 'utf8')
-    this.first = kept[0]?.record.q ?? this.last + 1
+    try {
+      renameSync(tmp, this.file)
+      this.bytes = Buffer.byteLength(text, 'utf8')
+      this.first = kept[0]?.record.q ?? this.last + 1
+    } finally {
+      this.fd = openSync(this.file, 'a', 0o600)
+    }
+  }
+
+  private failed(error: unknown): void {
+    // Half a line must not glue itself to the next one.
+    try {
+      ftruncateSync(this.fd, this.bytes)
+    } catch {
+      // Windows will not truncate an append handle; the next open cuts the tail.
+    }
+    if (this.failing) return
+    this.failing = true
+    this.onError(error)
   }
 }

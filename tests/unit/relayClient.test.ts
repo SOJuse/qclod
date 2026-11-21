@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'vitest'
+import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { RelayDaemon } from '../../src/relay/daemon'
@@ -161,6 +162,32 @@ describe('RelayClient', () => {
     await second.daemon.start()
     await until(() => k.reattached.length === 1, 15000, 'onReattached')
     expect(k.reattached[0]!.gap).toBe(true)
+  })
+
+  test('журнал посредника пропал — gap, и новые записи с его номерами доходят', async () => {
+    const root = tempDir('qclod-rc-')
+    const first = daemonAt(root, { nextTurn: [{ kind: 'text', text: 'привет' }] })
+    await first.daemon.start()
+    const c = client(socketTransport(first.paths.socket))
+    await c.connect(true)
+    const k = sink()
+    const s = (await c.open({ cwd: tempDir('qclod-rc-cwd-'), mode: 'default' }, k.s)).snapshot.s
+    await c.call('drv', { s, op: 'send', args: [{ text: 'раз', attachments: [] }] })
+    await until(() => k.evs.some(isResult), 8000, 'result')
+    expect(c.lastSeq(s)).toBeGreaterThan(1)
+    await first.daemon.stop()
+    daemons.splice(daemons.indexOf(first.daemon), 1)
+    await until(() => c.state !== 'online', 5000, 'обрыв')
+    // The disk lost the journal: the relay starts it again from 1.
+    rmSync(join(first.paths.sessions, s, 'journal.jsonl'), { force: true })
+    const second = daemonAt(root, { nextTurn: [{ kind: 'text', text: 'снова' }] })
+    await second.daemon.start()
+    await until(() => k.reattached.length === 1, 15000, 'onReattached')
+    expect(k.reattached[0]!.gap).toBe(true)
+    const before = k.evs.length
+    await c.call('drv', { s, op: 'send', args: [{ text: 'два', attachments: [] }] })
+    await until(() => k.evs.slice(before).some(isResult), 8000, 'result после сброса')
+    expect(k.evs.slice(before)[0]!.q).toBe(1)
   })
 
   test('authFailed не переподключается сам', async () => {

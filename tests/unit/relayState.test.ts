@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { emptyState, loadState, pruneClosed, saveState, type RelayState } from '../../src/relay/stateStore'
+import { emptyState, loadState, pruneClosed, pruneUploads, saveState, type RelayState } from '../../src/relay/stateStore'
 
 const DAY = 24 * 60 * 60 * 1000
 const dirs: string[] = []
@@ -89,5 +89,26 @@ describe('состояние посредника', () => {
     expect(existsSync(join(sessions, 'old'))).toBe(false)
     expect(existsSync(join(sessions, 'young'))).toBe(true)
     expect(existsSync(join(sessions, 'open'))).toBe(true)
+  })
+
+  test('pruneClosed уносит и uploads/<s>; pruneUploads — папки без открытой сессии', () => {
+    const root = tempDir()
+    const sessions = join(root, 'sessions')
+    const uploads = join(root, 'uploads')
+    for (const s of ['old', 'open', 'stray']) {
+      mkdirSync(join(sessions, s), { recursive: true })
+      mkdirSync(join(uploads, s), { recursive: true })
+      writeFileSync(join(uploads, s, '1-a.txt'), 'x')
+    }
+    const now = 100 * DAY
+    const state: RelayState = { sessions: [session('old', { closedAt: now - 31 * DAY }), session('open')], rules: [], autoAnswerMs: 1 }
+    pruneClosed(state, sessions, now, uploads)
+    expect(existsSync(join(uploads, 'old'))).toBe(false)
+    expect(existsSync(join(uploads, 'stray'))).toBe(true)
+    pruneUploads(uploads, new Set(['open']))
+    expect(existsSync(join(uploads, 'stray'))).toBe(false)
+    expect(existsSync(join(uploads, 'open', '1-a.txt'))).toBe(true)
+    // no uploads folder at all: nothing to do, nothing thrown
+    expect(() => pruneUploads(join(root, 'нет'), new Set())).not.toThrow()
   })
 })

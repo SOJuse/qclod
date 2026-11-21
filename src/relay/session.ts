@@ -159,6 +159,8 @@ export class RelaySession {
   /** A turn is under way, from a send (or a phone turn) to the result that ends the queue. */
   private turn = false
   private closed = false
+  /** The daemon stops: see markLeaving. */
+  private leaving = false
   private updated: number
   private readonly gate: RelayGate
   private readonly subscribers = new Set<(f: SessionFrame) => void>()
@@ -358,7 +360,13 @@ export class RelaySession {
 
   /** Before the daemon restarts: the driver goes, the record stays. */
   async suspend(): Promise<void> {
+    this.leaving = true
     await this.stopDriver()
+  }
+
+  /** The daemon is going down: a stream that ends from now on is no death (no notice, no `died`). */
+  markLeaving(): void {
+    this.leaving = true
   }
 
   /** «Закрыть чат»: claude is stopped and the session is marked closed. */
@@ -431,16 +439,25 @@ export class RelaySession {
     // Ended by itself: not a close, a suspend or a restart.
     this.driver = null
     this.turn = false
-    this.gate.cancelAll()
-    this.setStatus('error')
     const why = errorText(error)
-    this.notice({
-      kind: 'text',
-      text: why ? `Claude Code на сервере завершился: ${why}` : 'Claude Code на сервере завершился',
-      tone: 'error'
-    })
-    this.event({ type: 'died', error: why })
-    void driver.dispose().catch(() => undefined)
+    try {
+      this.gate.cancelAll()
+      if (this.leaving) {
+        // The daemon is stopping: the stream ended with it, no death to tell or to restart from.
+        this.setStatus('stopped')
+        return
+      }
+      this.setStatus('error')
+      this.notice({
+        kind: 'text',
+        text: why ? `Claude Code на сервере завершился: ${why}` : 'Claude Code на сервере завершился',
+        tone: 'error'
+      })
+    } finally {
+      // Whatever failed above, the process goes and the core hears of the death.
+      void driver.dispose().catch(() => undefined)
+      if (!this.leaving) this.event({ type: 'died', error: why })
+    }
   }
 
   private onMessage(message: unknown): void {

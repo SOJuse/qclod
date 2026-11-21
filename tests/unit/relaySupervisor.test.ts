@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { RESTART_EXIT_CODE } from '../../src/relay/daemon'
+import { cachedBinaryVersion, successorEnv } from '../../src/relay/env'
 import { relayPaths } from '../../src/relay/paths'
 import { SETUP_FILE, UNIT_TEXT, setup, startCommand, type Run } from '../../src/relay/supervisor'
 import { cleanTemps, tempDir } from './relayHarness'
@@ -33,11 +35,16 @@ function paths() {
 }
 
 describe('установка службы посредника', () => {
-  test('unit: Restart=always, ExecStart из ~/.qclod/bin', () => {
+  test('unit: Restart=on-failure и 75, KillMode=mixed, ExecStart из ~/.qclod/bin', () => {
     expect(UNIT_TEXT).toContain('Description=Qclod relay')
     expect(UNIT_TEXT).toContain('ExecStart=%h/.qclod/bin/qclod-relay daemon')
-    expect(UNIT_TEXT).toContain('Restart=always')
+    // exit 0 (another daemon serves) is no reason to come back: no loop every 2 s on a busy lock
+    expect(UNIT_TEXT).not.toContain('Restart=always')
+    expect(UNIT_TEXT).toContain('Restart=on-failure')
+    expect(UNIT_TEXT).toContain(`RestartForceExitStatus=${RESTART_EXIT_CODE}`)
     expect(UNIT_TEXT).toContain('RestartSec=2')
+    // a stop signals the daemon alone; it suspends the agents and marks the working ones itself
+    expect(UNIT_TEXT).toContain('KillMode=mixed')
     expect(UNIT_TEXT).toContain('WantedBy=default.target')
   })
 
@@ -86,18 +93,73 @@ describe('установка службы посредника', () => {
     expect(calls).toContain(`setsid -f ${p.bin}/qclod-relay daemon`)
   })
 
-  test('Linger=no, enable-linger не удался — {linger:no, lingerTried:true}', async () => {
-    const { paths: p } = paths()
+  test('Linger=no, enable-linger не удался — не systemd, а tmux; unit не включается', async () => {
+    const { home, paths: p } = paths()
     const { run, calls } = stub({
       'systemctl --user show-environment': { code: 0 },
       'systemctl --user daemon-reload': { code: 0 },
       'systemctl --user enable --now qclod-relay': { code: 0 },
+      'tmux -V': { code: 0 },
       'loginctl show-user u --property=Linger': { code: 0, stdout: 'Linger=no' },
       'loginctl enable-linger u': { code: 1 }
     })
-    expect(await setup(run, p, 'u')).toEqual({ supervisor: 'systemd', linger: 'no', lingerTried: true })
+    expect(await setup(run, p, 'u')).toEqual({ supervisor: 'tmux', linger: 'no', lingerTried: true })
     expect(calls).toContain('loginctl enable-linger u')
     expect(calls.filter((c) => c.startsWith('loginctl show-user'))).toHaveLength(2)
+    expect(calls).not.toContain('systemctl --user enable --now qclod-relay')
+    expect(existsSync(join(home, '.config', 'systemd', 'user', 'qclod-relay.service'))).toBe(false)
+    expect(calls.some((c) => c.startsWith('tmux new-session'))).toBe(true)
+  })
+
+  test('Linger не узнать, tmux нет — plain', async () => {
+    const { paths: p } = paths()
+    const { run, calls } = stub({ 'systemctl --user show-environment': { code: 0 } })
+    expect(await setup(run, p, 'u')).toEqual({ supervisor: 'plain', linger: 'unknown', lingerTried: false })
+    expect(calls).not.toContain('systemctl --user enable --now qclod-relay')
+  })
+
+  test('unit прошлой установки при Linger=no — выключен и убран', async () => {
+    const { home, paths: p } = paths()
+    const unit = join(home, '.config', 'systemd', 'user', 'qclod-relay.service')
+    mkdirSync(join(home, '.config', 'systemd', 'user'), { recursive: true })
+    writeFileSync(unit, UNIT_TEXT)
+    const { run, calls } = stub({
+      'systemctl --user show-environment': { code: 0 },
+      'tmux -V': { code: 0 },
+      'loginctl show-user u --property=Linger': { code: 0, stdout: 'Linger=no' }
+    })
+    expect((await setup(run, p, 'u')).supervisor).toBe('tmux')
+    expect(calls).toContain('systemctl --user disable qclod-relay')
+    expect(existsSync(unit)).toBe(false)
+  })
+
+  test('enable --now не удался — setup не говорит systemd', async () => {
+    const { paths: p } = paths()
+    const { run } = stub({
+      'systemctl --user show-environment': { code: 0 },
+      'systemctl --user daemon-reload': { code: 0 },
+      'systemctl --user enable --now qclod-relay': { code: 1 },
+      'tmux -V': { code: 0 },
+      'loginctl show-user u --property=Linger': { code: 0, stdout: 'Linger=yes' }
+    })
+    expect((await setup(run, p, 'u')).supervisor).toBe('tmux')
+  })
+
+  test('повторный setup, когда Linger появился, переводит на systemd', async () => {
+    const { home, paths: p } = paths()
+    const answers = {
+      'systemctl --user show-environment': { code: 0 },
+      'systemctl --user daemon-reload': { code: 0 },
+      'systemctl --user enable --now qclod-relay': { code: 0 },
+      'tmux -V': { code: 0 },
+      'tmux has-session -t qclod-relay': { code: 0 },
+      'loginctl show-user u --property=Linger': { code: 0, stdout: 'Linger=no' }
+    }
+    expect((await setup(stub(answers).run, p, 'u')).supervisor).toBe('tmux')
+    const again = stub({ ...answers, 'loginctl show-user u --property=Linger': { code: 0, stdout: 'Linger=yes' } })
+    expect(await setup(again.run, p, 'u')).toEqual({ supervisor: 'systemd', linger: 'yes', lingerTried: false })
+    expect(again.calls).toContain('systemctl --user enable --now qclod-relay')
+    expect(readFileSync(join(home, '.config', 'systemd', 'user', 'qclod-relay.service'), 'utf8')).toBe(UNIT_TEXT)
   })
 
   test('Linger=no, enable-linger удался — yes', async () => {
@@ -108,6 +170,34 @@ describe('установка службы посредника', () => {
       'loginctl enable-linger u': { code: 0 }
     })
     expect(await setup(run, p, 'u')).toEqual({ supervisor: 'tmux', linger: 'yes', lingerTried: true })
+  })
+
+  test('преемник демона под tmux не наследует TMUX и метки systemd', () => {
+    expect(
+      successorEnv({ PATH: '/usr/bin', HOME: '/home/u', TMUX: '/tmp/tmux-1000/default,1,0', TMUX_PANE: '%0', INVOCATION_ID: 'x' })
+    ).toEqual({ PATH: '/usr/bin', HOME: '/home/u' })
+  })
+
+  test('версия файла посредника спрашивается заново, только когда файл сменился', async () => {
+    const { home } = paths()
+    const binary = join(home, 'qclod-relay')
+    let asked = 0
+    const versionOf = cachedBinaryVersion(binary, '1.0.0', async () => {
+      asked++
+      return asked === 1 ? '1.0.0' : '1.0.1'
+    })
+    // no file yet: the running daemon's
+    expect(await versionOf()).toBe('1.0.0')
+    expect(asked).toBe(0)
+    writeFileSync(binary, 'old')
+    expect(await versionOf()).toBe('1.0.0')
+    expect(await versionOf()).toBe('1.0.0')
+    expect(asked).toBe(1)
+    writeFileSync(binary, 'newer')
+    const later = new Date(Date.now() + 5000)
+    utimesSync(binary, later, later)
+    expect(await versionOf()).toBe('1.0.1')
+    expect(asked).toBe(2)
   })
 
   test('startCommand по супервизору', () => {

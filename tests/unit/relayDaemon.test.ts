@@ -1,10 +1,17 @@
-import { afterEach, describe, expect, test } from 'vitest'
-import { existsSync, readFileSync } from 'node:fs'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { connect, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { runAttach } from '../../src/relay/attach'
-import { RelayDaemon, RESTART_EXIT_CODE, type RelayDaemonOptions } from '../../src/relay/daemon'
+import {
+  HOUSEKEEP_MS,
+  RelayDaemon,
+  RESTART_EXIT_CODE,
+  TOO_LARGE_NOTICE,
+  looksLikeRelayDaemon,
+  type RelayDaemonOptions
+} from '../../src/relay/daemon'
 import { relayMethods } from '../../src/relay/methods'
 import { relayPaths, type RelayPaths } from '../../src/relay/paths'
 import { loadState } from '../../src/relay/stateStore'
@@ -322,6 +329,247 @@ describe('демон посредника', () => {
   })
 })
 
+describe('замок демона', () => {
+  /** A lock as a dead daemon left it: written `ageMs` ago. */
+  function leftLock(paths: RelayPaths, text: string, ageMs: number): void {
+    mkdirSync(paths.run, { recursive: true })
+    writeFileSync(paths.lock, text)
+    const at = new Date(Date.now() - ageMs)
+    utimesSync(paths.lock, at, at)
+  }
+
+  test('в замке pid чужого живого процесса, сокета нет → демон стартует', async () => {
+    const t = setup()
+    // The parent of this test process: alive, ours, and no relay daemon (a pid reused after a crash).
+    leftLock(t.paths, String(process.ppid), 60 * 60_000)
+    expect(await t.daemon.start()).toBe(true)
+    expect(readFileSync(t.paths.lock, 'utf8')).toBe(String(process.pid))
+    const c = await Client.open(t.paths)
+    c.write({ t: 'ping' })
+    await until(() => c.frames.some((f) => f.t === 'pong'), 5000, 'pong')
+  })
+
+  test('в замке pid этого же процесса (тот же pid после перезагрузки) → демон стартует', async () => {
+    const t = setup()
+    leftLock(t.paths, String(process.pid), 60 * 60_000)
+    expect(await t.daemon.start()).toBe(true)
+  })
+
+  test('пустой замок — не удаляется: его демон ещё пишет pid', async () => {
+    const t = setup({}, { lockWaitMs: 300 })
+    leftLock(t.paths, '', 0)
+    expect(await t.daemon.start()).toBe(false)
+    expect(existsSync(t.paths.lock)).toBe(true)
+    expect(readFileSync(t.paths.lock, 'utf8')).toBe('')
+  })
+
+  test('пустой замок давнего сбоя — снят', async () => {
+    const t = setup({}, { lockWaitMs: 300 })
+    leftLock(t.paths, '', 60 * 60_000)
+    expect(await t.daemon.start()).toBe(true)
+  })
+
+  test('замок занят, но демон его отвечает — второй выходит, замок цел', async () => {
+    const a = setup()
+    expect(await a.daemon.start()).toBe(true)
+    const before = readFileSync(a.paths.lock, 'utf8')
+    const b = setup({}, { lockWaitMs: 300 }, a.root)
+    expect(await b.daemon.acquire()).toBe(false)
+    expect(readFileSync(a.paths.lock, 'utf8')).toBe(before)
+  })
+
+  test('cmdline: qclod-relay daemon — да, чужая программа — нет, нет /proc — неизвестно', () => {
+    const cmd = (...argv: string[]) => () => Buffer.from(argv.join('\0') + '\0')
+    expect(looksLikeRelayDaemon(5, cmd('/home/u/.qclod/bin/qclod-relay', 'daemon'))).toBe(true)
+    expect(looksLikeRelayDaemon(5, cmd('/usr/bin/node', '/x/out/relay/relay.cjs', 'daemon'))).toBe(true)
+    expect(looksLikeRelayDaemon(5, cmd('/home/u/.qclod/bin/qclod-relay', 'attach'))).toBe(false)
+    expect(looksLikeRelayDaemon(5, cmd('/usr/sbin/sshd', '-D'))).toBe(false)
+    expect(
+      looksLikeRelayDaemon(5, () => {
+        throw new Error('ENOENT')
+      })
+    ).toBeNull()
+  })
+})
+
+describe('остановка, уборка, кадры', () => {
+  test('stop при работающем ходе: wasRunning сразу, смерть потока при остановке — не смерть', async () => {
+    // The agent's stream, cut from outside as systemd's SIGTERM to the whole unit would.
+    const fake = fakeFactory({
+      sessionId: 'sdk-long',
+      nextTurn: [{ kind: 'tool', name: 'Bash', input: { command: 'make' }, result: 'ok', pauseMs: 5000 }]
+    })
+    let cut = (): void => undefined
+    const createDriver: RelayDaemonOptions['createDriver'] = async (opts) => {
+      const driver = (await fake.factory(opts)) as unknown as { messages: AsyncIterable<unknown> }
+      const inner = driver.messages[Symbol.asyncIterator]()
+      const killed = new Promise<IteratorResult<unknown>>((resolve) => {
+        cut = () => resolve({ done: true, value: undefined })
+      })
+      driver.messages = (async function* () {
+        for (;;) {
+          const next = await Promise.race([inner.next(), killed])
+          if (next.done) throw new Error('claude: terminated')
+          yield next.value
+        }
+      })()
+      return driver as never
+    }
+    const t = setup({}, { createDriver })
+    await t.daemon.start()
+    const c = await Client.open(t.paths)
+    const { snapshot } = await c.ok<AttachResult>('session.open', { cwd: t.root, mode: 'acceptEdits' })
+    const s = snapshot.s
+    await c.ok('drv', { s, op: 'send', args: [{ text: 'собери', attachments: [] }] })
+    await until(() => c.evs(s).some((e) => (e.d as { type?: string }).type === 'system'), 5000, 'init')
+    const session = t.daemon.sessions()[0]!
+    const events: string[] = []
+    session.onEvent((e) => events.push(e.type))
+    // systemd's stop signals the agent too: its stream ends as the daemon begins to stop.
+    const stopping = t.daemon.stop()
+    cut()
+    await stopping
+    const saved = loadState(t.paths.state).sessions.find((r) => r.s === s)!
+    expect(saved.wasRunning).toBe(true)
+    expect(events).not.toContain('died')
+    const notices = readFileSync(join(t.paths.sessions, s, 'journal.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as { k: string })
+      .filter((r) => r.k === 'notice')
+    expect(notices).toEqual([])
+  })
+
+  test('stop дважды (сигнал во время перезапуска) — второй ждёт первый', async () => {
+    const t = setup()
+    await t.daemon.start()
+    const a = t.daemon.stop()
+    const b = t.daemon.stop()
+    expect(b).toBe(a)
+    await a
+    expect(existsSync(t.paths.lock)).toBe(false)
+  })
+
+  test('уборка: закрытые старше 30 дней — с журналом и загрузками; загрузки без открытой сессии — вон', async () => {
+    let now = 1_000_000_000_000
+    const base = tempDir('qclod-daemon-')
+    const t = setup(
+      {},
+      {
+        now: () => now,
+        methods: relayMethods({
+          run: async () => ({ code: 1, stdout: '' }),
+          version: '1.0.0-test',
+          claudePath: () => '/opt/claude',
+          home: base,
+          listSessions: async () => []
+        })
+      },
+      base
+    )
+    await t.daemon.start()
+    const c = await Client.open(t.paths)
+    const open = (await c.ok<AttachResult>('session.open', { cwd: t.root, mode: 'default' })).snapshot.s
+    const closed = (await c.ok<AttachResult>('session.open', { cwd: t.root, mode: 'default' })).snapshot.s
+    const up = (s: string) =>
+      c.ok<{ path: string }>('fs.upload', { s, name: 'a.txt', offset: 0, dataBase64: 'eA==', final: true })
+    await up(open)
+    await up(closed)
+    // an upload for a session that is not open here makes no folder
+    const stray = await c.request('fs.upload', { s: 'nobody', name: 'a.txt', offset: 0, dataBase64: 'eA==', final: true })
+    expect(!stray.ok && stray.e.code).toBe('not_found')
+    expect(existsSync(join(t.paths.uploads, 'nobody'))).toBe(false)
+    // «Закрыть чат»: its uploads go at once, the journal stays
+    await c.ok('session.close', { s: closed })
+    expect(existsSync(join(t.paths.uploads, closed))).toBe(false)
+    expect(existsSync(join(t.paths.sessions, closed))).toBe(true)
+    // a folder left by a state that no longer knows it
+    mkdirSync(join(t.paths.uploads, 'orphan'), { recursive: true })
+    writeFileSync(join(t.paths.uploads, 'orphan', '1-x'), 'x')
+    now += 31 * 24 * 60 * 60_000
+    t.daemon.housekeep()
+    expect(existsSync(join(t.paths.sessions, closed))).toBe(false)
+    expect(existsSync(join(t.paths.uploads, 'orphan'))).toBe(false)
+    expect(existsSync(join(t.paths.uploads, open, '1-a.txt'))).toBe(true)
+    expect(loadState(t.paths.state).sessions.map((r) => r.s)).toEqual([open])
+  })
+
+  test('уборка раз в сутки — по таймеру, который не держит процесс', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const t = setup()
+      await t.daemon.start()
+      const housekeep = vi.spyOn(t.daemon, 'housekeep')
+      vi.advanceTimersByTime(HOUSEKEEP_MS - 1)
+      expect(housekeep).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1)
+      expect(housekeep).toHaveBeenCalledTimes(1)
+      await t.daemon.stop()
+      vi.advanceTimersByTime(HOUSEKEEP_MS)
+      expect(housekeep).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('attach с after больше lastSeq — gap и всё новое с номера журнала', async () => {
+    const t = setup({ nextTurn: [{ kind: 'text', text: 'привет' }] })
+    await t.daemon.start()
+    const c = await Client.open(t.paths)
+    const s = (await c.ok<AttachResult>('session.open', { cwd: t.root, mode: 'default' })).snapshot.s
+    const other = await Client.open(t.paths)
+    const res = await other.ok<AttachResult>('session.attach', { s, after: 500 })
+    expect(res.gap).toBe(true)
+    expect(res.snapshot.lastSeq).toBe(0)
+    await other.ok('drv', { s, op: 'send', args: [{ text: 'раз', attachments: [] }] })
+    await until(() => other.evs(s).some(isResult), 5000, 'result')
+    expect(other.evs(s)[0]!.q).toBe(1)
+  })
+
+  test('запись больше 16 МиБ — клиенту notice под её номером, не тишина', async () => {
+    const t = setup()
+    await t.daemon.start()
+    const c = await Client.open(t.paths)
+    const s = (await c.ok<AttachResult>('session.open', { cwd: t.root, mode: 'default' })).snapshot.s
+    const session = t.daemon.sessions()[0]!
+    const big = session.append('sdk', { type: 'assistant', text: 'x'.repeat(17 * 1024 * 1024) })
+    session.append('notice', { kind: 'text', text: 'после', tone: 'info' })
+    await until(() => c.evs(s).length >= 2, 8000, 'кадры')
+    expect(c.evs(s)[0]).toMatchObject({ q: big.q, k: 'notice', d: TOO_LARGE_NOTICE })
+    expect(c.evs(s)[1]).toMatchObject({ q: big.q + 1, k: 'notice' })
+  })
+
+  test('дочитывание журнала больше предела — не повод отключать', async () => {
+    const t = setup({}, { backlogMax: 256 * 1024 })
+    await t.daemon.start()
+    const c = await Client.open(t.paths)
+    const s = (await c.ok<AttachResult>('session.open', { cwd: t.root, mode: 'default' })).snapshot.s
+    const session = t.daemon.sessions()[0]!
+    for (let i = 0; i < 32; i++) session.append('notice', { kind: 'text', text: 'z'.repeat(64 * 1024), tone: 'info' })
+    const late = await Client.open(t.paths)
+    await late.ok('session.attach', { s, after: 0 })
+    await until(() => late.evs(s).length === 32, 8000, 'весь журнал')
+    expect(late.closed).toBe(false)
+  })
+
+  test('клиент не читает — отключён, когда отстал больше предела', async () => {
+    const t = setup({}, { backlogMax: 256 * 1024 })
+    await t.daemon.start()
+    const c = await Client.open(t.paths)
+    await c.ok<AttachResult>('session.open', { cwd: t.root, mode: 'default' })
+    c.socket.pause()
+    const session = t.daemon.sessions()[0]!
+    const text = 'y'.repeat(64 * 1024)
+    for (let i = 0; i < 200 && !c.closed; i++) {
+      session.append('notice', { kind: 'text', text, tone: 'info' })
+      await new Promise((r) => setTimeout(r, 1))
+    }
+    c.socket.resume()
+    await until(() => c.closed, 5000, 'отключение')
+    expect(t.daemon.clients).toBe(0)
+  })
+})
+
 describe('attach', () => {
   test('stdio ↔ сокет; без демона — запуск и повтор', async () => {
     const t = setup()
@@ -376,14 +624,15 @@ describe('файлы, история и аккаунт через сокет', (
     const list = await c.ok<{ path: string; entries: Array<{ name: string }> }>('fs.list', { path: '~' })
     expect(list.path).toBe(root)
     expect(list.entries.map((e) => e.name)).toContain('.qclod')
+    const s = (await c.ok<AttachResult>('session.open', { cwd: root, mode: 'default' })).snapshot.s
     const up = await c.ok<{ path: string }>('fs.upload', {
-      s: 'sess1',
+      s,
       name: 'a.txt',
       offset: 0,
       dataBase64: Buffer.from('привет').toString('base64'),
       final: true
     })
-    expect(up.path).toBe(join(t.paths.uploads, 'sess1', '1-a.txt'))
+    expect(up.path).toBe(join(t.paths.uploads, s, '1-a.txt'))
     const read = await c.ok<{ dataBase64: string; eof: boolean }>('fs.read', { path: up.path, offset: 0, length: 1024 })
     expect(Buffer.from(read.dataBase64, 'base64').toString('utf8')).toBe('привет')
     expect(read.eof).toBe(true)

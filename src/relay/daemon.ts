@@ -1,6 +1,20 @@
 import { randomUUID } from 'node:crypto'
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs'
-import { createServer, type Server, type Socket } from 'node:net'
+import {
+  closeSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+  writeSync
+} from 'node:fs'
+import { connect, createServer, type Server, type Socket } from 'node:net'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import type { DriverFactory } from '../main/agent/driver'
 import {
@@ -19,12 +33,13 @@ import { attachAutonomy, type RelayAutonomy, type RelayClock } from './autonomy'
 import { RelayError, badRequest } from './errors'
 import { Journal, privateMode } from './journal'
 import { SILENT_LOG, type RelayLog } from './log'
-import type { RelayPaths } from './paths'
+import { BINARY_NAME, type RelayPaths } from './paths'
 import { RelaySession, type SessionFrame } from './session'
 import {
   SESSION_ID,
   loadState,
   pruneClosed,
+  pruneUploads,
   readRules,
   saveState,
   type RelaySessionRecord,
@@ -32,8 +47,23 @@ import {
 } from './stateStore'
 
 export const HELLO_TIMEOUT_MS = 10_000
-/** The exit code of a restart asked for: systemd's Restart=always brings the daemon back. */
+/** The exit code of a restart asked for: the unit's RestartForceExitStatus=75 brings the daemon back. */
 export const RESTART_EXIT_CODE = 75
+/** A lock this young, with no socket yet, is a daemon starting (or stopping): it is waited for. */
+export const LOCK_FRESH_MS = 15_000
+/** How long a daemon waits for a lock held by one starting or stopping. */
+export const LOCK_WAIT_MS = 20_000
+const LOCK_POLL_MS = 250
+/** Closed sessions past 30 days and uploads of no open session go once a day. */
+export const HOUSEKEEP_MS = 24 * 60 * 60_000
+/** A client that reads this far behind is cut: it comes back and reads on from `after`. */
+export const CLIENT_BACKLOG_MAX = 32 * 1024 * 1024
+/** What a client gets in place of a record too large for one line. */
+export const TOO_LARGE_NOTICE = {
+  kind: 'text',
+  text: 'Здесь запись больше 16 МиБ — она есть только в журнале на сервере',
+  tone: 'info'
+} as const
 const MAX_AUTO_ANSWER_MS = 24 * 60 * 60_000
 const PERMISSION_MODES_SET: ReadonlySet<string> = new Set(PERMISSION_MODES)
 
@@ -46,8 +76,8 @@ export interface RelayDaemonOptions {
   createDriver: DriverFactory
   claudePath: () => string | null
   now?: () => number
-  /** claude's environment: the relay's own with the login shell's PATH. */
-  env?: NodeJS.ProcessEnv
+  /** claude's environment: the relay's own with the login shell's PATH (read when a session starts). */
+  env?: NodeJS.ProcessEnv | (() => NodeJS.ProcessEnv)
   /** The binary's own `version`, for welcome; the daemon's version by default. */
   binaryVersion?: () => Promise<string>
   /** Timers of the hello wait and the autonomy cores. */
@@ -62,6 +92,10 @@ export interface RelayDaemonOptions {
   methods?: Partial<Record<RelayMethod, ExtraMethod>>
   /** The user's home, for `~`; the folder ~/.qclod is in by default. */
   home?: string
+  /** How long to wait for a lock held by a daemon starting or stopping; LOCK_WAIT_MS by default. */
+  lockWaitMs?: number
+  /** Bytes a client may fall behind before it is cut; CLIENT_BACKLOG_MAX by default. */
+  backlogMax?: number
 }
 
 interface Live {
@@ -74,6 +108,11 @@ interface Client {
   ready: boolean
   /** Session id → unsubscribe. */
   subscriptions: Map<string, () => void>
+  /**
+   * Bytes of journal catch-up written since the socket last drained: a replay
+   * (up to a whole journal) is owed to the client, not a sign it stopped reading.
+   */
+  replayed: number
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -92,17 +131,65 @@ function sessionIdOf(p: Record<string, unknown>): string {
   return s
 }
 
-function processAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false
-  if (pid === process.pid) return true
+/** ours — alive and ours to signal; foreign — someone else's (EPERM), so never a daemon of ours. */
+function processState(pid: number): 'ours' | 'foreign' | 'gone' {
   try {
     process.kill(pid, 0)
-    return true
+    return 'ours'
   } catch (error) {
-    // EPERM: alive, someone else's.
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
+    return (error as NodeJS.ErrnoException).code === 'EPERM' ? 'foreign' : 'gone'
   }
 }
+
+/**
+ * Whether `pid` is a qclod-relay daemon, by /proc/<pid>/cmdline: the binary (or
+ * the node bundle relay.cjs) with `daemon`. null — no /proc to tell by. The pid
+ * in a lock a crash left behind is often somebody else's by now.
+ */
+export function looksLikeRelayDaemon(pid: number, read: (path: string) => Buffer = (p) => readFileSync(p)): boolean | null {
+  let raw: Buffer
+  try {
+    raw = read(`/proc/${pid}/cmdline`)
+  } catch {
+    return null
+  }
+  const argv = raw
+    .toString('utf8')
+    .split('\0')
+    .filter((a) => a !== '')
+  const named = argv.some((a) => {
+    const name = a.split('/').pop() ?? ''
+    return name.startsWith(BINARY_NAME) || name === 'relay.cjs'
+  })
+  return named && argv.includes('daemon')
+}
+
+/** up — a daemon answers; down — nobody listens there (ECONNREFUSED, ENOENT); unknown — anything else. */
+function socketState(path: string, ms = 1000): Promise<'up' | 'down' | 'unknown'> {
+  return new Promise((resolve) => {
+    const socket = connect(path)
+    const done = (state: 'up' | 'down' | 'unknown'): void => {
+      clearTimeout(timer)
+      socket.destroy()
+      resolve(state)
+    }
+    const timer = setTimeout(() => done('unknown'), ms)
+    socket.once('connect', () => done('up'))
+    socket.once('error', (error: NodeJS.ErrnoException) =>
+      done(error.code === 'ECONNREFUSED' || error.code === 'ENOENT' ? 'down' : 'unknown')
+    )
+  })
+}
+
+function readLock(path: string): { text: string; mtimeMs: number } | null {
+  try {
+    return { text: readFileSync(path, 'utf8').trim(), mtimeMs: statSync(path).mtimeMs }
+  } catch {
+    return null
+  }
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /** The answer a client gives to a permission, field by field: nothing else passes. */
 function readAnswer(raw: unknown): PermissionAnswer {
@@ -136,7 +223,8 @@ function readExtraArgs(raw: unknown): Record<string, string | null> | undefined 
  */
 export class RelayDaemon {
   private server: Server | null = null
-  private lockFd: number | null = null
+  private locked = false
+  private started = false
   private state: RelayState = { sessions: [], rules: [], autoAnswerMs: 0 }
   private readonly live = new Map<string, Live>()
   private readonly sockets = new Set<Client>()
@@ -145,6 +233,8 @@ export class RelayDaemon {
   private startedAt = 0
   private restartWanted = false
   private stopping = false
+  private stopped: Promise<void> | null = null
+  private housekeeper: ReturnType<typeof setInterval> | null = null
 
   constructor(private readonly opts: RelayDaemonOptions) {
     this.now = opts.now ?? Date.now
@@ -170,22 +260,62 @@ export class RelayDaemon {
     return [...this.live.values()].map((l) => l.session)
   }
 
+  /** A session open here (not closed): what fs.upload may write for. */
+  isOpen(s: string): boolean {
+    const live = this.live.get(s)
+    return live !== undefined && !live.session.isClosed
+  }
+
+  /**
+   * The lock, before anything else (main takes it before the login shell's
+   * PATH). false — another daemon holds it and answers on the socket, or is
+   * still starting after LOCK_WAIT_MS: this one has nothing to do, the caller
+   * exits 0. A lock nobody answers for is a dead daemon's, whatever its pid.
+   */
+  async acquire(): Promise<boolean> {
+    if (this.locked) return true
+    const { paths } = this.opts
+    for (const dir of [paths.root, paths.run, paths.sessions, paths.uploads, paths.logs]) {
+      mkdirSync(dir, { recursive: true, mode: 0o700 })
+      privateMode(dir, 0o700)
+    }
+    const deadline = Date.now() + (this.opts.lockWaitMs ?? LOCK_WAIT_MS)
+    for (let round = 0; round < 400; round++) {
+      if (this.tryLock()) {
+        this.locked = true
+        LOCKS_HELD.add(resolve(paths.lock))
+        return true
+      }
+      const seen = readLock(paths.lock)
+      // Gone meanwhile: try again.
+      if (!seen) continue
+      const verdict = await this.lockVerdict(seen)
+      if (verdict === 'busy') return false
+      if (verdict === 'stale') {
+        this.log.info('замок прошлого демона снят')
+        this.dropStaleLock(seen.text)
+        continue
+      }
+      if (Date.now() >= deadline) return false
+      await sleep(LOCK_POLL_MS)
+    }
+    return false
+  }
+
   /**
    * false — another daemon already holds the lock: this one has nothing to do
    * and the caller exits 0.
    */
   async start(): Promise<boolean> {
     const { paths } = this.opts
-    for (const dir of [paths.root, paths.run, paths.sessions, paths.uploads, paths.logs]) {
-      mkdirSync(dir, { recursive: true, mode: 0o700 })
-      privateMode(dir, 0o700)
-    }
-    if (!this.lock()) {
+    if (!(await this.acquire())) {
       this.log.info('второй демон: уже работает другой')
       return false
     }
+    this.started = true
     this.startedAt = this.now()
-    this.state = pruneClosed(loadState(paths.state), paths.sessions, this.now())
+    this.state = loadState(paths.state)
+    this.housekeep()
     this.save()
 
     try {
@@ -197,13 +327,56 @@ export class RelayDaemon {
 
     const open = this.state.sessions.filter((r) => r.closedAt === undefined)
     await Promise.allSettled(open.map((record) => this.restore(record)))
+    this.housekeeper = setInterval(() => this.housekeep(), HOUSEKEEP_MS)
+    this.housekeeper.unref?.()
     this.log.info(`демон запущен, сессий: ${open.length}`)
     return true
   }
 
-  async stop(): Promise<void> {
-    if (this.stopping) return
+  /** Once: a second call (a signal during a restart) waits for the first. */
+  stop(): Promise<void> {
+    this.stopped ??= this.halt()
+    return this.stopped
+  }
+
+  /**
+   * Closed sessions past 30 days go with their journals and uploads; a folder
+   * of uploads no open session owns goes too. At start and once a day.
+   */
+  housekeep(): void {
+    const { paths } = this.opts
+    const before = this.state.sessions.length
+    try {
+      this.state = pruneClosed(this.state, paths.sessions, this.now(), paths.uploads)
+      pruneUploads(paths.uploads, new Set(this.state.sessions.filter((r) => r.closedAt === undefined).map((r) => r.s)))
+    } catch (error) {
+      this.log.error('уборка', error)
+    }
+    if (this.started && this.state.sessions.length !== before) this.save()
+  }
+
+  private async halt(): Promise<void> {
     this.stopping = true
+    if (this.housekeeper) clearInterval(this.housekeeper)
+    this.housekeeper = null
+    // Before the first await, all at once (systemd's stop: the agents may be
+    // signalled too). Working now carries on after the next start; a limit
+    // waited out is already marked by the core; the autonomy cores stop
+    // deciding; a stream that ends from here on is the stop's, not a death.
+    for (const { session, autonomy } of this.live.values()) {
+      if (session.busy) session.markRunning(true)
+      autonomy.dispose()
+      session.markLeaving()
+    }
+    // Still mine, still going: a daemon started meanwhile waits rather than takes over.
+    if (this.locked) {
+      try {
+        const t = new Date()
+        utimesSync(this.opts.paths.lock, t, t)
+      } catch {
+        // Gone: nothing to hold off.
+      }
+    }
     // Ended, not cut: what was written last (a result, a notice) still reaches the client.
     for (const client of this.sockets) {
       client.socket.end()
@@ -212,44 +385,103 @@ export class RelayDaemon {
     this.sockets.clear()
     await new Promise<void>((done) => (this.server ? this.server.close(() => done()) : done()))
     this.server = null
-    for (const { session, autonomy } of this.live.values()) {
-      autonomy.dispose()
-      // Working now carries on after the next start; a limit waited out is already marked by the core.
-      if (session.busy) session.markRunning(true)
-    }
     await Promise.allSettled([...this.live.values()].map(({ session }) => session.suspend()))
     for (const { session } of this.live.values()) session.journal.close()
     this.live.clear()
-    this.save()
+    if (this.started) this.save()
     this.unlock()
-    this.log.info('демон остановлен')
+    if (this.started) this.log.info('демон остановлен')
   }
 
   // ------------------------------------------------------------ lifecycle
 
-  private lock(): boolean {
+  /** The lock made whole at once: the pid written aside, then linked into place. */
+  private tryLock(): boolean {
     const { lock } = this.opts.paths
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const tmp = `${lock}.${process.pid}-${randomUUID().slice(0, 8)}`
+    writeFileSync(tmp, String(process.pid), { mode: 0o600 })
+    try {
+      linkSync(tmp, lock)
+      return true
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'EEXIST') return false
+      if (code !== 'EPERM' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP') throw error
+      // No hard links on this file system: created exclusively, then written.
       try {
         const fd = openSync(lock, 'wx', 0o600)
         writeSync(fd, String(process.pid))
-        this.lockFd = fd
-        LOCKS_HELD.add(resolve(lock))
+        closeSync(fd)
         return true
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-        let pid = NaN
-        try {
-          pid = Number(readFileSync(lock, 'utf8').trim())
-        } catch {
-          // Gone meanwhile: try again.
-        }
-        // A daemon of this very process holds it too (tests run two in one).
-        if (processAlive(pid) && (pid !== process.pid || this.heldHere())) return false
-        rmSync(lock, { force: true })
+      } catch (again) {
+        if ((again as NodeJS.ErrnoException).code === 'EEXIST') return false
+        throw again
       }
+    } finally {
+      rmSync(tmp, { force: true })
+    }
+  }
+
+  /**
+   * busy — a daemon answers on the socket (or this very process holds the
+   * lock); starting — the lock is young and its pid could be a daemon on its
+   * way up or down; stale — nobody answers and the pid is gone, someone else's,
+   * not a relay, or a relay that kept its lock past the wait with no socket.
+   */
+  private async lockVerdict(seen: { text: string; mtimeMs: number }): Promise<'busy' | 'starting' | 'stale'> {
+    if ((await socketState(this.opts.paths.socket)) !== 'down') return 'busy'
+    const fresh = Date.now() - seen.mtimeMs < LOCK_FRESH_MS
+    const pid = /^\d+$/.test(seen.text) ? Number(seen.text) : NaN
+    // Empty: made, not yet written (a relay of before tmp+link).
+    if (!Number.isSafeInteger(pid) || pid <= 0) return fresh ? 'starting' : 'stale'
+    // The same pid as ours after a reboot is no daemon — unless a daemon object here holds it (tests).
+    if (pid === process.pid) return this.heldHere() ? 'busy' : 'stale'
+    if (processState(pid) !== 'ours') return 'stale'
+    const relay = looksLikeRelayDaemon(pid)
+    if (relay === false) return 'stale'
+    if (fresh) return 'starting'
+    if (relay === true) return (await this.retire(pid)) ? 'stale' : 'busy'
+    return 'stale'
+  }
+
+  /** A relay daemon of ours with no socket and an old lock: asked to go, and waited for. */
+  private async retire(pid: number): Promise<boolean> {
+    this.log.info('демон без сокета: остановлен')
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch {
+      return true
+    }
+    for (let i = 0; i < 50; i++) {
+      if (processState(pid) === 'gone') return true
+      await sleep(100)
     }
     return false
+  }
+
+  /**
+   * Out of the way, then checked: if what was moved is not the lock judged
+   * stale (another daemon took it meanwhile), it is put back.
+   */
+  private dropStaleLock(judged: string): void {
+    const { lock } = this.opts.paths
+    const aside = `${lock}.stale-${process.pid}-${randomUUID().slice(0, 8)}`
+    try {
+      renameSync(lock, aside)
+    } catch {
+      return
+    }
+    try {
+      if (readFileSync(aside, 'utf8').trim() !== judged) {
+        try {
+          linkSync(aside, lock)
+        } catch {
+          // Another lock is there already: that one stands.
+        }
+      }
+    } finally {
+      rmSync(aside, { force: true })
+    }
   }
 
   /** In this process, a lock file is held by a daemon object that has not stopped. */
@@ -258,15 +490,15 @@ export class RelayDaemon {
   }
 
   private unlock(): void {
-    if (this.lockFd === null) return
-    try {
-      closeSync(this.lockFd)
-    } catch {
-      // Already closed.
-    }
-    this.lockFd = null
+    if (!this.locked) return
+    this.locked = false
     LOCKS_HELD.delete(resolve(this.opts.paths.lock))
-    rmSync(this.opts.paths.lock, { force: true })
+    try {
+      // Only a lock that is still this process's.
+      if (readFileSync(this.opts.paths.lock, 'utf8').trim() === String(process.pid)) rmSync(this.opts.paths.lock)
+    } catch {
+      // Gone already.
+    }
   }
 
   private async listen(): Promise<void> {
@@ -302,12 +534,17 @@ export class RelayDaemon {
 
   private makeSession(record: RelaySessionRecord, claudePath: string): Live {
     const { paths } = this.opts
-    const journal = Journal.open(join(paths.sessions, record.s), { now: this.now })
+    const journal = Journal.open(join(paths.sessions, record.s), {
+      now: this.now,
+      // A full disk: the stream goes on live, the journal catches up when it can.
+      onError: (error) => this.log.error('журнал не записан', error)
+    })
+    const env = this.opts.env
     const session = new RelaySession({
       id: record.s,
       record,
       claudePath,
-      env: this.opts.env ?? process.env,
+      env: typeof env === 'function' ? env() : (env ?? process.env),
       createDriver: this.opts.createDriver,
       journal,
       rules: () => this.state.rules,
@@ -365,8 +602,11 @@ export class RelayDaemon {
   // -------------------------------------------------------------- clients
 
   private accept(socket: Socket): void {
-    const client: Client = { socket, ready: false, subscriptions: new Map() }
+    const client: Client = { socket, ready: false, subscriptions: new Map(), replayed: 0 }
     this.sockets.add(client)
+    socket.on('drain', () => {
+      client.replayed = 0
+    })
     const clock = this.opts.clock
     const onTimeout = (): void => {
       if (client.ready) return
@@ -461,7 +701,7 @@ export class RelayDaemon {
     }
   }
 
-  private send(client: Client, frame: RelayFrame): void {
+  private send(client: Client, frame: RelayFrame, replay = false): void {
     if (client.socket.destroyed) return
     let line: string
     try {
@@ -470,9 +710,18 @@ export class RelayDaemon {
       this.log.error('кадр больше 16 МиБ не отправлен', error)
       if (frame.t === 'res') {
         line = encodeFrame({ t: 'res', id: frame.id, ok: false, e: { code: 'too_large', message: 'ответ больше 16 МиБ' } })
+      } else if (frame.t === 'ev') {
+        // Its number still comes, as a line the ribbon shows: the client sees the hole, nothing is silently lost.
+        line = encodeFrame({ t: 'ev', s: frame.s, q: frame.q, k: 'notice', at: frame.at, d: TOO_LARGE_NOTICE })
       } else return
     }
     client.socket.write(line)
+    if (replay) client.replayed += Buffer.byteLength(line)
+    if (client.socket.writableLength > (this.opts.backlogMax ?? CLIENT_BACKLOG_MAX) + client.replayed) {
+      // It does not read: cut, rather than kept in memory without end. It comes back with `after`.
+      this.log.info('клиент не успевает читать: отключён')
+      client.socket.destroy()
+    }
   }
 
   private liveSession(s: string): Live {
@@ -507,6 +756,8 @@ export class RelayDaemon {
         await live.session.close()
         this.live.delete(live.session.id)
         for (const c of this.sockets) c.subscriptions.delete(live.session.id)
+        // Its uploads go with the chat; the journal stays its 30 days.
+        rmSync(join(this.opts.paths.uploads, live.session.id), { recursive: true, force: true })
         this.maybeRestart()
         return null
       }
@@ -611,13 +862,17 @@ export class RelayDaemon {
 
   /** The answer, then every ev after `after` in order, then the live stream. */
   private attach(client: Client, session: RelaySession, after: number, id: number): void {
-    const { records, gap } = session.journal.readAfter(after)
+    // A client that has seen more than this journal has (it was lost or cut
+    // short) starts over from where the journal is: a gap, and every new record.
+    const lastSeq = session.journal.lastSeq
+    const from = Math.min(after, lastSeq)
+    const { records, gap } = session.journal.readAfter(from)
     const snapshot: RelaySnapshot = session.snapshot()
-    const result: AttachResult = { snapshot, gap }
+    const result: AttachResult = { snapshot, gap: gap || after > lastSeq }
     this.send(client, { t: 'res', id, ok: true, r: result })
-    let last = after
+    let last = from
     for (const r of records) {
-      this.send(client, { t: 'ev', s: session.id, q: r.q, k: r.k, at: r.at, d: r.d })
+      this.send(client, { t: 'ev', s: session.id, q: r.q, k: r.k, at: r.at, d: r.d }, true)
       last = r.q
     }
     client.subscriptions.get(session.id)?.()

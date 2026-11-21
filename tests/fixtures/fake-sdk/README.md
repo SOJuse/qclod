@@ -51,6 +51,10 @@ for await (const message of driver.messages) { /* ... */ }
 растёт перед `result`, так что запрос контекста сразу после `result` уже
 видит новый процент.
 
+`result.modelUsage` — только если сценарий задал `modelUsage` (форма —
+`SDKResultMessage.modelUsage` из `sdk.d.ts`, не с живой сессии); по нему
+Qclod считает ставки (`costRates`) и «≈ $» сабагентов.
+
 ## Шаги сценария
 
 | Шаг | Что выдаёт |

@@ -1489,6 +1489,8 @@ export function createFakeSdk(script = {}) {
       num_turns: 1,
       duration_ms: 1234,
       total_cost_usd: script.costUsd ?? 0.0421,
+      // SDKResultMessage.modelUsage, only when a script gives it: per model, camelCase, with costUSD.
+      ...(script.modelUsage ? { modelUsage: script.modelUsage } : {}),
       usage: {
         input_tokens: 12,
         output_tokens: 240,

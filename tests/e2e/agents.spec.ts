@@ -142,6 +142,11 @@ test('написать законченному агенту: «передано
     script: {
       steps: [THREE[0]],
       resumeHoldMs: 4000,
+      // The session's own prices (lane L2): haiku at $1 per million tokens.
+      modelUsage: {
+        'claude-opus-5': { inputTokens: 1000, outputTokens: 1000, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.05 },
+        'claude-haiku-5-5': { inputTokens: 1_000_000, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 1 }
+      },
       nextTurn: [{ kind: 'text', text: 'Передал агенту.' }]
     }
   })
@@ -152,6 +157,8 @@ test('написать законченному агенту: «передано
     await node(win, 'Обзор вставки').click()
     const view = layer(win).locator('[data-testid="agent-view"]')
     await expect(view).toBeVisible()
+    // Its tokens priced at its own model's rate from the session's result.
+    await expect(view.locator('[data-testid="agent-details"]')).toHaveText('18k токенов · ≈ $0.0180 · 7 вызовов · claude-haiku-5-5')
 
     const input = win.locator('[data-testid="agent-composer-input"]:visible')
     await input.fill('Добавь ещё одно предложение о тестах')

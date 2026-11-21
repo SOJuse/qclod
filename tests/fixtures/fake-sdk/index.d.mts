@@ -169,6 +169,8 @@ export interface FakeScript {
   turns?: FakeStep[][]
   sessionId?: string
   costUsd?: number
+  /** result.modelUsage as the SDK gives it: `{ [model]: { inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, costUSD } }`. */
+  modelUsage?: Record<string, Record<string, number>>
   contextPercent?: number
   /** getContextUsage() after the i-th turn answers the i-th entry (1-based); the last one sticks. */
   contextPercentByTurn?: number[]

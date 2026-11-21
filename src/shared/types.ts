@@ -1,3 +1,5 @@
+import type { VoiceSettings } from './voice'
+
 export type TabId = string
 
 /** What a tab's agent is doing right now. */
@@ -542,6 +544,8 @@ export interface AppSettings {
   autoAnswerMinutes: number
   /** Start Qclod when Windows starts (an installed build only). */
   openAtLogin: boolean
+  /** Stage 5: voice input — the chosen model and the replacement dictionary. */
+  voice: VoiceSettings
   defaults: LaunchOverrides
 }
 

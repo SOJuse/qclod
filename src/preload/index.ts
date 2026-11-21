@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { CHANNELS } from '../shared/channels'
+import type { VoiceErrorCode, VoiceEvent, VoiceModelId, VoiceModelsSnapshot } from '../shared/voice'
 import type {
   EnvironmentReport,
   LoginProgress,
@@ -220,7 +221,24 @@ const api = {
     ipcRenderer.invoke(CHANNELS.autonomyHold, tabId, cardId),
   /** «Ответить сейчас»: what the running timer would do, done at once. */
   autonomyAnswerNow: (tabId: string, cardId: string): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.autonomyAnswerNow, tabId, cardId)
+    ipcRenderer.invoke(CHANNELS.autonomyAnswerNow, tabId, cardId),
+
+  // — Stage 5: voice
+  voice: {
+    models: (): Promise<VoiceModelsSnapshot> => ipcRenderer.invoke(CHANNELS.voiceModels),
+    download: (id: VoiceModelId): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceDownload, id),
+    cancelDownload: (id: VoiceModelId): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.voiceCancelDownload, id),
+    remove: (id: VoiceModelId): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceDelete, id),
+    begin: (tabId: TabId): Promise<{ session: string } | { error: VoiceErrorCode }> =>
+      ipcRenderer.invoke(CHANNELS.voiceBegin, tabId),
+    end: (session: string): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceEnd, session),
+    audio: (session: string, pcm: Float32Array): void =>
+      ipcRenderer.send(CHANNELS.voiceAudio, session, pcm),
+    openMicSettings: (): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceOpenMicSettings),
+    onEvent: (cb: (e: VoiceEvent) => void) => on(CHANNELS.voiceEvent, cb),
+    onModelsChanged: (cb: (s: VoiceModelsSnapshot) => void) => on(CHANNELS.voiceModelsChanged, cb)
+  }
 }
 
 export type QclodApi = typeof api

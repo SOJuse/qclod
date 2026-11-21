@@ -97,6 +97,32 @@ describe('ipc channel contract', () => {
     expect(INVOKE_CHANNELS).toContain('autonomy:answerNow')
   })
 
+  test('этап 5: каналы голоса — invoke, send и события, значения не пересекаются', () => {
+    const invoke = {
+      voiceModels: 'voice:models',
+      voiceDownload: 'voice:download',
+      voiceCancelDownload: 'voice:cancelDownload',
+      voiceDelete: 'voice:delete',
+      voiceBegin: 'voice:begin',
+      voiceEnd: 'voice:end',
+      voiceOpenMicSettings: 'voice:openMicSettings'
+    } as const
+    for (const [key, value] of Object.entries(invoke)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(INVOKE_CHANNELS).toContain(value)
+    }
+    expect(CHANNELS.voiceAudio).toBe('voice:audio')
+    expect(SEND_CHANNELS).toContain('voice:audio')
+    expect(INVOKE_CHANNELS).not.toContain('voice:audio')
+    const events = { voiceEvent: 'voice:event', voiceModelsChanged: 'voice:modelsChanged' } as const
+    for (const [key, value] of Object.entries(events)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(EVENT_CHANNELS).toContain(value)
+      expect(INVOKE_CHANNELS).not.toContain(value)
+    }
+    expect(CHANNELS.voiceStart).toBe('voice:start')
+  })
+
   test('терминальных каналов v1 больше нет', () => {
     // The pty is gone; a channel that outlives its feature is a trap for the
     // next reader.

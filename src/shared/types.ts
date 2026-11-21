@@ -123,6 +123,8 @@ export type RibbonItem =
       at?: number
       /** Sent by Qclod itself («продолжай» after a crash, a limit or a restore), not by the person. */
       auto?: true
+      /** этап 4: the person wrote this to a subagent; the main agent passes it on. */
+      relay?: { cardId: string; agent: string }
     })
   /** The agent finished a turn: when, and how long the turn took. */
   | (RibbonBase & { kind: 'turnEnd'; at: number; durationMs?: number; failed?: true })
@@ -169,6 +171,30 @@ export type RibbonItem =
       tokens?: number
       durationMs?: number
       toolCalls?: number
+      // — этап 4
+      /** AgentInput.prompt, at most 8000 characters. */
+      prompt?: string
+      /** AgentInput.name — the address for SendMessage while the agent works. */
+      label?: string
+      /** AgentOutput.resolvedModel (or async_launched.resolvedModel). */
+      model?: string
+      /** ms since the epoch; in history — from the transcript line's timestamp. */
+      startedAt?: number
+      endedAt?: number
+      /** 2 and more once SendMessage has resumed it. */
+      runs?: number
+    })
+  /** этап 4: one message of the conversation with a subagent, in its ribbon. */
+  | (RibbonBase & {
+      kind: 'agentMessage'
+      /** person — набрал человек в ленте сабагента; main — главный агент сам вызвал SendMessage. */
+      from: 'person' | 'main'
+      text: string
+      at?: number
+      /** Only with from: 'person'. */
+      relayId?: string
+      /** Only with from: 'person'. */
+      state?: RelayState
     })
   | (RibbonBase & {
       kind: 'permission'
@@ -237,6 +263,29 @@ export type RibbonItem =
     })
 
 export type NoticeAction = 'login' | 'terminal'
+
+// ---------------------------------------------------- этап 4: сабагенты
+
+export type SubagentItem = Extract<RibbonItem, { kind: 'subagent' }>
+
+/**
+ * What became of a message the person wrote to a subagent: sent — waiting for
+ * the main agent; read — the main agent took it; passed — it called
+ * SendMessage to that agent; cancelled — it never went.
+ */
+export type RelayState = 'sent' | 'read' | 'passed' | 'cancelled'
+
+export type SubagentSendResult =
+  | { ok: true }
+  | { ok: false; reason: 'empty' | 'unknown-agent' | 'not-started' | 'no-send-message' | 'not-running' }
+
+export type SubagentStopResult = 'stopping' | 'not-running' | 'not-started' | 'unsupported' | 'failed'
+
+/** USD per token, worked out from the session's own result.modelUsage. */
+export interface CostRates {
+  byModel: Record<string, number>
+  average: number
+}
 
 export interface TodoItem {
   content: string
@@ -320,6 +369,8 @@ export interface PanelData {
   backgroundTasks: BackgroundTask[]
   /** What Qclod is about to do by itself: answer timers, a limit wait, giving up (stage 3). */
   autonomy: AutonomyView
+  /** этап 4: what a token costs, for a subagent's estimate; null until the first result. */
+  costRates: CostRates | null
 }
 
 // ----------------------------------------------------- stage 3: autonomy
@@ -366,6 +417,8 @@ export interface QueuedMessage {
   attachments: number
   state: QueuedState
   canSendNow: boolean
+  /** этап 4: a message to a subagent, passed on by the main agent — the strip offers no «Изменить». */
+  relay?: true
 }
 
 /**
@@ -375,6 +428,11 @@ export interface QueuedMessage {
 export interface BackgroundTask {
   taskId: string
   toolUseId?: string
+  /** этап 4: a shell command or a subagent. */
+  kind: 'command' | 'agent'
+  subagentType?: string
+  /** task_progress.summary */
+  summary?: string
   /** task_type as the SDK names it: local_bash, monitor, … */
   type: string
   description: string

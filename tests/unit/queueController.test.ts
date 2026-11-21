@@ -26,7 +26,8 @@ function stubHost(): {
     remember: vi.fn(),
     emitQueue: vi.fn(),
     notice: vi.fn(),
-    cancelWaits: vi.fn()
+    cancelWaits: vi.fn(),
+    relayCancelled: vi.fn()
   }
   return { host: host as never, state, driver }
 }
@@ -82,5 +83,48 @@ describe('QueueController', () => {
     expect(host.notice).toHaveBeenCalledTimes(1)
     expect(host.notice).toHaveBeenCalledWith('Сообщение не дошло до агента: ход прервали — «два»', 'error')
     expect(queue.size).toBe(0)
+  })
+})
+
+describe('QueueController: этап 4 — поручение сабагенту', () => {
+  const relay = { relayId: 'rel-1', cardId: 'r5', agent: 'Explore', text: 'проверь тесты' }
+  const instruction = { text: 'Передай агенту a1 …\n\nпроверь тесты', attachments: [] }
+
+  function withRelayQueued(): ReturnType<typeof stubHost> & { queue: QueueController; uuid: string } {
+    const stub = stubHost()
+    const queue = new QueueController(stub.host)
+    queue.onInit({ type: 'system', subtype: 'init', capabilities: ['interrupt_receipt_v1'] })
+    queue.submit(instruction, { priority: 'next', relay })
+    const uuid = queue.view()[0]!.id
+    for (const fn of Object.values(stub.host)) fn.mockClear()
+    return { ...stub, queue, uuid }
+  }
+
+  test('в плашке — «→ агенту …» с relay; прочитанное показывается с relay', () => {
+    const { queue, host, uuid } = withRelayQueued()
+    expect(queue.view()[0]).toMatchObject({ text: '→ агенту Explore: проверь тесты', relay: true })
+    queue.onLifecycle({ type: 'command_lifecycle', command_uuid: uuid, state: 'started' })
+    expect(host.showUser).toHaveBeenCalledWith(instruction, instruction.text, null, { relay })
+  })
+
+  test('снятое CLI без спроса — relayCancelled и notice с текстом человека', () => {
+    const { queue, host, uuid } = withRelayQueued()
+    queue.onLifecycle({ type: 'command_lifecycle', command_uuid: uuid, state: 'cancelled' })
+    expect(host.relayCancelled).toHaveBeenCalledWith(relay)
+    expect(host.notice).toHaveBeenCalledWith('Сообщение не дошло до агента: ход прервали — «проверь тесты»', 'error')
+  })
+
+  test('take отдаёт поручение с relay, requeue у преемника его сохраняет', () => {
+    const { queue } = withRelayQueued()
+    const taken = queue.take()
+    expect(taken).toEqual([{ ...instruction, relay }])
+
+    const next = stubHost()
+    const successor = new QueueController(next.host)
+    successor.onInit({ type: 'system', subtype: 'init', capabilities: ['interrupt_receipt_v1'] })
+    successor.requeue(taken)
+    expect(successor.view()[0]).toMatchObject({ text: '→ агенту Explore: проверь тесты', relay: true })
+    // The driver gets the instruction, not the relay record.
+    expect(next.driver.sent.at(-1)).toEqual(instruction)
   })
 })

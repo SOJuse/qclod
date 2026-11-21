@@ -4167,3 +4167,331 @@ describe('AgentSession: автономность', () => {
     await session.dispose()
   })
 })
+
+// ---------------------------------------------------------------- этап 4
+
+describe('AgentSession: этап 4 — написать сабагенту', () => {
+  const AID = 'a00000000000000a1'
+  type Sub = Extract<RibbonItem, { kind: 'subagent' }>
+  type AgentMsg = Extract<RibbonItem, { kind: 'agentMessage' }>
+  const cards = (s: AgentSession): Sub[] => s.items.filter((i): i is Sub => i.kind === 'subagent')
+  const messagesOf = (s: AgentSession, cardId: string): AgentMsg[] =>
+    s.items.filter((i): i is AgentMsg => i.kind === 'agentMessage' && i.parentId === cardId)
+  const bubbles = (s: AgentSession): Array<Extract<RibbonItem, { kind: 'user' }>> =>
+    s.items.filter((i): i is Extract<RibbonItem, { kind: 'user' }> => i.kind === 'user')
+  function options(driver: ReturnType<typeof createFakeSdk>): Array<SendOptions | undefined> {
+    const got: Array<SendOptions | undefined> = []
+    const send = driver.send.bind(driver)
+    driver.send = (input, opts) => {
+      got.push(opts)
+      send(input, opts)
+    }
+    return got
+  }
+  const quickAgent = { kind: 'subagent' as const, name: 'счётчик', agentType: 'Explore', agentId: AID, steps: [{ kind: 'text' as const, text: '7' }] }
+  const longAgent = { kind: 'subagent' as const, name: 'долгий', agentType: 'Explore', agentId: AID, holdMs: 60_000, steps: [] }
+
+  async function upWith(script: FakeScript): Promise<{ session: AgentSession; driver: ReturnType<typeof createFakeSdk>; rec: Recorder }> {
+    const made = makeSession(script)
+    const rec = watch(made.session)
+    await made.session.start()
+    return { ...made, rec }
+  }
+
+  test('написать законченному агенту: главному уходит поручение, SendMessage возобновляет того же агента, сообщение passed', async () => {
+    const { session, driver } = await upWith({ steps: [], turns: [[quickAgent]], resumeReply: 'восемь' })
+    session.send({ text: 'посчитай', attachments: [] })
+    await vi.waitFor(() => expect(cards(session)[0]?.state).toBe('done'))
+    await vi.waitFor(() => expect(session.status).toBe('idle'))
+    const card = cards(session)[0]!
+
+    expect(await session.sendToSubagent(card.id, 'напиши про 8')).toEqual({ ok: true })
+    expect(driver.sent.at(-1)!.text).toBe(
+      `Передай агенту ${AID} через SendMessage (to: "${AID}") это сообщение от пользователя, дословно:\n\nнапиши про 8`
+    )
+    await vi.waitFor(() => expect(driver.relayed).toEqual([{ to: AID, message: 'напиши про 8' }]))
+    await vi.waitFor(() => expect(messagesOf(session, card.id).map((m) => [m.from, m.state])).toEqual([['person', 'passed']]))
+    await vi.waitFor(() => expect(cards(session)[0]).toMatchObject({ state: 'done', runs: 2 }))
+    expect(cards(session)).toHaveLength(1)
+    await session.dispose()
+  })
+
+  test('написать работающему на переднем плане: сначала backgroundTask, затем next; поручение прочитано до конца агента', async () => {
+    const { session, driver, rec } = await upWith({
+      steps: [],
+      turns: [[longAgent, { kind: 'text', text: 'главный дальше' }]]
+    })
+    const sentWith = options(driver)
+    session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(cards(session)[0]?.taskId).toBe(AID))
+    const card = cards(session)[0]!
+    expect(card.state).toBe('running')
+
+    expect(await session.sendToSubagent(card.id, 'и проверь README')).toEqual({ ok: true })
+    expect(driver.backgrounded).toEqual([card.toolUseId])
+    expect(sentWith.at(-1)).toMatchObject({ priority: 'next' })
+
+    await vi.waitFor(() => expect(cards(session)[0]!.state).toBe('done'), { timeout: 3000 })
+    const at = (match: (c: RibbonChange) => boolean): number => rec.changes.findIndex(match)
+    const relay = messagesOf(session, card.id)[0]!
+    const read = at((c) => c.kind === 'update' && c.id === relay.id && (c.patch as { state?: string }).state === 'read')
+    const done = at((c) => c.kind === 'update' && c.id === card.id && (c.patch as { state?: string }).state === 'done')
+    expect(read).toBeGreaterThan(-1)
+    expect(read).toBeLessThan(done)
+    expect(relay.state).toBe('passed')
+    await session.dispose()
+  })
+
+  test('увести в фон нельзя (backgroundTasksDisabled): поручение уходит с priority now', async () => {
+    const { session, driver } = await upWith({ backgroundTasksDisabled: true, steps: [], turns: [[longAgent]] })
+    const sentWith = options(driver)
+    session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(cards(session)[0]?.taskId).toBe(AID))
+    const card = cards(session)[0]!
+
+    expect(await session.sendToSubagent(card.id, 'срочно')).toEqual({ ok: true })
+    expect(driver.backgrounded).toEqual([card.toolUseId])
+    expect(sentWith.at(-1)).toMatchObject({ priority: 'now' })
+    await vi.waitFor(() => expect(driver.relayed).toEqual([{ to: AID, message: 'срочно' }]), { timeout: 3000 })
+    await session.dispose()
+  })
+
+  test('Стоп с поручением в плашке: в поле ввода не возвращается, сообщение cancelled', async () => {
+    const { session, rec } = await upWith({
+      steps: [],
+      turns: [[quickAgent], [{ kind: 'tool', name: 'Bash', input: { command: 'npm test' }, pauseMs: 1500 }]]
+    })
+    session.send({ text: 'раз', attachments: [] })
+    await vi.waitFor(() => expect(cards(session)[0]?.state).toBe('done'))
+    await vi.waitFor(() => expect(session.status).toBe('idle'))
+    const card = cards(session)[0]!
+    session.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() => expect(session.items.some((i) => i.kind === 'tool' && i.name === 'Bash')).toBe(true))
+
+    expect(await session.sendToSubagent(card.id, 'проверь тесты')).toEqual({ ok: true })
+    await vi.waitFor(() => expect(session.panel.queue[0]?.state).toBe('queued'))
+    // В плашке поручение видно как «→ агенту …», с relay — без «Изменить».
+    expect(session.panel.queue[0]).toMatchObject({ text: '→ агенту Explore: проверь тесты', relay: true })
+
+    const returned = await session.interrupt()
+    expect(returned).toEqual([])
+    await vi.waitFor(() => expect(messagesOf(session, card.id)[0]!.state).toBe('cancelled'))
+    expect(session.panel.queue).toEqual([])
+    expect(rec.changes.some((c) => c.kind === 'append' && c.item.kind === 'user' && c.item.text.includes('Передай агенту'))).toBe(false)
+    await session.dispose()
+  })
+
+  test('«Отменить» поручения в плашке: null, не в поле ввода; сообщение cancelled', async () => {
+    const { session } = await upWith({
+      steps: [],
+      turns: [[quickAgent], [{ kind: 'tool', name: 'Bash', input: { command: 'npm test' }, pauseMs: 1500 }]]
+    })
+    session.send({ text: 'раз', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('idle'))
+    const card = cards(session)[0]!
+    session.send({ text: 'два', attachments: [] })
+    await vi.waitFor(() => expect(session.items.some((i) => i.kind === 'tool' && i.name === 'Bash')).toBe(true))
+    await session.sendToSubagent(card.id, 'проверь тесты')
+    await vi.waitFor(() => expect(session.panel.queue[0]?.state).toBe('queued'))
+
+    expect(await session.cancelQueued(session.panel.queue[0]!.id)).toBeNull()
+    expect(messagesOf(session, card.id)[0]!.state).toBe('cancelled')
+    expect(session.panel.queue).toEqual([])
+    await session.dispose()
+  })
+
+  test('CLI без SendMessage: no-send-message, главному ничего не ушло', async () => {
+    const { session, driver } = await upWith({ noSendMessage: true, steps: [], turns: [[quickAgent]] })
+    session.send({ text: 'раз', attachments: [] })
+    await vi.waitFor(() => expect(cards(session)[0]?.state).toBe('done'))
+    const sent = driver.sent.length
+    expect(await session.sendToSubagent(cards(session)[0]!.id, 'привет')).toEqual({ ok: false, reason: 'no-send-message' })
+    expect(driver.sent).toHaveLength(sent)
+    expect(session.items.some((i) => i.kind === 'agentMessage')).toBe(false)
+    await session.dispose()
+  })
+
+  test('карточка без task_id: not-started; чужая — unknown-agent; пустой текст — empty; закрытая сессия — not-running', async () => {
+    const { session, driver } = await upWith({ steps: [] })
+    session.handle({
+      type: 'assistant',
+      session_id: 's',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tX', name: 'Agent', input: { description: 'x' } }] }
+    })
+    const card = cards(session)[0]!
+    expect(await session.sendToSubagent(card.id, 'привет')).toEqual({ ok: false, reason: 'not-started' })
+    expect(await session.sendToSubagent('r999', 'привет')).toEqual({ ok: false, reason: 'unknown-agent' })
+    const text = session.items.find((i) => i.kind !== 'subagent')
+    if (text) expect(await session.sendToSubagent(text.id, 'привет')).toEqual({ ok: false, reason: 'unknown-agent' })
+    expect(await session.sendToSubagent(card.id, '   ')).toEqual({ ok: false, reason: 'empty' })
+    expect(driver.sent).toEqual([])
+    await session.dispose()
+    expect(await session.sendToSubagent(card.id, 'привет')).toEqual({ ok: false, reason: 'not-running' })
+  })
+
+  test('пузырь в главной ленте — текст человека с relay, не текст поручения', async () => {
+    const { session } = await upWith({ steps: [], turns: [[quickAgent]] })
+    session.send({ text: 'посчитай', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('idle'))
+    const card = cards(session)[0]!
+    await session.sendToSubagent(card.id, 'напиши про 8')
+    await vi.waitFor(() => expect(bubbles(session).at(-1)?.relay).toBeTruthy())
+    expect(bubbles(session).at(-1)).toMatchObject({ text: 'напиши про 8', relay: { cardId: card.id, agent: 'Explore' } })
+    expect(bubbles(session).some((b) => b.text.includes('Передай агенту'))).toBe(false)
+    await vi.waitFor(() => expect(session.status).toBe('idle'))
+    expect(bubbles(session).some((b) => b.text.includes('Передай агенту'))).toBe(false)
+    await session.dispose()
+  })
+})
+
+describe('AgentSession: этап 4 — остановить сабагента', () => {
+  const AID = 'a00000000000000s1'
+  type Sub = Extract<RibbonItem, { kind: 'subagent' }>
+  const cards = (s: AgentSession): Sub[] => s.items.filter((i): i is Sub => i.kind === 'subagent')
+  const notices = (s: AgentSession): string[] =>
+    s.items.filter((i) => i.kind === 'notice').map((i) => (i as { text: string }).text)
+  const longAgent = { kind: 'subagent' as const, name: 'долгий', agentType: 'Explore', agentId: AID, holdMs: 60_000, steps: [] }
+
+  async function upWith(script: FakeScript): Promise<{ session: AgentSession; driver: ReturnType<typeof createFakeSdk> }> {
+    const made = makeSession(script)
+    await made.session.start()
+    return made
+  }
+
+  test('фоновый: stopTask, карточка stopped по кадру', async () => {
+    const { session, driver } = await upWith({
+      steps: [],
+      turns: [[{ kind: 'backgroundAgent', name: 'фон', agentType: 'Explore', agentId: AID, finish: null }]]
+    })
+    session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(cards(session)[0]?.taskId).toBe(AID))
+    await vi.waitFor(() => expect(session.status).toBe('idle'))
+    const card = cards(session)[0]!
+    expect(card).toMatchObject({ background: true, state: 'running' })
+
+    expect(await session.stopSubagent(card.id)).toBe('stopping')
+    expect(driver.stopped).toEqual([AID])
+    expect(driver.backgrounded).toEqual([])
+    await vi.waitFor(() => expect(cards(session)[0]!.state).toBe('stopped'))
+    await session.dispose()
+  })
+
+  test('на переднем плане: backgroundTask, затем stopTask', async () => {
+    const { session, driver } = await upWith({ steps: [], turns: [[longAgent, { kind: 'text', text: 'главный дальше' }]] })
+    session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(cards(session)[0]?.taskId).toBe(AID))
+    const card = cards(session)[0]!
+
+    expect(await session.stopSubagent(card.id)).toBe('stopping')
+    expect(driver.backgrounded).toEqual([card.toolUseId])
+    expect(driver.stopped).toEqual([AID])
+    await vi.waitFor(() => expect(cards(session)[0]!.state).toBe('stopped'))
+    // The main agent's turn goes on: the call returned async_launched, not an error.
+    await vi.waitFor(() => expect(texts(session.items)).toContain('главный дальше'))
+    expect(cards(session)[0]!.state).toBe('stopped')
+    await session.dispose()
+  })
+
+  test('увести в фон нельзя: сразу stopTask, агент на переднем плане остановлен', async () => {
+    const { session, driver } = await upWith({ backgroundTasksDisabled: true, steps: [], turns: [[longAgent]] })
+    session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(cards(session)[0]?.taskId).toBe(AID))
+    expect(await session.stopSubagent(cards(session)[0]!.id)).toBe('stopping')
+    expect(driver.stopped).toEqual([AID])
+    await vi.waitFor(() => expect(cards(session)[0]!.state).toBe('stopped'))
+    await session.dispose()
+  })
+
+  test('foregroundStop ignored: через 10 с notice «не остановился»', async () => {
+    const { session } = await upWith({
+      foregroundStop: 'ignored',
+      backgroundTasksDisabled: true,
+      steps: [],
+      turns: [[longAgent]]
+    })
+    session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(cards(session)[0]?.taskId).toBe(AID))
+    const card = cards(session)[0]!
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      expect(await session.stopSubagent(card.id)).toBe('stopping')
+      await vi.advanceTimersByTimeAsync(9_000)
+      expect(notices(session)).not.toContain('Агент «Explore» не остановился за 10 секунд.')
+      await vi.advanceTimersByTimeAsync(1_100)
+      expect(notices(session)).toContain('Агент «Explore» не остановился за 10 секунд.')
+      const notice = session.items.find((i) => i.kind === 'notice' && i.text.includes('не остановился'))!
+      expect(notice).toMatchObject({ tone: 'error' })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(cards(session)[0]!.state).toBe('running')
+    await session.dispose()
+  })
+
+  test('сторож снимается кадром остановки и при dispose', async () => {
+    const { session } = await upWith({
+      steps: [],
+      turns: [[{ kind: 'backgroundAgent', name: 'фон', agentType: 'Explore', agentId: AID, finish: null }]]
+    })
+    session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('idle'))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await session.stopSubagent(cards(session)[0]!.id)
+      await vi.advanceTimersByTimeAsync(50)
+      expect(cards(session)[0]!.state).toBe('stopped')
+      await vi.advanceTimersByTimeAsync(11_000)
+      expect(notices(session).some((t) => t.includes('не остановился'))).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+    await session.dispose()
+
+    const ignored = await upWith({ foregroundStop: 'ignored', backgroundTasksDisabled: true, steps: [], turns: [[longAgent]] })
+    ignored.session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(cards(ignored.session)[0]?.taskId).toBe(AID))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await ignored.session.stopSubagent(cards(ignored.session)[0]!.id)
+      const rec = watch(ignored.session)
+      void ignored.session.dispose()
+      await vi.advanceTimersByTimeAsync(11_000)
+      expect(rec.changes.some((c) => c.kind === 'append' && c.item.kind === 'notice' && c.item.text.includes('не остановился'))).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('законченный: not-running, драйвер не звали; без task_id — not-started', async () => {
+    const { session, driver } = await upWith({
+      steps: [],
+      turns: [[{ kind: 'subagent', name: 'быстрый', agentId: AID, steps: [] }]]
+    })
+    session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(cards(session)[0]?.state).toBe('done'))
+    expect(await session.stopSubagent(cards(session)[0]!.id)).toBe('not-running')
+    expect(await session.stopSubagent('r999')).toBe('not-running')
+    session.handle({
+      type: 'assistant',
+      session_id: 's',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tX', name: 'Agent', input: { description: 'x' } }] }
+    })
+    expect(await session.stopSubagent(cards(session).at(-1)!.id)).toBe('not-started')
+    expect(driver.stopped).toEqual([])
+    expect(driver.backgrounded).toEqual([])
+    await session.dispose()
+  })
+
+  test('stopTaskError: failed', async () => {
+    const { session } = await upWith({
+      stopTaskError: 'CLI отказал',
+      steps: [],
+      turns: [[{ kind: 'backgroundAgent', name: 'фон', agentId: AID, finish: null }]]
+    })
+    session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(cards(session)[0]?.taskId).toBe(AID))
+    expect(await session.stopSubagent(cards(session)[0]!.id)).toBe('failed')
+    expect(cards(session)[0]!.state).toBe('running')
+    await session.dispose()
+  })
+})

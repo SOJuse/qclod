@@ -123,6 +123,13 @@ describe('ipc channel contract', () => {
     expect(CHANNELS.voiceStart).toBe('voice:start')
   })
 
+  test('этап 4: agent:subagentSend и agent:subagentStop — invoke-каналы', () => {
+    expect(CHANNELS.agentSubagentSend).toBe('agent:subagentSend')
+    expect(CHANNELS.agentSubagentStop).toBe('agent:subagentStop')
+    expect(INVOKE_CHANNELS).toContain('agent:subagentSend')
+    expect(INVOKE_CHANNELS).toContain('agent:subagentStop')
+  })
+
   test('терминальных каналов v1 больше нет', () => {
     // The pty is gone; a channel that outlives its feature is a trap for the
     // next reader.

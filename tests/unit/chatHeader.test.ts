@@ -39,6 +39,11 @@ describe('ChatHeader', () => {
     expect(none).not.toContain('Агенты (')
   })
 
+  test('у кнопки «Агенты» есть подсказка', () => {
+    const html = render({ onOpenAgents: noop, agentsCount: 1 })
+    expect(/data-testid="open-agents"[^>]* title="[^"]+"|title="[^"]+"[^>]*data-testid="open-agents"/.test(html)).toBe(true)
+  })
+
   test('pane-title — только в сплите', () => {
     expect(has(render({ split: false }), 'pane-title')).toBe(false)
     const split = render({ split: true })

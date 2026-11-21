@@ -62,3 +62,12 @@ describe('QueueStrip', () => {
     expect(render([msg()])).not.toContain('disabled')
   })
 })
+
+describe('QueueStrip: поручение сабагенту (этап 4)', () => {
+  test('при relay: true нет «Изменить», «Убрать» остаётся', () => {
+    const html = render([msg({ relay: true })])
+    expect(html).not.toContain('data-testid="queue-edit"')
+    expect(html).toContain('data-testid="queue-cancel"')
+    expect(render([msg()])).toContain('data-testid="queue-edit"')
+  })
+})

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Image as ImageIcon, Smartphone } from 'lucide-react'
+import { ArrowRight, Image as ImageIcon, Smartphone } from 'lucide-react'
 import { clockTime, seconds } from '../../shared/format'
 import type { Attachment, RibbonItem as Item } from '../../shared/types'
 import type { CardAnswers } from '../chat/cardAnswers'
@@ -12,6 +12,7 @@ import { QuestionCard } from './cards/QuestionCard'
 import { NO_STEPS, SubagentCard } from './SubagentCard'
 import { ToolCard } from './ToolCard'
 import { Markdown } from '../markdown/Markdown'
+import { AgentMessage } from './agents/AgentMessage'
 import { ERROR_ICON } from '../ui/icons'
 import { PIECE, mostlyCyrillic, textPieces } from '../ui/longText'
 
@@ -248,6 +249,13 @@ export function RibbonRow({
                 <AutoTag />
               </div>
             )}
+            {/* этап 4: written to a subagent; the main agent passes it on. */}
+            {item.relay && (
+              <div className="row-user-relay" data-testid="user-relay">
+                <ArrowRight size={12} aria-hidden="true" />
+                агенту {item.relay.agent}:
+              </div>
+            )}
             <UserText text={item.text} />
             {item.at !== undefined && (
               <div
@@ -335,6 +343,9 @@ export function RibbonRow({
 
       case 'notice':
         return <NoticeRow item={item} tabId={tabId} />
+
+      case 'agentMessage':
+        return <AgentMessage item={item} />
 
       case 'turnEnd':
         return (

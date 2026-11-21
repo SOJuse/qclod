@@ -113,7 +113,11 @@ export const CHANNELS = Object.freeze({
   voiceAudio: 'voice:audio',
   // main -> renderer (events)
   voiceEvent: 'voice:event',
-  voiceModelsChanged: 'voice:modelsChanged'
+  voiceModelsChanged: 'voice:modelsChanged',
+  // этап 4: сабагенты
+  // renderer -> main (invoke)
+  agentSubagentSend: 'agent:subagentSend',
+  agentSubagentStop: 'agent:subagentStop'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -190,7 +194,10 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.voiceDelete,
   CHANNELS.voiceBegin,
   CHANNELS.voiceEnd,
-  CHANNELS.voiceOpenMicSettings
+  CHANNELS.voiceOpenMicSettings,
+  // этап 4: сабагенты
+  CHANNELS.agentSubagentSend,
+  CHANNELS.agentSubagentStop
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([

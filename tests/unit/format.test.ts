@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { bytes, clip, compactNumber, lines, plural, seconds, shortWhen, untilReset } from '../../src/shared/format'
+import { bytes, clip, compactNumber, lines, plural, seconds, shortWhen, untilReset, usd } from '../../src/shared/format'
 
 describe('format', () => {
   test('plural: один, несколько, много', () => {
@@ -69,4 +69,12 @@ describe('format: короткая дата в боковой панели', () 
   test('другой год — полная дата', () => expect(shortWhen(new Date(2025, 10, 12, 10, 0).getTime(), now)).toBe('12.11.2025'))
   test('1 января: вчера — это 31 декабря прошлого года', () =>
     expect(shortWhen(new Date(2025, 11, 31, 9, 0).getTime(), new Date(2026, 0, 1, 8, 0).getTime())).toBe('вчера'))
+})
+
+describe('usd', () => {
+  test('до доллара — четыре знака, дальше — два', () => {
+    expect(usd(0.0421)).toBe('$0.0421')
+    expect(usd(1.5)).toBe('$1.50')
+    expect(usd(0)).toBe('$0.0000')
+  })
 })

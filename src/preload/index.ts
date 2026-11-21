@@ -19,6 +19,8 @@ import type {
   RendererErrorReport,
   ResolvedPath,
   RibbonEvent,
+  SubagentSendResult,
+  SubagentStopResult,
   RibbonSnapshot,
   SessionSummary,
   StatusEvent,
@@ -238,7 +240,14 @@ const api = {
     openMicSettings: (): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceOpenMicSettings),
     onEvent: (cb: (e: VoiceEvent) => void) => on(CHANNELS.voiceEvent, cb),
     onModelsChanged: (cb: (s: VoiceModelsSnapshot) => void) => on(CHANNELS.voiceModelsChanged, cb)
-  }
+  },
+  // — этап 4: сабагенты. Из окна — только id карточки ленты и текст.
+  /** Пишет сабагенту этой карточки через главного агента. */
+  sendToSubagent: (tabId: TabId, cardId: string, text: string): Promise<SubagentSendResult> =>
+    ipcRenderer.invoke(CHANNELS.agentSubagentSend, tabId, cardId, text),
+  /** Останавливает сабагента этой карточки. */
+  stopSubagent: (tabId: TabId, cardId: string): Promise<SubagentStopResult> =>
+    ipcRenderer.invoke(CHANNELS.agentSubagentStop, tabId, cardId)
 }
 
 export type QclodApi = typeof api

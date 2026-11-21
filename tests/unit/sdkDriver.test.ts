@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
-import { createSdkDriver, toSdkMessage } from '../../src/main/agent/sdkDriver'
+import { createSdkDriver, sdkQueryOptions, toSdkMessage } from '../../src/main/agent/sdkDriver'
 import type { DriverOptions } from '../../src/main/agent/driver'
 import type { ToolPermissionContext } from '../../src/main/agent/permissionContext'
 import { toPermissionContext } from '../../src/main/agent/permissionContext'
@@ -564,5 +564,58 @@ describe('sdkDriver: отмена и квитанция прерывания', (
     expect(receipt).toEqual({ stillQueued: ['a'] })
     expect(receipt).not.toHaveProperty('cancelled')
     await d2.dispose()
+  })
+})
+
+describe('sdkQueryOptions и увод в фон (этап 4)', () => {
+  test('три поля сабагентов включены, прежние опции на месте', () => {
+    const options = sdkQueryOptions(
+      driverOptions(async () => ({ behavior: 'allow' })),
+      (async () => ({ behavior: 'allow' })) as never
+    )
+    expect(options['forwardSubagentText']).toBe(true)
+    expect(options['agentProgressSummaries']).toBe(true)
+    expect(options['perTaskStopAffordance']).toBe(true)
+    expect(options['cwd']).toBe('C:/проект')
+    expect(options['pathToClaudeCodeExecutable']).toBe('C:/bin/claude.exe')
+    expect(options['includePartialMessages']).toBe(true)
+    expect(options['settingSources']).toEqual(['user', 'project', 'local'])
+  })
+
+  test('query() получает те же поля', async () => {
+    const query = mockQuery()
+    const driver = await createSdkDriver(allowAll())
+    expect(query.options['forwardSubagentText']).toBe(true)
+    expect(query.options['perTaskStopAffordance']).toBe(true)
+    await driver.dispose()
+  })
+
+  test('backgroundTask без метода — null', async () => {
+    mockQuery()
+    const driver = await createSdkDriver(allowAll())
+    expect(await driver.backgroundTask('toolu_1')).toBeNull()
+    await driver.dispose()
+  })
+
+  test('backgroundTasks вернул true/false — это и есть ответ', async () => {
+    const backgroundTasks = vi.fn(async (_id: string) => false)
+    mockQuery({ backgroundTasks })
+    const driver = await createSdkDriver(allowAll())
+    expect(await driver.backgroundTask('toolu_1')).toBe(false)
+    expect(backgroundTasks).toHaveBeenCalledWith('toolu_1')
+    backgroundTasks.mockResolvedValueOnce(true)
+    expect(await driver.backgroundTask('toolu_2')).toBe(true)
+    await driver.dispose()
+  })
+
+  test('backgroundTasks бросил — null', async () => {
+    mockQuery({
+      backgroundTasks: async () => {
+        throw new Error('нет')
+      }
+    })
+    const driver = await createSdkDriver(allowAll())
+    expect(await driver.backgroundTask('toolu_1')).toBeNull()
+    await driver.dispose()
   })
 })

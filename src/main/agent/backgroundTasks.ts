@@ -41,11 +41,14 @@ function reopened(task: BackgroundTask): BackgroundTask {
  * `task_started`, `task_updated`, `task_notification` and
  * `background_tasks_changed`.
  *
- * Subagents (`local_agent`) are left out — they have their own cards — and
- * so is whatever the SDK marks as not activity (`ambient`, `skip_transcript`).
- * A shell the SDK registered in the foreground (`is_backgrounded: false`)
+ * Shell commands are listed as `kind: 'command'`, subagents (`local_agent`)
+ * as `kind: 'agent'` — but only the ones that run in the background; a
+ * foreground agent has its card in the ribbon. Whatever the SDK marks as not
+ * activity (`ambient`, `skip_transcript`) is left out.
+ * A task the SDK registered in the foreground (`is_backgrounded: false`)
  * blocks its own tool call and is not listed unless it is later moved to the
- * background (ruling C15).
+ * background (ruling C15; for an agent, `task_updated is_backgrounded: true`).
+ * A resumed agent (SendMessage) keeps its task_id, so it is the same row.
  */
 export class BackgroundTracker {
   private list: BackgroundTask[] = []
@@ -78,6 +81,8 @@ export class BackgroundTracker {
         return this.onStarted(message)
       case 'task_updated':
         return this.onUpdated(message)
+      case 'task_progress':
+        return this.onProgress(message)
       case 'task_notification':
         return this.onEnded(str(message['task_id']), endStatus(message['status']))
       case 'background_tasks_changed':
@@ -110,7 +115,7 @@ export class BackgroundTracker {
     const taskId = str(m['task_id'])
     if (!taskId || m['ambient'] === true || m['skip_transcript'] === true) return null
     const type = str(m['task_type'])
-    if (type === 'local_agent') return null
+    const isAgent = type === 'local_agent'
 
     const toolUseId = str(m['tool_use_id'])
     const command = toolUseId ? this.commands.get(toolUseId) : undefined
@@ -118,6 +123,8 @@ export class BackgroundTracker {
     const task: BackgroundTask = {
       taskId,
       ...(toolUseId ? { toolUseId } : {}),
+      kind: isAgent ? 'agent' : 'command',
+      ...(isAgent && str(m['subagent_type']) ? { subagentType: str(m['subagent_type']) } : {}),
       type,
       description: str(m['description']),
       ...(command ? { command } : {}),
@@ -133,15 +140,34 @@ export class BackgroundTracker {
       return null
     }
     // A resumed task keeps its task_id: it is the same row, running again.
+    // Its tool_use_id is now the SendMessage call that woke it (probe 05b);
+    // the row keeps the call that started it, as the ribbon's card does.
     const known = this.list.find((t) => t.taskId === taskId)
     if (known) {
       if (known.status === 'running') return null
       this.guessed.delete(taskId)
       this.list = this.list.filter((t) => t !== known)
       const kept = task.command ?? known.command
-      return this.add({ ...task, ...(kept ? { command: kept } : {}) })
+      const call = known.toolUseId ?? task.toolUseId
+      return this.add({ ...task, ...(call ? { toolUseId: call } : {}), ...(kept ? { command: kept } : {}) })
     }
     return this.add(task)
+  }
+
+  /** task_progress.summary: the row's one-line status; the list changes only on new text. */
+  private onProgress(m: Record<string, unknown>): BackgroundTask[] | null {
+    const taskId = str(m['task_id'])
+    const summary = str(m['summary']).trim()
+    if (!taskId || !summary) return null
+    // Not listed yet (still in the foreground): kept for when it moves.
+    const waiting = this.foreground.get(taskId)
+    if (waiting) {
+      this.foreground.set(taskId, { ...waiting, summary })
+      return null
+    }
+    const task = this.list.find((t) => t.taskId === taskId)
+    if (!task || task.summary === summary) return null
+    return this.replace(taskId, (t) => ({ ...t, summary }))
   }
 
   private onUpdated(m: Record<string, unknown>): BackgroundTask[] | null {

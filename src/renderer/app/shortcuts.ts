@@ -21,6 +21,10 @@ export type AppActionId =
   | 'zoomOut'
   | 'zoomReset'
   | 'reload'
+  // этап 7: шаблоны
+  | 'templates'
+  | 'saveDraftAsTemplate'
+  | 'harvestTemplates'
 
 export interface AppActionInfo {
   id: AppActionId
@@ -46,7 +50,11 @@ export const APP_ACTIONS: AppActionInfo[] = [
   { id: 'zoomIn', label: 'Крупнее', keys: 'Ctrl+=' },
   { id: 'zoomOut', label: 'Мельче', keys: 'Ctrl+-' },
   { id: 'zoomReset', label: 'Обычный масштаб', keys: 'Ctrl+0' },
-  { id: 'reload', label: 'Перезагрузить окно', keys: 'Ctrl+R' }
+  { id: 'reload', label: 'Перезагрузить окно', keys: 'Ctrl+R' },
+  // этап 7: шаблоны
+  { id: 'templates', label: 'Шаблоны' },
+  { id: 'saveDraftAsTemplate', label: 'Сохранить черновик как шаблон' },
+  { id: 'harvestTemplates', label: 'Собрать мои шаблоны' }
 ]
 
 /** A tooltip with keys that are not a window action, such as Enter in the input. */

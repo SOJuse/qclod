@@ -14,6 +14,8 @@ import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { CommandPalette } from '../components/CommandPalette'
+import { TemplateManager } from '../components/templates/TemplateManager'
+import { useTemplates } from '../state/useTemplates'
 import { historyToLoad } from '../palette/history'
 import { withMention } from '../palette/files'
 import { withCommand } from '../palette/commands'
@@ -54,6 +56,10 @@ function ThrowInPane(): null {
  */
 export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
+  /** этап 7: the templates sheet; initialBody — «Сохранить черновик как шаблон». */
+  const [templatesSheet, setTemplatesSheet] = useState<{ initialBody?: string } | null>(null)
+  /** этап 7: «Собрать мои шаблоны». */
+  const [, setHarvestOpen] = useState(false)
   const [version, setVersion] = useState('')
   const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
   const [focusToken, setFocusToken] = useState(0)
@@ -201,6 +207,8 @@ export function App(): JSX.Element {
   const activeTabId = useAppStore((s) => s.activeTabId)
   const fileIndexByTab = useAppStore((s) => s.fileIndexByTab)
   const commandsByTab = useAppStore((s) => s.commandsByTab)
+  const hasDraft = useAppStore((s) => (s.draftByTab[s.activeTabId] ?? '').trim() !== '')
+  const templates = useTemplates()
   const panelByTab = useAppStore((s) => s.panelByTab)
   const layout = useAppStore((s) => s.layout)
   const historyByProject = useAppStore((s) => s.historyByProject)
@@ -467,6 +475,16 @@ export function App(): JSX.Element {
           return void window.qclod.zoom('reset')
         case 'reload':
           return void window.qclod.reloadWindow()
+        case 'templates':
+          return setTemplatesSheet({})
+        case 'saveDraftAsTemplate': {
+          const draft = state.draftByTab[state.activeTabId] ?? ''
+          if (draft.trim() === '') return
+          return setTemplatesSheet({ initialBody: draft })
+        }
+        case 'harvestTemplates':
+          setTemplatesSheet(null)
+          return setHarvestOpen(true)
       }
     },
     [activate, newChat, closeActiveTab, togglePalette, togglePanel, toggleSidebar, toggleSplit, restartSession, cycleMode]
@@ -512,9 +530,11 @@ export function App(): JSX.Element {
         files: fileIndexByTab[activeTabId] ?? [],
         filesPending: fileIndexByTab[activeTabId] === undefined,
         commands: withLocalCommands(commandsByTab[activeTabId] ?? []),
+        templates,
+        hasDraft,
         run: paletteRun
       },
-    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, paletteRun]
+    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, templates, hasDraft, paletteRun]
   )
 
   // Window-level shortcuts, by physical key. The handler is registered once and
@@ -707,6 +727,17 @@ export function App(): JSX.Element {
           ctx={paletteCtx}
           {...(palette.scope === undefined ? {} : { initialScope: palette.scope })}
           onClose={() => setPalette(null)}
+          onFocusLost={focusComposer}
+        />
+      )}
+      {templatesSheet && (
+        <TemplateManager
+          {...(templatesSheet.initialBody === undefined ? {} : { initialBody: templatesSheet.initialBody })}
+          onClose={() => setTemplatesSheet(null)}
+          onHarvest={() => {
+            setTemplatesSheet(null)
+            setHarvestOpen(true)
+          }}
           onFocusLost={focusComposer}
         />
       )}

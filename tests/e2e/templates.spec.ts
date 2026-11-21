@@ -70,3 +70,51 @@ test('Ctrl+K «Шаблоны» вставляет текст на место к
     rmSync(profile, { recursive: true, force: true, maxRetries: 3 })
   }
 })
+
+test('менеджер: создать, увидеть в /, удалить; черновик как шаблон', async () => {
+  const { app, win } = await launchQclod({ script: { steps: [] } })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    await win.keyboard.press('Control+k')
+    await win.locator('[data-testid="action-query"]').fill('Шаблоны')
+    await win.locator('[data-testid="action-item"][data-section="commands"]', { hasText: /^Шаблоны$/ }).click()
+    const manager = win.locator('[data-testid="template-manager"]')
+    await expect(manager).toBeVisible()
+    await expect(manager).toContainText('Шаблонов пока нет. Создайте свой или соберите из истории Claude Code.')
+
+    await manager.locator('[data-testid="tpl-new"]').click()
+    await expect(manager.locator('[data-testid="tpl-save"]')).toBeDisabled()
+    await manager.locator('[data-testid="tpl-title"]').fill('Объясни')
+    await manager.locator('[data-testid="tpl-body"]').fill('Объясни, что делает {{файл}}')
+    await manager.locator('[data-testid="tpl-save"]').click()
+    await expect(manager.locator('[data-testid="tpl-item"]')).toHaveCount(1)
+    await win.keyboard.press('Escape')
+    await expect(manager).toHaveCount(0)
+
+    await input.click()
+    await input.press('/')
+    await input.pressSequentially('об')
+    await expect(win.locator('[data-testid="slash-item"]', { hasText: 'Объясни' })).toBeVisible()
+    await input.fill('')
+
+    await win.keyboard.press('Control+k')
+    await win.locator('[data-testid="action-query"]').fill('Шаблоны')
+    await win.locator('[data-testid="action-item"][data-section="commands"]', { hasText: /^Шаблоны$/ }).click()
+    await manager.locator('[data-testid="tpl-item"]').click()
+    await manager.locator('[data-testid="tpl-delete"]').click()
+    await expect(manager.locator('[data-testid="tpl-confirm"]')).toContainText('Удалить шаблон «Объясни»?')
+    await manager.locator('[data-testid="tpl-delete-confirm"]').click()
+    await expect(manager.locator('[data-testid="tpl-item"]')).toHaveCount(0)
+    await win.keyboard.press('Escape')
+
+    await input.click()
+    await input.fill('мой черновик')
+    await win.keyboard.press('Control+k')
+    await win.locator('[data-testid="action-query"]').fill('черновик')
+    await win.locator('[data-testid="action-item"]', { hasText: 'Сохранить черновик как шаблон' }).click()
+    await expect(manager.locator('[data-testid="tpl-body"]')).toHaveValue('мой черновик')
+  } finally {
+    await app.close()
+  }
+})

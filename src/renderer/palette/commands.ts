@@ -21,7 +21,10 @@ export const commandsProvider: PaletteProvider = {
   title: 'Команды',
   prefix: '>',
   items(query, ctx) {
-    const actions = APP_ACTIONS.filter((a) => a.id !== 'actions').map(
+    // «Сохранить черновик как шаблон» has nothing to save without a draft.
+    const actions = APP_ACTIONS.filter(
+      (a) => a.id !== 'actions' && (a.id !== 'saveDraftAsTemplate' || ctx.hasDraft === true)
+    ).map(
       (action): { row: PaletteItem; name?: string } => ({
         row: {
           key: `action:${action.id}`,

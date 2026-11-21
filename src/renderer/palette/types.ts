@@ -52,6 +52,8 @@ export interface PaletteContext {
   commands: CommandInfo[]
   /** этап 7: the owner's prompt templates. */
   templates?: PromptTemplate[]
+  /** этап 7: the active chat's input has text («Сохранить черновик как шаблон»). */
+  hasDraft?: boolean
   run: PaletteRunner
 }
 

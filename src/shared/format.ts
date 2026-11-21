@@ -101,3 +101,8 @@ export function untilReset(resetsAt: number, nowMs = Date.now()): string {
   if (hours < 24) return `через ${hours} ч ${minutes % 60} мин`
   return `через ${Math.round(hours / 24)} дн`
 }
+
+/** «$0.0421», «$1.50»: money to the cent from a dollar on, finer below it. */
+export function usd(value: number): string {
+  return `$${value.toFixed(value < 1 ? 4 : 2)}`
+}

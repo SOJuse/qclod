@@ -10,12 +10,12 @@ export const RECENT_PAST = 5
 /** Opening the palette reads the history of at most this many projects not read yet. */
 export const HISTORY_PREFETCH = 20
 
-/** The folders whose past conversations nobody has asked for yet, first ones first. */
-export function historyToLoad(sidebar: SidebarProject[]): string[] {
+/** The folders whose past conversations nobody has asked for yet, first ones first; a server's with its id (stage 6). */
+export function historyToLoad(sidebar: SidebarProject[]): Array<{ cwd: string; hostId?: string }> {
   return sidebar
     .filter((p) => p.past === null)
     .slice(0, HISTORY_PREFETCH)
-    .map((p) => p.cwd)
+    .map((p) => (p.remote ? { cwd: p.cwd, hostId: p.remote.hostId } : { cwd: p.cwd }))
 }
 
 /**
@@ -39,7 +39,11 @@ export const historyProvider: PaletteProvider = {
         section: 'history',
         title: pastLabel(session),
         hint: `${project.name} · ${shortWhen(session.updatedAt)}`,
-        run: () => ctx.run.openSession(project.cwd, session)
+        // A server project's conversation resumes on that server (сверка F21).
+        run: () =>
+          project.remote
+            ? ctx.run.openSession(project.cwd, session, project.remote.hostId)
+            : ctx.run.openSession(project.cwd, session)
       })
     )
   },
@@ -56,7 +60,10 @@ export const historyProvider: PaletteProvider = {
       title: 'Не удалось прочитать историю',
       reason: failed[0]!.past.error,
       retry: () => {
-        for (const p of failed) ctx.run.loadHistory(p.cwd)
+        for (const p of failed) {
+          if (p.remote) ctx.run.loadHistory(p.cwd, p.remote.hostId)
+          else ctx.run.loadHistory(p.cwd)
+        }
       }
     }
   }

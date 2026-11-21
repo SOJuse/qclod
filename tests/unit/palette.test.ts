@@ -214,7 +214,14 @@ describe('Ctrl+K: поиск по всему', () => {
     const asked = historyToLoad(sidebar)
     expect(asked).toHaveLength(HISTORY_PREFETCH)
     // Asked once already (read, or being read): not again.
-    expect(asked[0]).toBe('C:\\p2')
+    expect(asked[0]).toEqual({ cwd: 'C:\\p2' })
+  })
+
+  test('этап 6: серверный проект читается и открывается со своим hostId', () => {
+    const servers = [{ id: 'h1', label: 'Дом', colour: 'blue' }] as never
+    const tabs = [{ id: 't1', cwd: '/srv/app', title: 'a', overrides: {}, status: 'idle', badge: false, server: { hostId: 'h1' } }] as never
+    const sidebar = buildSidebar(tabs, [], {}, servers)
+    expect(historyToLoad(sidebar)).toEqual([{ cwd: '/srv/app', hostId: 'h1' }])
   })
 })
 

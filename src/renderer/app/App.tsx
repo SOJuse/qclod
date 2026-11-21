@@ -326,7 +326,7 @@ export function App(): JSX.Element {
     }
     const state = useAppStore.getState()
     const sidebarNow = buildSidebar(state.tabs, state.layout.projects, state.historyByProject, state.servers)
-    for (const cwd of historyToLoad(sidebarNow)) state.loadProjectHistory(cwd)
+    for (const p of historyToLoad(sidebarNow)) state.loadProjectHistory(p.cwd, false, p.hostId)
     setPalette({ ...(scope === undefined ? {} : { scope }), n: (was?.n ?? 0) + 1 })
   }, [])
 
@@ -538,7 +538,7 @@ export function App(): JSX.Element {
         const state = useAppStore.getState()
         if (state.activeTabId) state.setPaneLayer(state.activeTabId, layer)
       },
-      loadHistory: (cwd) => loadProjectHistory(cwd)
+      loadHistory: (cwd, hostId) => loadProjectHistory(cwd, false, hostId)
     }
   }, [activate, newChat, openPast, runAction, focusComposer, loadProjectHistory])
 

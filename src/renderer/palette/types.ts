@@ -23,7 +23,8 @@ export interface PaletteRunner {
   activateChat(id: TabId): void
   /** A new chat in this folder. */
   openProject(cwd: string): void
-  openSession(cwd: string, s: SessionSummary): void
+  /** hostId — a server project's (stage 6). */
+  openSession(cwd: string, s: SessionSummary, hostId?: string): void
   insertMention(path: string): void
   insertCommand(name: string): void
   /** Действие окна; arg — для действий с объектом (например, id сервера у этапа 6). */
@@ -31,7 +32,7 @@ export interface PaletteRunner {
   /** Слой поверх ленты активной панели (задача 6). */
   openLayer(layer: PaneLayerState): void
   /** Reads a project's past conversations again («Повторить» after a failed read). */
-  loadHistory(cwd: string): void
+  loadHistory(cwd: string, hostId?: string): void
 }
 
 /** Why a section shown by itself has no rows yet: still read, or the read failed. */

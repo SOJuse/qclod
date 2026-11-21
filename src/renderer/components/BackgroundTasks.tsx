@@ -5,6 +5,7 @@ import type { BackgroundTask, TabId, TaskOutput } from '../../shared/types'
 import { plural } from '../../shared/format'
 import { remoteErrorText, stripAnsi } from '../chat/stripAnsi'
 import { CategoryIcon } from '../ui/icons'
+import { AGENT_STATE_LABEL } from './agentState'
 import './BackgroundTasks.css'
 
 interface Props {
@@ -25,6 +26,15 @@ const STATUS: Record<BackgroundTask['status'], { word: string; icon: LucideIcon;
   failed: { word: 'ошибка', icon: CircleX, color: 'var(--status-critical)' },
   stopped: { word: 'остановлена', icon: CircleStop, color: 'var(--text-faint)' },
   interrupted: { word: 'прервана', icon: CircleSlash, color: 'var(--status-warn)' }
+}
+
+/** An agent's row says what its node in the graph says: «готов», not «готова». */
+const AGENT_WORD: Record<BackgroundTask['status'], string> = {
+  running: AGENT_STATE_LABEL.running,
+  completed: AGENT_STATE_LABEL.done,
+  failed: AGENT_STATE_LABEL.failed,
+  stopped: AGENT_STATE_LABEL.stopped,
+  interrupted: AGENT_STATE_LABEL.unfinished
 }
 
 /** 0:07, 2:05, 61:40 — how long a task has run. */
@@ -259,7 +269,7 @@ function AgentRow({
         </span>
         <span className="bg-task-status">
           <StatusIcon size={12} color={status.color} aria-hidden="true" />
-          {status.word}
+          {AGENT_WORD[task.status]}
         </span>
       </div>
       {(task.summary || onOpenAgent || running) && (

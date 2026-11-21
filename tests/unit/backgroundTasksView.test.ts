@@ -65,6 +65,20 @@ describe('TaskManagerList', () => {
     expect(html).not.toContain('Показать вывод')
   })
 
+  test('агент назван теми же словами, что в графе: «готов», «остановлен»; команда — «готова»', () => {
+    const html = list(
+      [agent('a1', { status: 'completed', endedAt: now }), agent('a2', { status: 'stopped', endedAt: now }), command('dev', { status: 'completed', endedAt: now })],
+      () => undefined
+    )
+    const agents = html.slice(0, html.indexOf('data-kind="command"'))
+    const commands = html.slice(html.indexOf('data-kind="command"'))
+    expect(agents).toContain('готов<')
+    expect(agents).toContain('остановлен<')
+    expect(agents).not.toContain('готова')
+    expect(agents).not.toContain('остановлена')
+    expect(commands).toContain('готова<')
+  })
+
   test('без onOpenAgent нет «Открыть ленту»', () => {
     expect(list([agent('a1')])).not.toContain('Открыть ленту')
   })

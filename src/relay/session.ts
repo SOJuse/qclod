@@ -40,6 +40,10 @@ export type SessionEvent =
   | { type: 'asked'; pending: RelayPending }
   | { type: 'resolved'; resolved: PermResolved }
   | { type: 'sent'; by: SentBy }
+  /** A client's own Remote Control switch. */
+  | { type: 'remoteWanted'; wanted: boolean }
+  /** A client pressed «Стоп». */
+  | { type: 'interrupted' }
   /** A process is up and reading. */
   | { type: 'up' }
   /** The process ended by itself: not a close, suspend or restart. */
@@ -260,10 +264,13 @@ export class RelaySession {
       case 'setRemoteControl': {
         if (typeof args[0] !== 'boolean') throw badRequest('enabled')
         const name = typeof args[1] === 'string' ? args[1] : undefined
+        this.event({ type: 'remoteWanted', wanted: args[0] })
+        return await this.setRemote(args[0], name)
+      }
+      case 'interrupt': {
         const driver = await this.ready()
-        const link = await driver.setRemoteControl(args[0], name)
-        this.patch({ remoteControl: args[0] })
-        return link
+        this.event({ type: 'interrupted' })
+        return await driver.interrupt(...(args as [{ cancelQueued?: boolean }?]))
       }
       default: {
         const driver = await this.ready()
@@ -282,6 +289,13 @@ export class RelaySession {
     this.event({ type: 'sent', by })
     this.refreshStatus()
     driver.send(input, opts)
+  }
+
+  /** Remote Control on or off; the record keeps the wish for the next process. */
+  async setRemote(enabled: boolean, name?: string): Promise<unknown> {
+    this.patch({ remoteControl: enabled })
+    const driver = await this.ready()
+    return await driver.setRemoteControl(enabled, name)
   }
 
   answer(requestId: string, answer: PermissionAnswer): boolean {

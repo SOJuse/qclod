@@ -1359,3 +1359,270 @@ describe('RibbonBuilder: ответы «авто»', () => {
     expect(plain).not.toHaveProperty('item.auto')
   })
 })
+
+// ---------------------------------------------------------------- этап 4
+
+/** A subagent's message, as CLI 2.1.317 forwards it (probe 05b). */
+function fromAgent(message: unknown, agentId: string, parentToolUseId: string, extra: Record<string, unknown> = {}): unknown {
+  return {
+    ...(message as Record<string, unknown>),
+    parent_tool_use_id: parentToolUseId,
+    agent_id: agentId,
+    subagent_type: 'Explore',
+    task_description: 'обзор',
+    ...extra
+  }
+}
+
+function agentCall(id: string, input: Record<string, unknown>, extra: Record<string, unknown> = {}): unknown {
+  return assistant([{ type: 'tool_use', id, name: 'Agent', input }], extra)
+}
+
+function taskStarted(fields: Record<string, unknown>): unknown {
+  return { type: 'system', subtype: 'task_started', uuid: uuid(), session_id: 's1', task_type: 'local_agent', ...fields }
+}
+
+function streamDelta(index: number, text: string, extra: Record<string, unknown>): unknown {
+  return {
+    type: 'stream_event',
+    uuid: uuid(),
+    session_id: 's1',
+    event: { type: 'content_block_delta', index, delta: { type: 'text_delta', text } },
+    ...extra
+  }
+}
+
+function blockStop(index: number, extra: Record<string, unknown>): unknown {
+  return { type: 'stream_event', uuid: uuid(), session_id: 's1', event: { type: 'content_block_stop', index }, ...extra }
+}
+
+const cardOf = (b: RibbonBuilder, toolUseId: string): SubagentCard =>
+  only(b.items, 'subagent').find((c) => c.toolUseId === toolUseId)!
+const textsIn = (b: RibbonBuilder, cardId: string): string[] =>
+  only(b.items, 'agentText').filter((t) => t.parentId === cardId).map((t) => t.text)
+
+describe('RibbonBuilder: этап 4 — сабагенты по своим карточкам', () => {
+  test('два сабагента пишут потоком вперемешку с index 0 — тексты в своих карточках', () => {
+    const b = new RibbonBuilder()
+    b.apply(assistant([
+      { type: 'tool_use', id: 'tA', name: 'Agent', input: { description: 'первый' } },
+      { type: 'tool_use', id: 'tB', name: 'Agent', input: { description: 'второй' } }
+    ]))
+    b.apply(taskStarted({ task_id: 'aA', tool_use_id: 'tA', is_backgrounded: false }))
+    b.apply(taskStarted({ task_id: 'aB', tool_use_id: 'tB', is_backgrounded: false }))
+    const A = { parent_tool_use_id: 'tA', agent_id: 'aA' }
+    const B = { parent_tool_use_id: 'tB', agent_id: 'aB' }
+    b.apply(streamDelta(0, 'Альфа ', A))
+    b.apply(streamDelta(0, 'Бета ', B))
+    b.apply(streamDelta(0, 'один', A))
+    b.apply(streamDelta(0, 'два', B))
+    b.apply(blockStop(0, A))
+    b.apply(streamDelta(0, ' три', B))
+    // A whole message of A does not cut B's stream.
+    b.apply(fromAgent(assistant([{ type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: 'a.ts' } }]), 'aA', 'tA'))
+    b.apply(streamDelta(0, ' четыре', B))
+
+    const cardA = cardOf(b, 'tA')
+    const cardB = cardOf(b, 'tB')
+    expect(textsIn(b, cardA.id)).toEqual(['Альфа один'])
+    expect(textsIn(b, cardB.id)).toEqual(['Бета два три четыре'])
+    expect(only(b.items, 'agentText').find((t) => t.parentId === cardA.id)!.streaming).toBe(false)
+    expect(only(b.items, 'agentText').find((t) => t.parentId === cardB.id)!.streaming).toBe(true)
+  })
+
+  test('сообщение с agent_id и чужим parent_tool_use_id идёт в карточку agent_id', () => {
+    const b = new RibbonBuilder()
+    b.apply(agentCall('tA', { description: 'первый' }))
+    b.apply(agentCall('tB', { description: 'второй' }))
+    b.apply(taskStarted({ task_id: 'aA', tool_use_id: 'tA' }))
+    b.apply(fromAgent(assistant([{ type: 'text', text: 'я A' }]), 'aA', 'tB'))
+    expect(textsIn(b, cardOf(b, 'tA').id)).toEqual(['я A'])
+    expect(textsIn(b, cardOf(b, 'tB').id)).toEqual([])
+  })
+
+  test('agentId из AgentOutput и async_launched тоже ведёт в карточку', () => {
+    const b = new RibbonBuilder()
+    b.apply(agentCall('tA', { description: 'первый' }))
+    b.apply(userMessage([{ type: 'tool_result', tool_use_id: 'tA', content: 'готово' }], { tool_use_result: { status: 'completed', agentId: 'aA' } }))
+    b.apply(agentCall('tB', { description: 'второй', run_in_background: true }))
+    b.apply(userMessage([{ type: 'tool_result', tool_use_id: 'tB', content: 'launched' }], { tool_use_result: { status: 'async_launched', agentId: 'aB' } }))
+    b.apply(fromAgent(assistant([{ type: 'text', text: 'от A' }]), 'aA', 'чужой'))
+    b.apply(fromAgent(assistant([{ type: 'text', text: 'от B' }]), 'aB', 'чужой'))
+    expect(textsIn(b, cardOf(b, 'tA').id)).toEqual(['от A'])
+    expect(textsIn(b, cardOf(b, 'tB').id)).toEqual(['от B'])
+  })
+
+  test('возобновлённый тем же task_id: та же карточка снова running, runs 2, endedAt снят', () => {
+    let clock = 1000
+    const b = new RibbonBuilder({ now: () => clock })
+    b.apply(agentCall('tA', { description: 'счётчик' }))
+    b.apply(taskStarted({ task_id: 'aA', tool_use_id: 'tA', is_backgrounded: false }))
+    clock = 2000
+    b.apply(userMessage([{ type: 'tool_result', tool_use_id: 'tA', content: '7' }], { tool_use_result: { status: 'completed', agentId: 'aA' } }))
+    expect(cardOf(b, 'tA')).toMatchObject({ state: 'done', endedAt: 2000 })
+
+    // The main agent writes to it: SendMessage, then the CLI resumes the same task.
+    b.apply(assistant([{ type: 'tool_use', id: 'tS', name: 'SendMessage', input: { to: 'aA', message: 'про 8' } }]))
+    clock = 3000
+    b.apply(taskStarted({ task_id: 'aA', tool_use_id: 'tS', is_backgrounded: true, run_id: 'r2' }))
+    const card = cardOf(b, 'tA')
+    expect(card.state).toBe('running')
+    expect(card.runs).toBe(2)
+    expect(card.endedAt).toBeUndefined()
+    expect(card.summary).toBe('')
+    expect(card.background).toBe(true)
+    expect(only(b.items, 'subagent')).toHaveLength(1)
+
+    // Its messages may point at the SendMessage call: they still go to the card.
+    b.apply(fromAgent(assistant([{ type: 'text', text: 'восемь' }]), 'aA', 'tS'))
+    expect(textsIn(b, card.id)).toEqual(['восемь'])
+    clock = 4000
+    b.apply({ type: 'system', subtype: 'task_notification', task_id: 'aA', tool_use_id: 'tS', status: 'completed', summary: 'восемь' })
+    expect(cardOf(b, 'tA')).toMatchObject({ state: 'done', endedAt: 4000, runs: 2 })
+  })
+
+  test('вложенный без tool_use: карточка под карточкой parent_task_id', () => {
+    const b = new RibbonBuilder({ now: () => 5000 })
+    b.apply(agentCall('tO', { description: 'внешний' }))
+    b.apply(taskStarted({ task_id: 'aO', tool_use_id: 'tO', is_backgrounded: false, spawn_depth: 1 }))
+    b.apply(taskStarted({ task_id: 'aI', tool_use_id: 'tI', is_backgrounded: false, spawn_depth: 2, parent_task_id: 'aO', subagent_type: 'Plan', description: 'внутренний' }))
+    const outer = cardOf(b, 'tO')
+    const inner = only(b.items, 'subagent').find((c) => c.taskId === 'aI')!
+    expect(inner).toMatchObject({ name: 'Plan', task: 'внутренний', state: 'running', background: false, parentId: outer.id, taskId: 'aI', startedAt: 5000 })
+    // Its own messages, when they come, go to it.
+    b.apply(fromAgent(assistant([{ type: 'text', text: 'внутри' }]), 'aI', 'tI'))
+    expect(textsIn(b, inner.id)).toEqual(['внутри'])
+    b.apply({ type: 'system', subtype: 'task_notification', task_id: 'aI', tool_use_id: 'tI', status: 'completed', summary: 'ок' })
+    expect(only(b.items, 'subagent').find((c) => c.taskId === 'aI')!.state).toBe('done')
+  })
+
+  test('неизвестный parent_task_id — карточка без родителя', () => {
+    const b = new RibbonBuilder()
+    b.apply(taskStarted({ task_id: 'aI', tool_use_id: 'tI', is_backgrounded: true, parent_task_id: 'никто', description: 'сирота' }))
+    const card = only(b.items, 'subagent')[0]!
+    expect(card).toMatchObject({ name: 'подагент', task: 'сирота', background: true, taskId: 'aI' })
+    expect(card.parentId).toBeUndefined()
+  })
+
+  test('task_started не local_agent карточки не заводит', () => {
+    const b = new RibbonBuilder()
+    b.apply(taskStarted({ task_id: 'b1', tool_use_id: 't1', task_type: 'local_bash' }))
+    expect(only(b.items, 'subagent')).toHaveLength(0)
+  })
+
+  test('startedAt и endedAt живьём от часов, в реплее от timestamp; без timestamp — нет', () => {
+    let clock = 1000
+    const live = new RibbonBuilder({ now: () => clock })
+    live.apply(agentCall('tA', { description: 'а' }))
+    clock = 9000
+    live.apply(toolResult('tA', 'готово'))
+    expect(cardOf(live, 'tA')).toMatchObject({ startedAt: 1000, endedAt: 9000 })
+
+    const replay = new RibbonBuilder({ replay: true, now: () => 777 })
+    replay.apply(agentCall('tA', { description: 'а' }, { timestamp: '2026-11-20T10:00:00.000Z' }))
+    replay.apply(userMessage([{ type: 'tool_result', tool_use_id: 'tA', content: 'готово' }], { timestamp: '2026-11-20T10:01:00.000Z' }))
+    expect(cardOf(replay, 'tA')).toMatchObject({
+      startedAt: Date.parse('2026-11-20T10:00:00.000Z'),
+      endedAt: Date.parse('2026-11-20T10:01:00.000Z')
+    })
+
+    const bare = new RibbonBuilder({ replay: true })
+    bare.apply(agentCall('tA', { description: 'а' }))
+    bare.apply(toolResult('tA', 'готово'))
+    const card = cardOf(bare, 'tA')
+    expect(card.startedAt).toBeUndefined()
+    expect(card.endedAt).toBeUndefined()
+
+    // task_updated closes it too, with the time of that event.
+    clock = 100
+    const upd = new RibbonBuilder({ now: () => clock })
+    upd.apply(agentCall('tA', { description: 'а' }))
+    upd.apply(taskStarted({ task_id: 'aA', tool_use_id: 'tA' }))
+    clock = 400
+    upd.apply({ type: 'system', subtype: 'task_updated', task_id: 'aA', patch: { status: 'killed' } })
+    expect(cardOf(upd, 'tA')).toMatchObject({ state: 'stopped', endedAt: 400 })
+    // The errored call result that follows a stop keeps it stopped.
+    clock = 500
+    upd.apply(toolResult('tA', 'Error: [Request interrupted by user for tool use]', true))
+    expect(cardOf(upd, 'tA')).toMatchObject({ state: 'stopped', endedAt: 400 })
+  })
+
+  test('prompt, label и model берутся из ввода и вывода Agent', () => {
+    const b = new RibbonBuilder()
+    const long = 'п'.repeat(9000)
+    b.apply(agentCall('tA', { description: 'а', prompt: long, name: 'scout' }))
+    b.apply(userMessage([{ type: 'tool_result', tool_use_id: 'tA', content: 'ок' }], { tool_use_result: { status: 'completed', agentId: 'aA', resolvedModel: 'claude-haiku-5-5' } }))
+    const card = cardOf(b, 'tA')
+    expect(card.label).toBe('scout')
+    expect(card.model).toBe('claude-haiku-5-5')
+    expect(card.prompt!.length).toBeLessThanOrEqual(8000 + 40)
+    expect(card.prompt!.startsWith('ппп')).toBe(true)
+
+    b.apply(agentCall('tB', { description: 'б', prompt: 'коротко', run_in_background: true }))
+    b.apply(userMessage([{ type: 'tool_result', tool_use_id: 'tB', content: 'launched' }], { tool_use_result: { status: 'async_launched', agentId: 'aB', resolvedModel: 'claude-sonnet-5' } }))
+    expect(cardOf(b, 'tB')).toMatchObject({ prompt: 'коротко', model: 'claude-sonnet-5', agentId: 'aB' })
+    expect(cardOf(b, 'tB').label).toBeUndefined()
+  })
+
+  test('task_updated is_backgrounded делает карточку фоновой', () => {
+    const b = new RibbonBuilder()
+    b.apply(agentCall('tA', { description: 'а' }))
+    b.apply(taskStarted({ task_id: 'aA', tool_use_id: 'tA', is_backgrounded: false }))
+    expect(cardOf(b, 'tA').background).toBe(false)
+    b.apply({ type: 'system', subtype: 'task_updated', task_id: 'aA', patch: { is_backgrounded: true } })
+    expect(cardOf(b, 'tA')).toMatchObject({ background: true, state: 'running' })
+  })
+
+  test('вложенный текст длиннее 20000 обрезается', () => {
+    const b = new RibbonBuilder()
+    b.apply(agentCall('tA', { description: 'а' }))
+    b.apply(fromAgent(assistant([{ type: 'text', text: 'т'.repeat(30000) }, { type: 'thinking', thinking: 'м'.repeat(30000) }]), 'aX', 'tA'))
+    const id = cardOf(b, 'tA').id
+    const text = only(b.items, 'agentText').find((t) => t.parentId === id)!
+    const thought = only(b.items, 'thinking').find((t) => t.parentId === id)!
+    expect(text.text.length).toBeLessThan(20100)
+    expect(thought.text.length).toBeLessThan(20100)
+    // The main agent's own text is not clipped that way.
+    b.apply(assistant([{ type: 'text', text: 'г'.repeat(30000) }]))
+    expect(only(b.items, 'agentText').find((t) => !t.parentId)!.text.length).toBe(30000)
+  })
+
+  test('subagentCard находит карточку по id, другое — undefined', () => {
+    const b = new RibbonBuilder()
+    b.apply(agentCall('tA', { description: 'а' }))
+    b.apply(assistant([{ type: 'text', text: 'текст' }]))
+    const card = cardOf(b, 'tA')
+    expect(b.subagentCard(card.id)).toBe(card)
+    expect(b.subagentCard(only(b.items, 'agentText')[0]!.id)).toBeUndefined()
+    expect(b.subagentCard('нет')).toBeUndefined()
+  })
+
+  test('фейк: возобновлённый через SendMessage агент — одна карточка, runs 2, done', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'subagent', name: 'счётчик', agentId: 'a00000000000000a1', steps: [{ kind: 'text', text: '7' }] }],
+      resumeReply: 'восемь'
+    })
+    const b = new RibbonBuilder()
+    const it = driver.messages[Symbol.asyncIterator]()
+    const read = async (until: (m: Record<string, unknown>) => boolean): Promise<void> => {
+      for (;;) {
+        const got = await it.next()
+        if (got.done) throw new Error('поток кончился')
+        const m = got.value as Record<string, unknown>
+        b.apply(m)
+        if (until(m)) return
+      }
+    }
+    await read((m) => m['type'] === 'result')
+    driver.send(
+      { text: 'Передай агенту a00000000000000a1 через SendMessage (to: "a00000000000000a1") это сообщение от пользователя, дословно:\n\nпро 8', attachments: [] },
+      { uuid: 'u1' }
+    )
+    await read((m) => m['subtype'] === 'background_tasks_changed' && Array.isArray(m['tasks']) && (m['tasks'] as unknown[]).length === 0)
+    const cards = only(b.items, 'subagent')
+    expect(cards).toHaveLength(1)
+    expect(cards[0]).toMatchObject({ state: 'done', runs: 2, agentId: 'a00000000000000a1' })
+    expect(textsIn(b, cards[0]!.id)).toEqual(['7', 'восемь'])
+    await driver.dispose()
+  })
+})

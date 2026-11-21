@@ -37,7 +37,10 @@ interface Clock {
   replay?: boolean
 }
 
-/** A content block currently being streamed, keyed by its index in the message. */
+/**
+ * A content block currently being streamed, keyed by its parent card and its
+ * index in the message: ten subagents streaming at once all use index 0.
+ */
 interface OpenBlock {
   itemId: string
   kind: 'agentText' | 'thinking'
@@ -175,6 +178,11 @@ function clipReport(text: string): string {
   return clipText(text, REPORT_CLIP)
 }
 
+/** A subagent's prompt, kept on its card. */
+const PROMPT_CLIP = 8000
+/** One text or thought of a subagent's own conversation, whole from the CLI. */
+const NESTED_CLIP = 20000
+
 /**
  * What a finished subagent wrote back, whole: the text blocks of AgentOutput's
  * content as paragraphs, or the tool_result's text when the output has no
@@ -284,11 +292,17 @@ function imageAttachment(block: Record<string, unknown>): Attachment | null {
 export class RibbonBuilder {
   private readonly list: RibbonItem[] = []
   private readonly byToolUseId = new Map<string, string>()
-  /** task_id of a subagent's task events -> its card, learnt from task_started. */
-  private readonly byTaskId = new Map<string, string>()
+  /**
+   * A subagent's agent_id / task_id (one and the same, probe 05b) -> its
+   * card: from task_started, AgentOutput.agentId and async_launched.agentId.
+   * Its messages are routed by it first: a resumed agent's may point at the
+   * SendMessage call rather than at its own Agent call.
+   */
+  private readonly byAgentId = new Map<string, string>()
   /** When each subagent card was placed, for timing it ourselves. */
   private readonly startedAt = new Map<string, number>()
-  private readonly openBlocks = new Map<number, OpenBlock>()
+  /** Keyed `${parentId ?? ''}:${index}`. */
+  private readonly openBlocks = new Map<string, OpenBlock>()
   /** Message ids whose text already reached the ribbon as deltas. */
   private readonly streamed = new Set<string>()
   private todoList: TodoItem[] | null = null
@@ -306,7 +320,9 @@ export class RibbonBuilder {
    * the end of the block before. Thinking starts there, not at its first
    * delta, which comes only after the model has been thinking for a while.
    */
-  private blockBoundaryAt: number | undefined
+  private readonly blockBoundaryAt = new Map<string, number>()
+  /** The message being applied: what a subagent card's end time is read from. */
+  private current: Record<string, unknown> | null = null
   private readonly now: () => number
   private replaying: boolean
   private remoteLive = false
@@ -322,6 +338,12 @@ export class RibbonBuilder {
 
   get todo(): TodoItem[] | null {
     return this.todoList
+  }
+
+  /** The subagent card with this id — what the window names when it writes to or stops an agent. */
+  subagentCard(cardId: string): SubagentItem | undefined {
+    const item = this.find(cardId)
+    return item?.kind === 'subagent' ? item : undefined
   }
 
   /**
@@ -519,6 +541,7 @@ export class RibbonBuilder {
     if (!isObject(message)) return []
     this.previousEventAt = this.lastEventAt
     this.lastEventAt = this.now()
+    this.current = message
     switch (message['type']) {
       case 'stream_event':
         return this.onStreamEvent(message)
@@ -583,17 +606,21 @@ export class RibbonBuilder {
     const event = message['event']
     if (!isObject(event)) return []
 
+    const parentId = this.parentOf(message)
+    const scope = parentId ?? ''
+
     if (event['type'] === 'message_start') {
       const inner = event['message']
       const id = isObject(inner) ? str(inner['id']) : ''
       if (id) this.streamed.add(id)
-      this.blockBoundaryAt = this.now()
+      this.blockBoundaryAt.set(scope, this.now())
       return []
     }
 
+    const key = `${scope}:${Number(event['index'] ?? 0)}`
     if (event['type'] === 'content_block_stop') {
-      const changes = this.closeBlock(Number(event['index'] ?? 0))
-      this.blockBoundaryAt = this.now()
+      const changes = this.closeBlock(key)
+      this.blockBoundaryAt.set(scope, this.now())
       return changes
     }
 
@@ -601,26 +628,23 @@ export class RibbonBuilder {
     const delta = event['delta']
     if (!isObject(delta)) return []
 
-    const index = Number(event['index'] ?? 0)
-    const parentId = this.parentOf(message)
-
     if (delta['type'] === 'text_delta') {
-      return this.appendDelta(index, 'agentText', str(delta['text']), parentId)
+      return this.appendDelta(key, 'agentText', str(delta['text']), parentId)
     }
     if (delta['type'] === 'thinking_delta') {
-      return this.appendDelta(index, 'thinking', str(delta['thinking']), parentId)
+      return this.appendDelta(key, 'thinking', str(delta['thinking']), parentId)
     }
     return []
   }
 
   private appendDelta(
-    index: number,
+    key: string,
     kind: 'agentText' | 'thinking',
     text: string,
     parentId: string | undefined
   ): RibbonChange[] {
     if (!text) return []
-    const open = this.openBlocks.get(index)
+    const open = this.openBlocks.get(key)
 
     if (open && open.kind === kind) {
       const item = this.find(open.itemId)
@@ -631,22 +655,22 @@ export class RibbonBuilder {
       }
     }
 
-    const closed = open ? this.closeBlock(index) : []
+    const closed = open ? this.closeBlock(key) : []
     const id = this.nextId()
     const item: RibbonItem =
       kind === 'agentText'
         ? { kind: 'agentText', id, text, streaming: true, ...(parentId ? { parentId } : {}) }
         : { kind: 'thinking', id, text, done: false, durationMs: 0, ...(parentId ? { parentId } : {}) }
 
-    const startedAt = kind === 'thinking' ? (this.blockBoundaryAt ?? this.now()) : this.now()
-    this.openBlocks.set(index, { itemId: id, kind, startedAt })
+    const startedAt = kind === 'thinking' ? (this.blockBoundaryAt.get(parentId ?? '') ?? this.now()) : this.now()
+    this.openBlocks.set(key, { itemId: id, kind, startedAt })
     return [...closed, this.append(item)]
   }
 
-  private closeBlock(index: number): RibbonChange[] {
-    const open = this.openBlocks.get(index)
+  private closeBlock(key: string): RibbonChange[] {
+    const open = this.openBlocks.get(key)
     if (!open) return []
-    this.openBlocks.delete(index)
+    this.openBlocks.delete(key)
 
     const item = this.find(open.itemId)
     if (!item) return []
@@ -671,16 +695,22 @@ export class RibbonBuilder {
     return Math.max(0, this.now() - this.previousEventAt)
   }
 
-  private closeOpenBlocks(): RibbonChange[] {
+  /** With `parentId` given, only that stream's blocks: another agent may still be writing. */
+  private closeOpenBlocks(parentId?: string | null): RibbonChange[] {
     const changes: RibbonChange[] = []
-    for (const index of [...this.openBlocks.keys()]) changes.push(...this.closeBlock(index))
+    const prefix = parentId === undefined ? null : `${parentId ?? ''}:`
+    for (const key of [...this.openBlocks.keys()]) {
+      if (prefix === null || key.startsWith(prefix)) changes.push(...this.closeBlock(key))
+    }
     return changes
   }
 
   // ---------------------------------------------------------- the assistant
 
   private onAssistant(message: Record<string, unknown>): RibbonChange[] {
-    const changes = this.closeOpenBlocks()
+    const parentId = this.parentOf(message)
+    // The message closes its own stream, not a neighbour's still being written.
+    const changes = this.closeOpenBlocks(parentId ?? null)
     const inner = message['message']
     if (!isObject(inner)) return changes
 
@@ -688,7 +718,8 @@ export class RibbonBuilder {
     // text is already on screen, so only the blocks the stream cannot carry
     // (tool calls) are new.
     const alreadyStreamed = this.streamed.has(str(inner['id']))
-    const parentId = this.parentOf(message)
+    // A subagent's whole text comes in one piece; a book of it is not kept.
+    const nested = (text: string): string => (parentId ? clipText(text, NESTED_CLIP) : text)
 
     for (const block of asArray(inner['content'])) {
       if (!isObject(block)) continue
@@ -707,7 +738,7 @@ export class RibbonBuilder {
             this.append({
               kind: 'agentText',
               id: this.nextId(),
-              text: str(block['text']),
+              text: nested(str(block['text'])),
               streaming: false,
               ...(parentId ? { parentId } : {})
             })
@@ -721,7 +752,7 @@ export class RibbonBuilder {
             this.append({
               kind: 'thinking',
               id: this.nextId(),
-              text: str(block['thinking']),
+              text: nested(str(block['thinking'])),
               done: true,
               durationMs: this.wholeThinkingMs(),
               ...(parentId ? { parentId } : {})
@@ -730,7 +761,7 @@ export class RibbonBuilder {
           break
 
         case 'tool_use':
-          changes.push(...this.onToolUse(block, parentId))
+          changes.push(...this.onToolUse(block, parentId, this.messageTime(message)))
           break
 
         default:
@@ -740,7 +771,7 @@ export class RibbonBuilder {
     return changes
   }
 
-  private onToolUse(block: Record<string, unknown>, parentId: string | undefined): RibbonChange[] {
+  private onToolUse(block: Record<string, unknown>, parentId: string | undefined, at?: number): RibbonChange[] {
     const toolUseId = str(block['id'])
     const name = str(block['name'])
     const input = isObject(block['input']) ? block['input'] : {}
@@ -799,15 +830,20 @@ export class RibbonBuilder {
       const id = this.nextId()
       this.byToolUseId.set(toolUseId, id)
       this.startedAt.set(id, this.now())
+      const prompt = str(input['prompt'])
+      const label = str(input['name'])
       return [
         this.append({
           kind: 'subagent',
           id,
           toolUseId,
           name: str(input['subagent_type']) || 'подагент',
-          task: str(input['description']) || clip(str(input['prompt']), 120),
+          task: str(input['description']) || clip(prompt, 120),
           state: 'running' as SubagentState,
           summary: '',
+          ...(prompt ? { prompt: clipText(prompt, PROMPT_CLIP) } : {}),
+          ...(label ? { label } : {}),
+          ...(at !== undefined ? { startedAt: at } : {}),
           ...(parentId ? { parentId } : {})
         })
       ]
@@ -913,9 +949,9 @@ export class RibbonBuilder {
       // A failed subagent stays a subagent: it still has a place in the
       // panel's list and its nested stream, now marked as failed.
       if (item.kind === 'subagent') {
-        const patch = { state: 'failed' as SubagentState, summary: clip(text, 160) }
-        Object.assign(item, patch)
-        return [this.update(item.id, patch)]
+        // Stopped: the call's error that follows («Request interrupted…») is the stop itself.
+        if (item.state === 'stopped') return []
+        return this.patchSubagent(item, { state: 'failed', summary: clip(text, 160) })
       }
       const name = item.kind === 'tool' ? item.name : ''
       const target = item.kind === 'tool' ? item.target : ''
@@ -942,15 +978,25 @@ export class RibbonBuilder {
       // result, so the summary is left alone.
       if (isObject(result) && (result['status'] === 'async_launched' || result['isAsync'] === true)) {
         const agentId = str(result['agentId'])
-        const launch: Partial<Extract<RibbonItem, { kind: 'subagent' }>> = {
+        const model = str(result['resolvedModel'])
+        if (agentId) this.byAgentId.set(agentId, item.id)
+        return this.patchSubagent(item, {
           background: true,
-          ...(agentId ? { agentId } : {})
-        }
-        Object.assign(item, launch)
-        return [this.update(item.id, launch)]
+          ...(agentId ? { agentId } : {}),
+          ...(model ? { model } : {})
+        })
       }
 
       const patch: Partial<Extract<RibbonItem, { kind: 'subagent' }>> = { state: 'done', summary: clip(text, 160) }
+      if (isObject(result)) {
+        const agentId = str(result['agentId'])
+        if (agentId) {
+          this.byAgentId.set(agentId, item.id)
+          patch.agentId = agentId
+        }
+        const model = str(result['resolvedModel'])
+        if (model) patch.model = model
+      }
       const report = subagentReport(result, whole)
       if (report) patch.report = report
       const stats = subagentStats(result)
@@ -965,8 +1011,7 @@ export class RibbonBuilder {
         // worth printing; «0 с» reads as a broken number.
         if (measured > 0) patch.durationMs = measured
       }
-      Object.assign(item, patch)
-      return [this.update(item.id, patch)]
+      return this.patchSubagent(item, patch)
     }
 
     if (item.kind === 'tool') {
@@ -1020,25 +1065,81 @@ export class RibbonBuilder {
     }
   }
 
+  /**
+   * The card a task event is about: by its task id first — the agent's
+   * identity; a resumed run's tool_use_id is the SendMessage call's — then
+   * by the call.
+   */
   private subagentFor(toolUseId: string, taskId: string): SubagentItem | undefined {
-    const id = (toolUseId && this.byToolUseId.get(toolUseId)) || (taskId && this.byTaskId.get(taskId))
-    const item = id ? this.find(id) : undefined
-    return item?.kind === 'subagent' ? item : undefined
+    for (const id of [taskId && this.byAgentId.get(taskId), toolUseId && this.byToolUseId.get(toolUseId)]) {
+      const item = id ? this.find(id) : undefined
+      if (item?.kind === 'subagent') return item
+    }
+    return undefined
   }
 
+  /** A card leaving `running` gets its end time: this message's, or now. */
   private patchSubagent(item: SubagentItem, patch: Partial<SubagentItem>): RibbonChange[] {
+    const ending = patch.state !== undefined && patch.state !== 'running'
+    if (item.state === 'running' && ending && patch.endedAt === undefined) {
+      const at = this.current ? this.messageTime(this.current) : undefined
+      if (at !== undefined) patch = { ...patch, endedAt: at }
+    }
     Object.assign(item, patch)
     return [this.update(item.id, patch)]
   }
 
   private onTaskStarted(message: Record<string, unknown>): RibbonChange[] {
     const taskId = str(message['task_id'])
-    const item = this.subagentFor(str(message['tool_use_id']), '')
-    if (!item || !taskId) return []
-    this.byTaskId.set(taskId, item.id)
-    const patch: Partial<SubagentItem> = { taskId }
-    if (typeof message['is_backgrounded'] === 'boolean') patch.background = message['is_backgrounded']
-    return this.patchSubagent(item, patch)
+    if (!taskId) return []
+    const toolUseId = str(message['tool_use_id'])
+    const backgrounded = typeof message['is_backgrounded'] === 'boolean' ? message['is_backgrounded'] : undefined
+
+    // The same agent started again — SendMessage resumed it: the same card, running anew.
+    const known = this.subagentFor('', taskId)
+    if (known && known.state !== 'running') {
+      return this.patchSubagent(known, {
+        state: 'running',
+        runs: (known.runs ?? 1) + 1,
+        endedAt: undefined,
+        summary: '',
+        ...(backgrounded !== undefined ? { background: backgrounded } : {})
+      })
+    }
+
+    const item = known ?? this.subagentFor(toolUseId, '')
+    if (item) {
+      this.byAgentId.set(taskId, item.id)
+      const patch: Partial<SubagentItem> = { taskId }
+      if (backgrounded !== undefined) patch.background = backgrounded
+      return this.patchSubagent(item, patch)
+    }
+
+    // An agent whose call never reached the stream — a nested one the CLI did
+    // not forward: a card of its own, under its parent's when that is known.
+    if (str(message['task_type']) !== 'local_agent') return []
+    const id = this.nextId()
+    if (toolUseId) this.byToolUseId.set(toolUseId, id)
+    this.byAgentId.set(taskId, id)
+    this.startedAt.set(id, this.now())
+    const parentTask = str(message['parent_task_id'])
+    const parentId = parentTask ? this.byAgentId.get(parentTask) : undefined
+    const at = this.messageTime(message)
+    return [
+      this.append({
+        kind: 'subagent',
+        id,
+        toolUseId,
+        name: str(message['subagent_type']) || 'подагент',
+        task: str(message['description']),
+        state: 'running',
+        summary: '',
+        background: backgrounded === true,
+        taskId,
+        ...(at !== undefined ? { startedAt: at } : {}),
+        ...(parentId ? { parentId } : {})
+      })
+    ]
   }
 
   private onTaskProgress(message: Record<string, unknown>): RibbonChange[] {
@@ -1061,14 +1162,17 @@ export class RibbonBuilder {
     const item = this.subagentFor('', str(message['task_id']))
     if (!item || item.state !== 'running') return []
     const patch = isObject(message['patch']) ? message['patch'] : {}
+    // Moved to the background: by backgroundTask(), or the CLI itself on a 'now' message.
+    const moved =
+      patch['is_backgrounded'] === true && item.background !== true ? this.patchSubagent(item, { background: true }) : []
     const status = patch['status']
-    if (status === 'completed') return this.patchSubagent(item, { state: 'done' })
-    if (status === 'killed') return this.patchSubagent(item, { state: 'stopped' })
+    if (status === 'completed') return [...moved, ...this.patchSubagent(item, { state: 'done' })]
+    if (status === 'killed') return [...moved, ...this.patchSubagent(item, { state: 'stopped' })]
     if (status === 'failed') {
       const error = str(patch['error'])
-      return this.patchSubagent(item, { state: 'failed', ...(error ? { summary: clip(error, 160) } : {}) })
+      return [...moved, ...this.patchSubagent(item, { state: 'failed', ...(error ? { summary: clip(error, 160) } : {}) })]
     }
-    return []
+    return moved
   }
 
   private onTaskNotification(message: Record<string, unknown>): RibbonChange[] {
@@ -1209,7 +1313,15 @@ export class RibbonBuilder {
     return null
   }
 
+  /**
+   * The card a nested message belongs to: its agent_id first, then the call
+   * it names. A resumed agent's messages keep their agent_id while the call
+   * they name may be the SendMessage that woke it (Review Focus 2).
+   */
   private parentOf(message: Record<string, unknown>): string | undefined {
+    const agent = str(message['agent_id'])
+    const byAgent = agent ? this.byAgentId.get(agent) : undefined
+    if (byAgent) return byAgent
     const parent = str(message['parent_tool_use_id'])
     if (!parent) return undefined
     return this.byToolUseId.get(parent)

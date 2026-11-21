@@ -61,6 +61,9 @@ import {
   USE_EXECUTION_STATE_HELPER
 } from './system/keepAwake'
 import { AutonomyHost } from './autonomy/autonomyHost'
+import { GitService } from './git/GitService'
+import { localGitRunner, type GitRunner } from './git/gitRunner'
+import { registerGitIpc } from './gitIpc'
 import { applyOpenAtLogin } from './system/loginItem'
 import { claimSingleInstance } from './system/singleInstance'
 import { QuitReason, sessionEnding } from './system/quitReason'
@@ -529,6 +532,17 @@ if (gotLock) void app.whenReady().then(async () => {
       saveSettings(userData, settings)
       send(CHANNELS.settingsChanged, settings)
     }
+  })
+  // этап 7: Git panel. The folder is the chat's own (controller.list), never the window's.
+  const gitRunners = new Map<string, GitRunner>()
+  registerGitIpc({
+    service: new GitService((tab) => {
+      if (tab.hostId) return { unavailable: 'Git для серверных проектов пока недоступен.' }
+      let run = gitRunners.get(tab.cwd)
+      if (!run) gitRunners.set(tab.cwd, (run = localGitRunner(tab.cwd)))
+      return run
+    }),
+    tabs: () => controller.list().map((t) => ({ id: t.id, cwd: t.cwd }))
   })
   ipcMain.handle(CHANNELS.hotkeyStatus, () => withFault(CHANNELS.hotkeyStatus, () => hotkey.status))
 

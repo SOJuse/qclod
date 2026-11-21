@@ -16,6 +16,8 @@ import { contextLevel } from '../chat/contextLevel'
 import { EFFORT_LABEL, EFFORT_SHORT, MODE_LABEL } from '../labels'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { BackgroundTasks } from './BackgroundTasks'
+import { cardForTask } from '../agents/cardForTask'
+import { useAppStore } from '../state/useAppStore'
 import '../ui/meter.css'
 import './StatusLine.css'
 
@@ -172,7 +174,15 @@ export function StatusLine({ tabId, data, started, slot, remote, onToggleRemote 
         />
         <LimitAlert limits={data.limits} now={now} />
         {slot}
-        <BackgroundTasks tabId={tabId} tasks={data.backgroundTasks} />
+        <BackgroundTasks
+          tabId={tabId}
+          tasks={data.backgroundTasks}
+          // An agent's row opens its own ribbon in this pane's agents layer (этап 4).
+          onOpenAgent={(taskId) => {
+            const state = useAppStore.getState()
+            state.openAgents(tabId, cardForTask(state.ribbonByTab[tabId] ?? [], taskId))
+          }}
+        />
       </div>
     </div>
   )

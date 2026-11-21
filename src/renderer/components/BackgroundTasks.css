@@ -1,5 +1,5 @@
 /*
- * Background commands (BackgroundTasks.tsx): a quiet counter at the right end
+ * The task manager (BackgroundTasks.tsx): a quiet counter at the right end
  * of the status line, and the list it opens upward. Each row is a command
  * card in miniature — the amber rule on the left only while it runs — and an
  * opened row shows the end of the output as a small sunken terminal.
@@ -58,10 +58,41 @@
   color: var(--text-dim);
 }
 
-.bg-list-title {
+.bg-list-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
+}
+
+.bg-list-title {
+  flex: 1 1 auto;
   font-size: var(--text-xs);
   color: var(--text-faint);
+}
+
+/* «Фоновых задач нет»: the list stayed open while its last task went. */
+.bg-empty {
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+/* Agents, then commands: a quiet word over each group. */
+.bg-group + .bg-group {
+  margin-top: var(--space-2);
+}
+
+.bg-group-title {
+  padding: var(--space-1) var(--space-2) var(--gap-hair);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.bg-group-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .bg-rows {
@@ -85,6 +116,63 @@
 /* Only a running command carries the category rule: an ended one is history. */
 .bg-task.is-running {
   box-shadow: inset var(--rule-category) 0 0 var(--cat-command);
+}
+
+.bg-task.is-agent.is-running {
+  box-shadow: inset var(--rule-category) 0 0 var(--cat-agent);
+}
+
+/* An agent's row: its kind and task where a command's toggle stands; no output to open. */
+.bg-agent-what {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--gap-hair) var(--space-1);
+  color: var(--text);
+}
+
+.bg-agent-what > svg {
+  flex: 0 0 auto;
+}
+
+.bg-agent-type {
+  flex: 0 0 auto;
+  font-weight: var(--weight-medium);
+}
+
+.bg-agent-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-1) calc(var(--space-2) + var(--space-3));
+}
+
+.bg-agent-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.bg-open {
+  flex: 0 0 auto;
+  padding: var(--status-pad);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.bg-open:hover {
+  background: var(--hover-fill);
 }
 
 .bg-task-head {

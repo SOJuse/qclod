@@ -10,6 +10,8 @@ import './BackgroundTasks.css'
 interface Props {
   tabId: TabId
   tasks: BackgroundTask[]
+  /** Opens an agent's own ribbon in the pane's agents layer (этап 4); without it there is no «Открыть ленту». */
+  onOpenAgent?: (taskId: string) => void
 }
 
 /** The pause between one read of an opened, running task's output and the next. */
@@ -31,20 +33,19 @@ function clock(ms: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
-function counterTitle(running: number, total: number): string {
-  if (running === 0) return `Фоновые команды: ${total}, все закончились`
-  return `Фоновые команды: ${running} ${plural(running, 'работает', 'работают', 'работают')}`
+export function counterTitle(running: number, total: number): string {
+  if (running === 0) return `Фоновые задачи: ${total}, все закончились`
+  return `Фоновые задачи: ${running} ${plural(running, 'работает', 'работают', 'работают')}`
 }
 
 /**
- * The background commands of this tab, on the right of the status line:
- * how many are running, and a list opening upward with each one's command,
- * time, outcome and the end of its output. Subagents are not here — they
- * have their own cards in the ribbon.
+ * The task manager of this tab (F7), on the right of the status line: how
+ * many background tasks are running, and a list opening upward — the
+ * background agents, then the commands, each with its time and outcome. An
+ * agent's row opens its own ribbon; a command's shows the end of its output.
  */
-export function BackgroundTasks({ tabId, tasks }: Props): JSX.Element | null {
+export function BackgroundTasks({ tabId, tasks, onOpenAgent }: Props): JSX.Element | null {
   const [open, setOpen] = useState(false)
-  const [expanded, setExpanded] = useState<string | null>(null)
   const [, setTick] = useState(0)
   const self = useRef<HTMLSpanElement | null>(null)
   const running = tasks.filter((t) => t.status === 'running').length
@@ -81,7 +82,8 @@ export function BackgroundTasks({ tabId, tasks }: Props): JSX.Element | null {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [open])
 
-  if (tasks.length === 0) return null
+  // An open list whose tasks all went says so; a closed one leaves no counter.
+  if (tasks.length === 0 && !open) return null
 
   return (
     <span className="bg" ref={self}>
@@ -100,22 +102,181 @@ export function BackgroundTasks({ tabId, tasks }: Props): JSX.Element | null {
       </button>
 
       {open && (
-        <div className="bg-list" data-testid="bg-list" role="dialog" aria-label="Фоновые команды">
-          <div className="bg-list-title">Фоновые команды</div>
-          <ul className="bg-rows">
-            {tasks.map((task) => (
-              <TaskRow
-                key={task.taskId}
-                tabId={tabId}
-                task={task}
-                expanded={expanded === task.taskId}
-                onToggle={() => setExpanded((id) => (id === task.taskId ? null : task.taskId))}
-              />
-            ))}
-          </ul>
-        </div>
+        <TaskManagerList
+          tabId={tabId}
+          tasks={tasks}
+          {...(onOpenAgent
+            ? {
+                onOpenAgent: (taskId: string) => {
+                  setOpen(false)
+                  onOpenAgent(taskId)
+                }
+              }
+            : {})}
+        />
       )}
     </span>
+  )
+}
+
+/**
+ * The list itself: agents and commands in groups of their own (an empty one
+ * is not drawn), and «Остановить все» once two or more are running — each
+ * task simply stops, so there is nothing to confirm.
+ */
+export function TaskManagerList({ tabId, tasks, onOpenAgent }: Props): JSX.Element {
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const agents = tasks.filter((t) => t.kind === 'agent')
+  const commands = tasks.filter((t) => t.kind !== 'agent')
+  const running = tasks.filter((t) => t.status === 'running')
+
+  const stopAll = (): void => {
+    // Each row's own stop says why, if one refuses; here nothing is held up by it.
+    for (const task of running) void window.qclod.stopTask(tabId, task.taskId).catch(() => undefined)
+  }
+
+  return (
+    <div className="bg-list" data-testid="bg-list" role="dialog" aria-label="Диспетчер задач">
+      <div className="bg-list-head">
+        <span className="bg-list-title">Диспетчер задач</span>
+        {running.length >= 2 && (
+          <button type="button" className="bg-stop" data-testid="bg-stop-all" onClick={stopAll}>
+            Остановить все
+          </button>
+        )}
+      </div>
+      {tasks.length === 0 ? (
+        <div className="bg-empty" data-testid="bg-empty">
+          Фоновых задач нет
+        </div>
+      ) : (
+        <div className="bg-rows">
+          {agents.length > 0 && (
+            <section className="bg-group" aria-label="Агенты">
+              <div className="bg-group-title">Агенты</div>
+              <ul className="bg-group-rows">
+                {agents.map((task) => (
+                  <AgentRow key={task.taskId} tabId={tabId} task={task} {...(onOpenAgent ? { onOpenAgent } : {})} />
+                ))}
+              </ul>
+            </section>
+          )}
+          {commands.length > 0 && (
+            <section className="bg-group" aria-label="Команды">
+              <div className="bg-group-title">Команды</div>
+              <ul className="bg-group-rows">
+                {commands.map((task) => (
+                  <TaskRow
+                    key={task.taskId}
+                    tabId={tabId}
+                    task={task}
+                    expanded={expanded === task.taskId}
+                    onToggle={() => setExpanded((id) => (id === task.taskId ? null : task.taskId))}
+                  />
+                ))}
+              </ul>
+            </section>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Stops one task; a refusal is said in its row, with the reason. Its end clears both. */
+function useStop(tabId: TabId, task: BackgroundTask): { stopping: boolean; stopError: string | null; stop: () => void } {
+  const [stopping, setStopping] = useState(false)
+  const [stopError, setStopError] = useState<string | null>(null)
+  const running = task.status === 'running'
+
+  useEffect(() => {
+    if (!running) {
+      setStopping(false)
+      setStopError(null)
+    }
+  }, [running])
+
+  const stop = (): void => {
+    setStopping(true)
+    setStopError(null)
+    // On success the button stays disabled: the task's notification ends it.
+    window.qclod.stopTask(tabId, task.taskId).catch((err: unknown) => {
+      setStopping(false)
+      setStopError(remoteErrorText(err))
+    })
+  }
+  return { stopping, stopError, stop }
+}
+
+function StopButton({ stopping, onStop }: { stopping: boolean; onStop: () => void }): JSX.Element {
+  return (
+    <button type="button" className="bg-stop" data-testid="bg-stop" disabled={stopping} onClick={onStop}>
+      {stopping ? 'Останавливаю…' : 'Остановить'}
+    </button>
+  )
+}
+
+function StopError({ text }: { text: string | null }): JSX.Element | null {
+  if (text === null) return null
+  return (
+    <div className="bg-task-error" data-testid="bg-stop-error" role="alert">
+      <CircleAlert size={12} color="var(--status-critical)" aria-hidden="true" />
+      <span>Не удалось остановить: {text}</span>
+    </div>
+  )
+}
+
+/**
+ * A background agent: its kind, what it was asked, what it says it is doing,
+ * time and state. It has no output to read (taskOutput refuses non-shell
+ * tasks); its own ribbon is a button away.
+ */
+function AgentRow({
+  tabId,
+  task,
+  onOpenAgent
+}: {
+  tabId: TabId
+  task: BackgroundTask
+  onOpenAgent?: (taskId: string) => void
+}): JSX.Element {
+  const { stopping, stopError, stop } = useStop(tabId, task)
+  const status = STATUS[task.status]
+  const StatusIcon = status.icon
+  const running = task.status === 'running'
+  return (
+    <li className={`bg-task is-agent is-${task.status}`} data-testid="bg-task" data-kind="agent" data-status={task.status}>
+      <div className="bg-task-head">
+        <span className="bg-agent-what">
+          <CategoryIcon category="agent" size={13} />
+          <span className="bg-agent-type">{task.subagentType || 'агент'}</span>
+          <span className="bg-task-label" title={task.description}>
+            {task.description}
+          </span>
+        </span>
+        <span className="bg-task-time" title={task.endedAt ? 'Сколько работал' : 'Работает уже'}>
+          {clock((task.endedAt ?? Date.now()) - task.startedAt)}
+        </span>
+        <span className="bg-task-status">
+          <StatusIcon size={12} color={status.color} aria-hidden="true" />
+          {status.word}
+        </span>
+      </div>
+      {(task.summary || onOpenAgent || running) && (
+        <div className="bg-agent-foot">
+          <span className="bg-agent-summary" title={task.summary}>
+            {task.summary}
+          </span>
+          {onOpenAgent && (
+            <button type="button" className="bg-open" data-testid="bg-open-agent" onClick={() => onOpenAgent(task.taskId)}>
+              Открыть ленту
+            </button>
+          )}
+          {running && <StopButton stopping={stopping} onStop={stop} />}
+        </div>
+      )}
+      <StopError text={stopError} />
+    </li>
   )
 }
 
@@ -130,8 +291,7 @@ function TaskRow({
   expanded: boolean
   onToggle: () => void
 }): JSX.Element {
-  const [stopping, setStopping] = useState(false)
-  const [stopError, setStopError] = useState<string | null>(null)
+  const { stopping, stopError, stop } = useStop(tabId, task)
   const status = STATUS[task.status]
   const StatusIcon = status.icon
   const elapsed = (task.endedAt ?? Date.now()) - task.startedAt
@@ -139,28 +299,8 @@ function TaskRow({
   const outputId = `bg-output-${task.taskId}`
   const running = task.status === 'running'
 
-  // Its end clears what was said about stopping it.
-  useEffect(() => {
-    if (!running) {
-      setStopping(false)
-      setStopError(null)
-    }
-  }, [running])
-
-  const stop = async (): Promise<void> => {
-    setStopping(true)
-    setStopError(null)
-    try {
-      // On success the button stays disabled: the task's notification ends it.
-      await window.qclod.stopTask(tabId, task.taskId)
-    } catch (err) {
-      setStopping(false)
-      setStopError(remoteErrorText(err))
-    }
-  }
-
   return (
-    <li className={`bg-task is-${task.status}`} data-testid="bg-task" data-status={task.status}>
+    <li className={`bg-task is-${task.status}`} data-testid="bg-task" data-kind="command" data-status={task.status}>
       <div className="bg-task-head">
         <button
           type="button"
@@ -183,24 +323,9 @@ function TaskRow({
           <StatusIcon size={12} color={status.color} aria-hidden="true" />
           {status.word}
         </span>
-        {running && (
-          <button
-            type="button"
-            className="bg-stop"
-            data-testid="bg-stop"
-            disabled={stopping}
-            onClick={() => void stop()}
-          >
-            {stopping ? 'Останавливаю…' : 'Остановить'}
-          </button>
-        )}
+        {running && <StopButton stopping={stopping} onStop={stop} />}
       </div>
-      {stopError !== null && (
-        <div className="bg-task-error" data-testid="bg-stop-error" role="alert">
-          <CircleAlert size={12} color="var(--status-critical)" aria-hidden="true" />
-          <span>Не удалось остановить: {stopError}</span>
-        </div>
-      )}
+      <StopError text={stopError} />
       {expanded && <TaskOutputView id={outputId} tabId={tabId} task={task} />}
     </li>
   )

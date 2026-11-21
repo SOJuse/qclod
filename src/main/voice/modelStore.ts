@@ -2,9 +2,10 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { VOICE_MODEL_IDS, type ModelInstallState, type VoiceModelId, type VoiceModelView } from '../../shared/voice'
-import { DownloadError, fetchFile } from './download'
+import { DownloadError, fetchFile, fileSha256 } from './download'
 import { activeManifests, activeVad, VAD_DIR, type ManifestFile, type ModelManifest } from './manifest'
 import type { ModelPaths } from './modelPaths'
+import { VC_REDIST_REASON } from './nvidia'
 
 export interface ModelStoreDeps {
   root: string
@@ -12,15 +13,29 @@ export interface ModelStoreDeps {
   platform: string
   /** fs.statfs */
   freeBytes(dir: string): Promise<number>
-  /** %SystemRoot%\System32\tar.exe -xf <zip> -C <dest> */
-  extractZip(zip: string, dest: string): Promise<void>
+  /** %SystemRoot%\System32\tar.exe -xf <zip> -C <dest>; the signal stops it (a cancel while unpacking). */
+  extractZip(zip: string, dest: string, signal?: AbortSignal): Promise<void>
   /** Until task 7: null means "not checked" and Whisper is unavailable. */
   nvidia?: (() => Promise<{ ok: true } | { ok: false; reason: string }>) | null
+  /** Whether the Visual C++ runtime whisper-server.exe needs is installed (I4); not given — taken as yes. */
+  vcRuntime?: () => boolean
 }
 
 const UNPACKED_WHISPER_BYTES = 1.8 * 1024 * 1024 * 1024
 const MIN_NOTIFY_GAP_MS = 200
-const WHISPER_EXE = ['cuda', 'Release', 'whisper-server.exe'] as const
+const WHISPER_RELEASE = ['cuda', 'Release'] as const
+const WHISPER_EXE = [...WHISPER_RELEASE, 'whisper-server.exe'] as const
+/** whisper-server.exe and the DLLs it loads, all in the b5454 zip's Release folder (M3). */
+const WHISPER_FILES = [
+  'whisper-server.exe',
+  'whisper.dll',
+  'ggml.dll',
+  'ggml-base.dll',
+  'ggml-cuda.dll',
+  'cudart64_12.dll',
+  'cublas64_12.dll',
+  'cublasLt64_12.dll'
+] as const
 
 /** "232 МБ", "1,3 ГБ": one comma, МБ up to 1000, then ГБ. */
 export function formatSize(bytes: number): string {
@@ -29,7 +44,15 @@ export function formatSize(bytes: number): string {
   return `${(mb / 1000).toFixed(1).replace('.', ',')} ГБ`
 }
 
-export function errorText(err: unknown): string {
+function noAccess(err: unknown): boolean {
+  if (err instanceof DownloadError) return err.code === 'access'
+  const code = (err as { code?: unknown } | null)?.code
+  return code === 'EACCES' || code === 'EPERM'
+}
+
+/** What the model's card says about a failed download. `root` — the models' folder, for «no access» (M4). */
+export function errorText(err: unknown, root?: string): string {
+  if (noAccess(err)) return root ? `Нет доступа к папке моделей: ${root}` : 'Нет доступа к папке моделей.'
   const code = err instanceof DownloadError ? err.code : null
   switch (code) {
     case 'network':
@@ -56,6 +79,8 @@ function fileSize(path: string): number {
 interface Job {
   controller: AbortController
   done: Promise<void>
+  /** Its turn came (the queue's previous job ended): a cancel now stops a running download. */
+  started: boolean
 }
 
 export class ModelStore {
@@ -63,6 +88,8 @@ export class ModelStore {
   private readonly vad: ManifestFile
   private readonly transient = new Map<VoiceModelId, ModelInstallState>()
   private readonly jobs = new Map<VoiceModelId, Job>()
+  /** Being deleted: not ready for the voice process, even while its files are still there (I3). */
+  private readonly removing = new Set<VoiceModelId>()
   private tail: Promise<void> = Promise.resolve()
   private readonly listeners = new Set<() => void>()
   private lastEmit = 0
@@ -97,11 +124,14 @@ export class ModelStore {
     }
   }
 
+  /** The zip for the card is unpacked: the server and every DLL it loads. */
+  private whisperUnpacked(dir: string): boolean {
+    return WHISPER_FILES.every((f) => existsSync(join(dir, ...WHISPER_RELEASE, f)))
+  }
+
   private filesPresent(m: ModelManifest): boolean {
     const dir = this.modelDir(m)
-    return m.files.every((f) =>
-      f.unpack === 'zip' ? existsSync(join(dir, ...WHISPER_EXE)) : fileSize(join(dir, f.name)) === f.size
-    )
+    return m.files.every((f) => (f.unpack === 'zip' ? this.whisperUnpacked(dir) : fileSize(join(dir, f.name)) === f.size))
   }
 
   /** Ready: installed.json of the manifest's version, every file of its size. Sums are not rechecked at start. */
@@ -111,7 +141,7 @@ export class ModelStore {
 
   paths(id: VoiceModelId): ModelPaths | null {
     const m = this.manifests[id]
-    if (!m || !this.isReady(m)) return null
+    if (!m || this.removing.has(id) || !this.isReady(m)) return null
     const dir = this.modelDir(m)
     const vad = this.vadPath()
     if (id === 'whisper-turbo-cuda') {
@@ -133,12 +163,19 @@ export class ModelStore {
 
   // --------------------------------------------------------------- snapshot
 
-  private async availability(id: VoiceModelId): Promise<{ available: boolean; unavailableReason?: string }> {
+  private async availability(
+    id: VoiceModelId
+  ): Promise<Pick<VoiceModelView, 'available' | 'unavailableReason' | 'fix'>> {
     if (id !== 'whisper-turbo-cuda') return { available: true }
     if (this.deps.platform !== 'win32') return { available: false, unavailableReason: 'Пока только на Windows' }
     const check = this.deps.nvidia ? await this.deps.nvidia() : null
     if (!check) return { available: false, unavailableReason: 'Видеокарта не проверена' }
-    return check.ok ? { available: true } : { available: false, unavailableReason: check.reason }
+    if (!check.ok) return { available: false, unavailableReason: check.reason }
+    // whisper-server.exe and its DLLs need MSVCP140/VCRUNTIME140(_1), which the zip does not carry (I4).
+    if (this.deps.vcRuntime && !this.deps.vcRuntime()) {
+      return { available: false, unavailableReason: VC_REDIST_REASON, fix: 'vc-redist' }
+    }
+    return { available: true }
   }
 
   async snapshot(): Promise<VoiceModelView[]> {
@@ -160,11 +197,34 @@ export class ModelStore {
     const m = this.manifests[id]
     if (!m) return Promise.reject(new Error(`unknown model ${id}`))
     const controller = new AbortController()
+    const job: Job = { controller, done: Promise.resolve(), started: false }
     this.setState(id, { kind: 'downloading', done: 0, total: 0 })
-    const done = this.tail.then(() => this.run(id, m, controller)).finally(() => this.jobs.delete(id))
-    this.tail = done.catch(() => {})
-    this.jobs.set(id, { controller, done })
-    return done
+    const ran = this.tail.then(() => {
+      // Cancelled while it waited its turn: already let go below.
+      if (controller.signal.aborted) return
+      job.started = true
+      return this.run(id, m, controller)
+    })
+    this.tail = ran.catch(() => {})
+    // A cancel (or a deletion) of a job still in the queue does not wait for the download before it (M1).
+    const dequeued = new Promise<void>((resolve) => {
+      controller.signal.addEventListener(
+        'abort',
+        () => {
+          if (job.started) return
+          if (this.jobs.get(id) === job) this.jobs.delete(id)
+          this.transient.delete(id)
+          this.emit()
+          resolve()
+        },
+        { once: true }
+      )
+    })
+    job.done = Promise.race([ran, dequeued]).finally(() => {
+      if (this.jobs.get(id) === job) this.jobs.delete(id)
+    })
+    this.jobs.set(id, job)
+    return job.done
   }
 
   /** The .part files stay for a resume. */
@@ -172,16 +232,31 @@ export class ModelStore {
     this.jobs.get(id)?.controller.abort()
   }
 
-  async remove(id: VoiceModelId): Promise<void> {
-    this.cancel(id)
-    await this.jobs.get(id)?.done.catch(() => {})
+  /**
+   * Deletes a model's folder. `release` lets the voice process go first
+   * (VoiceHost.release, I3): Windows keeps a running program's files locked,
+   * and a half-deleted folder would stay on the disk. While this runs, the
+   * model is not ready for a new recording.
+   */
+  async remove(id: VoiceModelId, release?: () => Promise<void>): Promise<void> {
     const m = this.manifests[id]
-    if (!m) return
-    // The voice process may only just have let the files go (host.modelChanged): Windows keeps them locked until it exits.
-    await rm(this.modelDir(m), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
-    this.transient.delete(id)
-    const needed = VOICE_MODEL_IDS.some((other) => other !== id && this.manifests[other] && this.hasMarker(this.manifests[other]))
-    if (!needed) await rm(this.vadDir(), { recursive: true, force: true })
+    this.removing.add(id)
+    try {
+      this.cancel(id)
+      await this.jobs.get(id)?.done.catch(() => {})
+      await release?.()
+      if (!m) return
+      // A process just closed may hold its files a moment longer: rm retries.
+      await rm(this.modelDir(m), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+      this.transient.delete(id)
+      // The VAD stays while another model has it or is downloading it (M2).
+      const needed = VOICE_MODEL_IDS.some(
+        (other) => other !== id && this.manifests[other] && (this.hasMarker(this.manifests[other]) || this.jobs.has(other))
+      )
+      if (!needed) await rm(this.vadDir(), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    } finally {
+      this.removing.delete(id)
+    }
     this.emit()
   }
 
@@ -195,14 +270,25 @@ export class ModelStore {
 
       const dir = this.modelDir(m)
       const todo: Array<{ file: ManifestFile; dir: string }> = []
+      /** A zip already downloaded whose unpacking failed: unpacked again, not downloaded again (M3). */
+      const toUnpack: ManifestFile[] = []
       if (fileSize(this.vadPath()) !== this.vad.size) todo.push({ file: this.vad, dir: this.vadDir() })
       for (const f of m.files) {
-        const have = f.unpack === 'zip' ? existsSync(join(dir, ...WHISPER_EXE)) : fileSize(join(dir, f.name)) === f.size
-        if (!have) todo.push({ file: f, dir })
+        if (f.unpack === 'zip') {
+          if (this.whisperUnpacked(dir)) continue
+          if (await this.keptZip(id, f, dir)) {
+            toUnpack.push(f)
+            continue
+          }
+          if (signal.aborted) throw new DownloadError('aborted')
+        } else if (fileSize(join(dir, f.name)) === f.size) {
+          continue
+        }
+        todo.push({ file: f, dir })
       }
 
       const total = todo.reduce((s, t) => s + t.file.size, 0)
-      const unpacked = todo.some((t) => t.file.unpack === 'zip') ? UNPACKED_WHISPER_BYTES : 0
+      const unpacked = toUnpack.length > 0 || todo.some((t) => t.file.unpack === 'zip') ? UNPACKED_WHISPER_BYTES : 0
       const need = 1.1 * (total + unpacked)
       const free = await this.deps.freeBytes(this.deps.root)
       if (free < need) {
@@ -218,8 +304,9 @@ export class ModelStore {
           onBytes: (bytes) => this.setState(id, { kind: 'downloading', done: finished + bytes, total })
         })
         finished += file.size
-        if (file.unpack === 'zip') await this.unpack(id, file, target)
+        if (file.unpack === 'zip') await this.unpack(id, file, target, signal)
       }
+      for (const file of toUnpack) await this.unpack(id, file, dir, signal)
 
       this.setState(id, { kind: 'verifying' })
       await writeFile(join(dir, 'installed.json'), JSON.stringify({ version: m.version, files: m.files.map((f) => f.name) }))
@@ -231,22 +318,36 @@ export class ModelStore {
         this.emit()
         return
       }
-      this.setState(id, { kind: 'error', message: errorText(err) })
+      this.setState(id, { kind: 'error', message: errorText(err, this.deps.root) })
       throw err
     }
   }
 
-  private async unpack(id: VoiceModelId, file: ManifestFile, dir: string): Promise<void> {
+  /** A zip of the right size left by a failed unpacking: kept if its sum is right, deleted if not. */
+  private async keptZip(id: VoiceModelId, file: ManifestFile, dir: string): Promise<boolean> {
+    const zip = join(dir, file.name)
+    if (fileSize(zip) !== file.size) return false
+    this.setState(id, { kind: 'verifying' })
+    if ((await fileSha256(zip)) === file.sha256.toLowerCase()) return true
+    await rm(zip, { force: true })
+    return false
+  }
+
+  private async unpack(id: VoiceModelId, file: ManifestFile, dir: string, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) throw new DownloadError('aborted')
     this.setState(id, { kind: 'extracting' })
     const zip = join(dir, file.name)
     const dest = join(dir, 'cuda')
     try {
       await rm(dest, { recursive: true, force: true })
       await mkdir(dest, { recursive: true })
-      await this.deps.extractZip(zip, dest)
-      if (!existsSync(join(dir, ...WHISPER_EXE))) throw new Error('whisper-server.exe is missing')
+      await this.deps.extractZip(zip, dest, signal)
+      if (signal.aborted) throw new DownloadError('aborted')
+      if (!this.whisperUnpacked(dir)) throw new Error('whisper-server.exe or a DLL it needs is missing')
     } catch (e) {
-      await rm(dest, { recursive: true, force: true })
+      // The zip stays: it is whole (its sum was checked), the next try only unpacks it.
+      await rm(dest, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+      if (signal.aborted) throw new DownloadError('aborted')
       throw new DownloadError('extract', (e as Error).message)
     }
     await rm(zip, { force: true })

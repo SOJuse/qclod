@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -154,6 +154,50 @@ describe('fetchFile', () => {
     handlers['/a'] = good()
     await fetchFile(file([`${base}/a`]), tmp, deps())
     expect(readFileSync(join(tmp, 'f.bin')).equals(BODY)).toBe(true)
+  })
+
+  test('M5: сервер замолчал посреди файла — через idleMs не висим, network; .part на месте', async () => {
+    handlers['/a'] = (_req, res) => {
+      res.writeHead(200, { 'Content-Length': BODY.length })
+      res.write(BODY.subarray(0, 15_000))
+      // and nothing more, the connection stays open
+    }
+    const started = Date.now()
+    const err = await fetchFile(file([`${base}/a`]), tmp, deps({ idleMs: 300 })).catch((e) => e)
+    expect(Date.now() - started).toBeLessThan(5000)
+    expect(err).toBeInstanceOf(DownloadError)
+    expect(err.code).toBe('network')
+    expect(err.message).toMatch(/no data/)
+    expect(statSync(join(tmp, 'f.bin.part')).size).toBe(15_000)
+  })
+
+  test('M5: замолчал основной — зеркало докачивает с того же места', async () => {
+    handlers['/a'] = (_req, res) => {
+      res.writeHead(200, { 'Content-Length': BODY.length })
+      res.write(BODY.subarray(0, 15_000))
+    }
+    handlers['/m'] = good()
+    ranges.length = 0
+    await fetchFile(file([`${base}/a`, `${base}/m`]), tmp, deps({ idleMs: 300 }))
+    expect(ranges[1]).toBe('bytes=15000-')
+    expect(readFileSync(join(tmp, 'f.bin')).equals(BODY)).toBe(true)
+  })
+
+  test('M4: .part нельзя писать (EPERM) — access, а не network, зеркало не пробуем', async () => {
+    const part = join(tmp, 'f.bin.part')
+    writeFileSync(part, BODY.subarray(0, 10_000))
+    chmodSync(part, 0o444)
+    handlers['/a'] = good()
+    handlers['/m'] = good()
+    ranges.length = 0
+    try {
+      const err = await fetchFile(file([`${base}/a`, `${base}/m`]), tmp, deps()).catch((e) => e)
+      expect(err).toBeInstanceOf(DownloadError)
+      expect(err.code).toBe('access')
+      expect(ranges).toHaveLength(1)
+    } finally {
+      chmodSync(part, 0o666)
+    }
   })
 
   test('отмена — aborted, .part на месте', async () => {

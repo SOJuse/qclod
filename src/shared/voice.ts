@@ -62,6 +62,8 @@ export interface VoiceModelView {
   state: ModelInstallState
   available: boolean
   unavailableReason?: string
+  /** What the person can do about it: «Голос» shows the button (vc-redist — Microsoft's VC++ installer, I4). */
+  fix?: 'vc-redist'
 }
 
 export interface VoiceModelsSnapshot {
@@ -78,6 +80,7 @@ export type VoiceErrorCode =
   | 'engine-crashed'
   | 'engine-gave-up'
   | 'ort-conflict'
+  | 'engine-missing'
   | 'load-failed'
   | 'gpu-fallback'
   | 'gpu-failed'
@@ -113,6 +116,10 @@ export function voiceErrorText(code: VoiceErrorCode, platform: string): string {
         : 'Голосовой движок не запускается. Пока можно диктовать через Windows (Win+H).'
     case 'ort-conflict':
       return 'Голосовой движок не запустился: мешает другая версия onnxruntime.dll в системе. Пока можно диктовать через Windows (Win+H).'
+    case 'engine-missing':
+      return mac
+        ? 'Голосовой движок не загрузился: файлы установки Qclod повреждены или их не пускает антивирус. Переустановите Qclod.'
+        : 'Голосовой движок не загрузился: файлы установки Qclod повреждены или их не пускает антивирус. Переустановите Qclod. Пока можно диктовать через Windows (Win+H).'
     case 'load-failed':
       return 'Не удалось загрузить модель голоса. Удалите её в настройках «Голос» и скачайте снова.'
     case 'gpu-fallback':

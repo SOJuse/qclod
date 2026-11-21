@@ -41,7 +41,8 @@ function setup(): void {
     store,
     isOurWindow: (id) => id === OUR,
     micAccess: () => mic,
-    openMicSettings: async () => void calls.push(['mic'])
+    openMicSettings: async () => void calls.push(['mic']),
+    openVcRedist: async () => void calls.push(['vc'])
   })
 }
 
@@ -132,7 +133,8 @@ describe('registerVoiceIpc', () => {
       },
       isOurWindow: () => true,
       micAccess: () => 'unknown',
-      openMicSettings: async () => {}
+      openMicSettings: async () => {},
+      openVcRedist: async () => {}
     })
     await expect(invoke(CHANNELS.voiceDownload, OUR, 'gigaam-v3')).resolves.toBeUndefined()
   })
@@ -140,5 +142,10 @@ describe('registerVoiceIpc', () => {
   test('openMicSettings', async () => {
     await invoke(CHANNELS.voiceOpenMicSettings, OUR)
     expect(calls).toEqual([['mic']])
+  })
+
+  test('I4: voiceOpenVcRedist открывает установщик VC++ — без аргументов из окна', async () => {
+    await invoke(CHANNELS.voiceOpenVcRedist, OUR, 'https://evil.example/')
+    expect(calls).toEqual([['vc']])
   })
 })

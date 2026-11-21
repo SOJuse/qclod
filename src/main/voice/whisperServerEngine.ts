@@ -25,15 +25,24 @@ export interface WhisperServerOptions {
   threads: number
   prompt: string
   onPid(pid: number): void
+  /**
+   * The loaded server is gone: it exited (a CUDA out-of-memory, a driver
+   * reset) or stopped answering. Every decode after this would fail, so the
+   * voice process exits and main restarts it on the next press (I1).
+   */
+  onDied?(reason: string): void
   spawn?: SpawnLike
   fetch?: typeof fetch
   readyTimeoutMs?: number
+  /** The least a decode may take before the server counts as hung; 3 × the phrase if longer. */
+  decodeTimeoutMs?: number
 }
 
 type GpuError = Error & { code: 'gpu-failed' }
 
 const HOST = '127.0.0.1'
 const POLL_MS = 150
+const DECODE_TIMEOUT_MS = 15_000
 const LOG_LIMIT = 64 * 1024
 const CUDA_FOUND = /found (\d+) CUDA devices/
 const CUDA_FAILED = /no CUDA devices|CUDA error|failed to initialize CUDA/i
@@ -81,15 +90,21 @@ export class WhisperServerEngine implements SpeechEngine {
   private readonly spawn: SpawnLike
   private readonly fetch: typeof fetch
   private readonly readyTimeoutMs: number
+  private readonly decodeTimeoutMs: number
   private child: ServerChild | null = null
   private port = 0
   private log = ''
   private exited = false
+  private exitCode: number | null = null
+  /** Loaded and warmed up: from here on its death is told by onDied. */
+  private serving = false
+  private died = false
 
   constructor(private readonly o: WhisperServerOptions) {
     this.spawn = o.spawn ?? ((file, args, opts) => nodeSpawn(file, args, opts))
     this.fetch = o.fetch ?? globalThis.fetch
     this.readyTimeoutMs = o.readyTimeoutMs ?? 30_000
+    this.decodeTimeoutMs = o.decodeTimeoutMs ?? DECODE_TIMEOUT_MS
   }
 
   async load(): Promise<void> {
@@ -105,12 +120,15 @@ export class WhisperServerEngine implements SpeechEngine {
       }
       child.stderr?.on('data', keep)
       child.stdout?.on('data', keep)
-      child.on('exit', () => {
+      child.on('exit', (code) => {
         this.exited = true
+        this.exitCode = code
+        if (this.serving && this.child === child) this.die(`whisper-server exited with code ${code}`)
       })
       await this.waitReady()
       // Warm-up: the first request pays for CUDA kernels.
       await this.decode(new Float32Array(8000))
+      this.serving = true
     } catch (err) {
       await this.dispose()
       throw err instanceof Error && (err as Partial<GpuError>).code === 'gpu-failed'
@@ -126,17 +144,42 @@ export class WhisperServerEngine implements SpeechEngine {
     form.append('temperature', '0.0')
     form.append('language', 'ru')
     form.append('prompt', this.o.prompt)
-    const res = await this.fetch(`http://${HOST}:${this.port}/inference`, { method: 'POST', body: form })
-    if (!res.ok) throw new Error(`whisper-server answered ${res.status}`)
-    const body = (await res.json()) as { text?: unknown }
+    // A hung driver never answers: 3 × the phrase (16 samples a ms), at least 15 s.
+    const ms = Math.max(this.decodeTimeoutMs, Math.round((pcm.length * 3) / 16))
+    let body: { text?: unknown }
+    try {
+      const res = await this.fetch(`http://${HOST}:${this.port}/inference`, {
+        method: 'POST',
+        body: form,
+        signal: AbortSignal.timeout(ms)
+      })
+      if (!res.ok) throw new Error(`whisper-server answered ${res.status}`)
+      body = (await res.json()) as { text?: unknown }
+    } catch (err) {
+      if ((err as { name?: unknown } | null)?.name === 'TimeoutError' && this.serving) {
+        this.die(`whisper-server did not answer in ${ms} ms`)
+      }
+      throw err
+    }
     const text = typeof body.text === 'string' ? body.text.trim() : ''
     return isWhisperHallucination(text) ? '' : text
   }
 
   async dispose(): Promise<void> {
+    this.serving = false
     const child = this.child
     this.child = null
     if (child !== null && !this.exited) child.kill()
+  }
+
+  /** Once: the server is killed (if it still runs) and the owner is told. */
+  private die(reason: string): void {
+    if (this.died) return
+    this.died = true
+    this.serving = false
+    const child = this.child
+    if (child !== null && !this.exited) child.kill()
+    this.o.onDied?.(reason)
   }
 
   private async waitReady(): Promise<void> {
@@ -144,7 +187,7 @@ export class WhisperServerEngine implements SpeechEngine {
     for (;;) {
       const failed = CUDA_FAILED.exec(this.log)
       if (failed !== null) throw gpuFailed(this.line(failed.index))
-      if (this.exited) throw gpuFailed('whisper-server exited before it was ready')
+      if (this.exited) throw gpuFailed(`whisper-server exited with code ${this.exitCode} before it was ready`)
       if (await this.answers()) {
         const found = CUDA_FOUND.exec(this.log)
         if (found === null || Number(found[1]) < 1) throw gpuFailed('whisper-server came up without CUDA')

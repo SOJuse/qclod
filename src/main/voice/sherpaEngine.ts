@@ -40,7 +40,7 @@ export interface SherpaModule {
   Vad: new (config: Record<string, unknown>, bufferSizeInSeconds: number) => SherpaVad
 }
 
-export type SherpaLoadCode = 'ort-conflict' | 'load-failed'
+export type SherpaLoadCode = 'ort-conflict' | 'engine-missing' | 'load-failed'
 export type SherpaLoadError = Error & { code: SherpaLoadCode }
 
 const RATE = 16_000
@@ -56,12 +56,20 @@ export function loadSherpa(): SherpaModule {
 /**
  * An error from loading the engine, with the code the window shows. An
  * «API version» error is a different onnxruntime.dll loaded before ours
- * (Решение 16).
+ * (Решение 16) — though usually that one kills the process first, and main
+ * finds the words in its stderr (voiceHost.ts). «Could not find
+ * sherpa-onnx-node» is the package's addon.js: it swallows why the .node did
+ * not load (a missing or blocked DLL of the install), so it is the install,
+ * not the model, that is broken.
  */
 export function sherpaLoadError(err: unknown): SherpaLoadError {
   const message = err instanceof Error ? err.message : String(err)
   const out = new Error(message) as SherpaLoadError
-  out.code = /API version/i.test(message) ? 'ort-conflict' : 'load-failed'
+  out.code = /API version/i.test(message)
+    ? 'ort-conflict'
+    : /Could not find sherpa-onnx-node/i.test(message)
+      ? 'engine-missing'
+      : 'load-failed'
   return out
 }
 

@@ -4,7 +4,7 @@ import { mkdir, open, rename, rm, stat, type FileHandle } from 'node:fs/promises
 import { join } from 'node:path'
 import type { ManifestFile } from './manifest'
 
-export type DownloadErrorCode = 'network' | 'checksum' | 'disk' | 'aborted' | 'extract'
+export type DownloadErrorCode = 'network' | 'checksum' | 'disk' | 'aborted' | 'extract' | 'access'
 
 export class DownloadError extends Error {
   constructor(
@@ -21,6 +21,15 @@ export interface DownloadDeps {
   signal?: AbortSignal
   /** Bytes of this file so far, resumed part included. */
   onBytes(total: number): void
+  /** No byte for this long: the connection is dead, the next address is tried (M5). 60 s. */
+  idleMs?: number
+}
+
+const IDLE_MS = 60_000
+
+function isAccessError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code
+  return code === 'EACCES' || code === 'EPERM'
 }
 
 async function sizeOf(path: string): Promise<number> {
@@ -33,6 +42,13 @@ async function sizeOf(path: string): Promise<number> {
 
 async function hashFile(path: string, hash: Hash): Promise<void> {
   for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer)
+}
+
+/** SHA-256 of a whole file, lower-case hex. */
+export async function fileSha256(path: string): Promise<string> {
+  const hash = createHash('sha256')
+  await hashFile(path, hash)
+  return hash.digest('hex')
 }
 
 class Mismatch extends Error {}
@@ -62,6 +78,9 @@ export async function fetchFile(file: ManifestFile, dir: string, deps: DownloadD
         last = new DownloadError('checksum')
       } else if (err instanceof DownloadError) {
         throw err
+      } else if (isAccessError(err)) {
+        // The folder is not ours to write: another address will not help (M4).
+        throw new DownloadError('access', (err as Error).message)
       } else {
         last = new DownloadError('network', (err as Error)?.message)
       }
@@ -81,9 +100,19 @@ export async function fetchFile(file: ManifestFile, dir: string, deps: DownloadD
     if (have < file.size) {
       const headers: Record<string, string> = {}
       if (have > 0) headers['Range'] = `bytes=${have}-`
-      const res = await deps.fetch(url, { headers, signal: sig, redirect: 'follow' })
+      // A connection that stays open with nothing coming would hang the download for ever.
+      const idleMs = deps.idleMs ?? IDLE_MS
+      const idle = new AbortController()
+      let idleTimer = setTimeout(() => idle.abort(), idleMs)
+      const poke = (): void => {
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => idle.abort(), idleMs)
+      }
+      const signal = sig ? AbortSignal.any([sig, idle.signal]) : idle.signal
       let handle: FileHandle | null = null
       try {
+        const res = await deps.fetch(url, { headers, signal, redirect: 'follow' })
+        poke()
         if (res.status === 416) {
           // Nothing left to send: what we have is judged by its sum below.
         } else if (res.status === 200 || res.status === 206) {
@@ -100,10 +129,12 @@ export async function fetchFile(file: ManifestFile, dir: string, deps: DownloadD
           for (;;) {
             const { done, value } = await reader.read()
             if (done) break
+            poke()
             hash.update(value)
             try {
               await handle.write(value)
             } catch (e) {
+              if (isAccessError(e)) throw new DownloadError('access', (e as Error).message)
               throw new DownloadError('disk', (e as Error).message ? 'disk' : undefined)
             }
             have += value.length
@@ -113,7 +144,11 @@ export async function fetchFile(file: ManifestFile, dir: string, deps: DownloadD
         } else {
           throw new Error(`HTTP ${res.status}`)
         }
+      } catch (err) {
+        if (idle.signal.aborted && !sig?.aborted) throw new Error(`no data for ${Math.round(idleMs / 1000)} s`)
+        throw err
       } finally {
+        clearTimeout(idleTimer)
         await handle?.close()
       }
     }

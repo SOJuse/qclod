@@ -25,7 +25,7 @@ interface Session {
 
 function failCode(err: unknown): FailCode {
   const code = (err as { code?: unknown } | null)?.code
-  return code === 'ort-conflict' || code === 'gpu-failed' ? code : 'load-failed'
+  return code === 'ort-conflict' || code === 'engine-missing' || code === 'gpu-failed' ? code : 'load-failed'
 }
 
 function message(err: unknown): string {
@@ -44,11 +44,17 @@ export class WorkerCore {
   private loaded = false
   private dead = false
   private queue: SessionMessage[] = []
-  private waitingSamples = 0
+  /** Sound in the queue: it waits for the model, or for a stop's last final. */
+  private queuedSamples = 0
   private pumping = false
   private session: Session | null = null
 
   constructor(private readonly deps: WorkerDeps) {}
+
+  /** Samples of sound waiting in the queue (at most 30 s). */
+  backlogSamples(): number {
+    return this.queuedSamples
+  }
 
   handle(m: ToWorker): void {
     if (this.dead) return
@@ -66,9 +72,12 @@ export class WorkerCore {
       }
       return
     }
-    if (m.type === 'audio' && !this.loaded) {
-      if (this.waitingSamples + m.pcm.length > LOAD_BUFFER_SAMPLES) return
-      this.waitingSamples += m.pcm.length
+    // While the model loads, or while a stop waits for a decode that may never
+    // come back (a hung driver: main closes the process, voiceHost.ts), the
+    // queue keeps at most 30 s of sound.
+    if (m.type === 'audio') {
+      if (this.queuedSamples + m.pcm.length > LOAD_BUFFER_SAMPLES) return
+      this.queuedSamples += m.pcm.length
     }
     this.queue.push(m)
     void this.pump()
@@ -84,11 +93,11 @@ export class WorkerCore {
     } catch (err) {
       this.dead = true
       this.queue = []
+      this.queuedSamples = 0
       this.deps.post({ type: 'failed', code: failCode(err), message: message(err) })
       return
     }
     this.loaded = true
-    this.waitingSamples = 0
     this.deps.post({ type: 'loaded', model: this.engine.model, ms: Date.now() - startedAt })
     void this.pump()
   }
@@ -99,6 +108,7 @@ export class WorkerCore {
     try {
       while (this.queue.length > 0 && !this.dead) {
         const m = this.queue.shift()!
+        if (m.type === 'audio') this.queuedSamples -= m.pcm.length
         if (m.type === 'start') this.begin(m.session, m.replacements)
         else if (m.type === 'audio') {
           if (this.session?.id === m.session) this.session.decoder.push(m.pcm)

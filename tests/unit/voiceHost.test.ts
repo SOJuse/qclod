@@ -9,14 +9,20 @@ import type { ErrorEntry } from '@main/system/errorLog'
 class FakeWorker extends EventEmitter implements WorkerLike {
   sent: ToWorker[] = []
   killed = false
+  /** kill() does not end the process by itself: the test emits its exit. */
+  manualExit = false
+  tail = ''
   postMessage(m: ToWorker): void {
     this.sent.push(m)
   }
   kill(): boolean {
     if (this.killed) return false
     this.killed = true
-    queueMicrotask(() => this.emit('exit', 0))
+    if (!this.manualExit) queueMicrotask(() => this.emit('exit', 0))
     return true
+  }
+  stderrTail(): string {
+    return this.tail
   }
   reply(m: FromWorker): void {
     this.emit('message', m)
@@ -344,8 +350,8 @@ describe('VoiceHost', () => {
     expect(r.w().types()).toEqual(['load', 'start'])
   })
 
-  test('ort-conflict и load-failed — ошибки с теми же кодами', async () => {
-    for (const code of ['ort-conflict', 'load-failed'] as const) {
+  test('ort-conflict, engine-missing и load-failed — ошибки с теми же кодами', async () => {
+    for (const code of ['ort-conflict', 'engine-missing', 'load-failed'] as const) {
       const r = rig()
       const s = await begin(r)
       r.w().reply({ type: 'failed', code, message: 'x' })
@@ -354,7 +360,185 @@ describe('VoiceHost', () => {
       await tick()
       expect(r.logs).toHaveLength(1)
       expect(r.logs[0].message).toContain(code)
+      // ort-conflict и engine-missing повторять бессмысленно; load-failed — можно.
+      const again = await r.host.begin(1, 't1')
+      if (code === 'load-failed') expect('session' in again).toBe(true)
+      else expect(again).toEqual({ error: code })
     }
+  })
+
+  test('I2: процесс упал при загрузке, в stderr «requested API version» — ort-conflict сразу и до перезапуска', async () => {
+    const r = rig()
+    const s = await begin(r)
+    r.w().tail =
+      '[voice] loading\nThe requested API version [28] is not available, only API versions [1, 17] are supported in this build.\n'
+    r.w().crash(139)
+    expect(r.events.slice(-1)).toEqual([{ owner: 1, e: { session: s, kind: 'error', code: 'ort-conflict' } }])
+    expect(r.logs).toHaveLength(1)
+    expect(r.logs[0].message).toContain('139')
+    expect(r.logs[0].message).toContain('requested API version [28]')
+    expect(await r.host.begin(1, 't1')).toEqual({ error: 'ort-conflict' })
+    expect(r.workers).toHaveLength(1)
+  })
+
+  test('I2: падение после загрузки с тем же stderr — обычное engine-crashed', async () => {
+    const r = rig()
+    const s = await begin(r)
+    r.w().reply({ type: 'loaded', model: 'gigaam-v3', ms: 1 })
+    r.w().tail = 'The requested API version [28] is not available'
+    r.w().crash(139)
+    expect(r.events.slice(-1)).toEqual([{ owner: 1, e: { session: s, kind: 'error', code: 'engine-crashed' } }])
+    expect('session' in (await r.host.begin(1, 't1'))).toBe(true)
+  })
+
+  test('журнал падения несёт хвост stderr процесса (код выхода whisper-server)', async () => {
+    const r = rig('whisper-turbo-cuda', ['whisper-turbo-cuda'])
+    await begin(r)
+    r.w().reply({ type: 'loaded', model: 'whisper-turbo-cuda', ms: 1 })
+    r.w().tail = '[voice] whisper-server exited with code 3221226505\n'
+    r.w().crash(1)
+    expect(r.logs[0].message).toContain('exited with code 1')
+    expect(r.logs[0].message).toContain('whisper-server exited with code 3221226505')
+  })
+
+  test('I1 сторож: после stop нет done за 30 с — процесс закрыт, engine-crashed, сервер убит', async () => {
+    const r = rig('whisper-turbo-cuda', ['whisper-turbo-cuda'])
+    const s = await begin(r)
+    r.w().reply({ type: 'loaded', model: 'whisper-turbo-cuda', ms: 1 })
+    r.w().reply({ type: 'pid', pid: 99 })
+    r.host.end(1, s)
+    vi.advanceTimersByTime(29_000)
+    expect(r.w().killed).toBe(false)
+    vi.advanceTimersByTime(1_000)
+    expect(r.w().killed).toBe(true)
+    expect(r.killedPids).toEqual([99])
+    expect(kinds(r).slice(-1)).toEqual(['error:engine-crashed'])
+    expect(r.logs.slice(-1)[0].message).toMatch(/30 s/)
+    await tick() // выход процесса — второй ошибки нет
+    expect(kinds(r).filter((k) => k.startsWith('error'))).toHaveLength(1)
+    await begin(r)
+    expect(r.workers).toHaveLength(2)
+  })
+
+  test('сторож: stop во время загрузки считает от загрузки; каждый final продлевает', async () => {
+    const r = rig()
+    const s = await begin(r)
+    r.host.end(1, s)
+    vi.advanceTimersByTime(40_000)
+    expect(r.w().killed).toBe(false)
+    r.w().reply({ type: 'loaded', model: 'gigaam-v3', ms: 40_000 })
+    vi.advanceTimersByTime(29_000)
+    r.w().reply({ type: 'final', session: s, phrase: 0, text: 'Раз.', joinsPrevious: false })
+    vi.advanceTimersByTime(29_000)
+    expect(r.w().killed).toBe(false)
+    r.w().reply({ type: 'done', session: s })
+    vi.advanceTimersByTime(60_000)
+    expect(r.w().killed).toBe(false)
+    expect(kinds(r)).toEqual(['loading', 'ready', 'final', 'done'])
+  })
+
+  test('сторож: новая сессия, сменившая прежнюю, тоже ждёт её done не дольше 30 с', async () => {
+    const r = rig()
+    await begin(r, 1, 't1')
+    r.w().reply({ type: 'loaded', model: 'gigaam-v3', ms: 1 })
+    const s2 = await begin(r, 2, 't2')
+    vi.advanceTimersByTime(30_000)
+    expect(r.w().killed).toBe(true)
+    expect(r.events.filter((x) => x.e.kind === 'error').map((x) => x.e.session)).toContain(s2)
+  })
+
+  test('I3: release загруженной модели закрывает процесс; промис — после выхода и kill pid сервера', async () => {
+    const r = rig('whisper-turbo-cuda', ['whisper-turbo-cuda'])
+    const s = await begin(r)
+    r.w().reply({ type: 'loaded', model: 'whisper-turbo-cuda', ms: 1 })
+    r.w().reply({ type: 'pid', pid: 4242 })
+    r.host.end(1, s)
+    r.w().reply({ type: 'done', session: s })
+    r.w().manualExit = true
+    let released = false
+    const p = r.host.release('whisper-turbo-cuda').then(() => (released = true))
+    await tick()
+    expect(r.w().killed).toBe(true)
+    expect(released).toBe(false)
+    r.w().crash(0)
+    await p
+    expect(r.killedPids).toEqual([4242])
+    expect(r.logs).toEqual([])
+    expect(kinds(r).filter((k) => k.startsWith('error'))).toEqual([])
+  })
+
+  test('I3: release другой модели процесс не трогает', async () => {
+    const r = rig('gigaam-v3', ['gigaam-v3', 'parakeet-v3'])
+    const s = await begin(r)
+    r.w().reply({ type: 'loaded', model: 'gigaam-v3', ms: 1 })
+    await r.host.release('parakeet-v3')
+    expect(r.w().killed).toBe(false)
+    r.host.audio(1, s, pcm())
+    expect(r.w().types()).toEqual(['load', 'start', 'audio'])
+  })
+
+  test('I3: release во время записи — запись заканчивается, её final и done доходят, потом процесс закрыт', async () => {
+    const r = rig()
+    const s = await begin(r)
+    r.w().reply({ type: 'loaded', model: 'gigaam-v3', ms: 1 })
+    let released = false
+    const p = r.host.release('gigaam-v3').then(() => (released = true))
+    await tick()
+    expect(r.w().types()).toEqual(['load', 'start', 'stop'])
+    expect(r.w().killed).toBe(false)
+    r.w().reply({ type: 'final', session: s, phrase: 0, text: 'Хвост.', joinsPrevious: false })
+    r.w().reply({ type: 'done', session: s })
+    await p
+    expect(released).toBe(true)
+    expect(r.w().killed).toBe(true)
+    expect(kinds(r)).toEqual(['loading', 'ready', 'final', 'done'])
+  })
+
+  test('I3: release ждёт выхода процесса, уже отпущенного сменой модели', async () => {
+    const r = rig('gigaam-v3', ['gigaam-v3', 'parakeet-v3'])
+    const s = await begin(r)
+    r.w().reply({ type: 'loaded', model: 'gigaam-v3', ms: 1 })
+    r.host.end(1, s)
+    r.w().reply({ type: 'done', session: s })
+    const old = r.w()
+    old.manualExit = true
+    r.settings = { model: 'parakeet-v3', replacements: null }
+    r.host.modelChanged()
+    expect(old.killed).toBe(true)
+    let released = false
+    const p = r.host.release('gigaam-v3').then(() => (released = true))
+    await tick()
+    expect(released).toBe(false)
+    old.crash(0)
+    await p
+    expect(released).toBe(true)
+  })
+
+  test('I3: процесс не вышел за 5 с после kill — pid сервера убит, release не висит', async () => {
+    const r = rig('whisper-turbo-cuda', ['whisper-turbo-cuda'])
+    await begin(r)
+    r.w().reply({ type: 'pid', pid: 31 })
+    const w = r.w()
+    w.manualExit = true
+    const s = r.events[0].e.session
+    r.host.end(1, s)
+    w.reply({ type: 'done', session: s })
+    const p = r.host.release('whisper-turbo-cuda')
+    await vi.advanceTimersByTimeAsync(5_000)
+    await p
+    expect(r.killedPids).toEqual([31])
+  })
+
+  test('M8: окно перезагрузилось или упало — его запись остановлена, звук больше не принимается', async () => {
+    const r = rig()
+    const s = await begin(r, 5)
+    r.w().reply({ type: 'loaded', model: 'gigaam-v3', ms: 1 })
+    r.host.endOwner(6)
+    expect(r.w().types()).toEqual(['load', 'start'])
+    r.host.endOwner(5)
+    expect(r.w().types()).toEqual(['load', 'start', 'stop'])
+    r.host.audio(5, s, pcm())
+    expect(r.w().types()).toEqual(['load', 'start', 'stop'])
   })
 
   test('новое begin завершает прежнюю сессию, её final уходит прежнему владельцу', async () => {

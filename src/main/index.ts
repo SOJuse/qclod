@@ -77,35 +77,65 @@ import { registerVoiceIpc, voiceSnapshot } from './voice/voiceIpc'
 import type { FromWorker } from './voice/protocol'
 import { ModelStore } from './voice/modelStore'
 import { modelsRoot } from './voice/modelsRoot'
-import { cudaReady, detectNvidia } from './voice/nvidia'
+import { cudaReady, detectNvidia, VC_REDIST_URL, vcRuntimeReady } from './voice/nvidia'
 
 let mainWindow: BrowserWindow | null = null
 
+/** How much of the voice process's stderr is kept for the log and for telling a crash's cause. */
+const VOICE_STDERR_TAIL = 8 * 1024
+
 /**
  * The voice process (voice/worker.ts). Its output goes to our console, marked:
- * the process has no log of its own.
+ * the process has no log of its own. The end of its stderr is kept: a native
+ * crash (a different onnxruntime.dll, I2) or the Whisper server's death says
+ * why only there (voiceHost.ts).
  */
 function forkVoiceWorker(): WorkerLike {
   const child = utilityProcess.fork(join(__dirname, 'voiceWorker.js'), [], {
     serviceName: 'Qclod voice',
     stdio: 'pipe'
   })
+  let tail = ''
+  let stderrEnded = child.stderr === null
   child.stdout?.on('data', (d: Buffer) => console.log('[voice]', String(d).trimEnd()))
-  child.stderr?.on('data', (d: Buffer) => console.warn('[voice]', String(d).trimEnd()))
+  child.stderr?.on('data', (d: Buffer) => {
+    const text = String(d)
+    console.warn('[voice]', text.trimEnd())
+    tail = (tail + text).slice(-VOICE_STDERR_TAIL)
+  })
+  child.stderr?.on('end', () => (stderrEnded = true))
   return {
     postMessage: (m) => child.postMessage(m),
     on: (e: 'message' | 'exit', f: ((m: FromWorker) => void) | ((code: number) => void)) => {
-      child.on(e as 'exit', f as (code: number) => void)
+      if (e === 'message') {
+        child.on('message', f as (m: FromWorker) => void)
+        return
+      }
+      // The exit may come before the last of stderr is read: wait for its end (at most 250 ms).
+      child.on('exit', (code) => {
+        const done = f as (code: number) => void
+        if (stderrEnded || child.stderr === null) return done(code)
+        let called = false
+        const once = (): void => {
+          if (called) return
+          called = true
+          clearTimeout(timer)
+          done(code)
+        }
+        const timer = setTimeout(once, 250)
+        child.stderr.once('end', once)
+      })
     },
-    kill: () => child.kill()
+    kill: () => child.kill(),
+    stderrTail: () => tail
   } as WorkerLike
 }
 
-/** Whisper's archive for the card, unpacked by Windows' own tar by its full path (decision 13). */
-function extractZip(zip: string, dest: string): Promise<void> {
+/** Whisper's archive for the card, unpacked by Windows' own tar by its full path (decision 13). A cancel stops tar. */
+function extractZip(zip: string, dest: string, signal?: AbortSignal): Promise<void> {
   const tar = join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'tar.exe')
   return new Promise((resolve, reject) => {
-    execFile(tar, ['-xf', zip, '-C', dest], { windowsHide: true }, (err) => (err ? reject(err) : resolve()))
+    execFile(tar, ['-xf', zip, '-C', dest], { windowsHide: true, signal }, (err) => (err ? reject(err) : resolve()))
   })
 }
 
@@ -543,7 +573,9 @@ if (gotLock) void app.whenReady().then(async () => {
     platform: process.platform,
     freeBytes,
     extractZip,
-    nvidia: nvidiaOnce()
+    nvidia: nvidiaOnce(),
+    // Whisper's server needs the VC++ runtime from System32 (I4); asked each time — the person may install it.
+    vcRuntime: () => vcRuntimeReady(process.env['SystemRoot'] ?? 'C:\\Windows')
   })
   const micAccess = (): 'granted' | 'denied' | 'unknown' => micAccessStatus(systemPreferences)
   const voiceHost = new VoiceHost({
@@ -587,11 +619,9 @@ if (gotLock) void app.whenReady().then(async () => {
       snapshot: () => modelStore.snapshot(),
       download: (id) => modelStore.download(id),
       cancel: (id) => modelStore.cancel(id),
-      // The process lets the model's files go first (now, or once its session is done).
-      remove: (id) => {
-        voiceHost.modelChanged()
-        return modelStore.remove(id)
-      }
+      // The voice process lets the model's files go first (I3): a recording on it ends,
+      // the process exits and the Whisper server is killed; another model's process stays.
+      remove: (id) => modelStore.remove(id, () => voiceHost.release(id))
     },
     isOurWindow: (id) => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.webContents.id === id,
     micAccess,
@@ -604,7 +634,15 @@ if (gotLock) void app.whenReady().then(async () => {
           return
         }
         await shell.openExternal(url)
-      })
+      }),
+    openVcRedist: async () => {
+      if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_FAKE_SHELL']) {
+        const g = globalThis as { __qclodShellLog?: unknown[] }
+        ;(g.__qclodShellLog ??= []).push({ action: 'vc-redist', path: VC_REDIST_URL })
+        return
+      }
+      await shell.openExternal(VC_REDIST_URL)
+    }
   })
   modelStore.onChange(() => {
     void voiceSnapshot(modelStore, micAccess).then((s) => send(CHANNELS.voiceModelsChanged, s))
@@ -700,8 +738,21 @@ if (gotLock) void app.whenReady().then(async () => {
 
   // Microphone: audio for our own window only (voice/micAccess.ts); before the window exists.
   installMediaPermissions(session.defaultSession, (wc) => !!wc && wc === mainWindow?.webContents)
+  // The page that recorded is gone (a reload, a crash, a closed window, M8): its
+  // recording stops, so the microphone's last sound is not decoded for nobody for ever.
+  const endVoiceWithPage = (win: BrowserWindow): void => {
+    const contents = win.webContents
+    const owner = contents.id
+    contents.on('render-process-gone', () => voiceHost.endOwner(owner))
+    contents.on('did-start-navigation', (_e, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) voiceHost.endOwner(owner)
+    })
+    contents.on('destroyed', () => voiceHost.endOwner(owner))
+  }
+
   mainWindow = createMainWindow()
   watchWindow(mainWindow, (e) => errorLog.write(e))
+  endVoiceWithPage(mainWindow)
   mainWindow.on('session-end', () => sessionEnding(quitReason, autonomy))
   loadRenderer(mainWindow)
   onSecondInstance = showWindow
@@ -783,6 +834,7 @@ if (gotLock) void app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createMainWindow()
       watchWindow(mainWindow, (e) => errorLog.write(e))
+      endVoiceWithPage(mainWindow)
       loadRenderer(mainWindow)
     }
   })

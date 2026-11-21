@@ -105,7 +105,8 @@ describe('ipc channel contract', () => {
       voiceDelete: 'voice:delete',
       voiceBegin: 'voice:begin',
       voiceEnd: 'voice:end',
-      voiceOpenMicSettings: 'voice:openMicSettings'
+      voiceOpenMicSettings: 'voice:openMicSettings',
+      voiceOpenVcRedist: 'voice:openVcRedist'
     } as const
     for (const [key, value] of Object.entries(invoke)) {
       expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)

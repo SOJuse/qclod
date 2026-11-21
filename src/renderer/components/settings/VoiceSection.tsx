@@ -111,6 +111,18 @@ function ModelCard({
           {card.disabledReason}
         </p>
       )}
+      {!view.available && view.fix === 'vc-redist' && (
+        <div className="voice-model-fix">
+          <button
+            type="button"
+            className="btn btn-sm"
+            data-testid="voice-model-vc-redist"
+            onClick={() => void window.qclod.voice.openVcRedist().catch(() => undefined)}
+          >
+            Скачать Visual C++ Redistributable
+          </button>
+        </div>
+      )}
     </li>
   )
 }

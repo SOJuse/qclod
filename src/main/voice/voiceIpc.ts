@@ -18,6 +18,8 @@ export interface VoiceIpcDeps {
   isOurWindow(id: number): boolean
   micAccess(): VoiceModelsSnapshot['micAccess']
   openMicSettings(): Promise<void>
+  /** Opens Microsoft's fixed VC++ Redistributable link; the window passes nothing (I4). */
+  openVcRedist(): Promise<void>
 }
 
 /** What the window is told about voice: the models, and whether the system lets us have the microphone. */
@@ -78,6 +80,8 @@ export function registerVoiceIpc(deps: VoiceIpcDeps): void {
   })
 
   ipcMain.handle(CHANNELS.voiceOpenMicSettings, () => deps.openMicSettings())
+
+  ipcMain.handle(CHANNELS.voiceOpenVcRedist, () => deps.openVcRedist())
 
   ipcMain.on(CHANNELS.voiceAudio, (e: Sender, session: unknown, pcm: unknown) => {
     if (!deps.isOurWindow(e.sender.id)) return

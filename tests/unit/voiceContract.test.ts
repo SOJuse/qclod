@@ -10,6 +10,7 @@ const CODES: VoiceErrorCode[] = [
   'engine-crashed',
   'engine-gave-up',
   'ort-conflict',
+  'engine-missing',
   'load-failed',
   'gpu-fallback',
   'gpu-failed'
@@ -41,5 +42,13 @@ describe('контракт голоса', () => {
     expect(mac).not.toContain('Windows')
     expect(voiceErrorText('engine-gave-up', 'win32')).toContain('Win+H')
     expect(voiceErrorText('engine-gave-up', 'darwin')).not.toContain('Win+H')
+  })
+
+  test('I2: engine-missing — про установку Qclod, а не «удалите модель»', () => {
+    const text = voiceErrorText('engine-missing', 'win32')
+    expect(text).toContain('Переустановите Qclod')
+    expect(text).toContain('Win+H')
+    expect(text).not.toMatch(/Удалите/)
+    expect(voiceErrorText('engine-missing', 'darwin')).not.toContain('Win+H')
   })
 })

@@ -238,6 +238,8 @@ const api = {
     audio: (session: string, pcm: Float32Array): void =>
       ipcRenderer.send(CHANNELS.voiceAudio, session, pcm),
     openMicSettings: (): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceOpenMicSettings),
+    /** Microsoft's VC++ Redistributable download, for Whisper (I4). */
+    openVcRedist: (): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceOpenVcRedist),
     onEvent: (cb: (e: VoiceEvent) => void) => on(CHANNELS.voiceEvent, cb),
     onModelsChanged: (cb: (s: VoiceModelsSnapshot) => void) => on(CHANNELS.voiceModelsChanged, cb)
   },

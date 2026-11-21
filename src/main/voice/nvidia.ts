@@ -1,5 +1,18 @@
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { win32 } from 'node:path'
+
+/** Microsoft's own link to the x64 VC++ 2015–2022 Redistributable (I4, Ruling S5-R3). */
+export const VC_REDIST_URL = 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
+export const VC_REDIST_REASON =
+  'Для Whisper нужен Microsoft Visual C++ Redistributable (x64). Установите его с сайта Microsoft и перезапустите Qclod.'
+/** What whisper-server.exe, ggml.dll and ggml-cuda.dll import and the zip does not carry. */
+const VC_RUNTIME_DLLS = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'] as const
+
+/** Whether the Visual C++ runtime is in %SystemRoot%\System32 (where its installer puts the x64 DLLs). */
+export function vcRuntimeReady(systemRoot: string, exists: (path: string) => boolean = existsSync): boolean {
+  return VC_RUNTIME_DLLS.every((dll) => exists(win32.join(systemRoot, 'System32', dll)))
+}
 
 export interface NvidiaInfo {
   name: string

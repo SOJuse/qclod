@@ -29,7 +29,7 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => new Promise((r) => s.close(() => r(undefined)))))
 })
 
-function fake(o: { stderr: string[]; text?: string; listen?: boolean }): FakeRun {
+function fake(o: { stderr: string[]; text?: string; listen?: boolean; hangAfter?: number }): FakeRun {
   const run: FakeRun = { spawn: undefined as unknown as SpawnLike, calls: [], bodies: [], killed: () => false }
   let killed = false
   run.killed = () => killed
@@ -54,6 +54,8 @@ function fake(o: { stderr: string[]; text?: string; listen?: boolean }): FakeRun
         req.on('end', () => {
           if (req.method === 'POST' && req.url === '/inference') {
             run.bodies.push(Buffer.concat(chunks).toString('utf8'))
+            // A hung driver: the request is taken and never answered.
+            if (o.hangAfter !== undefined && run.bodies.length > o.hangAfter) return
             res.writeHead(200, { 'content-type': 'application/json' })
             res.end(JSON.stringify({ text: o.text ?? '' }))
             return
@@ -70,8 +72,13 @@ function fake(o: { stderr: string[]; text?: string; listen?: boolean }): FakeRun
   return run
 }
 
-function engine(run: FakeRun, extra: { prompt?: string; readyTimeoutMs?: number; pids?: number[] } = {}): WhisperServerEngine {
+function engine(
+  run: FakeRun,
+  extra: { prompt?: string; readyTimeoutMs?: number; pids?: number[]; died?: string[]; decodeTimeoutMs?: number } = {}
+): WhisperServerEngine {
   return new WhisperServerEngine({
+    onDied: (why) => extra.died?.push(why),
+    ...(extra.decodeTimeoutMs !== undefined ? { decodeTimeoutMs: extra.decodeTimeoutMs } : {}),
     exe: EXE,
     ggml: GGML,
     threads: 4,
@@ -133,7 +140,7 @@ describe('WhisperServerEngine', () => {
     expect(run.killed()).toBe(true)
   })
 
-  test('сервер вышел до готовности — gpu-failed', async () => {
+  test('сервер вышел до готовности — gpu-failed, код выхода в сообщении', async () => {
     const run = fake({ stderr: [], listen: false })
     const spawn = run.spawn
     run.spawn = (file, args, opts) => {
@@ -141,7 +148,65 @@ describe('WhisperServerEngine', () => {
       setTimeout(() => (child as unknown as EventEmitter).emit('exit', 3221225781, null), 50)
       return child
     }
-    await expect(engine(run, { readyTimeoutMs: 10_000 }).load()).rejects.toMatchObject({ code: 'gpu-failed' })
+    await expect(engine(run, { readyTimeoutMs: 10_000 }).load()).rejects.toMatchObject({
+      code: 'gpu-failed',
+      message: expect.stringContaining('3221225781')
+    })
+  })
+
+  test('I1-А: сервер упал после загрузки (CUDA OOM) — onDied с кодом выхода', async () => {
+    let child!: EventEmitter
+    const run = fake({ stderr: CUDA_OK })
+    const spawn = run.spawn
+    run.spawn = (file, args, opts) => {
+      const c = spawn(file, args, opts)
+      child = c as unknown as EventEmitter
+      return c
+    }
+    const died: string[] = []
+    const e = engine(run, { died })
+    await e.load()
+    expect(died).toEqual([])
+    child.emit('exit', 3221226505, null)
+    expect(died).toHaveLength(1)
+    expect(died[0]).toContain('3221226505')
+    await e.dispose()
+    expect(died).toHaveLength(1)
+  })
+
+  test('I1-Б: сервер не отвечает на decode — таймаут, сервер убит, onDied', async () => {
+    const run = fake({ stderr: CUDA_OK, hangAfter: 1 })
+    const died: string[] = []
+    const e = engine(run, { died, decodeTimeoutMs: 300 })
+    await e.load()
+    const started = Date.now()
+    await expect(e.decode(new Float32Array(1600))).rejects.toThrow()
+    expect(Date.now() - started).toBeLessThan(3000)
+    expect(run.killed()).toBe(true)
+    expect(died).toHaveLength(1)
+    expect(died[0]).toMatch(/did not answer/)
+  })
+
+  test('таймаут decode растёт с длиной фразы: 3 × длина, не меньше заданного', async () => {
+    const run = fake({ stderr: CUDA_OK, hangAfter: 1 })
+    const died: string[] = []
+    const e = engine(run, { died, decodeTimeoutMs: 100 })
+    await e.load()
+    const started = Date.now()
+    // 0,25 с звука → 750 мс
+    await expect(e.decode(new Float32Array(4000))).rejects.toThrow()
+    expect(Date.now() - started).toBeGreaterThanOrEqual(700)
+    expect(died).toHaveLength(1)
+  })
+
+  test('dispose не считается смертью сервера', async () => {
+    const run = fake({ stderr: CUDA_OK })
+    const died: string[] = []
+    const e = engine(run, { died })
+    await e.load()
+    await e.dispose()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(died).toEqual([])
   })
 
   test('decode шлёт файл WAV и поля language, response_format, prompt; возвращает trim', async () => {

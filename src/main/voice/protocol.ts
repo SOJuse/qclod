@@ -21,7 +21,7 @@ export type FromWorker =
   | { type: 'partial'; session: string; phrase: number; text: string }
   | { type: 'final'; session: string; phrase: number; text: string; joinsPrevious: boolean }
   | { type: 'done'; session: string }
-  | { type: 'failed'; code: 'ort-conflict' | 'load-failed' | 'gpu-failed'; message: string }
+  | { type: 'failed'; code: 'ort-conflict' | 'engine-missing' | 'load-failed' | 'gpu-failed'; message: string }
   | { type: 'pid'; pid: number }
   | { type: 'selftest'; ok: boolean; error?: string }
 

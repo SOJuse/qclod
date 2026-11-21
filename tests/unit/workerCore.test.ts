@@ -149,6 +149,30 @@ describe('WorkerCore', () => {
     ])
   })
 
+  test('I1-Б: декод завис — очередь не растёт дальше 30 с звука', async () => {
+    let hang = false
+    const stuck = (): SpeechEngine => ({
+      model: 'gigaam-v3',
+      load: async () => {},
+      decode: () => (hang ? new Promise<string>(() => {}) : Promise.resolve('Раз.')),
+      dispose: async () => {}
+    })
+    const { core, posts } = setup([], stuck)
+    core.handle({ type: 'load', paths: PATHS, threads: 4, prompt: '' })
+    await vi.advanceTimersByTimeAsync(10)
+    core.handle({ type: 'start', session: 's1', replacements: [] })
+    hang = true
+    say(core, 's1', tone(1))
+    core.handle({ type: 'stop', session: 's1' })
+    core.handle({ type: 'start', session: 's2', replacements: [] })
+    // Две минуты звука, пока прежняя сессия ждёт декод, который не вернётся.
+    say(core, 's2', tone(120))
+    await vi.advanceTimersByTimeAsync(10)
+    expect(posts.some((m) => m.type === 'done')).toBe(false)
+    expect(core.backlogSamples()).toBeLessThanOrEqual(30 * RATE)
+    expect(core.backlogSamples()).toBeGreaterThan(20 * RATE)
+  })
+
   test('ошибка загрузки — failed с кодом движка', async () => {
     const failing = (): SpeechEngine => ({
       model: 'gigaam-v3',
@@ -168,6 +192,22 @@ describe('WorkerCore', () => {
       { type: 'failed', code: 'ort-conflict', message: 'requested API version [23] is not available' }
     ])
   })
+})
+
+test('ошибка загрузки с кодом engine-missing доходит до main с тем же кодом', async () => {
+  vi.useFakeTimers()
+  const failing = (): SpeechEngine => ({
+    model: 'gigaam-v3',
+    load: async () => {
+      throw Object.assign(new Error('Could not find sherpa-onnx-node'), { code: 'engine-missing' })
+    },
+    decode: async () => '',
+    dispose: async () => {}
+  })
+  const { core, posts } = setup([], failing)
+  core.handle({ type: 'load', paths: PATHS, threads: 4, prompt: '' })
+  await vi.advanceTimersByTimeAsync(10)
+  expect(posts).toEqual([{ type: 'failed', code: 'engine-missing', message: 'Could not find sherpa-onnx-node' }])
 })
 
 describe('WorkerCore selftest', () => {

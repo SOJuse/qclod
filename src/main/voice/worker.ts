@@ -35,7 +35,14 @@ function makeEngine(p: ModelPaths, threads: number, prompt: string): SpeechEngin
     threads,
     prompt,
     // main kills it if this process dies first (voiceHost.ts).
-    onPid: (pid) => port.postMessage({ type: 'pid', pid } satisfies FromWorker)
+    onPid: (pid) => port.postMessage({ type: 'pid', pid } satisfies FromWorker),
+    // The server died or hung after loading (I1): this process goes too, and
+    // main tells the window (engine-crashed) and counts it (three in 10 min).
+    // The reason goes to stderr, which main keeps for the log.
+    onDied: (reason) => {
+      console.error(`[voice] ${reason}`)
+      process.exit(1)
+    }
   })
 }
 

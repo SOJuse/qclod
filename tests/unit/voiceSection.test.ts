@@ -115,6 +115,27 @@ describe('VoiceSection', () => {
     expect(html).toContain('Нужна видеокарта NVIDIA')
   })
 
+  test('I4: Whisper без VC++ — причина и кнопка «Скачать Visual C++ Redistributable»', () => {
+    expect(render()).not.toContain('voice-model-vc-redist')
+    const reason =
+      'Для Whisper нужен Microsoft Visual C++ Redistributable (x64). Установите его с сайта Microsoft и перезапустите Qclod.'
+    useVoice.setState({
+      models: {
+        ...SNAPSHOT,
+        models: [
+          SNAPSHOT.models[0],
+          SNAPSHOT.models[1],
+          { id: 'whisper-turbo-cuda', state: { kind: 'absent' }, available: false, unavailableReason: reason, fix: 'vc-redist' }
+        ]
+      }
+    })
+    const html = render()
+    expect(html).toContain(escape(reason))
+    expect(html).toMatch(
+      /data-testid="voice-model-whisper-turbo-cuda".*?data-testid="voice-model-vc-redist"[^>]*>Скачать Visual C\+\+ Redistributable<\/button>/s
+    )
+  })
+
   test('словарь при null показывает стандартные пары', () => {
     const html = render()
     expect(html).toContain('Словарь замен')

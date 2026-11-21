@@ -181,6 +181,12 @@ describe('SherpaEngine', () => {
     await expect(e.load()).rejects.toMatchObject({ code: 'ort-conflict' })
   })
 
+  test('I2: «Could not find sherpa-onnx-node» (addon.js проглотил ошибку .node) — engine-missing', async () => {
+    const s = stub({ failWith: 'Could not find sherpa-onnx-node. Tried\n\n  ../build/Release/sherpa-onnx.node\n' })
+    const e = new SherpaEngine(GIGA, 4, s.module)
+    await expect(e.load()).rejects.toMatchObject({ code: 'engine-missing' })
+  })
+
   test('любая другая ошибка загрузки — load-failed', async () => {
     const s = stub({ failWith: 'No such file: encoder.int8.onnx' })
     const e = new SherpaEngine(GIGA, 4, s.module)

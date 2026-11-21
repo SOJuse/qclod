@@ -109,6 +109,7 @@ export const CHANNELS = Object.freeze({
   voiceBegin: 'voice:begin',
   voiceEnd: 'voice:end',
   voiceOpenMicSettings: 'voice:openMicSettings',
+  voiceOpenVcRedist: 'voice:openVcRedist',
   // renderer -> main (send)
   voiceAudio: 'voice:audio',
   // main -> renderer (events)
@@ -195,6 +196,7 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.voiceBegin,
   CHANNELS.voiceEnd,
   CHANNELS.voiceOpenMicSettings,
+  CHANNELS.voiceOpenVcRedist,
   // этап 4: сабагенты
   CHANNELS.agentSubagentSend,
   CHANNELS.agentSubagentStop

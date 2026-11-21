@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { cudaReady, detectNvidia, parseNvidiaSmi, type ExecFileLike } from '@main/voice/nvidia'
+import { cudaReady, detectNvidia, parseNvidiaSmi, vcRuntimeReady, VC_REDIST_URL, type ExecFileLike } from '@main/voice/nvidia'
 
 describe('parseNvidiaSmi', () => {
   test('одна карта', () => {
@@ -113,5 +113,20 @@ describe('detectNvidia', () => {
       if (old === undefined) delete process.env['QCLOD_FAKE_NVIDIA']
       else process.env['QCLOD_FAKE_NVIDIA'] = old
     }
+  })
+})
+
+describe('vcRuntimeReady (I4)', () => {
+  test('нужны все три DLL в System32', () => {
+    const all = new Set([
+      'C:\\Windows\\System32\\msvcp140.dll',
+      'C:\\Windows\\System32\\vcruntime140.dll',
+      'C:\\Windows\\System32\\vcruntime140_1.dll'
+    ])
+    expect(vcRuntimeReady('C:\\Windows', (p) => all.has(p))).toBe(true)
+    for (const missing of all) {
+      expect(vcRuntimeReady('C:\\Windows', (p) => p !== missing && all.has(p)), missing).toBe(false)
+    }
+    expect(VC_REDIST_URL).toBe('https://aka.ms/vs/17/release/vc_redist.x64.exe')
   })
 })

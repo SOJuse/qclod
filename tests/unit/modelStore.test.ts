@@ -71,17 +71,33 @@ const fakeFetch = (async (url: string | URL | Request) => {
   return new Response(new Uint8Array(body), { status: 200 })
 }) as typeof fetch
 
+/** What whisper-server.exe needs next to it (the b5454 zip's Release folder). */
+const WHISPER_RELEASE = [
+  'whisper-server.exe',
+  'whisper.dll',
+  'ggml.dll',
+  'ggml-base.dll',
+  'ggml-cuda.dll',
+  'cudart64_12.dll',
+  'cublas64_12.dll',
+  'cublasLt64_12.dll'
+]
+
+function unzipFake(dest: string, files: readonly string[] = WHISPER_RELEASE): void {
+  for (const f of files) {
+    const path = join(dest, 'Release', f)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, 'MZ')
+  }
+}
+
 function store(extra: Partial<ModelStoreDeps> = {}): ModelStore {
   return new ModelStore({
     root,
     fetch: fakeFetch,
     platform: 'win32',
     freeBytes: async () => 10 * 1024 ** 3,
-    extractZip: async (_zip, dest) => {
-      const exe = join(dest, 'Release', 'whisper-server.exe')
-      mkdirSync(dirname(exe), { recursive: true })
-      writeFileSync(exe, 'MZ')
-    },
+    extractZip: async (_zip, dest) => unzipFake(dest),
     nvidia: async () => ({ ok: true }),
     ...extra
   })
@@ -156,15 +172,11 @@ describe('ModelStore', () => {
   })
 
   test('zip: extractZip вызван с путём модели, архив удалён, paths даёт whisper-server.exe', async () => {
-    const extractZip = vi.fn(async (_z: string, dest: string) => {
-      const exe = join(dest, 'Release', 'whisper-server.exe')
-      mkdirSync(dirname(exe), { recursive: true })
-      writeFileSync(exe, 'MZ')
-    })
+    const extractZip = vi.fn(async (_z: string, dest: string, _signal?: AbortSignal) => unzipFake(dest))
     const s = store({ extractZip })
     await s.download('whisper-turbo-cuda')
     const dir = join(root, 'whisper-turbo-cuda')
-    expect(extractZip).toHaveBeenCalledWith(join(dir, 'cuda.zip'), join(dir, 'cuda'))
+    expect(extractZip).toHaveBeenCalledWith(join(dir, 'cuda.zip'), join(dir, 'cuda'), expect.any(AbortSignal))
     expect(existsSync(join(dir, 'cuda.zip'))).toBe(false)
     const p = s.paths('whisper-turbo-cuda')
     expect(p).toMatchObject({ kind: 'whisper', exe: join(dir, 'cuda', 'Release', 'whisper-server.exe'), ggml: join(dir, 'ggml.bin') })
@@ -177,6 +189,169 @@ describe('ModelStore', () => {
       kind: 'error',
       message: 'Не удалось распаковать файлы для видеокарты.'
     })
+  })
+
+  test('M3: распаковка без DLL рядом с whisper-server.exe — extract; готовность проверяет и DLL', async () => {
+    const s = store({ extractZip: async (_z, dest) => unzipFake(dest, ['whisper-server.exe']) })
+    await expect(s.download('whisper-turbo-cuda')).rejects.toMatchObject({ code: 'extract' })
+    const good = store()
+    await good.download('whisper-turbo-cuda')
+    expect(good.paths('whisper-turbo-cuda')).not.toBeNull()
+    rmSync(join(root, 'whisper-turbo-cuda', 'cuda', 'Release', 'ggml-cuda.dll'))
+    expect(store().paths('whisper-turbo-cuda')).toBeNull()
+    expect(await stateOf(store(), 'whisper-turbo-cuda')).toEqual({ kind: 'absent' })
+  })
+
+  test('M3: распаковка не удалась — «Повторить» не качает zip заново, а распаковывает скачанный', async () => {
+    let fail = true
+    const s = store({
+      extractZip: async (_z, dest) => {
+        if (fail) throw new Error('tar: Error exit delayed from previous errors')
+        unzipFake(dest)
+      }
+    })
+    await expect(s.download('whisper-turbo-cuda')).rejects.toMatchObject({ code: 'extract' })
+    expect(existsSync(join(root, 'whisper-turbo-cuda', 'cuda.zip'))).toBe(true)
+    fail = false
+    await s.download('whisper-turbo-cuda')
+    expect(requests.filter((r) => r.endsWith('/cuda.zip'))).toHaveLength(1)
+    expect(await stateOf(s, 'whisper-turbo-cuda')).toEqual({ kind: 'ready' })
+  })
+
+  test('M3: скачанный zip испорчен — проверка суммы, zip качается заново', async () => {
+    let fail = true
+    const s = store({
+      extractZip: async (_z, dest) => {
+        if (fail) throw new Error('bad zip')
+        unzipFake(dest)
+      }
+    })
+    await expect(s.download('whisper-turbo-cuda')).rejects.toMatchObject({ code: 'extract' })
+    const zip = join(root, 'whisper-turbo-cuda', 'cuda.zip')
+    const broken = readFileSync(zip)
+    broken[0] ^= 0xff
+    writeFileSync(zip, broken)
+    fail = false
+    await s.download('whisper-turbo-cuda')
+    expect(requests.filter((r) => r.endsWith('/cuda.zip'))).toHaveLength(2)
+    expect(await stateOf(s, 'whisper-turbo-cuda')).toEqual({ kind: 'ready' })
+  })
+
+  test('M3: отмена во время распаковки — tar остановлен, состояние absent, zip остаётся', async () => {
+    let extracting!: () => void
+    const started = new Promise<void>((r) => (extracting = r))
+    const s = store({
+      extractZip: (_z, _dest, signal) =>
+        new Promise<void>((_resolve, reject) => {
+          extracting()
+          signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+        })
+    })
+    const p = s.download('whisper-turbo-cuda')
+    await started
+    expect(await stateOf(s, 'whisper-turbo-cuda')).toEqual({ kind: 'extracting' })
+    s.cancel('whisper-turbo-cuda')
+    await expect(p).resolves.toBeUndefined()
+    expect(await stateOf(s, 'whisper-turbo-cuda')).toEqual({ kind: 'absent' })
+    expect(existsSync(join(root, 'whisper-turbo-cuda', 'cuda.zip'))).toBe(true)
+    expect(existsSync(join(root, 'whisper-turbo-cuda', 'cuda'))).toBe(false)
+  })
+
+  test('I3: remove сначала отпускает модель (release), пока идёт удаление — paths null', async () => {
+    const s = store()
+    await s.download('gigaam-v3')
+    const order: string[] = []
+    let free!: () => void
+    const p = s.remove('gigaam-v3', async () => {
+      order.push('release')
+      expect(s.paths('gigaam-v3')).toBeNull()
+      expect(existsSync(join(root, 'gigaam-v3'))).toBe(true)
+      await new Promise<void>((r) => (free = r))
+      order.push('released')
+    })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(order).toEqual(['release'])
+    expect(existsSync(join(root, 'gigaam-v3'))).toBe(true)
+    free()
+    await p
+    expect(order).toEqual(['release', 'released'])
+    expect(existsSync(join(root, 'gigaam-v3'))).toBe(false)
+  })
+
+  test('M1: удаление модели, ждущей в очереди, не ждёт чужую загрузку', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const slow = (async (url: string | URL | Request) => {
+      if (String(url).endsWith('encoder.int8.onnx') && requests.every((r) => !r.includes('/encoder.int8.onnx'))) await gate
+      return fakeFetch(url)
+    }) as typeof fetch
+    const s = store({ fetch: slow })
+    const first = s.download('gigaam-v3')
+    const queued = s.download('parakeet-v3')
+    await new Promise((r) => setTimeout(r, 30))
+    let removed = false
+    const rem = s.remove('parakeet-v3').then(() => (removed = true))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(removed).toBe(true)
+    await expect(queued).resolves.toBeUndefined()
+    expect(await stateOf(s, 'parakeet-v3')).toEqual({ kind: 'absent' })
+    release()
+    await Promise.all([first, rem])
+    expect(await stateOf(s, 'gigaam-v3')).toEqual({ kind: 'ready' })
+    // Отменённая в очереди модель так и не начала качаться и не вернула себе состояние.
+    expect(requests.some((r) => r.includes('joiner.int8.onnx'))).toBe(false)
+    expect(await stateOf(s, 'parakeet-v3')).toEqual({ kind: 'absent' })
+    // И её снова можно поставить в очередь.
+    await s.download('parakeet-v3')
+    expect(await stateOf(s, 'parakeet-v3')).toEqual({ kind: 'ready' })
+  })
+
+  test('M2: удаление последней готовой модели не уносит VAD, пока качается другая', async () => {
+    const s0 = store()
+    await s0.download('gigaam-v3')
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const slow = (async (url: string | URL | Request) => {
+      if (String(url).endsWith('joiner.int8.onnx')) await gate
+      return fakeFetch(url)
+    }) as typeof fetch
+    const s = store({ fetch: slow })
+    const p = s.download('parakeet-v3')
+    await new Promise((r) => setTimeout(r, 30))
+    await s.remove('gigaam-v3')
+    expect(existsSync(join(root, 'silero-vad', 'silero_vad.onnx'))).toBe(true)
+    release()
+    await p
+    expect(s.paths('parakeet-v3')).not.toBeNull()
+  })
+
+  test('I4: Whisper без Visual C++ Redistributable — недоступен, причина и ссылка-действие', async () => {
+    const s = store({ vcRuntime: () => false })
+    const w = (await s.snapshot()).find((v) => v.id === 'whisper-turbo-cuda')!
+    expect(w.available).toBe(false)
+    expect(w.unavailableReason).toBe(
+      'Для Whisper нужен Microsoft Visual C++ Redistributable (x64). Установите его с сайта Microsoft и перезапустите Qclod.'
+    )
+    expect(w.fix).toBe('vc-redist')
+    await expect(s.download('whisper-turbo-cuda')).rejects.toThrow('Visual C++')
+    expect(requests).toEqual([])
+    // Без NVIDIA причина — видеокарта, а не VC++.
+    const noGpu = store({ vcRuntime: () => false, nvidia: async () => ({ ok: false, reason: 'Нужна видеокарта NVIDIA' }) })
+    const v = (await noGpu.snapshot()).find((x) => x.id === 'whisper-turbo-cuda')!
+    expect(v.unavailableReason).toBe('Нужна видеокарта NVIDIA')
+    expect(v.fix).toBeUndefined()
+    // GigaAM от VC++ не зависит.
+    expect((await s.snapshot()).find((x) => x.id === 'gigaam-v3')!.available).toBe(true)
+  })
+
+  test('M4: нет доступа к папке моделей — русский текст с путём, а не «Нет связи»', async () => {
+    const s = store({
+      freeBytes: async () => {
+        throw Object.assign(new Error(`EPERM: operation not permitted, mkdir '${root}'`), { code: 'EPERM' })
+      }
+    })
+    await expect(s.download('gigaam-v3')).rejects.toThrow()
+    expect(await stateOf(s, 'gigaam-v3')).toEqual({ kind: 'error', message: `Нет доступа к папке моделей: ${root}` })
   })
 
   test('удаление GigaAM оставляет VAD, если готов Parakeet; последняя модель уносит VAD', async () => {

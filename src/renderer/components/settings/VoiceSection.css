@@ -125,3 +125,9 @@
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+.voice-model-fix {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-1);
+}

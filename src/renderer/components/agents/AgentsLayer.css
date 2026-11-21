@@ -1,0 +1,238 @@
+/*
+ * The agents layer over a pane's ribbon: a bar (counter, graph or timeline),
+ * then the graph — buttons laid out by hand over one SVG of links — or the
+ * timeline. Motion says «working» softly; the word and the icon say it too,
+ * and with reduced motion they are all that is left.
+ */
+
+.agents-layer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 100%;
+}
+
+.agents-layer-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.agents-layer-count {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.agents-tabs {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: var(--gap-hair);
+  padding: var(--gap-hair);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.agents-tab {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.agents-tab:hover {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.agents-tab.is-selected {
+  background: var(--accent-fill);
+  color: var(--text);
+}
+
+.agents-layer-view {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  padding-bottom: var(--space-2);
+}
+
+/* ------------------------------------------------------------ the graph */
+
+.agent-graph {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.agent-edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.agent-edge {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.agent-edge.is-live {
+  stroke: var(--accent);
+  stroke-dasharray: 6 6;
+  animation: agent-flow 1.2s linear infinite;
+}
+
+@keyframes agent-flow {
+  to {
+    stroke-dashoffset: -12;
+  }
+}
+
+.agent-root {
+  box-sizing: border-box;
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.agent-node {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: var(--gap-hair);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  border-left: var(--rule-category) solid var(--cat-agent);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.agent-node:hover {
+  background: var(--surface-hover);
+}
+
+.agent-node.is-failed {
+  border-left-color: var(--status-critical);
+}
+
+/* A soft breath of the accent around a working agent's frame. */
+.agent-node.is-running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 2px var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  animation: agent-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes agent-breathe {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.agent-node-line,
+.agent-node-state {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.agent-node-kind {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: var(--weight-medium);
+}
+
+.agent-badge {
+  flex: 0 0 auto;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.agent-node-task {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.agent-node-state {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.agent-node-state svg {
+  flex: 0 0 auto;
+}
+
+.agent-node.is-done .agent-node-state svg {
+  color: var(--status-ok);
+}
+
+.agent-node.is-failed .agent-node-state svg {
+  color: var(--status-critical);
+}
+
+.agent-node.is-running .agent-node-state {
+  color: var(--text);
+}
+
+.agent-node-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-node.is-running::after,
+  .agent-node {
+    animation: none;
+  }
+
+  .agent-edge.is-live,
+  .agent-edge {
+    animation: none;
+  }
+}

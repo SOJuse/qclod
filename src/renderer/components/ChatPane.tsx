@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
-import type { SessionSummary, UserInput } from '../../shared/types'
+import type { CostRates, RibbonItem, SessionSummary, UserInput } from '../../shared/types'
 import { EMPTY_PANEL, useAppStore, type PaneLayerState } from '../state/useAppStore'
 import { useHeldDrafts } from '../state/heldDrafts'
 import { compactNow, sendCommand } from '../input/slash'
@@ -29,8 +29,11 @@ import { nextOverride, panelMode, panelToggle, type PanelOverride } from '../app
 import { restartChat } from '../app/restartChat'
 import { ChatHeader } from './ChatHeader'
 import { PaneLayer } from './PaneLayer'
+import { AgentsLayer } from './agents/AgentsLayer'
 import { SidePanel } from './SidePanel'
 import './ChatPane.css'
+
+const NO_ITEMS: RibbonItem[] = []
 
 /** Ctrl+\ for the pane it acts on: that pane's panel button, pressed from the keyboard. */
 export interface PanelRequest {
@@ -43,10 +46,13 @@ export interface PanelRequest {
  * What a layer over the ribbon shows, by kind — one line per stage. A kind
  * with nothing to show draws no layer: in этап 2 there is none yet.
  */
-function paneLayerView(layer: PaneLayerState): { title: string; body: ReactNode } | null {
+function paneLayerView(
+  layer: PaneLayerState,
+  pane: { tabId: string; items: RibbonItem[]; costRates: CostRates | null }
+): { title: string; body: ReactNode } | null {
   switch (layer.kind) {
     case 'agents': // этап 4: the pane's subagents, layer.agentId opened
-      return null
+      return { title: 'Агенты этого чата', body: <AgentsLayer {...pane} /> }
     case 'file': // этап 6: layer.path at layer.line
       return null
     case 'git': // этап 7: the folder's changes
@@ -239,9 +245,14 @@ export function ChatPane({
     return () => observer.disconnect()
   }, [])
 
-  const layer = useAppStore((s) => s.layerByTab[tabId] ?? null)
-  const layerView = layer ? paneLayerView(layer) : null
   const items = ribbonByTab[tabId]
+  const layer = useAppStore((s) => s.layerByTab[tabId] ?? null)
+  const layerView = layer ? paneLayerView(layer, { tabId, items: items ?? NO_ITEMS, costRates: panel.costRates }) : null
+  /** «Агенты (3)»: the subagents working now. */
+  const agentsCount = useMemo(
+    () => (items ?? NO_ITEMS).reduce((n, item) => (item.kind === 'subagent' && item.state === 'running' ? n + 1 : n), 0),
+    [items]
+  )
   const answers = useMemo(() => cardAnswers(tabId), [tabId])
   const sentTexts = useMemo(
     () => (items ?? []).flatMap((item) => (item.kind === 'user' ? [item.text] : [])),
@@ -312,7 +323,8 @@ export function ChatPane({
           panelShown={shown}
           onTogglePanel={togglePanel}
           {...(split && onUnsplit ? { onUnsplit } : {})}
-          // этап 4: onOpenAgents={() => setPaneLayer(tabId, { kind: 'agents' })} and agentsCount, the running subagents.
+          onOpenAgents={() => useAppStore.getState().openAgents(tabId)}
+          agentsCount={agentsCount}
         />
 
         <div className="chat-body" ref={bodyRef}>

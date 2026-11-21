@@ -35,6 +35,9 @@ const PER_TAB_KEYS = [
   'panelChoiceByTab'
 ] as const
 
+/** How the agents layer shows a chat's subagents (этап 4). */
+export type AgentsView = 'graph' | 'timeline'
+
 const RECENT_COMMANDS = 6
 /** Answers about paths kept per tab; the oldest go first past this. */
 const PATHS_PER_TAB = 5000
@@ -241,6 +244,10 @@ interface AppState {
   layerByTab: Record<TabId, PaneLayerState | null>
   /** Each pane's own panel choice (S2-R23): open or closed by hand; absent — the setting decides. In memory only. */
   panelChoiceByTab: Record<TabId, PanelOverride>
+  /** этап 4: graph or timeline in every agents layer; survives a reload of the window (uiPersist), not a restart. */
+  agentsView: AgentsView
+  /** этап 4: what is typed to a subagent, by `${tabId}:${cardId}`; in memory only. */
+  agentDrafts: Record<string, string>
 
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
@@ -268,6 +275,11 @@ interface AppState {
   /** A new layer replaces the one before it; null closes it. */
   setPaneLayer: (tabId: TabId, layer: PaneLayerState | null) => void
   setPanelChoice: (tabId: TabId, choice: PanelOverride) => void
+  /** этап 4: the agents layer over this pane's ribbon; with `agentId` (a card id) — that subagent's own ribbon. */
+  openAgents: (tabId: TabId, agentId?: string | null) => void
+  closeAgents: (tabId: TabId) => void
+  setAgentsView: (view: AgentsView) => void
+  setAgentDraft: (key: string, text: string) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -354,6 +366,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   recentCommands: [],
   layerByTab: {},
   panelChoiceByTab: {},
+  agentsView: restored.agentsView ?? 'graph',
+  agentDrafts: {},
 
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
@@ -549,14 +563,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       (state.panelChoiceByTab[tabId] ?? null) === choice
         ? state
         : { panelChoiceByTab: { ...state.panelChoiceByTab, [tabId]: choice } }
-    )
+    ),
+  // One layer per pane (сверка F9): the agents replace a git or file layer.
+  openAgents: (tabId, agentId) =>
+    get().setPaneLayer(tabId, agentId ? { kind: 'agents', agentId } : { kind: 'agents' }),
+  closeAgents: (tabId) => get().setPaneLayer(tabId, null),
+  setAgentsView: (agentsView) => set((state) => (state.agentsView === agentsView ? state : { agentsView })),
+  setAgentDraft: (key, text) =>
+    set((state) => {
+      if ((state.agentDrafts[key] ?? '') === text) return state
+      const agentDrafts = { ...state.agentDrafts }
+      if (text === '') delete agentDrafts[key]
+      else agentDrafts[key] = text
+      return { agentDrafts }
+    })
 }))
 
 // Written on change, so a reload (Ctrl+R) at any moment finds the latest.
 useAppStore.subscribe((state, before) => {
   if (
     state.draftByTab === before.draftByTab &&
-    state.attachmentsByTab === before.attachmentsByTab
+    state.attachmentsByTab === before.attachmentsByTab &&
+    state.agentsView === before.agentsView
   ) {
     return
   }

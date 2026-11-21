@@ -104,7 +104,36 @@ export const CHANNELS = Object.freeze({
   // этап 4: сабагенты
   // renderer -> main (invoke)
   agentSubagentSend: 'agent:subagentSend',
-  agentSubagentStop: 'agent:subagentStop'
+  agentSubagentStop: 'agent:subagentStop',
+
+  // stage 6: servers over SSH
+  // renderer -> main (invoke)
+  serversList: 'servers:list',
+  serversSave: 'servers:save',
+  serversRemove: 'servers:remove',
+  serversConnect: 'servers:connect',
+  serversForgetPassword: 'servers:forgetPassword',
+  serversPromptAnswer: 'servers:promptAnswer',
+  serversListDir: 'servers:listDir',
+  serversOpenFolder: 'servers:openFolder',
+  serversLogin: 'servers:login',
+  serversLoginCode: 'servers:loginCode',
+  serversUpdateRelay: 'servers:updateRelay',
+  viewerRead: 'viewer:read',
+  viewerDownloadOpen: 'viewer:downloadOpen',
+  filesUploadRemote: 'files:uploadRemote',
+  terminalOpen: 'terminal:open',
+  terminalResize: 'terminal:resize',
+  terminalClose: 'terminal:close',
+  // renderer -> main (send)
+  terminalInput: 'terminal:input',
+  // main -> renderer (events)
+  serversChanged: 'servers:changed',
+  serversPrompt: 'servers:prompt',
+  serversConnectProgress: 'servers:connectProgress',
+  serversLoginProgress: 'servers:loginProgress',
+  terminalData: 'terminal:data',
+  terminalExit: 'terminal:exit'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -176,7 +205,25 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.autonomyAnswerNow,
   // этап 4: сабагенты
   CHANNELS.agentSubagentSend,
-  CHANNELS.agentSubagentStop
+  CHANNELS.agentSubagentStop,
+  // stage 6: servers over SSH
+  CHANNELS.serversList,
+  CHANNELS.serversSave,
+  CHANNELS.serversRemove,
+  CHANNELS.serversConnect,
+  CHANNELS.serversForgetPassword,
+  CHANNELS.serversPromptAnswer,
+  CHANNELS.serversListDir,
+  CHANNELS.serversOpenFolder,
+  CHANNELS.serversLogin,
+  CHANNELS.serversLoginCode,
+  CHANNELS.serversUpdateRelay,
+  CHANNELS.viewerRead,
+  CHANNELS.viewerDownloadOpen,
+  CHANNELS.filesUploadRemote,
+  CHANNELS.terminalOpen,
+  CHANNELS.terminalResize,
+  CHANNELS.terminalClose
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
@@ -191,8 +238,19 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.setupLoginProgress,
   CHANNELS.updateChanged,
   // — этап 2: проекты, раскладка, окно-заглушка
-  CHANNELS.layoutChanged
+  CHANNELS.layoutChanged,
+  // stage 6: servers over SSH
+  CHANNELS.serversChanged,
+  CHANNELS.serversPrompt,
+  CHANNELS.serversConnectProgress,
+  CHANNELS.serversLoginProgress,
+  CHANNELS.terminalData,
+  CHANNELS.terminalExit
 ])
 
 /** Fire-and-forget: the renderer sends, nothing comes back. */
-export const SEND_CHANNELS: readonly ChannelName[] = Object.freeze([CHANNELS.rendererError])
+export const SEND_CHANNELS: readonly ChannelName[] = Object.freeze([
+  CHANNELS.rendererError,
+  // stage 6: keystrokes for a server's terminal
+  CHANNELS.terminalInput
+])

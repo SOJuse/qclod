@@ -5,6 +5,7 @@ import type {
   ModelOption,
   PanelData,
   PermissionAnswer,
+  TabServer,
   TaskOutput,
   UserInput
 } from '../../shared/types'
@@ -57,7 +58,16 @@ export interface AgentDriver {
    * Rejects when the CLI refuses; the caller explains it.
    */
   setRemoteControl(enabled: boolean, name?: string): Promise<RemoteLink | null>
-  dispose(): Promise<void>
+  /**
+   * Ends the session. `detachOnly` (stage 6): a relay driver lets go of the
+   * server's session and leaves its agent running; local drivers ignore it.
+   */
+  dispose(opts?: { detachOnly?: boolean }): Promise<void>
+  /**
+   * Stage 6: set by the relay's driver — this tab's AutonomyCore lives on the
+   * server, so main makes none for it (AutonomyHost.tabAdded, task 19).
+   */
+  readonly hostsAutonomy?: true
 }
 
 export type SendPriority = 'now' | 'next' | 'later'
@@ -108,6 +118,8 @@ export interface DriverOptions {
     input: Record<string, unknown>,
     context: ToolPermissionContext
   ) => Promise<PermissionAnswer>
+  /** Stage 6: the tab's agent runs on this server, through its relay. */
+  server?: TabServer | undefined
 }
 
 export type DriverFactory = (options: DriverOptions) => AgentDriver | Promise<AgentDriver>

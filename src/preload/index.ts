@@ -217,6 +217,10 @@ const api = {
   retryRenderer: (): Promise<void> => ipcRenderer.invoke(CHANNELS.rendererRetry),
   openLogs: (): Promise<void> => ipcRenderer.invoke(CHANNELS.logsOpen),
 
+  // — stage 6
+  /** The Mac application menu (Настройки…): the window does what the key would. */
+  onAppAction: (cb: (id: 'settings' | 'newTab') => void) => on(CHANNELS.appAction, cb),
+
   // — stage 3: autonomy
   /** «Остановить таймер», or the person started answering: no auto-answer for this card. */
   autonomyHold: (tabId: string, cardId: string): Promise<void> =>

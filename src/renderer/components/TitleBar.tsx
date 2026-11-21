@@ -91,7 +91,9 @@ export function TitleBar({
 }
 
 /** Minimise, maximise, close: the frameless window's own buttons. */
-function WindowButtons(): JSX.Element {
+function WindowButtons(): JSX.Element | null {
+  // A Mac has its own traffic lights in the corner (main/window.ts).
+  if (window.qclod.platform === 'darwin') return null
   return (
     <>
       <button

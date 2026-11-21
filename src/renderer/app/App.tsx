@@ -535,6 +535,9 @@ export function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // The Mac menu's «Настройки…» does what the key does.
+  useEffect(() => window.qclod.onAppAction((id) => runRef.current(id)), [])
+
   // The file index backs @-mentions; it is per folder, so it is fetched once
   // per tab rather than on every keystroke.
   useEffect(() => {

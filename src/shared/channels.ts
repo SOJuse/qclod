@@ -99,7 +99,11 @@ export const CHANNELS = Object.freeze({
   // stage 3: autonomy
   // renderer -> main (invoke)
   autonomyHold: 'autonomy:hold',
-  autonomyAnswerNow: 'autonomy:answerNow'
+  autonomyAnswerNow: 'autonomy:answerNow',
+
+  // stage 6
+  // main -> renderer (event): a menu item that does what a key does
+  appAction: 'app:action'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -183,7 +187,9 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.setupLoginProgress,
   CHANNELS.updateChanged,
   // — этап 2: проекты, раскладка, окно-заглушка
-  CHANNELS.layoutChanged
+  CHANNELS.layoutChanged,
+  // stage 6
+  CHANNELS.appAction
 ])
 
 /** Fire-and-forget: the renderer sends, nothing comes back. */

@@ -17,3 +17,16 @@ test('окно непрозрачное, фон — графит из токен
   expect(o.backgroundColor).toBe(WINDOW_BG)
   expect(readTokens(css).get('--bg')).toBe(WINDOW_BG)
 })
+
+test('Mac: родные «светофоры» во вставке, рамка не отключена', () => {
+  const o = mainWindowOptions('darwin')
+  expect(o.titleBarStyle).toBe('hiddenInset')
+  expect(o.trafficLightPosition).toEqual({ x: 14, y: 14 })
+  expect(o.frame).not.toBe(false)
+})
+
+test('Windows и Linux: окно без рамки, как раньше', () => {
+  expect(mainWindowOptions('win32').frame).toBe(false)
+  expect(mainWindowOptions('win32').titleBarStyle).toBeUndefined()
+  expect(mainWindowOptions('linux').frame).toBe(false)
+})

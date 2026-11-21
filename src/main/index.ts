@@ -24,6 +24,7 @@ import {
   watchMount,
   watchRenderer
 } from './window'
+import { appMenuTemplate } from './menu'
 import { ErrorLog, type ErrorEntry } from './system/errorLog'
 import { installMainErrorHandlers } from './system/mainErrors'
 import { registerFallbackIpc } from './fallbackIpc'
@@ -219,8 +220,16 @@ app.on('web-contents-created', (_e, contents) => {
 })
 
 if (gotLock) void app.whenReady().then(async () => {
-  // No default menu: its accelerators (Close Window, Reload) would fight ours.
-  Menu.setApplicationMenu(null)
+  // No default menu on Windows: its accelerators (Close Window, Reload) would fight ours.
+  // A Mac has to have one (Правка brings ⌘C/⌘V to the fields), without Close and Reload.
+  const appMenu = appMenuTemplate(process.platform, {
+    version: app.getVersion(),
+    onAction: (id) => {
+      showWindow()
+      send(CHANNELS.appAction, id)
+    }
+  })
+  Menu.setApplicationMenu(appMenu ? Menu.buildFromTemplate(appMenu) : null)
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
   // Start at login: an installed build only, and never from an e2e run.
@@ -612,7 +621,8 @@ if (gotLock) void app.whenReady().then(async () => {
   }
 
   mainWindow.on('close', (event) => {
-    if (quitting || headless || !settings.closeToTray) return
+    // The red button on a Mac hides the window, closeToTray or not; ⌘Q quits.
+    if (quitting || headless || (process.platform !== 'darwin' && !settings.closeToTray)) return
     event.preventDefault()
     mainWindow?.hide()
   })
@@ -642,7 +652,9 @@ if (gotLock) void app.whenReady().then(async () => {
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    // The Dock icon brings back a hidden window, or makes one when there is none.
+    if (mainWindow && !mainWindow.isDestroyed()) showWindow()
+    else if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createMainWindow()
       watchWindow(mainWindow, (e) => errorLog.write(e))
       loadRenderer(mainWindow)
@@ -651,5 +663,6 @@ if (gotLock) void app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  app.quit()
+  // A Mac app stays in the Dock with no windows.
+  if (process.platform !== 'darwin') app.quit()
 })

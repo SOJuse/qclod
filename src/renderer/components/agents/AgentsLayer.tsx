@@ -4,6 +4,7 @@ import { agentNodes } from '../../agents/agentModel'
 import { useAppStore, type AgentsView } from '../../state/useAppStore'
 import { StateView } from '../../ui/StateView'
 import { AgentGraph } from './AgentGraph'
+import { AgentTimeline } from './AgentTimeline'
 import './AgentsLayer.css'
 
 const VIEWS: Array<{ view: AgentsView; label: string }> = [
@@ -115,7 +116,11 @@ export function AgentsLayer({ tabId, items, costRates }: Props): JSX.Element {
         />
       ) : (
         <div className="agents-layer-view" role="tabpanel">
-          {view === 'graph' ? <AgentGraph nodes={nodes} now={now} costRates={costRates} onOpen={open} /> : null}
+          {view === 'graph' ? (
+            <AgentGraph nodes={nodes} now={now} costRates={costRates} onOpen={open} />
+          ) : (
+            <AgentTimeline nodes={nodes} now={now} onOpen={open} />
+          )}
         </div>
       )}
     </div>

@@ -33,4 +33,9 @@ describe('AgentsLayer.css', () => {
     expect(block).toMatch(/\.agent-node[^{]*\{[^}]*animation:\s*none/)
     expect(block).toMatch(/\.agent-edge[^{]*\{[^}]*animation:\s*none/)
   })
+
+  test('открытый край полосы таймлайна пульсирует и затихает при reduced motion', () => {
+    expect(css).toMatch(/\.agent-bar\.is-open::after\s*\{[^}]*animation:\s*agent-pulse/)
+    expect(reducedBlock()).toMatch(/\.agent-bar\.is-open::after\s*\{[^}]*animation:\s*none/)
+  })
 })

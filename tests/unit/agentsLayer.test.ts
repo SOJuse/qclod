@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import type { CostRates, RibbonItem } from '../../src/shared/types'
 import { AgentsLayer } from '../../src/renderer/components/agents/AgentsLayer'
+import { AgentTimeline } from '../../src/renderer/components/agents/AgentTimeline'
+import { agentNodes } from '../../src/renderer/agents/agentModel'
 
 type Sub = Extract<RibbonItem, { kind: 'subagent' }>
 const sub = (id: string, patch: Partial<Sub> = {}): Sub => ({
@@ -73,5 +75,39 @@ describe('AgentsLayer', () => {
     expect(html).toContain('задача a')
     expect(html).toContain('готов')
     expect(html).toContain('4,2 с')
+  })
+})
+
+
+describe('AgentTimeline', () => {
+  const renderTimeline = (items: RibbonItem[], now: number): string =>
+    renderToStaticMarkup(createElement(AgentTimeline, { nodes: agentNodes(items), now, onOpen: () => undefined }))
+
+  test('две строки: left/width в процентах из раскладки, подписи делений', () => {
+    const html = renderTimeline(
+      [sub('a', { startedAt: 0, endedAt: 60_000 }), sub('b', { startedAt: 30_000, endedAt: 90_000 })],
+      90_000
+    )
+    expect(count(html, 'data-testid="agent-row"')).toBe(2)
+    expect(html).toMatch(/left:0%;width:66\.66\d*%/)
+    expect(html).toMatch(/left:33\.33\d*%;width:66\.66\d*%/)
+    for (const label of ['0:00', '0:30', '1:00', '1:30']) expect(html).toContain(`>${label}<`)
+    expect(html).toContain('задача a')
+    expect(html).not.toContain('Без отметок времени')
+  })
+
+  test('untimed: 1 — «Без отметок времени: 1»', () => {
+    const html = renderTimeline([sub('a', { startedAt: 0, endedAt: 5000 }), sub('x')], 5000)
+    expect(html).toContain('Без отметок времени: 1')
+  })
+
+  test('у работающей полосы класс is-open, у законченной — нет', () => {
+    const html = renderTimeline(
+      [sub('a', { startedAt: 0, endedAt: 5000 }), sub('b', { startedAt: 1000, state: 'running' })],
+      9000
+    )
+    expect(count(html, 'is-open')).toBe(1)
+    expect(html).toMatch(/class="agent-bar is-running is-open"/)
+    expect(html).toMatch(/class="agent-bar is-done"/)
   })
 })

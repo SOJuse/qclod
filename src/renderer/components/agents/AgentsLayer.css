@@ -225,6 +225,151 @@
   text-overflow: ellipsis;
 }
 
+/* ------------------------------------------------------------ the timeline */
+
+.agent-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-hair);
+  min-width: 520px;
+  padding-right: var(--space-4);
+}
+
+.agent-timeline-ticks,
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.agent-timeline-label {
+  flex: 0 0 180px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agent-timeline-scale {
+  position: relative;
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.agent-timeline-ticks {
+  height: var(--space-5);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.agent-tick {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+}
+
+.agent-tick:first-child {
+  transform: translate(0, -50%);
+}
+
+.agent-row {
+  min-height: var(--tool-head-h);
+  padding: var(--space-1) 0 var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-row:hover {
+  background: var(--hover-fill);
+}
+
+.agent-row-kind,
+.agent-row-task {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-row-kind {
+  font-weight: var(--weight-medium);
+}
+
+.agent-row-task {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.agent-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+/* The bar's colour is its state's, as the icons in the graph. */
+.agent-bar {
+  position: absolute;
+  top: 50%;
+  height: var(--space-3);
+  transform: translateY(-50%);
+  border-radius: var(--radius-sm);
+  background: var(--text-faint);
+}
+
+.agent-bar.is-running {
+  background: var(--accent);
+}
+
+.agent-bar.is-done {
+  background: var(--status-ok);
+}
+
+.agent-bar.is-failed {
+  background: var(--status-critical);
+}
+
+/* Still going: the right edge is open, and softly breathes. */
+.agent-bar.is-open {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.agent-bar.is-open::after {
+  content: '';
+  position: absolute;
+  top: calc(-1 * var(--gap-hair));
+  bottom: calc(-1 * var(--gap-hair));
+  right: calc(-1 * var(--space-1));
+  width: var(--space-1);
+  background: var(--accent);
+  opacity: 0.35;
+  animation: agent-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes agent-pulse {
+  0%,
+  100% {
+    opacity: 0.1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.agent-timeline-untimed {
+  padding: var(--space-2) var(--space-2) 0;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-node.is-running::after,
   .agent-node {
@@ -233,6 +378,10 @@
 
   .agent-edge.is-live,
   .agent-edge {
+    animation: none;
+  }
+
+  .agent-bar.is-open::after {
     animation: none;
   }
 }

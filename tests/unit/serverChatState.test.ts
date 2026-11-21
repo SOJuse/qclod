@@ -79,6 +79,9 @@ describe('сменившийся ключ сервера — опасность 
     expect(quiet).not.toContain('role="alert"')
     const css = readFileSync('src/renderer/components/servers/servers.css', 'utf8')
     expect(css).toMatch(/\.server-problem\.is-danger\s*\{[^}]*--status-critical/)
+    // The changed-key text names two commands, maybe on lines of their own: it wraps, never runs off.
+    expect(css).toMatch(/\.server-problem\s*\{[^}]*white-space:\s*pre-line/)
+    expect(css).toMatch(/\.server-offline-strip\.is-danger\s*\{[^}]*white-space:\s*pre-line/)
   })
 
   test('плашка над вводом — текст проблемы, а не «Сервер не на связи»', () => {

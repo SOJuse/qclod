@@ -152,6 +152,7 @@
   font-size: var(--text-sm);
   line-height: var(--leading);
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 /* A changed host key (R5): a danger, not a hint — red edge, icon, role="alert". */
@@ -351,6 +352,7 @@ button.server-link {
   border-color: var(--status-critical);
   color: var(--text);
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .server-offline-strip.is-danger svg {

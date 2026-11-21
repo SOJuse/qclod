@@ -18,7 +18,8 @@ export function PaneLayer({ title, onClose, children }: Props): JSX.Element {
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null
     const node = self.current
-    node?.focus()
+    // A body that put the focus on a control of its own (the agents' switch) keeps it.
+    if (!node?.contains(document.activeElement)) node?.focus()
     return () => {
       // Back to the opener if it is still there and nothing else took the focus meanwhile.
       const active = document.activeElement

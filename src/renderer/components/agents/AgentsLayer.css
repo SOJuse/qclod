@@ -1,0 +1,612 @@
+/*
+ * The agents layer over a pane's ribbon: a bar (counter, graph or timeline),
+ * then the graph — buttons laid out by hand over one SVG of links — or the
+ * timeline. Motion says «working» softly; the word and the icon say it too,
+ * and with reduced motion they are all that is left.
+ */
+
+.agents-layer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 100%;
+}
+
+.agents-layer-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.agents-layer-count {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.agents-tabs {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: var(--gap-hair);
+  padding: var(--gap-hair);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.agents-tab {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.agents-tab:hover {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.agents-tab.is-selected {
+  background: var(--accent-fill);
+  color: var(--text);
+}
+
+.agents-layer-view {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  padding-bottom: var(--space-2);
+}
+
+/* ------------------------------------------------------------ the graph */
+
+.agent-graph {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.agent-edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.agent-edge {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.agent-edge.is-live {
+  stroke: var(--accent);
+  stroke-dasharray: 6 6;
+  animation: agent-flow 1.2s linear infinite;
+}
+
+@keyframes agent-flow {
+  to {
+    stroke-dashoffset: -12;
+  }
+}
+
+.agent-root {
+  box-sizing: border-box;
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.agent-node {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: var(--gap-hair);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  border-left: var(--rule-category) solid var(--cat-agent);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.agent-node:hover {
+  background: var(--surface-hover);
+}
+
+.agent-node.is-failed {
+  border-left-color: var(--status-critical);
+}
+
+/* A soft breath of the accent around a working agent's frame. */
+.agent-node.is-running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 2px var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  animation: agent-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes agent-breathe {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.agent-node-line,
+.agent-node-state {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.agent-node-kind {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: var(--weight-medium);
+}
+
+.agent-badge {
+  flex: 0 0 auto;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.agent-node-task {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.agent-node-state {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.agent-node-state svg {
+  flex: 0 0 auto;
+}
+
+.agent-node.is-done .agent-node-state svg {
+  color: var(--status-ok);
+}
+
+.agent-node.is-failed .agent-node-state svg {
+  color: var(--status-critical);
+}
+
+.agent-node.is-running .agent-node-state {
+  color: var(--text);
+}
+
+.agent-node-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------------------ the timeline */
+
+.agent-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-hair);
+  min-width: 520px;
+  padding-right: var(--space-4);
+}
+
+.agent-timeline-ticks,
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.agent-timeline-label {
+  flex: 0 0 180px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agent-timeline-scale {
+  position: relative;
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.agent-timeline-ticks {
+  height: var(--space-5);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.agent-tick {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+}
+
+.agent-tick:first-child {
+  transform: translate(0, -50%);
+}
+
+.agent-row {
+  min-height: var(--tool-head-h);
+  padding: var(--space-1) 0 var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-row:hover {
+  background: var(--hover-fill);
+}
+
+.agent-row-kind,
+.agent-row-task {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-row-kind {
+  font-weight: var(--weight-medium);
+}
+
+.agent-row-task {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.agent-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+/* The bar's colour is its state's, as the icons in the graph. */
+.agent-bar {
+  position: absolute;
+  top: 50%;
+  height: var(--space-3);
+  transform: translateY(-50%);
+  border-radius: var(--radius-sm);
+  background: var(--text-faint);
+}
+
+.agent-bar.is-running {
+  background: var(--accent);
+}
+
+.agent-bar.is-done {
+  background: var(--status-ok);
+}
+
+.agent-bar.is-failed {
+  background: var(--status-critical);
+}
+
+/* Still going: the right edge is open, and softly breathes. */
+.agent-bar.is-open {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.agent-bar.is-open::after {
+  content: '';
+  position: absolute;
+  top: calc(-1 * var(--gap-hair));
+  bottom: calc(-1 * var(--gap-hair));
+  right: calc(-1 * var(--space-1));
+  width: var(--space-1);
+  background: var(--accent);
+  opacity: 0.35;
+  animation: agent-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes agent-pulse {
+  0%,
+  100% {
+    opacity: 0.1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.agent-timeline-untimed {
+  padding: var(--space-2) var(--space-2) 0;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------ one agent's own ribbon */
+
+/* Fills the layer above the dock: the ribbon in it scrolls by itself. */
+.agent-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+  min-height: 0;
+}
+
+.agent-view-head {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.agent-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  margin-left: calc(-1 * var(--space-2));
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.agent-back:hover {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.agent-view-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-md);
+}
+
+.agent-view-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.agent-view-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.agent-view-state.is-running {
+  color: var(--text);
+}
+
+.agent-view-state.is-done svg {
+  color: var(--status-ok);
+}
+
+.agent-view-state.is-failed svg {
+  color: var(--status-critical);
+}
+
+.agent-view-details {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.agent-view-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.agent-stop {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--button-sm-gap);
+  padding: var(--button-sm-pad);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--button-sm-radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.agent-stop:hover:not(:disabled) {
+  border-color: var(--critical-border);
+  background: var(--critical-fill);
+}
+
+.agent-stop:disabled {
+  cursor: default;
+  color: var(--text-dim);
+}
+
+.agent-stop-error {
+  font-size: var(--text-xs);
+  color: var(--status-critical);
+}
+
+.agent-prompt {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-size: var(--text-sm);
+}
+
+.agent-prompt > summary {
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.agent-prompt-text {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 0 var(--space-3) var(--space-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.agent-view-ribbon {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* The layer already keeps room for the dock under it. */
+.agent-view-ribbon .ribbon {
+  padding-bottom: var(--space-4);
+}
+
+/* ------------------------------------------------------------ messages to and from a subagent */
+
+.agent-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-width: min(80%, var(--prose-max-w));
+  margin: var(--space-3) 0;
+}
+
+.agent-message.is-person {
+  margin-left: auto;
+  align-items: flex-end;
+}
+
+.agent-message.is-main {
+  margin-right: auto;
+  align-items: flex-start;
+}
+
+.agent-message-text {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--text-md);
+  line-height: var(--leading-prose);
+}
+
+.agent-message.is-person .agent-message-text {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
+}
+
+.agent-message.is-main .agent-message-text {
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.agent-message.is-cancelled .agent-message-text {
+  color: var(--text-dim);
+}
+
+.agent-message-caption {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+/* In the main ribbon: a message the person wrote to a subagent. */
+.row-user-relay {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------ the subagent's input */
+
+.agent-composer-foot {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2) 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.agent-composer-reason {
+  color: var(--status-warn);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-node.is-running::after,
+  .agent-node {
+    animation: none;
+  }
+
+  .agent-edge.is-live,
+  .agent-edge {
+    animation: none;
+  }
+
+  .agent-bar.is-open::after {
+    animation: none;
+  }
+}

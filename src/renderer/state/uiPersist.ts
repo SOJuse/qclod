@@ -16,6 +16,8 @@ export const UI_KEY = 'qclod.ui'
 export interface PersistedUi {
   draftByTab: Record<string, string>
   attachmentsByTab: Record<string, PendingAttachment[]>
+  /** этап 4: the agents layer's view; kept only when it is not the graph (сверка F14). */
+  agentsView?: 'graph' | 'timeline'
 }
 
 const EMPTY = (): PersistedUi => ({ draftByTab: {}, attachmentsByTab: {} })
@@ -32,7 +34,11 @@ export function serializeUi(state: PersistedUi): string {
     }
     if (kept.length > 0) attachmentsByTab[id] = kept
   }
-  return JSON.stringify({ draftByTab, attachmentsByTab })
+  return JSON.stringify({
+    draftByTab,
+    attachmentsByTab,
+    ...(state.agentsView === 'timeline' ? { agentsView: 'timeline' } : {})
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -73,6 +79,7 @@ export function loadUi(storage: Pick<Storage, 'getItem'> | null): PersistedUi {
         if (typeof text === 'string' && text !== '') out.draftByTab[id] = text
       }
     }
+    if (parsed['agentsView'] === 'timeline') out.agentsView = 'timeline'
     if (isRecord(parsed['attachmentsByTab'])) {
       for (const [id, items] of Object.entries(parsed['attachmentsByTab'])) {
         if (!Array.isArray(items)) continue

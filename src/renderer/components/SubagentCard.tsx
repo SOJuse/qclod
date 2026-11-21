@@ -10,7 +10,8 @@ import './SubagentCard.css'
 
 type SubagentItem = Extract<RibbonItem, { kind: 'subagent' }>
 
-const STATE_ICON: Record<SubagentState, LucideIcon> = {
+/** The icon of each state, beside its word (AGENT_STATE_LABEL); the agents layer uses the same. */
+export const STATE_ICON: Record<SubagentState, LucideIcon> = {
   running: LoaderCircle,
   done: Check,
   failed: CircleAlert,

@@ -86,7 +86,8 @@ export const EMPTY_PANEL: PanelData = {
   projectSettings: null,
   queue: [],
   backgroundTasks: [],
-  autonomy: NO_AUTONOMY
+  autonomy: NO_AUTONOMY,
+  costRates: null
 }
 
 let lastPanelRev = 0

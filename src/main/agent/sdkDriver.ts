@@ -301,6 +301,11 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
       await session.stopTask(taskId)
     },
 
+    /** этап 4 (задача 2): заглушка; настоящая — задача 9. */
+    async backgroundTask(_toolUseId: string): Promise<boolean | null> {
+      return null
+    },
+
     async remoteAvailability(): Promise<RemoteAvailability> {
       const hasMethod = typeof remote.enableRemoteControl === 'function'
       let timer: ReturnType<typeof setTimeout> | undefined

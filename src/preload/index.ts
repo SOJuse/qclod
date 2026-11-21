@@ -18,6 +18,8 @@ import type {
   RendererErrorReport,
   ResolvedPath,
   RibbonEvent,
+  SubagentSendResult,
+  SubagentStopResult,
   RibbonSnapshot,
   SessionSummary,
   StatusEvent,
@@ -220,7 +222,15 @@ const api = {
     ipcRenderer.invoke(CHANNELS.autonomyHold, tabId, cardId),
   /** «Ответить сейчас»: what the running timer would do, done at once. */
   autonomyAnswerNow: (tabId: string, cardId: string): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.autonomyAnswerNow, tabId, cardId)
+    ipcRenderer.invoke(CHANNELS.autonomyAnswerNow, tabId, cardId),
+
+  // — этап 4: сабагенты. Из окна — только id карточки ленты и текст.
+  /** Пишет сабагенту этой карточки через главного агента. */
+  sendToSubagent: (tabId: TabId, cardId: string, text: string): Promise<SubagentSendResult> =>
+    ipcRenderer.invoke(CHANNELS.agentSubagentSend, tabId, cardId, text),
+  /** Останавливает сабагента этой карточки. */
+  stopSubagent: (tabId: TabId, cardId: string): Promise<SubagentStopResult> =>
+    ipcRenderer.invoke(CHANNELS.agentSubagentStop, tabId, cardId)
 }
 
 export type QclodApi = typeof api

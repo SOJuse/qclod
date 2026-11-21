@@ -99,7 +99,12 @@ export const CHANNELS = Object.freeze({
   // stage 3: autonomy
   // renderer -> main (invoke)
   autonomyHold: 'autonomy:hold',
-  autonomyAnswerNow: 'autonomy:answerNow'
+  autonomyAnswerNow: 'autonomy:answerNow',
+
+  // этап 4: сабагенты
+  // renderer -> main (invoke)
+  agentSubagentSend: 'agent:subagentSend',
+  agentSubagentStop: 'agent:subagentStop'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -168,7 +173,10 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.logsOpen,
   // stage 3: autonomy
   CHANNELS.autonomyHold,
-  CHANNELS.autonomyAnswerNow
+  CHANNELS.autonomyAnswerNow,
+  // этап 4: сабагенты
+  CHANNELS.agentSubagentSend,
+  CHANNELS.agentSubagentStop
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([

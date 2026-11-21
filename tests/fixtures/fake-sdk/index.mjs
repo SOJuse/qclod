@@ -1332,6 +1332,10 @@ export function createFakeSdk(script = {}) {
       })
       pushOutOfBand(backgroundTasksChanged())
     },
+    /** этап 4 (задача 2): заглушка; настоящая — задача 3. */
+    async backgroundTask(_toolUseId) {
+      return null
+    },
     async dispose() {
       state.disposed = true
       closed = true

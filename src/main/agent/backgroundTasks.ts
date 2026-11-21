@@ -118,6 +118,7 @@ export class BackgroundTracker {
     const task: BackgroundTask = {
       taskId,
       ...(toolUseId ? { toolUseId } : {}),
+      kind: 'command',
       type,
       description: str(m['description']),
       ...(command ? { command } : {}),

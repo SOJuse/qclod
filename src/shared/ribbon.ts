@@ -4,6 +4,7 @@ import type {
   QuestionView,
   RibbonChange,
   RibbonItem,
+  SubagentItem,
   SubagentState,
   TodoItem,
   ToolState
@@ -269,7 +270,6 @@ const NOTICE_STATE: Record<TaskNotice['status'], SubagentState> = {
   killed: 'stopped'
 }
 
-type SubagentItem = Extract<RibbonItem, { kind: 'subagent' }>
 
 function imageAttachment(block: Record<string, unknown>): Attachment | null {
   const source = block['source']

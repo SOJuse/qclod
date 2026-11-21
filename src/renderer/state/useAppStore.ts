@@ -195,7 +195,8 @@ export const EMPTY_PANEL: PanelData = Object.freeze({
   projectSettings: null,
   queue: [],
   backgroundTasks: [],
-  autonomy: NO_AUTONOMY
+  autonomy: NO_AUTONOMY,
+  costRates: null
 })
 
 interface AppState {

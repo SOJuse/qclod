@@ -228,6 +228,7 @@ export interface FakeDriver {
   }>
   taskOutput(taskId: string): Promise<FakeTaskOutput | null>
   stopTask(taskId: string): Promise<void>
+  backgroundTask(toolUseId: string): Promise<boolean | null>
   remoteAvailability(): Promise<FakeRemoteAvailability>
   setRemoteControl(
     enabled: boolean,

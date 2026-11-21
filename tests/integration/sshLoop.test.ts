@@ -11,9 +11,13 @@
  */
 import { afterAll, describe, expect, test } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { LineDecoder, RELAY_PROTO, encodeFrame, type RelayFrame } from '../../src/shared/relayProtocol'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { LineDecoder, RELAY_PROTO, encodeFrame, type AttachResult, type RelayFrame } from '../../src/shared/relayProtocol'
+import { RelayClient, type SessionSink } from '../../src/main/ssh/relayClient'
+import { ATTACH_COMMAND, type RelayTransport, type TransportFactory } from '../../src/main/ssh/transport'
+import { shq } from '../../src/main/ssh/sshArgs'
 
 const HOST = process.env['QCLOD_SSH_LOOP_HOST']
 const BINARY_DIR = process.env['QCLOD_RELAY_BINARY_DIR'] ?? 'dist-relay-e2e'
@@ -48,12 +52,47 @@ const PROBE = [
 ].join('\n')
 
 let attach: ChildProcessWithoutNullStreams | null = null
+let client: RelayClient | null = null
+
+async function until(check: () => boolean, ms: number, what: string): Promise<void> {
+  const started = Date.now()
+  while (!check()) {
+    if (Date.now() - started > ms) throw new Error(`не дождались: ${what}`)
+    await new Promise((r) => setTimeout(r, 50))
+  }
+}
+
+/** `qclod-relay attach` over a real ssh, as RelayClient's transport; every one made is kept to be cut. */
+function loopTransport(made: ChildProcessWithoutNullStreams[]): TransportFactory {
+  return (): RelayTransport => {
+    const child = spawn('ssh', [...SSH_OPTS, HOST!, '--', ATTACH_COMMAND])
+    made.push(child)
+    let stderr = ''
+    let exited: { code: number | null } | null = null
+    const waiting: Array<(code: number | null, stderr: string) => void> = []
+    child.stderr.on('data', (d) => (stderr += d))
+    child.stdin.on('error', () => undefined)
+    child.on('close', (code) => {
+      exited = { code }
+      for (const cb of waiting.splice(0)) cb(code, stderr)
+    })
+    return {
+      stdin: child.stdin,
+      stdout: child.stdout,
+      kill: () => void child.kill(),
+      onExit: (cb) => (exited ? cb(exited.code, stderr) : void waiting.push(cb))
+    }
+  }
+}
 
 afterAll(async () => {
   attach?.kill()
+  client?.close()
   if (!HOST) return
   // The loop leaves nothing running behind it.
-  await ssh('tmux kill-session -t qclod-relay 2>/dev/null; systemctl --user stop qclod-relay 2>/dev/null; true')
+  await ssh(
+    "tmux kill-session -t qclod-relay 2>/dev/null; systemctl --user stop qclod-relay 2>/dev/null; pkill -f '.qclod/bin/qclod-relay daemon'; true"
+  )
 })
 
 describe.skipIf(!HOST)('ssh-петля: посредник на настоящем sshd', () => {
@@ -99,5 +138,45 @@ describe.skipIf(!HOST)('ssh-петля: посредник на настояще
       if (Date.now() - started > 25_000) throw new Error('нет pong')
       await new Promise((r) => setTimeout(r, 50))
     }
+  })
+
+  test('4. сессия на фейке SDK, обрыв ssh, дочитывание с after — без потерь и дублей', async () => {
+    attach?.kill()
+    attach = null
+    // The daemon again, on the fake SDK: every turn a tool that runs 1.5 s, so a cut lands inside a turn.
+    const fake = resolve('tests/fixtures/fake-sdk/index.mjs')
+    const script = JSON.stringify({ nextTurn: [{ kind: 'tool', name: 'Bash', input: { command: 'make' }, result: 'ok', pauseMs: 1500 }] })
+    await ssh("tmux kill-session -t qclod-relay 2>/dev/null; systemctl --user stop qclod-relay 2>/dev/null; pkill -f '.qclod/bin/qclod-relay daemon'; sleep 1; true")
+    const started = await ssh(
+      `QCLOD_FAKE_SDK=${shq(fake)} QCLOD_FAKE_SDK_SCRIPT=${shq(script)} setsid -f ~/.qclod/bin/qclod-relay daemon </dev/null >/dev/null 2>&1; ` +
+        'for i in $(seq 1 50); do test -S ~/.qclod/run/relay.sock && exit 0; sleep 0.2; done; exit 1'
+    )
+    expect(started.code, started.stderr).toBe(0)
+
+    const made: ChildProcessWithoutNullStreams[] = []
+    client = new RelayClient({ hostId: 'loop', appVersion: '1.0.0', clientName: 'sshLoop', transport: loopTransport(made) })
+    await client.connect(false)
+    const evs: Array<Extract<RelayFrame, { t: 'ev' }>> = []
+    const reattached: AttachResult[] = []
+    const sink: SessionSink = { onEvent: (f) => evs.push(f), onLive: () => undefined, onReattached: (r) => reattached.push(r) }
+    const cwd = mkdtempSync(join(tmpdir(), 'qclod-loop-'))
+    const { snapshot } = await client.open({ cwd, mode: 'default' }, sink)
+    const s = snapshot.s
+    const results = (): number => evs.filter((e) => e.s === s && (e.d as { type?: string }).type === 'result').length
+
+    await client.call('drv', { s, op: 'send', args: [{ text: 'раз', attachments: [] }] })
+    await until(() => results() === 1, 30_000, 'первый result')
+
+    await client.call('drv', { s, op: 'send', args: [{ text: 'два', attachments: [] }] })
+    // ssh is cut while the second turn runs; the client comes back by itself and reads from after.
+    made.at(-1)!.kill()
+    await until(() => results() === 2, 60_000, 'второй result после обрыва')
+    expect(reattached.length).toBeGreaterThan(0)
+    expect(reattached.every((r) => r.gap === false)).toBe(true)
+    const qs = evs.filter((e) => e.s === s).map((e) => e.q)
+    expect(new Set(qs).size).toBe(qs.length)
+    expect(qs).toEqual(Array.from({ length: qs.length }, (_, i) => i + 1))
+    const sent = evs.filter((e) => e.s === s && e.k === 'sent').map((e) => (e.d as { input: { text: string } }).input.text)
+    expect(sent).toEqual(['раз', 'два'])
   })
 })

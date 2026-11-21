@@ -48,7 +48,7 @@ export function AgentGraph({
           )
         })}
       </svg>
-      <div className="agent-root" style={{ left: layout.root.x, top: layout.root.y, width: ROOT_W, height: NODE_H }}>
+      <div className="agent-root" data-testid="agent-graph-root" style={{ left: layout.root.x, top: layout.root.y, width: ROOT_W, height: NODE_H }}>
         <Bot size={14} aria-hidden="true" />
         <span>Главный агент</span>
       </div>

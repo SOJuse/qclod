@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { AgentNode } from '../../src/renderer/agents/agentModel'
-import { COL_GAP, NODE_H, NODE_W, ROOT_W, ROW_GAP, layoutGraph } from '../../src/renderer/agents/graphLayout'
+import { COL_GAP, NODE_H, NODE_W, ROOT_W, ROW_GAP, layoutGraph, scrollTarget } from '../../src/renderer/agents/graphLayout'
 
 const node = (id: string, parentId: string | null = null, patch: Partial<AgentNode> = {}): AgentNode => ({
   id,
@@ -60,5 +60,22 @@ describe('layoutGraph', () => {
     expect(g.placed.size).toBe(0)
     expect(g.edges).toEqual([])
     expect(g.root).toEqual({ x: 0, y: 0 })
+  })
+})
+
+describe('scrollTarget: куда прокрутить слой при открытии', () => {
+  const fifteen = (running: number[]): AgentNode[] =>
+    Array.from({ length: 15 }, (_, i) =>
+      node(`n${i}`, i >= 10 ? `n${i - 10}` : null, { depth: i >= 10 ? 2 : 1, state: running.includes(i) ? 'running' : 'done' })
+    )
+
+  test('15 узлов: первый работающий в порядке ленты', () => {
+    expect(scrollTarget(fifteen([12, 7]))).toBe('n7')
+    expect(scrollTarget(fifteen([13]))).toBe('n13')
+  })
+
+  test('работающих нет — корень (null); пусто — корень', () => {
+    expect(scrollTarget(fifteen([]))).toBeNull()
+    expect(scrollTarget([])).toBeNull()
   })
 })

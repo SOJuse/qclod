@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { CHANNELS } from '../../src/shared/channels'
-import { TERM_INPUT_MAX, TerminalHub, shellCommand, termSize, type IPtyLike } from '../../src/main/ssh/terminal'
+import { TERM_BACKLOG_MAX, TERM_INPUT_MAX, TerminalHub, shellCommand, termSize, type IPtyLike } from '../../src/main/ssh/terminal'
 
 /** A pty that records what it is told and can be made to exit. */
 function fakePty() {
@@ -115,5 +115,30 @@ describe('терминал сервера', () => {
     expect(ended).toEqual([id])
     expect(h.has(id)).toBe(false)
     expect(h.input(id, 'x')).toBe(false)
+  })
+})
+
+describe('терминал сервера переживает уход панели (R1)', () => {
+  test('attach отдаёт накопленный вывод той же вкладке; чужой вкладке и после выхода — null', () => {
+    const { h, fake } = hub()
+    const id = h.open('t1', { target: 'box' }, '/srv', {}, { cols: 80, rows: 24 })
+    fake.made[0]!.pty.data('$ ls\r\n')
+    fake.made[0]!.pty.data('a b\r\n')
+    expect(h.attach('t1', id)).toBe('$ ls\r\na b\r\n')
+    expect(h.attach('t2', id)).toBeNull()
+    expect(h.attach('t1', '0b9a6c2e-4f1d-4a7b-9c3e-1d2f3a4b5c6d')).toBeNull()
+    fake.made[0]!.pty.exit(0)
+    expect(h.attach('t1', id)).toBeNull()
+  })
+
+  test('буфер — последние 256 КБ вывода', () => {
+    const { h, fake } = hub()
+    const id = h.open('t1', { target: 'box' }, '/srv', {}, { cols: 80, rows: 24 })
+    const chunk = 'x'.repeat(100 * 1024)
+    for (let i = 0; i < 4; i++) fake.made[0]!.pty.data(chunk)
+    fake.made[0]!.pty.data('конец')
+    const backlog = h.attach('t1', id)!
+    expect(backlog.length).toBe(TERM_BACKLOG_MAX)
+    expect(backlog.endsWith('xконец')).toBe(true)
   })
 })

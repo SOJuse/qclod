@@ -285,10 +285,15 @@ const api = {
   terminalResize: (termId: string, cols: number, rows: number): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.terminalResize, termId, cols, rows),
   terminalClose: (termId: string): Promise<void> => ipcRenderer.invoke(CHANNELS.terminalClose, termId),
+  /** The tab's terminal again, after its drawer was unmounted: what it printed meanwhile; null — it is gone. */
+  terminalAttach: (tabId: TabId, termId: string): Promise<string | null> =>
+    ipcRenderer.invoke(CHANNELS.terminalAttach, tabId, termId),
   /** Fire-and-forget: keystrokes for the terminal. */
   terminalInput: (termId: string, data: string): void => ipcRenderer.send(CHANNELS.terminalInput, termId, data),
   onServersChanged: (cb: (servers: ServerView[]) => void) => on(CHANNELS.serversChanged, cb),
   onSshPrompt: (cb: (prompt: SshPrompt) => void) => on(CHANNELS.serversPrompt, cb),
+  /** An ssh question gone without an answer from here (timeout, ssh exited): drop its dialog. */
+  onSshPromptClosed: (cb: (e: { promptId: string }) => void) => on(CHANNELS.serversPromptClosed, cb),
   onConnectProgress: (cb: (e: { hostId: string; steps: ConnectStep[] }) => void) =>
     on(CHANNELS.serversConnectProgress, cb),
   onServerLoginProgress: (

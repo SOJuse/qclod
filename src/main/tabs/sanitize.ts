@@ -508,3 +508,13 @@ export function sanitizeRemotePath(value: unknown): string | null {
   if (!isString(value) || value.length > MAX_SERVER_VALUE || value.includes('\0')) return null
   return value
 }
+
+/** Stage 6: a server terminal's id — what TerminalHub handed out (a uuid). */
+export function sanitizeTerminalId(value: unknown): string | null {
+  return isString(value) && /^[0-9a-f-]{36}$/i.test(value) ? value : null
+}
+
+/** Stage 6: keystrokes for a server terminal, at most 64 KiB at a time. */
+export function sanitizeTerminalInput(value: unknown): string | null {
+  return isString(value) && value.length > 0 && value.length <= 64 * 1024 ? value : null
+}

@@ -4,6 +4,7 @@ import { OFFLINE_STRIP_TEXT } from '../../shared/serverTexts'
 import { ServerLoginDialog } from './servers/ServerLoginDialog'
 import type { FileSource, SessionSummary, TabId, UserInput } from '../../shared/types'
 import { FileViewer } from './viewer/FileViewer'
+import { TerminalDrawer } from './terminal/TerminalDrawer'
 import { EMPTY_PANEL, useAppStore, type PaneLayerState } from '../state/useAppStore'
 import { useHeldDrafts } from '../state/heldDrafts'
 import { compactNow, sendCommand } from '../input/slash'
@@ -127,6 +128,7 @@ export function ChatPane({
   const commands = useAppStore((s) => s.commandsByTab[tabId])
   const recentCommands = useAppStore((s) => s.recentCommands)
   const panel = useAppStore((s) => s.panelByTab[tabId]) ?? EMPTY_PANEL
+  const terminalShown = useAppStore((s) => s.terminalShownByTab[tabId])
 
   const busySinceByTab = useAppStore((s) => s.busySinceByTab)
   // A tab with history is not empty just because its ribbon has not arrived yet.
@@ -372,6 +374,12 @@ export function ChatPane({
           {...(split && onUnsplit ? { onUnsplit } : {})}
           server={server}
           {...(server ? { onReconnect: () => void window.qclod.connectServer(server.id) } : {})}
+          {...(server
+            ? {
+                onToggleTerminal: () => useAppStore.getState().setTerminalShown(tabId, terminalShown !== true),
+                terminalOpen: terminalShown === true
+              }
+            : {})}
           // этап 4: onOpenAgents={() => setPaneLayer(tabId, { kind: 'agents' })} and agentsCount, the running subagents.
         />
 
@@ -538,6 +546,16 @@ export function ChatPane({
             />
           </div>
         </div>
+
+        {/* Stage 6: the server's terminal, once opened; hidden it keeps its session. */}
+        {server && terminalShown !== undefined && (
+          <TerminalDrawer
+            tabId={tabId}
+            label={server.label || server.target}
+            shown={terminalShown}
+            onHide={() => useAppStore.getState().setTerminalShown(tabId, false)}
+          />
+        )}
       </div>
 
       {mode !== 'hidden' && (

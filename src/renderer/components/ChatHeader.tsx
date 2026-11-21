@@ -1,4 +1,4 @@
-import { Bot, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
+import { Bot, PanelRightClose, PanelRightOpen, SquareTerminal, X } from 'lucide-react'
 import type { ServerView, SessionStatus } from '../../shared/types'
 import { ServerBadge, ServerLink } from './servers/ServerBadge'
 import { hint } from '../app/shortcuts'
@@ -25,6 +25,9 @@ interface Props {
   server?: ServerView | undefined
   /** «Повторить» / «Подключиться» of a server that is not on line. */
   onReconnect?: () => void
+  /** Stage 6: «Терминал» of a server chat — the drawer under the ribbon. */
+  onToggleTerminal?: () => void
+  terminalOpen?: boolean
 }
 
 /** The folder's own name: the path is in the hint. */
@@ -49,7 +52,9 @@ export function ChatHeader({
   onOpenAgents,
   agentsCount = 0,
   server,
-  onReconnect
+  onReconnect,
+  onToggleTerminal,
+  terminalOpen = false
 }: Props): JSX.Element {
   const panelLabel = panelShown ? 'Скрыть панель' : 'Показать панель'
   // A new chat is named after its folder: the name once is enough.
@@ -80,6 +85,18 @@ export function ChatHeader({
         {STATUS_LABEL[status]}
       </span>
       <span className="chat-header-gap" />
+      {onToggleTerminal && (
+        <button
+          type="button"
+          className="chat-header-button is-text"
+          data-testid="open-terminal"
+          aria-pressed={terminalOpen}
+          onClick={onToggleTerminal}
+        >
+          <SquareTerminal size={14} aria-hidden="true" />
+          <span>Терминал</span>
+        </button>
+      )}
       {onOpenAgents && (
         <button type="button" className="chat-header-button is-text" data-testid="open-agents" onClick={onOpenAgents}>
           <Bot size={14} aria-hidden="true" />

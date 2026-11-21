@@ -71,6 +71,8 @@ export interface AgentIpcDeps {
   knownServer?: (hostId: string) => boolean
   /** Stage 6: a server's relay, raised if need be — a server chat's files are read through it. */
   serverClient?: (hostId: string) => Promise<RelayReader>
+  /** Stage 6: «Закрыть чат» closes what belongs to it, its server terminal too. */
+  onTabClosed?: (id: TabId) => void
 }
 
 function isString(value: unknown): value is string {
@@ -153,6 +155,7 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     deps.resolver.forget(id)
     viewer.forget(id)
     remoteIndex.forget(id)
+    deps.onTabClosed?.(id)
     await controller.close(id)
   })
 

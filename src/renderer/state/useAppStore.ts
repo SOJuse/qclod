@@ -34,7 +34,8 @@ const PER_TAB_KEYS = [
   'commandsByTab',
   'pathsByTab',
   'layerByTab',
-  'panelChoiceByTab'
+  'panelChoiceByTab',
+  'terminalShownByTab'
 ] as const
 
 const RECENT_COMMANDS = 6
@@ -276,6 +277,9 @@ interface AppState {
   setPanelChoice: (tabId: TabId, choice: PanelOverride) => void
   setServers: (servers: ServerView[]) => void
   setConnectSteps: (hostId: string, steps: ConnectStep[]) => void
+  /** Stage 6: a server chat's terminal drawer is shown; hiding it keeps its session. */
+  terminalShownByTab: Record<TabId, boolean>
+  setTerminalShown: (tabId: TabId, shown: boolean) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -361,6 +365,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pathsByTab: {},
   recentCommands: [],
   layerByTab: {},
+  terminalShownByTab: {},
   panelChoiceByTab: {},
   servers: [],
   connectSteps: {},
@@ -554,6 +559,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   setPaneLayer: (tabId, layer) => set((state) => ({ layerByTab: { ...state.layerByTab, [tabId]: layer } })),
+  setTerminalShown: (tabId, shown) =>
+    set((state) => ({ terminalShownByTab: { ...state.terminalShownByTab, [tabId]: shown } })),
   setServers: (servers) => set({ servers }),
   setConnectSteps: (hostId, steps) => set((state) => ({ connectSteps: { ...state.connectSteps, [hostId]: steps } })),
   setPanelChoice: (tabId, choice) =>

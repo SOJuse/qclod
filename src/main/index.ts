@@ -77,6 +77,8 @@ import { createRelayDriver } from './ssh/relayDriver'
 import { sshTransport } from './ssh/transport'
 import { SshPromptBroker } from './ssh/promptBroker'
 import { registerServerIpc } from './ssh/serverIpc'
+import { TerminalHub, nodePtySpawn, type TerminalSpawn } from './ssh/terminal'
+import { registerTerminalIpc } from './ssh/terminalIpc'
 import { ServerLogin, pipePty } from './ssh/serverLogin'
 import type { RelayManifest } from './ssh/relayInstaller'
 import type { ServerEntry, SessionSummary } from '../shared/types'
@@ -615,6 +617,48 @@ if (gotLock) void app.whenReady().then(async () => {
     log: (line) => console.log('[servers]', line)
   })
   const serverHosts = hosts
+  // node-pty, loaded with the first terminal; a build without it falls back to plain pipes for the login.
+  let ptySpawn: TerminalSpawn | null = null
+  const loadPty = async (): Promise<TerminalSpawn | null> => {
+    if (ptySpawn) return ptySpawn
+    try {
+      ptySpawn = await nodePtySpawn()
+    } catch (err) {
+      console.warn('[terminal] node-pty', err instanceof Error ? err.message : String(err))
+    }
+    return ptySpawn
+  }
+  // The server's terminal (task 26): a drawer under a server chat, ssh -tt in node-pty.
+  const terminals = new TerminalHub({
+    spawnPty: (file, args, o) => {
+      if (!ptySpawn) throw new Error('node-pty не загружен')
+      return ptySpawn(file, args, o)
+    },
+    send,
+    sshPath: findSsh(),
+    platform: process.platform,
+    userData,
+    ...(typeof process.getuid === 'function' ? { uid: process.getuid() } : {})
+  })
+  registerTerminalIpc({
+    hub: terminals,
+    open: async (tabId, size) => {
+      const tab = controller.list().find((t) => t.id === tabId)
+      if (!tab) return null
+      if (!(await loadPty())) return null
+      // e2e: a local shell in place of ssh; a release build has no such branch (buildFlags.d.ts).
+      if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_E2E_TERMINAL']) {
+        const shell = process.platform === 'win32' ? (process.env['ComSpec'] ?? 'cmd.exe') : '/bin/sh'
+        return terminals.start(tabId, shell, [], size, process.env)
+      }
+      const entry = tab.server ? hostStore.get(tab.server.hostId) : null
+      if (!tab.server || !entry) return null
+      await askpassUp
+      // A saved password goes by itself; otherwise ssh's question comes to the window (SshPromptDialog).
+      const ask = askpass.forSpawn(tab.server.hostId, { interactive: true })
+      return terminals.open(tabId, targetOf(entry), tab.cwd, ask.env, size, () => ask.done())
+    }
+  })
   // «Войти» of a server's Claude account (task 23): ssh -tt … claude auth login, one per server.
   const logins = new Map<string, ServerLogin>()
   const startServerLogin = async (hostId: string): Promise<void> => {
@@ -625,8 +669,10 @@ if (gotLock) void app.whenReady().then(async () => {
     const claude = serverHosts.probeOf(hostId)?.claudePath ?? view?.account?.claudePath ?? 'claude'
     logins.get(hostId)?.cancel()
     const ask = askpass.forSpawn(hostId, { interactive: true })
+    // A real terminal when node-pty is there (task 26), else ssh -tt over pipes.
+    const pty = await loadPty()
     const login = new ServerLogin({
-      spawnPty: pipePty,
+      spawnPty: pty ? (file, args, o) => pty(file, args, { ...o, name: 'xterm-256color' }) : pipePty,
       onProgress: (p) => {
         send(CHANNELS.serversLoginProgress, { hostId, ...p })
         if (p.state === 'done' || p.state === 'failed') ask.done()
@@ -690,6 +736,7 @@ if (gotLock) void app.whenReady().then(async () => {
     serverHistory,
     knownServer: (hostId) => hostStore.get(hostId) !== null,
     serverClient: (hostId) => serverHosts.client(hostId),
+    onTabClosed: (id) => terminals.closeTab(id),
     userData,
     openTerminal: (cwd) => {
       // e2e records the call instead of opening a console (buildFlags.d.ts).
@@ -819,6 +866,7 @@ if (gotLock) void app.whenReady().then(async () => {
     void controller
       .disposeAll()
       .finally(() => {
+        terminals.closeAll()
         serverHosts.closeAll()
         return askpass.stop()
       })

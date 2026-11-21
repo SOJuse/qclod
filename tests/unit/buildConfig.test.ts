@@ -156,3 +156,12 @@ describe('CI посредника (этап 6)', () => {
     }
   })
 })
+
+describe('терминал сервера (этап 6, задача 26)', () => {
+  test('node-pty — зависимость, распакован из asar; xterm и fit — в зависимостях', () => {
+    expect(pkg.dependencies['node-pty']).toMatch(/^\^1\.1/)
+    expect(pkg.dependencies['@xterm/xterm']).toBeTruthy()
+    expect(pkg.dependencies['@xterm/addon-fit']).toBeTruthy()
+    expect(yml).toMatch(/^asarUnpack:\n(?: {2}.*\n|#.*\n| {2}#.*\n)*? {2}- node_modules\/node-pty\/\*\*$/m)
+  })
+})

@@ -499,9 +499,17 @@ export function App(): JSX.Element {
           if (!server) return
           return setServersSheet(server.state === 'online' ? { kind: 'folder', hostId: at } : { kind: 'connect', hostId: at })
         }
-        case 'openServerTerminal':
-          // The server's terminal is task 26 (H1); until it is merged the row opens nothing.
+        case 'openServerTerminal': {
+          // The server's terminal (task 26) opens under a chat on that server: the active one, else
+          // the first; with no chat there yet, a folder is picked first.
+          if (typeof at !== 'string') return
+          const onServer = state.tabs.filter((t) => t.server?.hostId === at)
+          const tab = onServer.find((t) => t.id === state.activeTabId) ?? onServer[0]
+          if (!tab) return setServersSheet({ kind: 'connect', hostId: at })
+          if (tab.id !== state.activeTabId) activate(tab.id)
+          state.setTerminalShown(tab.id, true)
           return
+        }
       }
     },
     [activate, newChat, closeActiveTab, togglePalette, togglePanel, toggleSidebar, toggleSplit, restartSession, cycleMode]

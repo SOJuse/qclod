@@ -15,6 +15,7 @@ import type {
   SessionStatus
 } from '../../src/shared/types'
 import { REMOTE_BLOCK_TEXT } from '../../src/shared/remote'
+import { relayInstruction } from '../../src/shared/relayText'
 import type { AutonomyInput } from '../../src/core/autonomy/types'
 
 type FakeScript = Parameters<typeof createFakeSdk>[0]
@@ -4329,6 +4330,123 @@ describe('AgentSession: этап 4 — написать сабагенту', () 
     expect(await session.sendToSubagent(card.id, 'привет')).toEqual({ ok: false, reason: 'not-running' })
   })
 
+  /** Two Agent calls of one message, both in the foreground and started. */
+  function twoForeground(session: AgentSession): void {
+    session.handle({
+      type: 'assistant',
+      session_id: 's',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'tu1', name: 'Agent', input: { description: 'один', subagent_type: 'Explore' } },
+          { type: 'tool_use', id: 'tu2', name: 'Agent', input: { description: 'два', subagent_type: 'Explore' } }
+        ]
+      }
+    })
+    for (const [task, tool] of [['a1', 'tu1'], ['a2', 'tu2']] as const) {
+      session.handle({
+        type: 'system',
+        subtype: 'task_started',
+        session_id: 's',
+        task_id: task,
+        tool_use_id: tool,
+        description: tool,
+        task_type: 'local_agent',
+        is_backgrounded: false
+      })
+    }
+  }
+
+  test('два агента на переднем плане, пишем одному: в фон уводятся оба, поручение — next', async () => {
+    const { session, driver } = await upWith({ steps: [] })
+    twoForeground(session)
+    const sentWith = options(driver)
+    const move = vi.spyOn(driver, 'backgroundTask').mockResolvedValue(true)
+    const [first, second] = cards(session)
+    expect(first).toMatchObject({ state: 'running', taskId: 'a1' })
+    expect(second).toMatchObject({ state: 'running', taskId: 'a2' })
+
+    expect(await session.sendToSubagent(first!.id, 'и это')).toEqual({ ok: true })
+    expect(move.mock.calls.map((c) => c[0]).sort()).toEqual(['tu1', 'tu2'])
+    expect(sentWith.at(-1)).toMatchObject({ priority: 'next' })
+    await session.dispose()
+  })
+
+  test('backgroundTask ответил false (агента уже нет на переднем плане): next, а не now', async () => {
+    const { session, driver } = await upWith({ steps: [] })
+    twoForeground(session)
+    const sentWith = options(driver)
+    vi.spyOn(driver, 'backgroundTask').mockResolvedValue(false)
+    expect(await session.sendToSubagent(cards(session)[0]!.id, 'и это')).toEqual({ ok: true })
+    expect(sentWith.at(-1)).toMatchObject({ priority: 'next' })
+    await session.dispose()
+  })
+
+  test('backgroundTask ответил null: now', async () => {
+    const { session, driver } = await upWith({ steps: [] })
+    twoForeground(session)
+    const sentWith = options(driver)
+    vi.spyOn(driver, 'backgroundTask').mockResolvedValue(null)
+    expect(await session.sendToSubagent(cards(session)[0]!.id, 'и это')).toEqual({ ok: true })
+    expect(sentWith.at(-1)).toMatchObject({ priority: 'now' })
+    await session.dispose()
+  })
+
+  test('открытый заново разговор: поручение — пузырь человека с relay и сообщение person в карточке, SendMessage — passed', () => {
+    const at = (n: number): string => new Date(Date.UTC(2026, 10, 20, 10, 0, n)).toISOString()
+    const seed = seedFromTranscript([
+      { type: 'user', timestamp: at(1), message: { role: 'user', content: 'посчитай' } },
+      {
+        type: 'assistant',
+        timestamp: at(2),
+        message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 'tA', name: 'Agent', input: { description: 'счётчик', subagent_type: 'Explore' } }] }
+      },
+      {
+        type: 'user',
+        timestamp: at(3),
+        tool_use_result: { status: 'completed', agentId: AID, content: [{ type: 'text', text: '7' }] },
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tA', content: '7' }] }
+      },
+      { type: 'user', timestamp: at(4), message: { role: 'user', content: relayInstruction(AID, 'напиши про 8') } },
+      {
+        type: 'assistant',
+        timestamp: at(5),
+        message: { id: 'm2', role: 'assistant', content: [{ type: 'tool_use', id: 'tS', name: 'SendMessage', input: { to: AID, message: 'напиши про 8' } }] }
+      }
+    ])
+    const items = seed.builder.items
+    const card = items.find((i): i is Sub => i.kind === 'subagent')!
+    const users = items.filter((i): i is Extract<RibbonItem, { kind: 'user' }> => i.kind === 'user')
+    expect(users.map((u) => u.text)).toEqual(['посчитай', 'напиши про 8'])
+    expect(users[1]!.relay).toEqual({ cardId: card.id, agent: 'Explore' })
+    const inCard = items.filter((i): i is AgentMsg => i.kind === 'agentMessage' && i.parentId === card.id)
+    expect(inCard.map((m) => [m.from, m.text, m.state])).toEqual([['person', 'напиши про 8', 'passed']])
+    expect(inCard[0]!.at).toBe(Date.parse(at(4)))
+  })
+
+  test('поручение без SendMessage после — read; к незнакомому агенту — пузырь текста человека без relay', () => {
+    const seed = seedFromTranscript([
+      {
+        type: 'assistant',
+        message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 'tA', name: 'Agent', input: { description: 'счётчик' } }] }
+      },
+      {
+        type: 'user',
+        tool_use_result: { status: 'completed', agentId: AID },
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tA', content: '7' }] }
+      },
+      { type: 'user', message: { role: 'user', content: [{ type: 'text', text: relayInstruction(AID, 'ещё') }] } },
+      { type: 'user', message: { role: 'user', content: relayInstruction('a-нет', 'кому-то') } }
+    ])
+    const items = seed.builder.items
+    const users = items.filter((i): i is Extract<RibbonItem, { kind: 'user' }> => i.kind === 'user')
+    expect(users.map((u) => [u.text, u.relay !== undefined])).toEqual([
+      ['ещё', true],
+      ['кому-то', false]
+    ])
+    expect(items.filter((i): i is AgentMsg => i.kind === 'agentMessage').map((m) => [m.from, m.state])).toEqual([['person', 'read']])
+  })
+
   test('пузырь в главной ленте — текст человека с relay, не текст поручения', async () => {
     const { session } = await upWith({ steps: [], turns: [[quickAgent]] })
     session.send({ text: 'посчитай', attachments: [] })
@@ -4460,6 +4578,60 @@ describe('AgentSession: этап 4 — остановить сабагента',
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  test('кадр остановки пришёл раньше, чем stopTask вернулся: сторож не пишет «не остановился»', async () => {
+    const { session, driver } = await upWith({
+      steps: [],
+      turns: [[{ kind: 'backgroundAgent', name: 'фон', agentType: 'Explore', agentId: AID, finish: null }]]
+    })
+    session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('idle'))
+    const card = cards(session)[0]!
+    vi.spyOn(driver, 'stopTask').mockImplementation(async () => {
+      session.handle({ type: 'system', subtype: 'task_updated', session_id: 's', task_id: AID, patch: { status: 'killed' } })
+      session.handle({ type: 'system', subtype: 'task_notification', session_id: 's', task_id: AID, status: 'stopped' })
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      expect(await session.stopSubagent(card.id)).toBe('stopping')
+      expect(cards(session)[0]!.state).toBe('stopped')
+      await vi.advanceTimersByTimeAsync(11_000)
+      expect(notices(session).some((t) => t.includes('не остановился'))).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+    await session.dispose()
+  })
+
+  test('сторож: карточка уже не работает (кадр не распознан) — тоже молчит; ошибка stopTask снимает сторож', async () => {
+    const { session, driver } = await upWith({
+      steps: [],
+      turns: [[{ kind: 'backgroundAgent', name: 'фон', agentType: 'Explore', agentId: AID, finish: null }]]
+    })
+    session.send({ text: 'начни', attachments: [] })
+    await vi.waitFor(() => expect(session.status).toBe('idle'))
+    const card = cards(session)[0]!
+    const stop = vi.spyOn(driver, 'stopTask').mockRejectedValueOnce(new Error('нет'))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      expect(await session.stopSubagent(card.id)).toBe('failed')
+      await vi.advanceTimersByTimeAsync(11_000)
+      expect(notices(session).some((t) => t.includes('не остановился'))).toBe(false)
+
+      // The card ends by a frame the watch itself does not settle on: the card's state decides.
+      stop.mockImplementation(async () => {
+        session.handle({ type: 'system', subtype: 'task_updated', session_id: 's', task_id: AID, patch: { status: 'completed' } })
+      })
+      vi.spyOn(session as unknown as { settleStopWatch: () => void }, 'settleStopWatch').mockImplementation(() => undefined)
+      expect(await session.stopSubagent(card.id)).toBe('stopping')
+      expect(cards(session)[0]!.state).toBe('done')
+      await vi.advanceTimersByTimeAsync(11_000)
+      expect(notices(session).some((t) => t.includes('не остановился'))).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+    await session.dispose()
   })
 
   test('законченный: not-running, драйвер не звали; без task_id — not-started', async () => {

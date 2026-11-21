@@ -1712,6 +1712,17 @@ describe('RibbonBuilder: этап 4 — переписка с сабагенто
     expect(got[2]!.text).toBe('{"kind":"json","n":1}')
   })
 
+  test('адресат SendMessage — имя агента (тип и описание карточки), не сырой id', () => {
+    const b = new RibbonBuilder()
+    b.apply(agentCall('tA', { description: 'Обзор вставки', subagent_type: 'Explore' }))
+    b.apply(taskStarted({ task_id: 'a0000000000000001', tool_use_id: 'tA', is_backgrounded: true }))
+    b.apply(sendMessage('s1', { to: 'a0000000000000001', message: 'ещё' }))
+    expect(only(b.items, 'tool').find((t) => t.toolUseId === 's1')).toMatchObject({
+      name: 'SendMessage',
+      target: '→ Explore «Обзор вставки»'
+    })
+  })
+
   test('SendMessage к незнакомому — только карточка инструмента', () => {
     const { b } = withAgent()
     b.apply(sendMessage('s1', { to: 'кто-то', message: 'привет' }))

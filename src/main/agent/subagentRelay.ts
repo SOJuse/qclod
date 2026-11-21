@@ -15,14 +15,8 @@ export interface RelayMeta {
   text: string
 }
 
-/**
- * What the main agent is told (stage 4, decision 5). «от пользователя» is
- * there on purpose: a model once took a relayed message for an injection
- * (park P1 of stage 1).
- */
-export function relayInstruction(ref: string, text: string): string {
-  return `Передай агенту ${ref} через SendMessage (to: "${ref}") это сообщение от пользователя, дословно:\n\n${text}`
-}
+/** What the main agent is told (stage 4, decision 5): one string, kept in shared for the ribbon. */
+export { relayInstruction } from '../../shared/relayText'
 
 /**
  * The address SendMessage takes: the agent's id, else its task id, else the

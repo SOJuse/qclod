@@ -12,6 +12,7 @@ import type {
 } from './types'
 import { clipForView, clipText } from './clip'
 import { clip, lines } from './format'
+import { parseRelayInstruction } from './relayText'
 
 /**
  * Turns the SDK's message stream into the ribbon the user reads.
@@ -835,11 +836,7 @@ export class RibbonBuilder {
    */
   private onSendMessage(block: Record<string, unknown>, at: number | undefined): RibbonChange[] {
     const input = isObject(block['input']) ? block['input'] : {}
-    const to = str(input['to'])
-    if (!to) return []
-    const card = this.list.find(
-      (i): i is SubagentItem => i.kind === 'subagent' && (i.agentId === to || i.taskId === to || i.label === to)
-    )
+    const card = this.cardByRef(str(input['to']))
     if (!card) return []
     const waiting = this.list.find(
       (i) =>
@@ -862,6 +859,53 @@ export class RibbonBuilder {
         from: 'main',
         text,
         ...(at !== undefined ? { at } : {}),
+        parentId: card.id
+      })
+    ]
+  }
+
+  /** The subagent card a SendMessage address names: its agent id, task id, or given name. */
+  private cardByRef(ref: string): SubagentItem | undefined {
+    if (!ref) return undefined
+    return this.list.find(
+      (i): i is SubagentItem => i.kind === 'subagent' && (i.agentId === ref || i.taskId === ref || i.label === ref)
+    )
+  }
+
+  /** «→ Explore «Обзор вставки»» for an agent the ribbon knows; the bare address otherwise. */
+  private sendTarget(input: Record<string, unknown>): string {
+    const card = this.cardByRef(str(input['to']))
+    if (!card) return toolTarget('SendMessage', input)
+    return `→ ${clip(card.task ? `${card.name} «${card.task}»` : card.name)}`
+  }
+
+  /**
+   * A message the person typed — or, in a conversation read back, the
+   * instruction that carried their words to a subagent: then the bubble is
+   * those words, marked for the agent, and the agent's ribbon has them as read
+   * (the next SendMessage to it passes them on).
+   */
+  private userOrRelay(text: string, attachments: Attachment[], at: number | undefined): RibbonChange[] {
+    const relay = parseRelayInstruction(text)
+    if (!relay) return this.appendUser(text, attachments, at)
+    const card = this.cardByRef(relay.ref)
+    if (!card) return this.appendUser(relay.text, attachments, at)
+    return [
+      this.append({
+        kind: 'user',
+        id: this.nextId(),
+        text: relay.text,
+        attachments,
+        ...(at !== undefined ? { at } : {}),
+        relay: { cardId: card.id, agent: card.name }
+      }),
+      this.append({
+        kind: 'agentMessage',
+        id: this.nextId(),
+        from: 'person',
+        text: relay.text,
+        ...(at !== undefined ? { at } : {}),
+        state: 'read',
         parentId: card.id
       })
     ]
@@ -953,7 +997,7 @@ export class RibbonBuilder {
         id,
         toolUseId,
         name,
-        target: toolTarget(name, input),
+        target: name === 'SendMessage' ? this.sendTarget(input) : toolTarget(name, input),
         summary: '',
         detail: '',
         state: 'running' as ToolState,
@@ -997,7 +1041,7 @@ export class RibbonBuilder {
     if (typeof content === 'string') {
       if (message['isSynthetic'] === true || fromAgent || this.consumeEcho(content)) return noticed
       const text = userText(content)
-      return text === '' ? noticed : [...noticed, ...this.appendUser(text, [], this.messageTime(message))]
+      return text === '' ? noticed : [...noticed, ...this.userOrRelay(text, [], this.messageTime(message))]
     }
 
     const blocks = asArray(content).filter(isObject)
@@ -1025,7 +1069,7 @@ export class RibbonBuilder {
 
     if (!text && attachments.length === 0) return noticed
     if (this.consumeEcho(text)) return noticed
-    return [...noticed, ...this.appendUser(text, attachments, this.messageTime(message))]
+    return [...noticed, ...this.userOrRelay(text, attachments, this.messageTime(message))]
   }
 
   private onToolResult(

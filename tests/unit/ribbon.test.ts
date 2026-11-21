@@ -638,6 +638,17 @@ describe('RibbonBuilder: подагент называется Agent', () => {
     )
     expect(only(b.items, 'subagent')[0]!.name).toBe('подагент')
   })
+
+  test('тип из task_started называет карточку без subagent_type — как строку диспетчера задач', () => {
+    const b = new RibbonBuilder()
+    b.apply(assistant([{ type: 'tool_use', id: 'a1', name: 'Agent', input: { description: 'что-то' } }]))
+    b.apply({ type: 'system', subtype: 'task_started', task_id: 'ag', tool_use_id: 'a1', task_type: 'local_agent', subagent_type: 'general-purpose' })
+    expect(only(b.items, 'subagent')[0]!.name).toBe('general-purpose')
+    // A type the call named is not renamed.
+    b.apply(assistant([{ type: 'tool_use', id: 'a2', name: 'Agent', input: { description: 'ещё', subagent_type: 'Explore' } }]))
+    b.apply({ type: 'system', subtype: 'task_started', task_id: 'ag2', tool_use_id: 'a2', task_type: 'local_agent', subagent_type: 'general-purpose' })
+    expect(only(b.items, 'subagent')[1]!.name).toBe('Explore')
+  })
 })
 
 describe('RibbonBuilder: время подагента', () => {
@@ -1479,6 +1490,26 @@ describe('RibbonBuilder: этап 4 — сабагенты по своим ка�
     clock = 4000
     b.apply({ type: 'system', subtype: 'task_notification', task_id: 'aA', tool_use_id: 'tS', status: 'completed', summary: 'восемь' })
     expect(cardOf(b, 'tA')).toMatchObject({ state: 'done', endedAt: 4000, runs: 2 })
+  })
+
+  test('нулевой usage прогона не стирает известные токены, вызовы и время', () => {
+    const b = new RibbonBuilder()
+    b.apply(agentCall('tA', { description: 'счётчик' }))
+    b.apply(taskStarted({ task_id: 'aA', tool_use_id: 'tA', is_backgrounded: false }))
+    b.apply(
+      userMessage([{ type: 'tool_result', tool_use_id: 'tA', content: '7' }], {
+        tool_use_result: { status: 'completed', agentId: 'aA', totalTokens: 18000, totalToolUseCount: 7, totalDurationMs: 42000 }
+      })
+    )
+    b.apply(taskStarted({ task_id: 'aA', tool_use_id: 'tS', is_backgrounded: true, run_id: 'r2' }))
+    const zero = { total_tokens: 0, tool_uses: 0, duration_ms: 0 }
+    b.apply({ type: 'system', subtype: 'task_progress', task_id: 'aA', tool_use_id: 'tS', usage: zero })
+    b.apply({ type: 'system', subtype: 'task_notification', task_id: 'aA', tool_use_id: 'tS', status: 'completed', summary: 'восемь', usage: zero })
+    expect(cardOf(b, 'tA')).toMatchObject({ state: 'done', runs: 2, tokens: 18000, toolCalls: 7, durationMs: 42000 })
+    // A real count still replaces it.
+    b.apply(taskStarted({ task_id: 'aA', tool_use_id: 'tS2', is_backgrounded: true, run_id: 'r3' }))
+    b.apply({ type: 'system', subtype: 'task_progress', task_id: 'aA', tool_use_id: 'tS2', usage: { total_tokens: 20000, tool_uses: 9, duration_ms: 50000 } })
+    expect(cardOf(b, 'tA')).toMatchObject({ tokens: 20000, toolCalls: 9, durationMs: 50000 })
   })
 
   test('вложенный без tool_use: карточка под карточкой parent_task_id', () => {

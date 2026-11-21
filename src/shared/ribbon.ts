@@ -176,6 +176,22 @@ function subagentStats(result: unknown): {
   }
 }
 
+/** A subagent whose call named no type, until the CLI says which one it ran. */
+const UNNAMED_AGENT = 'подагент'
+
+/**
+ * A task event's counters that say something: a zero is «not counted», and
+ * must not wipe what the card already knows — a run resumed by SendMessage
+ * may report nothing of its own (stage 4).
+ */
+function counted(usage: { tokens: number; toolCalls: number; durationMs: number }): Partial<SubagentItem> {
+  return {
+    ...(usage.tokens > 0 ? { tokens: usage.tokens } : {}),
+    ...(usage.toolCalls > 0 ? { toolCalls: usage.toolCalls } : {}),
+    ...(usage.durationMs > 0 ? { durationMs: usage.durationMs } : {})
+  }
+}
+
 /** The most a subagent's report keeps: enough to read, not a book. */
 const REPORT_CLIP = 8000
 
@@ -917,7 +933,7 @@ export class RibbonBuilder {
           kind: 'subagent',
           id,
           toolUseId,
-          name: str(input['subagent_type']) || 'подагент',
+          name: str(input['subagent_type']) || UNNAMED_AGENT,
           task: str(input['description']) || clip(prompt, 120),
           state: 'running' as SubagentState,
           summary: '',
@@ -1192,6 +1208,9 @@ export class RibbonBuilder {
       this.byAgentId.set(taskId, item.id)
       const patch: Partial<SubagentItem> = { taskId }
       if (backgrounded !== undefined) patch.background = backgrounded
+      // A call that named no type: the CLI says which one it ran, as the task list does.
+      const type = str(message['subagent_type'])
+      if (type && item.name === UNNAMED_AGENT) patch.name = type
       return this.patchSubagent(item, patch)
     }
 
@@ -1210,7 +1229,7 @@ export class RibbonBuilder {
         kind: 'subagent',
         id,
         toolUseId,
-        name: str(message['subagent_type']) || 'подагент',
+        name: str(message['subagent_type']) || UNNAMED_AGENT,
         task: str(message['description']),
         state: 'running',
         summary: '',
@@ -1226,11 +1245,11 @@ export class RibbonBuilder {
     const item = this.subagentFor(str(message['tool_use_id']), str(message['task_id']))
     if (!item || item.state !== 'running') return []
     const usage = isObject(message['usage']) ? message['usage'] : {}
-    const patch: Partial<SubagentItem> = {
+    const patch: Partial<SubagentItem> = counted({
       tokens: Number(usage['total_tokens'] ?? 0) || 0,
       toolCalls: Number(usage['tool_uses'] ?? 0) || 0,
       durationMs: Number(usage['duration_ms'] ?? 0) || 0
-    }
+    })
     const last = str(message['last_tool_name'])
     if (last) patch.lastTool = last
     const summary = str(message['summary'])
@@ -1285,13 +1304,7 @@ export class RibbonBuilder {
       // A background agent's only words back are the notice's summary; a
       // foreground one already has its whole report from the tool's output.
       ...(notice.summary && (item.background || !item.report) ? { report: clipReport(notice.summary) } : {}),
-      ...(notice.usage
-        ? {
-            tokens: notice.usage.tokens,
-            toolCalls: notice.usage.toolCalls,
-            durationMs: notice.usage.durationMs
-          }
-        : {})
+      ...(notice.usage ? counted(notice.usage) : {})
     }
     return this.patchSubagent(item, patch)
   }

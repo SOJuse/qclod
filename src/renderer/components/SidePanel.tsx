@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ServerView } from '../../shared/types'
+import { ServerAccount } from './servers/ServerLoginDialog'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import type { LimitWindow, McpServerInfo, PanelData, RemoteInfo } from '../../shared/types'
 import { plural, untilReset, usd } from '../../shared/format'
@@ -24,6 +26,9 @@ interface Props {
   active: boolean
   /** The drawer asks to close: Esc, or a press outside it. */
   onClose: () => void
+  /** Stage 6: a server chat — the server and its Claude account lead the panel. */
+  server?: ServerView | undefined
+  onServerLogin?: () => void
 }
 
 /**
@@ -76,7 +81,7 @@ const MCP_ORDER: Record<McpServerInfo['status'], number> = {
  * whether to keep going. Subagents are not here: the pane's «Агенты» layer
  * shows them (этап 4).
  */
-export function SidePanel({ data, started, remote, onRemote, mode, active, onClose }: Props): JSX.Element {
+export function SidePanel({ data, started, remote, onRemote, mode, active, onClose, server, onServerLogin }: Props): JSX.Element {
   const self = useRef<HTMLElement | null>(null)
 
   // A drawer is out of the way at once: Esc, or a press anywhere outside it.
@@ -107,6 +112,11 @@ export function SidePanel({ data, started, remote, onRemote, mode, active, onClo
   const remoteFirst = remote.state !== 'off'
   return (
     <aside className="panel" data-testid="side-panel" data-mode={mode} ref={self} aria-label="Панель сессии">
+      {server && (
+        <Section title="Сервер">
+          <ServerAccount server={server} onLogin={onServerLogin ?? (() => undefined)} />
+        </Section>
+      )}
       {remoteFirst && remoteSection}
 
       <Section title="Контекст">

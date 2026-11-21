@@ -76,6 +76,7 @@ import { createRelayDriver } from './ssh/relayDriver'
 import { sshTransport } from './ssh/transport'
 import { SshPromptBroker } from './ssh/promptBroker'
 import { registerServerIpc } from './ssh/serverIpc'
+import { ServerLogin, pipePty } from './ssh/serverLogin'
 import type { RelayManifest } from './ssh/relayInstaller'
 import type { ServerEntry, SessionSummary } from '../shared/types'
 import { QuitReason, sessionEnding } from './system/quitReason'
@@ -610,7 +611,37 @@ if (gotLock) void app.whenReady().then(async () => {
     log: (line) => console.log('[servers]', line)
   })
   const serverHosts = hosts
-  registerServerIpc({ hosts: serverHosts, askpassAnswers: (answer) => promptBroker.answer(answer) })
+  // «Войти» of a server's Claude account (task 23): ssh -tt … claude auth login, one per server.
+  const logins = new Map<string, ServerLogin>()
+  const startServerLogin = async (hostId: string): Promise<void> => {
+    const entry = hostStore.get(hostId)
+    if (!entry) return
+    await askpassUp
+    const view = serverHosts.list().find((v) => v.id === hostId)
+    const claude = serverHosts.probeOf(hostId)?.claudePath ?? view?.account?.claudePath ?? 'claude'
+    logins.get(hostId)?.cancel()
+    const ask = askpass.forSpawn(hostId, { interactive: true })
+    const login = new ServerLogin({
+      spawnPty: pipePty,
+      onProgress: (p) => {
+        send(CHANNELS.serversLoginProgress, { hostId, ...p })
+        if (p.state === 'done' || p.state === 'failed') ask.done()
+      },
+      recheck: async () =>
+        (await serverHosts.refreshAccount(hostId)) ?? { loggedIn: null, claudePath: null, claudeVersion: null },
+      sshPath: findSsh(),
+      platform: process.platform,
+      userData,
+      ...(typeof process.getuid === 'function' ? { uid: process.getuid() } : {})
+    })
+    logins.set(hostId, login)
+    login.start(targetOf(entry), claude, ask.env)
+  }
+  registerServerIpc({
+    hosts: serverHosts,
+    askpassAnswers: (answer) => promptBroker.answer(answer),
+    login: { start: startServerLogin, code: (hostId, code) => logins.get(hostId)?.sendCode(code) }
+  })
   /** A server project's past conversations: the relay's list (сверка F21). */
   async function serverHistory(cwd: string, hostId: string): Promise<SessionSummary[]> {
     const client = await serverHosts.client(hostId)

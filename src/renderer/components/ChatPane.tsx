@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { OFFLINE_STRIP_TEXT } from '../../shared/serverTexts'
+import { ServerLoginDialog } from './servers/ServerLoginDialog'
 import type { SessionSummary, UserInput } from '../../shared/types'
 import { EMPTY_PANEL, useAppStore, type PaneLayerState } from '../state/useAppStore'
 import { useHeldDrafts } from '../state/heldDrafts'
@@ -122,6 +123,8 @@ export function ChatPane({
   const servers = useAppStore((s) => s.servers)
   const server = tab?.server ? servers.find((s) => s.id === tab.server!.hostId) : undefined
   const serverAway = server !== undefined && server.state !== 'online' && server.state !== 'connecting'
+  /** Stage 6: «Войти» of the server's Claude account. */
+  const [loginOpen, setLoginOpen] = useState(false)
   const status = tab?.status ?? 'stopped'
   const remote = tab?.remote ?? REMOTE_OFF
   const draft = draftByTab[tabId] ?? ''
@@ -496,8 +499,11 @@ export function ChatPane({
           mode={mode}
           active={focused}
           onClose={closeDrawer}
+          server={server}
+          onServerLogin={() => setLoginOpen(true)}
         />
       )}
+      {loginOpen && server && <ServerLoginDialog server={server} onClose={() => setLoginOpen(false)} />}
     </section>
   )
 }

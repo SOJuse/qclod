@@ -34,6 +34,8 @@ import { registerAgentIpc } from './agentIpc'
 import { withFault } from './testSeams/ipcFaults'
 import { loadSettings, saveSettings } from './store/settingsStore'
 import { LayoutStore } from './store/layoutStore'
+import { TemplateLibrary } from './store/templatesStore'
+import { registerTemplatesIpc } from './templatesIpc'
 import { HotkeyRegistrar } from './hotkey/globalHotkey'
 import { createTray, type TrayTone } from './tray'
 import { readTaskbarLight } from './system/systemTheme'
@@ -530,6 +532,9 @@ if (gotLock) void app.whenReady().then(async () => {
       send(CHANNELS.settingsChanged, settings)
     }
   })
+  // этап 7: the owner's prompt templates, userData/templates.json (решение 2).
+  const templates = new TemplateLibrary(userData)
+  registerTemplatesIpc({ library: templates, getWindow: () => mainWindow })
   ipcMain.handle(CHANNELS.hotkeyStatus, () => withFault(CHANNELS.hotkeyStatus, () => hotkey.status))
 
   // Voice input is Windows' own (Win+H), pressed for the person: the input

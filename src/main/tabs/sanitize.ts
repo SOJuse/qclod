@@ -12,8 +12,11 @@ import {
   type RendererErrorReport,
   type TabAutonomyRecord,
   type TabState,
-  type UserInput
+  type UserInput,
+  TEMPLATE_LIMITS,
+  type TemplateDraft
 } from '../../shared/types'
+import { clip } from '../../shared/format'
 import { isInsidePasteDir } from '../files/imagePaste'
 
 const MAX_TITLE = 200
@@ -407,4 +410,37 @@ export function sanitizeErrorReport(value: unknown): RendererErrorReport | null 
   if (isString(stack)) report.stack = stack.slice(0, MAX_ERROR_TEXT)
   if (isString(componentStack)) report.componentStack = componentStack.slice(0, MAX_ERROR_TEXT)
   return report
+}
+
+// — этап 7: шаблоны
+const TEMPLATE_ID = /^[A-Za-z0-9_-]{1,64}$/
+/** An empty title is the body's first line, this long at most. */
+const TEMPLATE_AUTO_TITLE = 60
+
+/**
+ * A template from the window: a body that is not blank and within the limit,
+ * a title within the limit (blank — the body's first line), a plain id if
+ * any, a known origin. Anything else — null, and nothing is saved.
+ */
+export function sanitizeTemplateDraft(value: unknown): TemplateDraft | null {
+  if (!isPlainObject(value)) return null
+  const { id, title, body, origin } = value
+  if (!isString(body)) return null
+  const text = body.trim()
+  if (text === '' || text.length > TEMPLATE_LIMITS.body) return null
+  if (title !== undefined && !isString(title)) return null
+  let name = (title ?? '').trim()
+  if (name.length > TEMPLATE_LIMITS.title) return null
+  if (name === '') {
+    const firstLine = text.split('\n').find((line) => line.trim() !== '') ?? text
+    name = clip(firstLine.trim(), TEMPLATE_AUTO_TITLE)
+  }
+  if (id !== undefined && (!isString(id) || !TEMPLATE_ID.test(id))) return null
+  const draft: TemplateDraft = { title: name, body: text, origin: origin === 'harvest' ? 'harvest' : 'manual' }
+  return id !== undefined ? { id: id as string, ...draft } : draft
+}
+
+/** A stored template id: what the window may name in «удалить». */
+export function isTemplateId(value: unknown): value is string {
+  return isString(value) && TEMPLATE_ID.test(value)
 }

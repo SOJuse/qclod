@@ -97,6 +97,37 @@ describe('ipc channel contract', () => {
     expect(INVOKE_CHANNELS).toContain('autonomy:answerNow')
   })
 
+  test('этап 7: каналы шаблонов, сбора, Git и поиска по истории', () => {
+    const invoke = {
+      templatesList: 'templates:list',
+      templatesSave: 'templates:save',
+      templatesSaveMany: 'templates:saveMany',
+      templatesDelete: 'templates:delete',
+      harvestPreview: 'templates:harvestPreview',
+      harvestRun: 'templates:harvestRun',
+      harvestCancel: 'templates:harvestCancel',
+      gitStatus: 'git:status',
+      gitDiff: 'git:diff',
+      gitCommit: 'git:commit',
+      historySearch: 'history:search'
+    } as const
+    const stage7Keys = new Set<string>([...Object.keys(invoke), 'templatesChanged'])
+    const before = Object.entries(CHANNELS)
+      .filter(([key]) => !stage7Keys.has(key))
+      .map(([, value]) => value as string)
+    expect(Object.keys(invoke)).toHaveLength(11)
+    for (const [key, value] of Object.entries(invoke)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(INVOKE_CHANNELS).toContain(value)
+      expect(EVENT_CHANNELS).not.toContain(value)
+      expect(before).not.toContain(value)
+    }
+    expect(CHANNELS.templatesChanged).toBe('templates:changed')
+    expect(EVENT_CHANNELS).toContain('templates:changed')
+    expect(INVOKE_CHANNELS).not.toContain('templates:changed')
+    expect(before).not.toContain('templates:changed')
+  })
+
   test('терминальных каналов v1 больше нет', () => {
     // The pty is gone; a channel that outlives its feature is a trap for the
     // next reader.

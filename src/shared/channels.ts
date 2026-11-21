@@ -99,7 +99,23 @@ export const CHANNELS = Object.freeze({
   // stage 3: autonomy
   // renderer -> main (invoke)
   autonomyHold: 'autonomy:hold',
-  autonomyAnswerNow: 'autonomy:answerNow'
+  autonomyAnswerNow: 'autonomy:answerNow',
+
+  // этап 7: шаблоны, Git, поиск по истории
+  // renderer -> main (invoke)
+  templatesList: 'templates:list',
+  templatesSave: 'templates:save',
+  templatesSaveMany: 'templates:saveMany',
+  templatesDelete: 'templates:delete',
+  harvestPreview: 'templates:harvestPreview',
+  harvestRun: 'templates:harvestRun',
+  harvestCancel: 'templates:harvestCancel',
+  gitStatus: 'git:status',
+  gitDiff: 'git:diff',
+  gitCommit: 'git:commit',
+  historySearch: 'history:search',
+  // main -> renderer (event)
+  templatesChanged: 'templates:changed'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -168,7 +184,19 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.logsOpen,
   // stage 3: autonomy
   CHANNELS.autonomyHold,
-  CHANNELS.autonomyAnswerNow
+  CHANNELS.autonomyAnswerNow,
+  // этап 7: шаблоны, Git, поиск по истории
+  CHANNELS.templatesList,
+  CHANNELS.templatesSave,
+  CHANNELS.templatesSaveMany,
+  CHANNELS.templatesDelete,
+  CHANNELS.harvestPreview,
+  CHANNELS.harvestRun,
+  CHANNELS.harvestCancel,
+  CHANNELS.gitStatus,
+  CHANNELS.gitDiff,
+  CHANNELS.gitCommit,
+  CHANNELS.historySearch
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
@@ -183,7 +211,9 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.setupLoginProgress,
   CHANNELS.updateChanged,
   // — этап 2: проекты, раскладка, окно-заглушка
-  CHANNELS.layoutChanged
+  CHANNELS.layoutChanged,
+  // этап 7: шаблоны, Git, поиск по истории
+  CHANNELS.templatesChanged
 ])
 
 /** Fire-and-forget: the renderer sends, nothing comes back. */

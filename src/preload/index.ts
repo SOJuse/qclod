@@ -25,7 +25,16 @@ import type {
   TabState,
   TaskOutput,
   UpdateState,
-  UserInput
+  UserInput,
+  // этап 7
+  CommitResult,
+  GitFileDiff,
+  GitStatus,
+  HarvestOutcome,
+  HarvestPreview,
+  HistoryHit,
+  PromptTemplate,
+  TemplateDraft
 } from '../shared/types'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -220,7 +229,31 @@ const api = {
     ipcRenderer.invoke(CHANNELS.autonomyHold, tabId, cardId),
   /** «Ответить сейчас»: what the running timer would do, done at once. */
   autonomyAnswerNow: (tabId: string, cardId: string): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.autonomyAnswerNow, tabId, cardId)
+    ipcRenderer.invoke(CHANNELS.autonomyAnswerNow, tabId, cardId),
+
+  // — этап 7: шаблоны, Git, поиск по истории
+  templatesList: (): Promise<PromptTemplate[]> => ipcRenderer.invoke(CHANNELS.templatesList),
+  /** The saved template; null when main refused the draft. */
+  templatesSave: (d: TemplateDraft): Promise<PromptTemplate | null> =>
+    ipcRenderer.invoke(CHANNELS.templatesSave, d),
+  /** How many were saved. */
+  templatesSaveMany: (ds: TemplateDraft[]): Promise<number> => ipcRenderer.invoke(CHANNELS.templatesSaveMany, ds),
+  templatesDelete: (id: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.templatesDelete, id),
+  onTemplatesChanged: (cb: (list: PromptTemplate[]) => void) => on(CHANNELS.templatesChanged, cb),
+  /** «Собрать мои шаблоны»: exactly what would be sent, nothing sent yet. */
+  harvestPreview: (excludedProjects: string[]): Promise<HarvestPreview> =>
+    ipcRenderer.invoke(CHANNELS.harvestPreview, excludedProjects),
+  harvestRun: (excludedProjects: string[]): Promise<HarvestOutcome> =>
+    ipcRenderer.invoke(CHANNELS.harvestRun, excludedProjects),
+  harvestCancel: (): Promise<void> => ipcRenderer.invoke(CHANNELS.harvestCancel),
+  /** The window names the tab, never a folder: main knows the tab's folder. */
+  gitStatus: (tabId: string): Promise<GitStatus> => ipcRenderer.invoke(CHANNELS.gitStatus, tabId),
+  gitDiff: (tabId: string, path: string): Promise<GitFileDiff> =>
+    ipcRenderer.invoke(CHANNELS.gitDiff, tabId, path),
+  gitCommit: (tabId: string, paths: string[], message: string): Promise<CommitResult> =>
+    ipcRenderer.invoke(CHANNELS.gitCommit, tabId, paths, message),
+  /** Full-text search over past conversations (Ctrl+K «В разговорах»). */
+  historySearch: (query: string): Promise<HistoryHit[]> => ipcRenderer.invoke(CHANNELS.historySearch, query)
 }
 
 export type QclodApi = typeof api

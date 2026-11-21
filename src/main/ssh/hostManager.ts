@@ -7,7 +7,7 @@
  * probe, the upload of the binary, its `setup`. Claude Code is never installed
  * by Qclod (I14): a missing one is said and the checklist stops there.
  */
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import type { PermissionRule } from '../agent/permissionStore'
@@ -61,12 +61,26 @@ export function lingerText(user: string): string {
   )
 }
 
-export function hostKeyChangedText(host: string, userData: string): string {
+/**
+ * The key may sit in Qclod's known_hosts or in the person's own: both
+ * commands. A port other than 22 is written down as [host]:port.
+ */
+export function hostKeyChangedText(host: string, userData: string, port?: number): string {
+  const name = port !== undefined && port !== 22 ? `"[${host}]:${port}"` : host
   return (
     `Ключ сервера ${host} изменился. Это может быть подмена, поэтому Qclod не подключается. ` +
-    `Если сервер переустанавливали, удалите старый ключ: ssh-keygen -R ${host} -f "${knownHostsPath(userData)}"`
+    `Если сервер переустанавливали, удалите старый ключ: ssh-keygen -R ${name} -f "${knownHostsPath(userData)}"` +
+    ` — и, если он есть в ~/.ssh/known_hosts, ещё ssh-keygen -R ${name}`
   )
 }
+
+/** The window asked for a server that waits for a person (a password, a key): nothing is tried by itself. */
+export const NEEDS_PERSON_TEXT = 'Сервер ждёт входа: нажмите «Подключить»'
+export const OFFLINE_TEXT = 'Сервер не на связи'
+/** Without a channel, the window's calls try the quiet checklist at most this often (I2). */
+export const QUIET_CHECKLIST_MS = 60_000
+/** Server chats closed while their server was away: closed there on the next connect (I6). */
+export const CLOSING_FILE = 'servers-closing.json'
 
 export type SshRunner = (
   t: SshTarget,
@@ -91,6 +105,7 @@ export interface HostManagerDeps {
   download?: (url: string, dest: string) => Promise<void>
   /** Test builds: QCLOD_RELAY_BINARY_DIR. */
   localRelayDir?: string
+  now?: () => number
   log?: (line: string) => void
 }
 
@@ -104,6 +119,8 @@ interface HostRuntime {
   relayUpdate?: 'pending' | 'required'
   probe?: ProbeResult
   connecting: Promise<boolean> | null
+  /** When client() last ran the checklist by itself. */
+  quietAt?: number
 }
 
 const PROBE_TIMEOUT_MS = 90_000
@@ -134,9 +151,15 @@ function hostPart(target: string): string {
 export class HostManager {
   private readonly hosts = new Map<string, HostRuntime>()
   private readonly run: SshRunner
+  private readonly now: () => number
+  /** hostId → relay sessions to close there (I6), as in CLOSING_FILE. */
+  private readonly closing: Map<string, string[]>
+  private readonly flushing = new Set<string>()
 
   constructor(private readonly deps: HostManagerDeps) {
     this.run = deps.run ?? realSshRun
+    this.now = deps.now ?? Date.now
+    this.closing = this.readClosing()
   }
 
   private rt(id: string): HostRuntime {
@@ -181,18 +204,31 @@ export class HostManager {
   }
 
   save(e: SaveEntry, password?: string): ServerView[] {
+    const before = e.id !== undefined ? this.deps.store.get(e.id) : null
     const saved = this.deps.store.save(e)
+    // Another host, port or key: the channel to the old one is not this server's any more.
+    if (
+      before &&
+      (before.target !== saved.target || before.port !== saved.port || (before.identityFile ?? '') !== (saved.identityFile ?? ''))
+    ) {
+      this.dropRuntime(saved.id)
+    }
     if (saved.auth === 'key') this.deps.store.setPassword(saved.id, null)
     else if (password !== undefined && password !== '') this.deps.store.setPassword(saved.id, password)
     this.changed()
     return this.list()
   }
 
-  remove(id: string): ServerView[] {
+  private dropRuntime(id: string): void {
     const r = this.hosts.get(id)
     r?.unsubscribe?.()
     r?.client?.close()
     this.hosts.delete(id)
+  }
+
+  remove(id: string): ServerView[] {
+    this.dropRuntime(id)
+    if (this.closing.delete(id)) this.writeClosing()
     this.deps.store.remove(id)
     this.changed()
     return this.list()
@@ -203,9 +239,9 @@ export class HostManager {
     this.changed()
   }
 
-  /** The person said «Запомнить» when ssh asked (askpass). */
-  rememberPassword(id: string, password: string): void {
-    this.deps.store.setPassword(id, password)
+  /** The person said «Запомнить» when ssh asked (askpass), and ssh got in with it; `forHost` — the user@host it was for. */
+  rememberPassword(id: string, password: string, forHost?: string): void {
+    this.deps.store.setPassword(id, password, forHost)
     this.changed()
   }
 
@@ -255,7 +291,7 @@ export class HostManager {
     if (!probe) {
       const failure = classifySshFailure(probeRun.stderr, probeRun.code)
       if (failure === 'hostKeyChanged') {
-        const text = hostKeyChangedText(hostPart(entry.target), this.deps.userData)
+        const text = hostKeyChangedText(hostPart(entry.target), this.deps.userData, entry.port)
         set('ssh', { state: 'fail', hint: text })
         return stop('hostKeyChanged', text)
       }
@@ -339,6 +375,7 @@ export class HostManager {
     } else set('login', { state: 'warn', text: ACCOUNT_UNKNOWN_TEXT })
 
     await this.syncSettings(id)
+    void this.flushCloses(id)
     this.setState(id, 'online')
     return true
   }
@@ -354,12 +391,13 @@ export class HostManager {
       if (r.connecting && s !== 'online') return
       if (s === 'online') {
         if (wasOnline) void this.syncSettings(id)
+        if (wasOnline) void this.flushCloses(id)
         wasOnline = true
         if (!r.connecting) this.setState(id, 'online')
         return
       }
       const state: ServerConnState = s === 'connecting' ? 'connecting' : s
-      this.setState(id, state, s === 'hostKeyChanged' ? hostKeyChangedText(hostPart(entry.target), this.deps.userData) : problem)
+      this.setState(id, state, s === 'hostKeyChanged' ? hostKeyChangedText(hostPart(entry.target), this.deps.userData, entry.port) : problem)
     })
     return client
   }
@@ -421,24 +459,111 @@ export class HostManager {
     return r.account
   }
 
-  /** The channel, raised without asking anybody when it is not up. */
+  /**
+   * The channel, raised without asking anybody when it is not up — and never
+   * hammered (I2, C1). A server that waits for a person (a password that did
+   * not fit, a changed key) gets no try at all until they press «Подключить».
+   * A channel that is there but down is RelayClient's to bring back by its
+   * ladder: the window's calls fail at once meanwhile. With no channel yet,
+   * the quiet checklist runs at most once a minute.
+   */
   async client(id: string): Promise<RelayLink> {
     const r = this.rt(id)
     if (r.client && r.client.state === 'online') return r.client
     if (r.relayUpdate === 'required') throw new Error(RELAY_PROTO_TEXT)
-    if (r.client && r.connecting === null && (r.client.state === 'reconnecting' || r.client.state === 'offline')) {
-      // The client tries by itself; one more try now, without questions.
-      try {
-        await r.client.connect(false)
-        return r.client
-      } catch {
-        // Then the whole checklist.
-      }
+    if (r.state === 'needsAuth' || r.state === 'hostKeyChanged') throw new Error(r.problem ?? NEEDS_PERSON_TEXT)
+    if (r.connecting) {
+      await r.connecting
+      if (r.client?.state === 'online') return r.client
+      throw new Error(r.problem ?? OFFLINE_TEXT)
     }
+    if (r.client && (r.client.state === 'reconnecting' || r.client.state === 'connecting')) {
+      throw new Error(r.problem ?? OFFLINE_TEXT)
+    }
+    const now = this.now()
+    if (r.quietAt !== undefined && now - r.quietAt < QUIET_CHECKLIST_MS) throw new Error(r.problem ?? OFFLINE_TEXT)
+    r.quietAt = now
     if (!(await this.connect(id, false)) || !r.client) {
-      throw new Error(r.problem ?? 'Сервер не на связи')
+      throw new Error(r.problem ?? OFFLINE_TEXT)
     }
     return r.client
+  }
+
+  // ------------------------------------------------- chats closed while away
+
+  private closingFile(): string {
+    return join(this.deps.userData, CLOSING_FILE)
+  }
+
+  private readClosing(): Map<string, string[]> {
+    const out = new Map<string, string[]>()
+    try {
+      const parsed = JSON.parse(readFileSync(this.closingFile(), 'utf8')) as { hosts?: unknown }
+      const hosts = parsed && typeof parsed.hosts === 'object' && parsed.hosts !== null ? (parsed.hosts as Record<string, unknown>) : {}
+      for (const [hostId, list] of Object.entries(hosts)) {
+        if (!/^[\w.-]{1,64}$/.test(hostId) || !Array.isArray(list)) continue
+        const ids = list.filter((x): x is string => typeof x === 'string' && /^[\w.-]{1,128}$/.test(x)).slice(0, 500)
+        if (ids.length > 0) out.set(hostId, [...new Set(ids)])
+      }
+    } catch {
+      // None yet.
+    }
+    return out
+  }
+
+  private writeClosing(): void {
+    try {
+      mkdirSync(this.deps.userData, { recursive: true })
+      const file = this.closingFile()
+      const tmp = `${file}.tmp`
+      writeFileSync(tmp, JSON.stringify({ version: 1, hosts: Object.fromEntries(this.closing) }, null, 2), 'utf8')
+      renameSync(tmp, file)
+    } catch (err) {
+      this.deps.log?.(`closing list: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  /** Relay sessions still to be closed on `id` (I6). */
+  pendingCloses(id: string): string[] {
+    return [...(this.closing.get(id) ?? [])]
+  }
+
+  /**
+   * «Закрыть чат» while the server was away (I6): the agent there is closed
+   * on the next connect — kept in userData, so a quit meanwhile loses nothing.
+   */
+  closeLater(id: string, s: string): void {
+    const list = this.closing.get(id) ?? []
+    if (!list.includes(s)) list.push(s)
+    this.closing.set(id, list)
+    this.writeClosing()
+    void this.flushCloses(id)
+  }
+
+  private async flushCloses(id: string): Promise<void> {
+    if (this.flushing.has(id)) return
+    const client = this.hosts.get(id)?.client
+    if (!client || client.state !== 'online' || !this.closing.has(id)) return
+    this.flushing.add(id)
+    try {
+      for (const s of this.pendingCloses(id)) {
+        let gone = true
+        try {
+          await client.call('session.close', { s })
+        } catch (err) {
+          // Away again: next time. Any other answer — it is not there to close.
+          const code = (err as { code?: unknown } | null)?.code
+          gone = code !== 'offline' && code !== 'timeout'
+        }
+        if (!gone) break
+        const rest = (this.closing.get(id) ?? []).filter((x) => x !== s)
+        if (rest.length > 0) this.closing.set(id, rest)
+        else this.closing.delete(id)
+        this.writeClosing()
+      }
+    } finally {
+      this.flushing.delete(id)
+    }
   }
 
   /** The relay channel if there is one, online or not; nothing is started. */

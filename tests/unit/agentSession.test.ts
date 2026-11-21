@@ -3192,6 +3192,22 @@ describe('AgentSession: Remote Control', () => {
     expect(session.status).toBe('stopped')
   })
 
+  test('I5: выход из приложения (detachOnly) у локального чата выключает мост, как закрытие', async () => {
+    const { session, driver } = makeSession()
+    const disposed: unknown[] = []
+    const realDispose = driver.dispose.bind(driver)
+    driver.dispose = async (opts?: { detachOnly?: boolean }) => {
+      disposed.push(opts)
+      return realDispose()
+    }
+    await session.start()
+    await session.setRemote(true)
+    await session.dispose({ detachOnly: true })
+    expect(driver.remoteCalls.at(-1)).toEqual({ enabled: false })
+    // A local agent is stopped, not let go of.
+    expect(disposed).toEqual([undefined])
+  })
+
   test('закрытие вкладки без моста ничего не выключает', async () => {
     const { session, driver } = makeSession()
     await session.start()

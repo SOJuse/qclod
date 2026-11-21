@@ -1,5 +1,6 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFileSync } from 'node:fs'
+import { isAbsolute, resolve as resolvePath } from 'node:path'
 import { CHANNELS } from '../shared/channels'
 import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
 import { projectKey } from '../shared/projects'
@@ -126,6 +127,9 @@ function lineNumber(value: unknown): number | undefined {
  * the renderer is the least privileged part of the app and a bug there must
  * not be able to point a session at another folder or fake a status.
  */
+/** How many chosen local files main keeps in mind for uploads to a server. */
+const MAX_SEEN_FILES = 1000
+
 export function registerAgentIpc(deps: AgentIpcDeps): void {
   const { controller, manager, broker } = deps
   // Stage 6: the read-only viewer and a server chat's paths (task 24).
@@ -502,6 +506,20 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     return buildFileIndex(tab.cwd)
   })
 
+  // Stage 6: a file goes to a server only when main saw the person choose it —
+  // picked in the dialog here, or dropped/pasted (the preload tells, from
+  // webUtils, which knows only real files). A window that names any path
+  // cannot send ~/.ssh/id_ed25519 to a server.
+  const seenFiles = new Set<string>()
+  const seeFile = (path: string): void => {
+    if (!isString(path) || path === '' || path.length > 4096 || path.includes('\0') || !isAbsolute(path)) return
+    const key = resolvePath(path)
+    seenFiles.delete(key)
+    seenFiles.add(key)
+    if (seenFiles.size > MAX_SEEN_FILES) seenFiles.delete(seenFiles.values().next().value!)
+  }
+  ipcMain.on(CHANNELS.filesSeen, (_e, path: unknown) => seeFile(path as string))
+
   // Stage 6: a file attached in a server chat goes to the server at once; the
   // message carries its path there. Images still go as base64 (decision 8).
   ipcMain.handle(CHANNELS.filesUploadRemote, async (_e, id: unknown, localPath: unknown) => {
@@ -512,6 +530,9 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!tab?.server) return { error: uploadFailedText('это не чат на сервере') }
     const s = tab.server.relaySessionId
     if (!s) return { error: uploadFailedText('чат на сервере ещё не открыт') }
+    if (!isAbsolute(localPath) || !seenFiles.has(resolvePath(localPath))) {
+      return { error: uploadFailedText('файл не был выбран в Qclod') }
+    }
     try {
       const remotePath = await uploadFile(await serverClient(tab.server.hostId), s, localPath)
       return { remotePath }
@@ -625,12 +646,18 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
 
   ipcMain.handle(CHANNELS.dialogPickFiles, async () => {
     const stubbed = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_PICK_FILES'] : undefined
-    if (stubbed) return stubbed.split(';').filter(Boolean)
+    if (stubbed) {
+      const paths = stubbed.split(';').filter(Boolean)
+      for (const p of paths) seeFile(p)
+      return paths
+    }
 
     const win = deps.getWindow()
     if (!win) return []
     const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] })
-    return result.canceled ? [] : result.filePaths
+    if (result.canceled) return []
+    for (const p of result.filePaths) seeFile(p)
+    return result.filePaths
   })
 }
 

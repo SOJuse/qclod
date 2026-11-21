@@ -163,7 +163,10 @@ const api = {
   // learn where a dropped or pasted file lives on disk.
   pathForFile: (file: File): string | null => {
     try {
-      return webUtils.getPathForFile(file) || null
+      const path = webUtils.getPathForFile(file) || null
+      // Stage 6: main uploads to a server only files it knows were chosen (filesUploadRemote).
+      if (path) ipcRenderer.send(CHANNELS.filesSeen, path)
+      return path
     } catch {
       return null
     }
@@ -289,6 +292,8 @@ const api = {
   terminalInput: (termId: string, data: string): void => ipcRenderer.send(CHANNELS.terminalInput, termId, data),
   onServersChanged: (cb: (servers: ServerView[]) => void) => on(CHANNELS.serversChanged, cb),
   onSshPrompt: (cb: (prompt: SshPrompt) => void) => on(CHANNELS.serversPrompt, cb),
+  /** An ssh question gone without an answer from here (timeout, ssh exited): drop its dialog. */
+  onSshPromptClosed: (cb: (e: { promptId: string }) => void) => on(CHANNELS.serversPromptClosed, cb),
   onConnectProgress: (cb: (e: { hostId: string; steps: ConnectStep[] }) => void) =>
     on(CHANNELS.serversConnectProgress, cb),
   onServerLoginProgress: (

@@ -8,15 +8,18 @@ import type { DriverOptions } from '../../src/main/agent/driver'
 import { RelayDaemon } from '../../src/relay/daemon'
 import { relayPaths, type RelayPaths } from '../../src/relay/paths'
 import { CALL_TIMEOUT_MS, RelayClient, type SessionSink } from '../../src/main/ssh/relayClient'
-import { createRelayDriver, toAutonomyView } from '../../src/main/ssh/relayDriver'
+import { ANSWER_LATER_TEXT, STREAM_RESET, createRelayDriver, toAutonomyView } from '../../src/main/ssh/relayDriver'
 import { socketTransport, type RelayTransport, type TransportFactory } from '../../src/main/ssh/transport'
 import {
   RELAY_DRIVER_OPS,
   type AttachResult,
+  type PermResolved,
   type RelayFrame,
+  type RelayPending,
   type RelaySnapshot
 } from '../../src/shared/relayProtocol'
-import type { RibbonItem, TabServer } from '../../src/shared/types'
+import type { PermissionAnswer, RibbonItem, TabServer } from '../../src/shared/types'
+import type { RelayClientState } from '../../src/main/ssh/relayClient'
 import type { FakeScript } from '../fixtures/fake-sdk/index.mjs'
 import { cleanTemps, fakeFactory, manualClock, tempDir, until } from './relayHarness'
 
@@ -204,6 +207,7 @@ describe('RelayDriver за AgentSession', () => {
 function fakeClient(snapshot: Partial<RelaySnapshot> = {}) {
   const calls: Array<{ m: string; p: unknown }> = []
   let sink: SessionSink | null = null
+  let state: RelayClientState = 'online'
   const snap: RelaySnapshot = {
     s: 'S1',
     cwd: '/srv/app',
@@ -222,6 +226,9 @@ function fakeClient(snapshot: Partial<RelaySnapshot> = {}) {
   }
   const client = {
     calls,
+    get state() {
+      return state
+    },
     attach: async (_s: string, _after: number, k: SessionSink): Promise<AttachResult> => {
       sink = k
       return { snapshot: snap, gap: false }
@@ -232,6 +239,7 @@ function fakeClient(snapshot: Partial<RelaySnapshot> = {}) {
     },
     call: async (m: string, p: unknown) => {
       calls.push({ m, p })
+      if (state !== 'online') throw Object.assign(new Error('Сервер не на связи'), { code: 'offline' })
       return null
     },
     detach: vi.fn()
@@ -239,6 +247,10 @@ function fakeClient(snapshot: Partial<RelaySnapshot> = {}) {
   return {
     client: client as unknown as RelayClient,
     calls,
+    setState: (s: RelayClientState) => {
+      state = s
+    },
+    reattach: (over: Partial<RelaySnapshot>) => sink!.onReattached({ snapshot: { ...snap, ...over }, gap: false }),
     ev: (q: number, k: 'sdk' | 'sent' | 'notice', d: unknown) =>
       sink!.onEvent({ t: 'ev', s: 'S1', q, k, at: Date.now(), d } as Extract<RelayFrame, { t: 'ev' }>),
     live: (k: Extract<RelayFrame, { t: 'live' }>['k'], d: unknown) => sink!.onLive({ t: 'live', s: 'S1', k, d })
@@ -249,6 +261,107 @@ const baseOptions = (): DriverOptions => ({
   cwd: '/srv/app',
   executablePath: '',
   canUseTool: async () => ({ behavior: 'deny' })
+})
+
+/** Everything the driver hands the session, as it comes. */
+function readAll(driver: { messages: AsyncIterable<unknown> }): unknown[] {
+  const out: unknown[] = []
+  void (async () => {
+    for await (const m of driver.messages) out.push(m)
+  })()
+  return out
+}
+
+const tick = () => new Promise((res) => setTimeout(res, 0))
+
+describe('RelayDriver: без связи (I3, I4, I6)', () => {
+  const card: RelayPending = { requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, toolUseId: 'tu1', askedAt: 1 }
+
+  function asking() {
+    const answers: Array<(a: PermissionAnswer) => void> = []
+    const opts: DriverOptions = {
+      ...baseOptions(),
+      canUseTool: () => new Promise<PermissionAnswer>((resolve) => answers.push(resolve))
+    }
+    return { opts, answers }
+  }
+
+  test('I3: ответ без связи ждёт и уходит после attach, если посредник ещё ждёт', async () => {
+    const f = fakeClient()
+    const a = asking()
+    const driver = await createRelayDriver(a.opts, { client: f.client, onSessionId: () => undefined })
+    const out = readAll(driver)
+    f.live('perm', card)
+    await until(() => a.answers.length === 1, 2000, 'карточка')
+    f.setState('reconnecting')
+    a.answers[0]!({ behavior: 'allow', updatedInput: { command: 'ls' } })
+    await tick()
+    expect(f.calls.filter((c) => c.m === 'perm.answer')).toEqual([])
+    expect(out).toContainEqual({ type: 'qclod_relay_notice', notice: { kind: 'text', text: ANSWER_LATER_TEXT, tone: 'info' } })
+    // Back, and the relay still waits on it: the person's answer goes, once.
+    f.setState('online')
+    f.reattach({ pending: [card] })
+    f.reattach({ pending: [] })
+    await tick()
+    expect(f.calls.filter((c) => c.m === 'perm.answer').map((c) => c.p)).toEqual([
+      { s: 'S1', requestId: 'r1', answer: { behavior: 'allow', updatedInput: { command: 'ls' } } }
+    ])
+    // The card is not asked again.
+    expect(a.answers).toHaveLength(1)
+  })
+
+  test('I3: пока ответ ждал, посредник закрыл карточку сам — ответ не уходит, карточка закрыта', async () => {
+    const f = fakeClient()
+    const a = asking()
+    const driver = await createRelayDriver(a.opts, { client: f.client, onSessionId: () => undefined })
+    const resolved: PermResolved[] = []
+    driver.onResolvedRemotely((r) => resolved.push(r))
+    f.live('perm', card)
+    await until(() => a.answers.length === 1, 2000, 'карточка')
+    f.setState('offline')
+    a.answers[0]!({ behavior: 'deny', message: 'нет' })
+    await tick()
+    f.setState('online')
+    f.reattach({ pending: [] })
+    await tick()
+    expect(f.calls.filter((c) => c.m === 'perm.answer')).toEqual([])
+    expect(resolved).toEqual([{ requestId: 'r1', by: 'elsewhere', toolUseId: 'tu1' }])
+  })
+
+  test('I4: после засева и при каждом attach — сброс потока', async () => {
+    const f = fakeClient()
+    const driver = await createRelayDriver(baseOptions(), { client: f.client, onSessionId: () => undefined })
+    const out = readAll(driver)
+    await tick()
+    expect(out).toEqual([STREAM_RESET])
+    f.reattach({})
+    await tick()
+    expect(out).toEqual([STREAM_RESET, STREAM_RESET])
+  })
+
+  test('I6: «Закрыть чат» без связи — в closeLater, session.close не теряется молча', async () => {
+    const f = fakeClient()
+    const later: string[] = []
+    const driver = await createRelayDriver(baseOptions(), { client: f.client, onSessionId: () => undefined, closeLater: (s) => later.push(s) })
+    f.setState('reconnecting')
+    await driver.dispose()
+    expect(later).toEqual(['S1'])
+    expect(f.calls.filter((c) => c.m === 'session.close')).toEqual([])
+
+    const g = fakeClient()
+    const kept: string[] = []
+    const online = await createRelayDriver(baseOptions(), { client: g.client, onSessionId: () => undefined, closeLater: (s) => kept.push(s) })
+    await online.dispose()
+    expect(g.calls.filter((c) => c.m === 'session.close')).toHaveLength(1)
+    expect(kept).toEqual([])
+    // Detached on quit: nothing to close later.
+    const h = fakeClient()
+    const none: string[] = []
+    const quit = await createRelayDriver(baseOptions(), { client: h.client, onSessionId: () => undefined, closeLater: (s) => none.push(s) })
+    h.setState('offline')
+    await quit.dispose({ detachOnly: true })
+    expect(none).toEqual([])
+  })
 })
 
 describe('RelayDriver: каждый метод и вид автономности', () => {

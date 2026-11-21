@@ -24,7 +24,11 @@ export function runAskpassClient(
 ): Promise<number> {
   const pipe = env['QCLOD_ASKPASS_PIPE']
   const token = env['QCLOD_ASKPASS_TOKEN']
-  const prompt = argv.length > 0 ? argv[argv.length - 1]! : ''
+  // ssh passes the question as one argument. More than one means its text
+  // (written by the server) was split on the way into a command line: that
+  // run answers nothing (I8).
+  if (argv.length !== 1) return Promise.resolve(1)
+  const prompt = argv[0]!
   if (!pipe || !token) return Promise.resolve(1)
   return new Promise<number>((resolve) => {
     let settled = false

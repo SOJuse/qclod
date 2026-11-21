@@ -421,21 +421,28 @@ if (gotLock) void app.whenReady().then(async () => {
 
   // — stage 6: servers over SSH. ssh's questions go to the window (askpass), the
   // servers and their relays are HostManager's; a server chat's driver is the relay's.
-  const promptBroker = new SshPromptBroker((prompt) => {
-    const win = mainWindow
-    if (!win || win.isDestroyed() || offScreen) return false
-    showWindow()
-    send(CHANNELS.serversPrompt, prompt)
-    return true
-  })
+  const promptBroker = new SshPromptBroker(
+    (prompt) => {
+      const win = mainWindow
+      if (!win || win.isDestroyed() || offScreen) return false
+      showWindow()
+      send(CHANNELS.serversPrompt, prompt)
+      return true
+    },
+    undefined,
+    // Gone without an answer from the window (R4): its dialog closes.
+    (promptId) => send(CHANNELS.serversPromptClosed, { promptId })
+  )
   const hostStore = new HostStore(userData, electronSecretBox())
   const askpass = new AskpassServer({
     platform: process.platform,
     execPath: process.execPath,
     userData,
     ask: (prompt) => promptBroker.ask(prompt),
+    cancel: (promptId) => promptBroker.cancel(promptId),
     storedPassword: (hostId) => hostStore.password(hostId),
-    onRemember: (hostId, password) => hosts?.rememberPassword(hostId, password),
+    storedPasswordFor: (hostId) => hostStore.passwordFor(hostId),
+    onRemember: (hostId, password, forHost) => hosts?.rememberPassword(hostId, password, forHost),
     canRemember: () => hostStore.canStorePasswords(),
     askpassScript: join(__dirname, 'askpass.js'),
     log: (line) => console.log('[ssh]', line)
@@ -479,7 +486,9 @@ if (gotLock) void app.whenReady().then(async () => {
     return createRelayDriver(options, {
       client,
       ...(server.relaySessionId ? { relaySessionId: server.relaySessionId } : {}),
-      onSessionId: () => undefined
+      onSessionId: () => undefined,
+      // «Закрыть чат» while the server is away: closed there on the next connect (I6).
+      closeLater: (s) => hosts?.closeLater(server.hostId, s)
     })
   }
 
@@ -655,26 +664,35 @@ if (gotLock) void app.whenReady().then(async () => {
       if (!tab.server || !entry) return null
       await askpassUp
       // A saved password goes by itself; otherwise ssh's question comes to the window (SshPromptDialog).
-      const ask = askpass.forSpawn(tab.server.hostId, { interactive: true })
-      return terminals.open(tabId, targetOf(entry), tab.cwd, ask.env, size, () => ask.done())
+      const ask = askpass.forSpawn(tab.server.hostId, { interactive: true, target: entry.target })
+      // ssh's own failures end with 255; anything else was the shell there — the sign-in was taken.
+      return terminals.open(tabId, targetOf(entry), tab.cwd, ask.env, size, (exitCode) => {
+        if (exitCode !== undefined && exitCode !== 255) ask.authed()
+        ask.done()
+      })
     }
   })
   // «Войти» of a server's Claude account (task 23): ssh -tt … claude auth login, one per server.
-  const logins = new Map<string, ServerLogin>()
+  const logins = new Map<string, { login: ServerLogin; done: () => void }>()
   const startServerLogin = async (hostId: string): Promise<void> => {
     const entry = hostStore.get(hostId)
     if (!entry) return
     await askpassUp
     const view = serverHosts.list().find((v) => v.id === hostId)
     const claude = serverHosts.probeOf(hostId)?.claudePath ?? view?.account?.claudePath ?? 'claude'
-    logins.get(hostId)?.cancel()
-    const ask = askpass.forSpawn(hostId, { interactive: true })
+    // A login started again: the old one's ssh and its askpass token go first.
+    const before = logins.get(hostId)
+    before?.login.cancel()
+    before?.done()
+    const ask = askpass.forSpawn(hostId, { interactive: true, target: entry.target })
     // A real terminal when node-pty is there (task 26), else ssh -tt over pipes.
     const pty = await loadPty()
     const login = new ServerLogin({
       spawnPty: pty ? (file, args, o) => pty(file, args, { ...o, name: 'xterm-256color' }) : pipePty,
       onProgress: (p) => {
         send(CHANNELS.serversLoginProgress, { hostId, ...p })
+        // claude there spoke: ssh got in.
+        if (p.state === 'waitingCode' || p.state === 'done') ask.authed()
         if (p.state === 'done' || p.state === 'failed') ask.done()
       },
       recheck: async () =>
@@ -684,13 +702,13 @@ if (gotLock) void app.whenReady().then(async () => {
       userData,
       ...(typeof process.getuid === 'function' ? { uid: process.getuid() } : {})
     })
-    logins.set(hostId, login)
+    logins.set(hostId, { login, done: () => ask.done() })
     login.start(targetOf(entry), claude, ask.env)
   }
   registerServerIpc({
     hosts: serverHosts,
     askpassAnswers: (answer) => promptBroker.answer(answer),
-    login: { start: startServerLogin, code: (hostId, code) => logins.get(hostId)?.sendCode(code) }
+    login: { start: startServerLogin, code: (hostId, code) => logins.get(hostId)?.login.sendCode(code) }
   })
   /** A server project's past conversations: the relay's list (сверка F21). */
   async function serverHistory(cwd: string, hostId: string): Promise<SessionSummary[]> {

@@ -4,6 +4,10 @@ import { configHosts } from '@main/ssh/sshConfig'
 const none = (): string[] => []
 
 describe('configHosts', () => {
+  test('I10: имена с метасимволами оболочки и ведущим - не берутся', () => {
+    expect(configHosts('Host ok -oProxyCommand=x a;b c$d e|f good.lan\n', none)).toEqual(['ok', 'good.lan'])
+  })
+
   test('Host a b *.x !c даёт a, b', () => {
     expect(configHosts('Host a b *.x !c\n  HostName 1.2.3.4\n', none)).toEqual(['a', 'b'])
   })

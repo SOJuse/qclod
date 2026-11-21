@@ -1500,6 +1500,9 @@ export class AgentSession {
 
   /** `detachOnly` (stage 6): a server chat lets go of its agent and leaves it running there. */
   async dispose(opts?: { detachOnly?: boolean }): Promise<void> {
+    // Only a server chat is let go of: a local one is stopped as ever, its
+    // Remote Control turned off first (I5, stage 4).
+    if (opts?.detachOnly && !this.options.server) opts = undefined
     this.disposed = true
     this.turnRunning = false
     // A late answer about the strip — a cancel the CLI confirms after the
@@ -1597,6 +1600,8 @@ export class AgentSession {
 
   private onMessage(message: unknown): void {
     if (isObject(message) && message['type'] === 'qclod_relay_notice') return this.onRelayNotice(message['notice'])
+    // Stage 6: the relay's stream was cut (a break, a late attach) — whole messages take over (I4).
+    if (isObject(message) && message['type'] === 'qclod_stream_reset') return this.emit(this.builder.resetStream())
     this.feedAutonomy({ type: 'sdk', message })
     const changes = this.builder.apply(message)
     this.emit(changes)

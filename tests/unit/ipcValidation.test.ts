@@ -24,7 +24,10 @@ import {
 type Handler = (e: unknown, ...args: unknown[]) => unknown
 const handlers = vi.hoisted(() => new Map<string, Handler>())
 vi.mock('electron', () => ({
-  ipcMain: { handle: (channel: string, fn: Handler) => handlers.set(channel, fn) },
+  ipcMain: {
+    handle: (channel: string, fn: Handler) => handlers.set(channel, fn),
+    on: (channel: string, fn: Handler) => handlers.set(channel, fn)
+  },
   dialog: {},
   BrowserWindow: class {},
   shell: { openPath: vi.fn(), showItemInFolder: vi.fn() },

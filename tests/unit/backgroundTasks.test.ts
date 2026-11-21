@@ -280,6 +280,8 @@ describe('BackgroundTracker: фоновые агенты (этап 4)', () => {
     expect(list).toHaveLength(1)
     expect(list[0]).toMatchObject({ taskId: 'ag1', status: 'running', kind: 'agent' })
     expect(list[0]).not.toHaveProperty('endedAt')
+    // The row is the agent, as its ribbon card is: it keeps the Agent call, not the SendMessage that woke it.
+    expect(list[0]!.toolUseId).toBe('toolu_agent')
   })
 
   test('агент и оболочка живут в одном списке', () => {

@@ -140,13 +140,16 @@ export class BackgroundTracker {
       return null
     }
     // A resumed task keeps its task_id: it is the same row, running again.
+    // Its tool_use_id is now the SendMessage call that woke it (probe 05b);
+    // the row keeps the call that started it, as the ribbon's card does.
     const known = this.list.find((t) => t.taskId === taskId)
     if (known) {
       if (known.status === 'running') return null
       this.guessed.delete(taskId)
       this.list = this.list.filter((t) => t !== known)
       const kept = task.command ?? known.command
-      return this.add({ ...task, ...(kept ? { command: kept } : {}) })
+      const call = known.toolUseId ?? task.toolUseId
+      return this.add({ ...task, ...(call ? { toolUseId: call } : {}), ...(kept ? { command: kept } : {}) })
     }
     return this.add(task)
   }

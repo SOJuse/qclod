@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { EnvironmentReport, HotkeyRegistration, SessionSummary } from '../../shared/types'
+import type { EnvironmentReport, HistoryHit, HotkeyRegistration, SessionSummary } from '../../shared/types'
 import { useAppStore } from '../state/useAppStore'
 import { startLayoutSync } from '../state/layoutSync'
 import { MAX_PANES, buildSidebar, chatOrder, nextPanes } from '../chat/sidebarModel'
@@ -20,6 +20,8 @@ import { useTemplates } from '../state/useTemplates'
 import { historyToLoad } from '../palette/history'
 import { withMention } from '../palette/files'
 import { withCommand } from '../palette/commands'
+import { HISTORY_TEXT_MIN } from '../palette/historyText'
+import { fold } from '../palette/rank'
 import type { PaletteContext, PaletteRunner, PaletteSection } from '../palette/types'
 import { withLocalCommands } from '../../shared/commandFilter'
 import { UpdateBanner } from '../components/UpdateBanner'
@@ -61,11 +63,21 @@ export function App(): JSX.Element {
   const [templatesSheet, setTemplatesSheet] = useState<{ initialBody?: string; notice?: string } | null>(null)
   /** этап 7: «Собрать мои шаблоны». */
   const [harvestOpen, setHarvestOpen] = useState(false)
+  /**
+   * A templates sheet that closes into the other one («Собрать» from the
+   * manager, the manager after saving) has no opener left: the next sheet
+   * focuses itself, and the input must not take the focus from under it.
+   */
+  const sheetOpen = useRef(false)
+  sheetOpen.current = templatesSheet !== null || harvestOpen
   const [version, setVersion] = useState('')
   const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
   const [focusToken, setFocusToken] = useState(0)
   /** Where focus goes when a closed sheet's opener is gone: the active tab's input. */
   const focusComposer = useCallback(() => setFocusToken((n) => n + 1), [])
+  const focusAfterSheet = useCallback(() => {
+    if (!sheetOpen.current) focusComposer()
+  }, [focusComposer])
   const [environment, setEnvironment] = useState<EnvironmentReport | null>(null)
   const [setupDismissed, setSetupDismissed] = useState(false)
   /**
@@ -75,6 +87,33 @@ export function App(): JSX.Element {
   const [setupNeeded, setSetupNeeded] = useState(false)
   /** Ctrl+K, open: kept to one section or not; `n` tells one opening from the next. */
   const [palette, setPalette] = useState<{ scope?: PaletteSection; n: number } | null>(null)
+  /** этап 7: Ctrl+K «В разговорах» — the latest answer of the search over past conversations. */
+  const [historyText, setHistoryText] = useState<{ query: string; hits: HistoryHit[]; pending: boolean } | null>(null)
+  const historyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** What is typed in Ctrl+K: the search starts after 300 ms of quiet, from 3 characters. */
+  const onPaletteQuery = useCallback((raw: string): void => {
+    if (historyTimer.current) clearTimeout(historyTimer.current)
+    historyTimer.current = null
+    const text = raw.trim()
+    const needle = fold(text)
+    if (needle.length < HISTORY_TEXT_MIN || /^[>@]/.test(text)) {
+      setHistoryText(null)
+      return
+    }
+    setHistoryText((prev) => (prev && prev.query === needle && !prev.pending ? prev : { query: needle, hits: [], pending: true }))
+    historyTimer.current = setTimeout(() => {
+      const done = (hits: HistoryHit[]): void =>
+        setHistoryText((cur) => (cur && cur.query === needle ? { query: needle, hits, pending: false } : cur))
+      window.qclod.historySearch(text).then(done, () => done([]))
+    }, 300)
+  }, [])
+  // A closed palette forgets its search.
+  useEffect(() => {
+    if (palette) return
+    if (historyTimer.current) clearTimeout(historyTimer.current)
+    historyTimer.current = null
+    setHistoryText(null)
+  }, [palette])
   /** Ctrl+W was pressed once on a working tab; a second press within 3 s closes it. */
   const [closeGuardTab, setCloseGuardTab] = useState<string | null>(null)
   const closeGuardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -533,9 +572,11 @@ export function App(): JSX.Element {
         commands: withLocalCommands(commandsByTab[activeTabId] ?? []),
         templates,
         hasDraft,
+        historyText,
+        onQuery: onPaletteQuery,
         run: paletteRun
       },
-    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, templates, hasDraft, paletteRun]
+    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, templates, hasDraft, historyText, onPaletteQuery, paletteRun]
   )
 
   // Window-level shortcuts, by physical key. The handler is registered once and
@@ -740,7 +781,7 @@ export function App(): JSX.Element {
             setTemplatesSheet(null)
             setHarvestOpen(true)
           }}
-          onFocusLost={focusComposer}
+          onFocusLost={focusAfterSheet}
         />
       )}
       {harvestOpen && (
@@ -750,7 +791,7 @@ export function App(): JSX.Element {
             setHarvestOpen(false)
             setTemplatesSheet({ notice: `Сохранено: ${templatesCount(count)}.` })
           }}
-          onFocusLost={focusComposer}
+          onFocusLost={focusAfterSheet}
         />
       )}
       {settingsOpen && (

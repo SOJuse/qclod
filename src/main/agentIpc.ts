@@ -26,6 +26,7 @@ import { EMPTY_PANEL } from './agent/panelData'
 import { withFault } from './testSeams/ipcFaults'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
 import type { PermissionBroker } from './agent/permissions'
+import type { HistorySearch } from './history/historySearch'
 import {
   sanitizeAnswer,
   sanitizeQuestionAnswers,
@@ -58,6 +59,8 @@ export interface AgentIpcDeps {
   history: Pick<TabHistory, 'list'>
   /** The per-tab autonomy cores (stage 3). */
   autonomy?: Pick<AutonomyHost, 'hold' | 'answerNow' | 'remoteWanted'>
+  /** этап 7: the full-text search over past conversations (Ctrl+K «В разговорах»). */
+  historySearch?: Pick<HistorySearch, 'search' | 'knowsFolder'>
 }
 
 function isString(value: unknown): value is string {
@@ -332,7 +335,10 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     const key = projectKey(cwd)
     const project = layout.get().projects.find((p) => !p.hostId && projectKey(p.cwd) === key)
     if (project) return project.cwd
-    return controller.list().find((tab) => projectKey(tab.cwd) === key)?.cwd ?? null
+    const open = controller.list().find((tab) => projectKey(tab.cwd) === key)?.cwd
+    if (open) return open
+    // этап 7: a folder the search over the owner's own history found a session in.
+    return deps.historySearch?.knowsFolder(cwd) ? cwd : null
   }
 
   ipcMain.handle(CHANNELS.layoutGet, (): LayoutState => layout.get())
@@ -405,6 +411,13 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
       if (!isString(id)) return []
       return controller.history(id)
     })
+  )
+
+  // этап 7: a query of at most 200 characters; anything else finds nothing.
+  ipcMain.handle(CHANNELS.historySearch, (_e, query: unknown) =>
+    withFault(CHANNELS.historySearch, () =>
+      isString(query) && query.length <= 200 && deps.historySearch ? deps.historySearch.search(query) : []
+    )
   )
 
   ipcMain.handle(CHANNELS.historyOpen, (_e, id: unknown, sessionId: unknown, title: unknown) => {

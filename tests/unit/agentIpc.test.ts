@@ -227,6 +227,7 @@ describe('этап 2: проекты и раскладка', () => {
   let layout: LayoutStore
   const listed: string[] = []
   const opened: Array<[string, string, string | undefined]> = []
+  const searched: string[] = []
   const panes: string[][] = []
   const changes: LayoutState[] = []
   const tabs = [
@@ -267,8 +268,22 @@ describe('этап 2: проекты и раскладка', () => {
       rememberDefault: () => undefined,
       resolver: { forget: () => undefined },
       getEditorCommand: () => '',
-      userData: USER_DATA
+      userData: USER_DATA,
+      historySearch: {
+        search: async (q: string) => (searched.push(q), []),
+        knowsFolder: (cwd: string) => cwd === 'C:\\найдено'
+      }
     } as unknown as AgentIpcDeps)
+  })
+
+  test('этап 7: поиск по истории — строка до 200 символов; папка из поиска открывается', async () => {
+    searched.length = 0
+    expect(await call(CHANNELS.historySearch, 42)).toEqual([])
+    expect(await call(CHANNELS.historySearch, 'я'.repeat(201))).toEqual([])
+    expect(await call(CHANNELS.historySearch, 'уникальная')).toEqual([])
+    expect(searched).toEqual(['уникальная'])
+    expect(await call(CHANNELS.projectOpenSession, 'C:\\найдено', 's9')).toMatchObject({ id: 'новая' })
+    expect(opened).toEqual([['C:\\найдено', 's9', undefined]])
   })
 
   test('история чужой папки — пусто, history.list не вызван', async () => {

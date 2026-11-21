@@ -205,7 +205,8 @@ describe('Ctrl+K: поиск по всему', () => {
       ['history', 'Прошлые разговоры'],
       ['files', 'Файлы'],
       ['commands', 'Команды'],
-      ['templates', 'Шаблоны']
+      ['templates', 'Шаблоны'],
+      ['historyText', 'В разговорах']
     ])
     expect(sectionTitle('history')).toBe('Прошлые разговоры')
 

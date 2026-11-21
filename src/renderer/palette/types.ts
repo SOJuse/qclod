@@ -1,4 +1,4 @@
-import type { CommandInfo, PromptTemplate, SessionSummary, TabId } from '../../shared/types'
+import type { CommandInfo, HistoryHit, PromptTemplate, SessionSummary, TabId } from '../../shared/types'
 import type { AppActionId } from '../app/shortcuts'
 import type { SidebarProject } from '../chat/sidebarModel'
 import type { PaneLayerState } from '../state/useAppStore'
@@ -15,6 +15,10 @@ export interface PaletteItem {
   hint?: string
   /** A window action's keys, shown on the right. */
   keys?: string
+  /** этап 7: a row that says something but does nothing («Ищу в разговорах…»). */
+  disabled?: boolean
+  /** этап 7: the part of `title` to show marked (a search match). */
+  mark?: { start: number; length: number }
   run(): void
 }
 
@@ -54,6 +58,10 @@ export interface PaletteContext {
   templates?: PromptTemplate[]
   /** этап 7: the active chat's input has text («Сохранить черновик как шаблон»). */
   hasDraft?: boolean
+  /** этап 7: the latest answer of the search over past conversations, for `query` (folded). */
+  historyText?: { query: string; hits: HistoryHit[]; pending: boolean } | null
+  /** этап 7: what is typed in the palette, as typed; the search over history waits for 300 ms of quiet. */
+  onQuery?(query: string): void
   run: PaletteRunner
 }
 

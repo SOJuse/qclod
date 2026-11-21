@@ -32,6 +32,8 @@ export function CommandPalette({ ctx, initialScope, onClose, onFocusLost }: Prop
   const trap = useModalFocus(sheet, onFocusLost)
 
   useEffect(() => field.current?.focus(), [])
+  // этап 7: the search over past conversations hears what is typed (not in a section of its own).
+  useEffect(() => ctx.onQuery?.(scope === undefined ? query : ''), [query, scope])
 
   const shown = useMemo(() => searchPalette(query, ctx, scope), [query, ctx, scope])
   // A section shown alone with nothing yet says why: still read, or failed — not «nothing found».
@@ -43,7 +45,7 @@ export function CommandPalette({ ctx, initialScope, onClose, onFocusLost }: Prop
   }, [selected, shown])
 
   const run = (item: PaletteItem | undefined): void => {
-    if (!item) return
+    if (!item || item.disabled) return
     onClose()
     item.run()
   }
@@ -140,7 +142,8 @@ export function CommandPalette({ ctx, initialScope, onClose, onFocusLost }: Prop
                   data-testid="action-item"
                   data-section={item.section}
                   aria-selected={index === selected}
-                  className={`action-palette-item${index === selected ? ' is-selected' : ''}`}
+                  aria-disabled={item.disabled === true || undefined}
+                  className={`action-palette-item${index === selected ? ' is-selected' : ''}${item.disabled ? ' is-disabled' : ''}`}
                   title={item.hint ? `${item.title} — ${item.hint}` : item.title}
                   onMouseMove={() => index !== selected && setChosenKey(item.key)}
                   onMouseDown={(e) => {
@@ -148,7 +151,17 @@ export function CommandPalette({ ctx, initialScope, onClose, onFocusLost }: Prop
                     run(item)
                   }}
                 >
-                  <span className="action-palette-label">{item.title}</span>
+                  <span className="action-palette-label">
+                    {item.mark ? (
+                      <>
+                        {item.title.slice(0, item.mark.start)}
+                        <mark className="palette-mark">{item.title.slice(item.mark.start, item.mark.start + item.mark.length)}</mark>
+                        {item.title.slice(item.mark.start + item.mark.length)}
+                      </>
+                    ) : (
+                      item.title
+                    )}
+                  </span>
                   {item.hint && <span className="action-palette-hint">{item.hint}</span>}
                   {item.keys && <span className="action-palette-keys">{item.keys}</span>}
                 </li>

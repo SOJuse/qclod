@@ -37,6 +37,7 @@ import { LayoutStore } from './store/layoutStore'
 import { TemplateLibrary } from './store/templatesStore'
 import { registerTemplatesIpc } from './templatesIpc'
 import { HarvestService } from './templates/harvest'
+import { HistorySearch } from './history/historySearch'
 import { harvestExecutable, harvestQuery } from './templates/harvestQuery'
 import { HotkeyRegistrar } from './hotkey/globalHotkey'
 import { createTray, type TrayTone } from './tray'
@@ -505,6 +506,8 @@ if (gotLock) void app.whenReady().then(async () => {
 
   registerAgentIpc({
     getWindow: () => mainWindow,
+    // этап 7: Ctrl+K «В разговорах», over the owner's transcripts, read only.
+    historySearch: new HistorySearch(claudeConfigDir(process.env, homedir())),
     controller,
     manager,
     broker,

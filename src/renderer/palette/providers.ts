@@ -2,6 +2,7 @@ import { chatsProvider } from './chats'
 import { commandsProvider } from './commands'
 import { filesProvider } from './files'
 import { historyProvider } from './history'
+import { historyTextProvider } from './historyText'
 import { projectsProvider } from './projects'
 import { fold } from './rank'
 import { templatesProvider } from './templates'
@@ -25,7 +26,8 @@ export const PALETTE_PROVIDERS: PaletteProvider[] = [
   historyProvider,
   filesProvider,
   commandsProvider,
-  templatesProvider
+  templatesProvider,
+  historyTextProvider
 ]
 
 /** A section's heading; the id itself for a section nobody provides. */

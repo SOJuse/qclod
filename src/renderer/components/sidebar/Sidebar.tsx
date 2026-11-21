@@ -14,7 +14,10 @@ export interface SidebarProps {
   onActivate: (id: TabId) => void
   onClose: (id: TabId) => void
   /** With a folder, a new chat there; without one, the folder is asked for. */
-  onNewChat: (cwd?: string) => void
+  /** `hostId`: a new chat in that folder of a server (stage 6). */
+  onNewChat: (cwd?: string, hostId?: string) => void
+  /** Stage 6: «Новый чат» on a server — the servers' sheet. Without it there is no switch. */
+  onNewServerChat?: () => void
   onOpenPast: (cwd: string, session: SessionSummary) => void
   onToggleProject: (cwd: string, collapsed: boolean) => void
   onForget: (cwd: string) => void
@@ -40,10 +43,13 @@ export function Sidebar({
   onToggleProject,
   onForget,
   onRetryPast,
-  onMore
+  onMore,
+  onNewServerChat
 }: SidebarProps): JSX.Element {
   /** How many past conversations each project shows, by project key; PAST_FIRST until «Показать ещё». */
   const [shown, setShown] = useState<Record<string, number>>({})
+  /** Where «Новый чат» opens one: here, or on a server (stage 6). */
+  const [where, setWhere] = useState<'local' | 'server'>('local')
 
   return (
     <nav className="sidebar" data-testid="sidebar" aria-label="Проекты и чаты">
@@ -53,11 +59,35 @@ export function Sidebar({
           className="sidebar-new"
           data-testid="tab-new"
           title={hint('Новый чат в другой папке', 'newTab')}
-          onClick={() => onNewChat()}
+          onClick={() => (where === 'server' && onNewServerChat ? onNewServerChat() : onNewChat())}
         >
           <SquarePen size={14} aria-hidden="true" />
           Новый чат
         </button>
+        {onNewServerChat && (
+          <div className="sidebar-where" role="radiogroup" aria-label="Где новый чат">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={where === 'local'}
+              className={`sidebar-where-option${where === 'local' ? ' is-on' : ''}`}
+              data-testid="new-chat-local"
+              onClick={() => setWhere('local')}
+            >
+              Локально
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={where === 'server'}
+              className={`sidebar-where-option${where === 'server' ? ' is-on' : ''}`}
+              data-testid="new-chat-server"
+              onClick={() => setWhere('server')}
+            >
+              Сервер
+            </button>
+          </div>
+        )}
       </div>
       <div className="sidebar-list">
         {projects.map((project) => (

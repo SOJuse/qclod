@@ -9,6 +9,8 @@ import type { PanelOverride } from '../app/panelVisibility'
 import type {
   AppSettings,
   CommandInfo,
+  ConnectStep,
+  ServerView,
   PanelData,
   PanelSnapshot,
   ResolvedPath,
@@ -241,6 +243,10 @@ interface AppState {
   layerByTab: Record<TabId, PaneLayerState | null>
   /** Each pane's own panel choice (S2-R23): open or closed by hand; absent — the setting decides. In memory only. */
   panelChoiceByTab: Record<TabId, PanelOverride>
+  /** Stage 6: the servers Qclod knows, as main sees them. */
+  servers: ServerView[]
+  /** Stage 6: the last checklist of each server's connect, by server id. */
+  connectSteps: Record<string, ConnectStep[]>
 
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
@@ -268,6 +274,8 @@ interface AppState {
   /** A new layer replaces the one before it; null closes it. */
   setPaneLayer: (tabId: TabId, layer: PaneLayerState | null) => void
   setPanelChoice: (tabId: TabId, choice: PanelOverride) => void
+  setServers: (servers: ServerView[]) => void
+  setConnectSteps: (hostId: string, steps: ConnectStep[]) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -354,6 +362,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   recentCommands: [],
   layerByTab: {},
   panelChoiceByTab: {},
+  servers: [],
+  connectSteps: {},
 
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
@@ -544,6 +554,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   setPaneLayer: (tabId, layer) => set((state) => ({ layerByTab: { ...state.layerByTab, [tabId]: layer } })),
+  setServers: (servers) => set({ servers }),
+  setConnectSteps: (hostId, steps) => set((state) => ({ connectSteps: { ...state.connectSteps, [hostId]: steps } })),
   setPanelChoice: (tabId, choice) =>
     set((state) =>
       (state.panelChoiceByTab[tabId] ?? null) === choice

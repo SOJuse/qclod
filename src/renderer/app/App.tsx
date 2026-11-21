@@ -20,6 +20,9 @@ import { withCommand } from '../palette/commands'
 import type { PaletteContext, PaletteRunner, PaletteSection } from '../palette/types'
 import { withLocalCommands } from '../../shared/commandFilter'
 import { UpdateBanner } from '../components/UpdateBanner'
+import { ServersSheet, type ServersSheetMode } from '../components/servers/ServersSheet'
+import { SshPromptDialog } from '../components/servers/SshPromptDialog'
+import type { SshPrompt } from '../../shared/types'
 import { compactNow } from '../input/slash'
 import { reasonOf } from '../ui/StateView'
 import { resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
@@ -68,6 +71,11 @@ export function App(): JSX.Element {
   const [setupNeeded, setSetupNeeded] = useState(false)
   /** Ctrl+K, open: kept to one section or not; `n` tells one opening from the next. */
   const [palette, setPalette] = useState<{ scope?: PaletteSection; n: number } | null>(null)
+  /** Stage 6: the servers' sheet — a new chat on a server — and the questions ssh asks, in order. */
+  const [serversSheet, setServersSheet] = useState<ServersSheetMode | null>(null)
+  const [sshPrompts, setSshPrompts] = useState<SshPrompt[]>([])
+  const servers = useAppStore((s) => s.servers)
+  const connectSteps = useAppStore((s) => s.connectSteps)
   /** Ctrl+W was pressed once on a working tab; a second press within 3 s closes it. */
   const [closeGuardTab, setCloseGuardTab] = useState<string | null>(null)
   const closeGuardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -253,8 +261,16 @@ export function App(): JSX.Element {
       // The list is live: a plugin installed mid-session changes it.
       window.qclod.onCommandsChanged((event) =>
         useAppStore.getState().setCommands(event.tabId, event.commands)
-      )
+      ),
+      // Stage 6: the servers, their checklists, ssh's questions.
+      window.qclod.onServersChanged((list) => useAppStore.getState().setServers(list)),
+      window.qclod.onConnectProgress((e) => useAppStore.getState().setConnectSteps(e.hostId, e.steps)),
+      window.qclod.onSshPrompt((prompt) => setSshPrompts((queue) => [...queue, prompt]))
     ]
+    window.qclod.listServers().then(
+      (list) => useAppStore.getState().setServers(list),
+      () => undefined
+    )
     return () => {
       clearTimeout(tabsRetry)
       for (const off of unsubscribers) off()
@@ -342,7 +358,14 @@ export function App(): JSX.Element {
 
   /** A new chat in this folder; without one, the folder is asked for first. */
   const newChat = useCallback(
-    (cwd?: string): void => {
+    (cwd?: string, hostId?: string): void => {
+      // A folder on a server: a chat there at once (stage 6).
+      if (cwd && hostId) {
+        void window.qclod.openServerFolder(hostId, cwd).then((tab) => {
+          if (tab) activate(tab.id)
+        })
+        return
+      }
       const create = (folder: string): void => {
         void window.qclod.createTab(folder).then((tab) => {
           if (tab) activate(tab.id)
@@ -608,6 +631,10 @@ export function App(): JSX.Element {
           onRecheck={recheck}
           onDone={() => setSetupDismissed(true)}
           onOpenSettings={() => setSettingsOpen(true)}
+          onServersOnly={() => {
+            setSetupDismissed(true)
+            setServersSheet({ kind: 'picker' })
+          }}
         />
         {settingsOpen && (
           <SettingsScreen
@@ -656,6 +683,7 @@ export function App(): JSX.Element {
               closeChat(id)
             }}
             onNewChat={newChat}
+            onNewServerChat={() => setServersSheet({ kind: 'picker' })}
             onOpenPast={openPast}
             onToggleProject={toggleProject}
             onForget={(cwd) => void window.qclod.forgetProject(cwd)}
@@ -704,6 +732,28 @@ export function App(): JSX.Element {
           {...(palette.scope === undefined ? {} : { initialScope: palette.scope })}
           onClose={() => setPalette(null)}
           onFocusLost={focusComposer}
+        />
+      )}
+      {serversSheet && (
+        <ServersSheet
+          servers={servers}
+          steps={connectSteps}
+          initial={serversSheet}
+          onClose={() => {
+            setServersSheet(null)
+            focusComposer()
+          }}
+          onOpened={(tab) => activate(tab.id)}
+        />
+      )}
+      {sshPrompts[0] && (
+        <SshPromptDialog
+          key={sshPrompts[0].promptId}
+          prompt={sshPrompts[0]}
+          onAnswer={(answer) => {
+            void window.qclod.answerSshPrompt(answer)
+            setSshPrompts((queue) => queue.filter((p) => p.promptId !== answer.promptId))
+          }}
         />
       )}
       {settingsOpen && (

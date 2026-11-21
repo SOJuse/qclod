@@ -75,6 +75,7 @@ import { RelayClient } from './ssh/relayClient'
 import { createRelayDriver } from './ssh/relayDriver'
 import { sshTransport } from './ssh/transport'
 import { SshPromptBroker } from './ssh/promptBroker'
+import { registerServerIpc } from './ssh/serverIpc'
 import type { RelayManifest } from './ssh/relayInstaller'
 import type { ServerEntry, SessionSummary } from '../shared/types'
 import { QuitReason, sessionEnding } from './system/quitReason'
@@ -609,6 +610,7 @@ if (gotLock) void app.whenReady().then(async () => {
     log: (line) => console.log('[servers]', line)
   })
   const serverHosts = hosts
+  registerServerIpc({ hosts: serverHosts, askpassAnswers: (answer) => promptBroker.answer(answer) })
   /** A server project's past conversations: the relay's list (сверка F21). */
   async function serverHistory(cwd: string, hostId: string): Promise<SessionSummary[]> {
     const client = await serverHosts.client(hostId)

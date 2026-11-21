@@ -727,6 +727,8 @@ export interface ServerView extends ServerEntry {
   info?: HostInfo & { claudeVersion: string | null }
   account?: ServerAuth
   relayUpdate?: 'pending' | 'required'
+  /** Stage 6 (task 20): whether a password can be kept (safeStorage works on this machine). */
+  canStorePassword?: boolean
 }
 
 /** Which server a tab's chat runs on; relaySessionId once the relay has opened it. */

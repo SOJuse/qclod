@@ -156,6 +156,7 @@ export class HostManager {
         state: r?.state ?? 'idle',
         ...(r?.problem ? { problem: r.problem } : {}),
         hasPassword: this.deps.store.hasPassword(e.id),
+        canStorePassword: this.deps.store.canStorePasswords(),
         ...(r?.info ? { info: r.info } : {}),
         ...(r?.account ? { account: r.account } : {}),
         ...(r?.relayUpdate ? { relayUpdate: r.relayUpdate } : {})

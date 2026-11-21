@@ -291,3 +291,28 @@ test('файл в строке «сейчас» — ссылка, которая
   await link.click()
   await expect.poll(shellLog).toContainEqual({ action: 'open', path: aTs() })
 })
+
+test('«Посмотреть» открывает файл поверх ленты на строке из текста, только для чтения', async () => {
+  const win = await launch(SAY('Правил src/a.ts:3 и setup.exe'))
+  const link = win.locator('[data-testid="path-link"]').first()
+  await expect(link).toBeVisible({ timeout: 15000 })
+  await link.click({ button: 'right' })
+  await win.locator('[data-testid="path-view"]').click()
+
+  const viewer = win.locator('[data-testid="file-viewer"]')
+  await expect(viewer).toBeVisible()
+  await expect(viewer).toContainText('export const a = 1')
+  await expect(viewer.locator('.tok-keyword').first()).toBeVisible()
+  await expect(viewer.locator('[data-testid="file-viewer-target"]')).toHaveAttribute('data-line', '3')
+  await expect(viewer.locator('input, textarea, [contenteditable]')).toHaveCount(0)
+  // Esc closes the layer.
+  await win.keyboard.press('Escape')
+  await expect(viewer).toBeHidden()
+
+  // A program is not for the viewer.
+  const exe = win.locator('[data-testid="path-link"]', { hasText: 'setup.exe' })
+  if (await exe.count()) {
+    await exe.first().click({ button: 'right' })
+    await expect(win.locator('[data-testid="path-view"]')).toHaveCount(0)
+  }
+})

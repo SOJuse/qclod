@@ -1,14 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ClipboardCopy, Copy, ExternalLink, FolderOpen, SquarePen, type LucideIcon } from 'lucide-react'
+import { ClipboardCopy, Copy, Eye, ExternalLink, FolderOpen, SquarePen, type LucideIcon } from 'lucide-react'
 import type { ResolvedPath, TabId } from '../../shared/types'
 import { useAppStore } from '../state/useAppStore'
 import { relativePath } from './linkify'
+import { viewLayerFor } from './viewable'
 import { freshTarget } from './useResolvedPaths'
 import { ERROR_ICON } from '../ui/icons'
 
 interface Item {
   label: string
+  testId?: string
   Icon: LucideIcon
   /** Returns a message to show instead of closing, or nothing. */
   run: () => Promise<string | null | void>
@@ -70,6 +72,20 @@ export function PathMenu({
         if (!fresh) return null
         return window.qclod.openInEditor(tabId, fresh.absPath, fresh.line, fresh.column)
       }
+    })
+  }
+
+  // Last, so the older items keep their places: a local chat's text file opens in
+  // the viewer over the ribbon, at the line named in the text.
+  if (viewLayerFor(target)) {
+    items.push({
+      label: 'Посмотреть',
+      testId: 'path-view',
+      Icon: Eye,
+      run: act(async (p) => {
+        const layer = viewLayerFor(p)
+        if (layer) useAppStore.getState().setPaneLayer(tabId, layer)
+      })
     })
   }
 
@@ -152,7 +168,7 @@ export function PathMenu({
           role="menuitem"
           tabIndex={i === active ? 0 : -1}
           className={`path-menu-item ring-on-parent${i === active ? ' is-active' : ''}`}
-          data-testid="path-menu-item"
+          data-testid={item.testId ?? 'path-menu-item'}
           title={item.label}
           onMouseEnter={() => setActive(i)}
           onClick={(e) => {

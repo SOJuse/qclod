@@ -10,8 +10,11 @@ import { compactNow, sendCommand } from '../input/slash'
 import { REMOTE_BLOCK_TEXT, REMOTE_OFF, isRemoteLive } from '../../shared/remote'
 import {
   draftWithReturned,
+  needsUpload,
   pendingFromSent,
   prepareAttachment,
+  prepareRemoteFile,
+  type PendingFile,
   type PendingImage
 } from '../input/attachments'
 import { Ribbon } from './Ribbon'
@@ -283,6 +286,31 @@ export function ChatPane({
     )
   }
 
+  // Stage 6: a server chat's file goes to the server the moment it is attached —
+  // dropped, pasted or picked. The chip says «загружаю на сервер…», a send waits
+  // for it (isPreparing), and the message carries the server's path.
+  const isServerChat = tab?.server !== undefined
+  const tabAttachments = attachmentsByTab[tabId]
+  useEffect(() => {
+    if (!isServerChat || !tabAttachments) return
+    const fresh = tabAttachments.filter(needsUpload)
+    if (fresh.length === 0) return
+    setAttachments(
+      tabId,
+      tabAttachments.map((item) => (fresh.includes(item as PendingFile) ? { ...item, uploading: true as const } : item))
+    )
+    for (const item of fresh) {
+      void prepareRemoteFile(item, (path) => window.qclod.uploadRemoteFile(tabId, path)).then((done) => {
+        setAttachments(
+          tabId,
+          (useAppStore.getState().attachmentsByTab[tabId] ?? []).map((chip) =>
+            chip.kind === 'file' && chip.path === item.path && chip.uploading ? done : chip
+          )
+        )
+      })
+    }
+  }, [isServerChat, tabAttachments, tabId, setAttachments])
+
   /**
    * «Стоп» handed the queue back: its texts go into the field before what is
    * already typed, its attachments back as chips — nothing the user wrote is
@@ -292,7 +320,12 @@ export function ChatPane({
     if (returned.length === 0) return
     const state = useAppStore.getState()
     setDraft(tabId, draftWithReturned(returned.map((r) => r.text), state.draftByTab[tabId] ?? ''))
-    const chips = returned.flatMap((r) => r.attachments.map(pendingFromSent))
+    // A server chat's file came back with its server path: it is there already, not uploaded again.
+    const chips = returned.flatMap((r) =>
+      r.attachments.map((a) =>
+        a.kind === 'file' && tab?.server ? { kind: 'file' as const, path: a.path, remotePath: a.path } : pendingFromSent(a)
+      )
+    )
     setAttachments(tabId, [...chips, ...(state.attachmentsByTab[tabId] ?? [])])
     // An image that came back without main's copy is prepared again.
     for (const chip of chips) {

@@ -16,7 +16,8 @@ import type {
   TabState,
   UserInput
 } from '../shared/types'
-import { buildFileIndex } from './files/fileIndex'
+import { FILE_INDEX_LIMIT, buildFileIndex } from './files/fileIndex'
+import { RemoteIndexCache, UPLOAD_TOO_LARGE_TEXT, uploadFailedText, uploadFile } from './ssh/uploads'
 import { MAX_PER_CALL, type PathResolver } from './files/pathResolver'
 import { openInEditor, openPath, revealPath } from './files/fileActions'
 import { pasteMediaType, pasteRealPath } from './files/imagePaste'
@@ -134,6 +135,10 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     userData: deps.userData,
     openPath
   })
+  // Stage 6 (task 25): a server chat's @-list, kept a minute per tab.
+  const remoteIndex = new RemoteIndexCache()
+  const serverClient = (hostId: string): Promise<RelayReader> =>
+    deps.serverClient ? deps.serverClient(hostId) : Promise.reject(new Error('серверы недоступны'))
 
   ipcMain.handle(CHANNELS.tabsList, () => withFault(CHANNELS.tabsList, () => controller.list()))
 
@@ -147,6 +152,7 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     broker.cancelTab(id)
     deps.resolver.forget(id)
     viewer.forget(id)
+    remoteIndex.forget(id)
     await controller.close(id)
   })
 
@@ -485,7 +491,31 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!isString(id)) return []
     const tab = controller.list().find((t) => t.id === id)
     if (!tab || tab.missingCwd) return []
+    // A server chat's files are the server's: fs.index of its folder (stage 6).
+    if (tab.server) {
+      const { hostId } = tab.server
+      return remoteIndex.files(() => serverClient(hostId), id, tab.cwd, FILE_INDEX_LIMIT).catch(() => [])
+    }
     return buildFileIndex(tab.cwd)
+  })
+
+  // Stage 6: a file attached in a server chat goes to the server at once; the
+  // message carries its path there. Images still go as base64 (decision 8).
+  ipcMain.handle(CHANNELS.filesUploadRemote, async (_e, id: unknown, localPath: unknown) => {
+    if (!isString(id) || !isString(localPath) || localPath === '' || localPath.length > 4096) {
+      return { error: uploadFailedText('неверный запрос') }
+    }
+    const tab = controller.list().find((t) => t.id === id)
+    if (!tab?.server) return { error: uploadFailedText('это не чат на сервере') }
+    const s = tab.server.relaySessionId
+    if (!s) return { error: uploadFailedText('чат на сервере ещё не открыт') }
+    try {
+      const remotePath = await uploadFile(await serverClient(tab.server.hostId), s, localPath)
+      return { remotePath }
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e)
+      return { error: why === UPLOAD_TOO_LARGE_TEXT ? why : uploadFailedText(why) }
+    }
   })
 
   // Which of the paths in a tab's text exist, relative to the tab's folder.

@@ -5,6 +5,8 @@ import { filterPaths } from '../shared/fuzzy'
 export { filterPaths }
 
 const DEFAULT_LIMIT = 8000
+/** How many files an @-list holds; a server chat's (fs.index) the same. */
+export const FILE_INDEX_LIMIT = DEFAULT_LIMIT
 
 /** Never worth indexing, .gitignore or not. */
 const ALWAYS_SKIP = new Set(['.git', 'node_modules', '.hg', '.svn'])

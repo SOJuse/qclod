@@ -9,6 +9,7 @@ import type {
   TemplateProposal
 } from '../../../shared/types'
 import { useModalFocus } from '../../ui/modalFocus'
+import { useEscape } from './TemplateManager'
 import './HarvestSheet.css'
 
 /** Where «Собрать мои шаблоны» is: reading, showing what would go, asking Claude, the answer, or why not. */
@@ -94,6 +95,7 @@ export function HarvestSheetView(props: ViewProps): JSX.Element {
   const { state, projects, excluded, showItems, checked } = props
   const sheet = useRef<HTMLDivElement | null>(null)
   const trap = useModalFocus(sheet, props.onFocusLost)
+  useEscape(props.onClose)
 
   return (
     <div className="sheet-backdrop" onMouseDown={props.onClose}>
@@ -107,14 +109,7 @@ export function HarvestSheetView(props: ViewProps): JSX.Element {
         aria-label="Собрать мои шаблоны"
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
-            e.preventDefault()
-            props.onClose()
-            return
-          }
-          trap(e)
-        }}
+        onKeyDown={trap}
       >
         <header className="sheet-head">
           <h2 className="sheet-title">Собрать мои шаблоны</h2>

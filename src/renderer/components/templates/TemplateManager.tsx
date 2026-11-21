@@ -6,6 +6,25 @@ import { useTemplates } from '../../state/useTemplates'
 import { useModalFocus } from '../../ui/modalFocus'
 import './TemplateManager.css'
 
+/**
+ * Esc closes the sheet wherever the focus is — also after the button that had
+ * it went away (a saved template's «Сохранить»).
+ */
+export function useEscape(onEscape: () => void): void {
+  const latest = useRef(onEscape)
+  latest.current = onEscape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.isComposing) return
+      e.preventDefault()
+      latest.current()
+    }
+    // Capture: before anything under the sheet could take the key for itself.
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+}
+
 interface Props {
   /** «Сохранить черновик как шаблон»: the editor opens on a new template with this text. */
   initialBody?: string
@@ -53,6 +72,7 @@ export function TemplateManagerView({
   const search = useRef<HTMLInputElement | null>(null)
   const bodyField = useRef<HTMLTextAreaElement | null>(null)
   const trap = useModalFocus(sheet, onFocusLost)
+  useEscape(onClose)
 
   useEffect(() => {
     if (initialBody !== undefined) bodyField.current?.focus()
@@ -81,7 +101,10 @@ export function TemplateManagerView({
       title: editing.title,
       body: editing.body
     })
-    if (saved) open(null)
+    if (saved) {
+      open(null)
+      search.current?.focus()
+    }
     else setFailed(full ? 'Шаблонов уже 500 — удалите ненужные.' : 'Не сохранилось.')
   }
 
@@ -89,6 +112,7 @@ export function TemplateManagerView({
     if (editing?.id === undefined) return
     await window.qclod.templatesDelete(editing.id)
     open(null)
+    search.current?.focus()
   }
 
   return (
@@ -101,14 +125,7 @@ export function TemplateManagerView({
         aria-modal="true"
         aria-label="Шаблоны"
         onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
-            e.preventDefault()
-            onClose()
-            return
-          }
-          trap(e)
-        }}
+        onKeyDown={trap}
       >
         <header className="sheet-head">
           <h2 className="sheet-title">Шаблоны</h2>

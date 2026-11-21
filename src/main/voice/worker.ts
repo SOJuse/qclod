@@ -6,6 +6,7 @@ import { FakeSpeechEngine } from './fakeEngine'
 import type { FromWorker, ModelPaths, ToWorker } from './protocol'
 import { SherpaEngine } from './sherpaEngine'
 import { SileroVad } from './sileroVad'
+import { WhisperServerEngine } from './whisperServerEngine'
 import { WorkerCore } from './workerCore'
 
 const port = process.parentPort
@@ -25,22 +26,17 @@ function fakeScript(): string[] | null {
 const script = fakeScript()
 const crashAfterFinal = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_SPEECH_CRASH'] === '1' : false
 
-function gpuFailed(message: string): Error & { code: 'gpu-failed' } {
-  return Object.assign(new Error(message), { code: 'gpu-failed' as const })
-}
-
-function makeEngine(p: ModelPaths, threads: number): SpeechEngine {
+function makeEngine(p: ModelPaths, threads: number, prompt: string): SpeechEngine {
   if (__QCLOD_TEST_SEAMS__ && script !== null) return new FakeSpeechEngine(script)
   if (p.kind === 'sherpa') return new SherpaEngine(p, threads)
-  // Whisper on the GPU arrives with task 7.
-  return {
-    model: p.model,
-    load: async () => {
-      throw gpuFailed('Whisper on the GPU is not built yet')
-    },
-    decode: async () => '',
-    dispose: async () => {}
-  }
+  return new WhisperServerEngine({
+    exe: p.exe,
+    ggml: p.ggml,
+    threads,
+    prompt,
+    // main kills it if this process dies first (voiceHost.ts).
+    onPid: (pid) => port.postMessage({ type: 'pid', pid } satisfies FromWorker)
+  })
 }
 
 function makeVad(p: ModelPaths): VoiceActivity {

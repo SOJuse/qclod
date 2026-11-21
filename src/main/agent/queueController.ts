@@ -3,6 +3,7 @@ import type { QueuedMessage, UserInput } from '../../shared/types'
 import type { AgentDriver, InterruptReceipt, SendPriority } from './driver'
 import { composeText } from './userMessage'
 import { Outbox, queueModeFrom, type OutboxEntry } from './outbox'
+import type { RelayMeta } from './subagentRelay'
 
 /** Messages on the strip, not read by the agent yet; one more is handed back rather than kept. */
 export const MAX_QUEUED = 20
@@ -20,9 +21,26 @@ function withoutCopiedBytes(input: UserInput): UserInput {
   }
 }
 
-/** The host's options for a message sent by Qclod itself; none for the person's. */
-function marks(auto: boolean | undefined): { auto?: boolean } {
-  return auto ? { auto: true } : {}
+/** The host's options for a message: Qclod's own, a message to a subagent; none for a plain one. */
+function marks(auto: boolean | undefined, relay?: RelayMeta): { auto?: boolean; relay?: RelayMeta } {
+  return { ...(auto ? { auto: true } : {}), ...(relay ? { relay } : {}) }
+}
+
+/**
+ * A message on its way, as the strip hands it to a successor and takes it
+ * back from one: a message to a subagent keeps what it is (stage 4).
+ */
+export type QueuedInput = UserInput & { relay?: RelayMeta }
+
+/** How a message goes beyond its text: its priority, and what it carries to a subagent. */
+interface Extra {
+  priority?: SendPriority
+  relay?: RelayMeta
+}
+
+function plain(input: QueuedInput): UserInput {
+  const { relay: _relay, ...rest } = input
+  return rest
 }
 
 /** What the queue needs from the session it serves; the session keeps turns, waits and status. */
@@ -38,8 +56,18 @@ export interface QueueHost {
   /** turnRunning = false, status idle unless a card is open. */
   endTurn(): void
   currentTurn(): number
-  /** `auto` — sent by Qclod itself, the bubble is marked «авто». */
-  showUser(input: UserInput, composed: string, echoOf: string | null, opts?: { auto?: boolean }): void
+  /**
+   * `auto` — sent by Qclod itself, the bubble is marked «авто». `relay` — a
+   * message to a subagent: the bubble shows the person's words, and it is read.
+   */
+  showUser(
+    input: UserInput,
+    composed: string,
+    echoOf: string | null,
+    opts?: { auto?: boolean; relay?: RelayMeta }
+  ): void
+  /** A message to a subagent was taken off the strip unread: it never went. */
+  relayCancelled(relay: RelayMeta): void
   /** Before init: kept for a resend (`sentBeforeInit`) — unless `auto`, which is never resent. */
   remember(sent: UserInput, opts?: { auto?: boolean }): void
   emitQueue(view: QueuedMessage[]): void
@@ -126,8 +154,8 @@ export class QueueController {
    * A message for a session that is up: under a uuid of its own. `auto` — sent
    * by Qclod itself («продолжай»): its bubble, now or when read, says «авто».
    */
-  submit(input: UserInput, opts: { auto?: boolean } = {}): void {
-    this.dispatch(input, randomUUID(), opts.auto === true)
+  submit(input: UserInput, opts: { auto?: boolean } & Extra = {}): void {
+    this.dispatch(input, randomUUID(), opts.auto === true, extraOf(opts))
   }
 
   /**
@@ -138,20 +166,20 @@ export class QueueController {
    * it shows when the CLI says the agent read it — or at once, with a CLI that
    * says nothing about its queue.
    */
-  private dispatch(input: UserInput, uuid: string, auto = false): void {
-    if (!this.host.turnRunning() || this.stopsInFlight > 0) this.sendNowAs(input, uuid, auto)
-    else if (this.cliQueueOn) this.enqueue(input, uuid, undefined, auto)
-    else this.foldNow(input, uuid, auto)
+  private dispatch(input: UserInput, uuid: string, auto = false, extra: Extra = {}): void {
+    if (!this.host.turnRunning() || this.stopsInFlight > 0) this.sendNowAs(input, uuid, auto, extra)
+    else if (this.cliQueueOn) this.enqueue(input, uuid, extra.priority, auto, extra.relay)
+    else this.foldNow(input, uuid, auto, extra)
   }
 
   /** Starts a turn of its own: shown at once, given to the agent. */
-  private sendNowAs(input: UserInput, uuid: string, auto: boolean): void {
+  private sendNowAs(input: UserInput, uuid: string, auto: boolean, extra: Extra = {}): void {
     const driver = this.host.driver()
     if (!driver) return
     const composed = composeText(input)
-    this.host.showUser(input, composed, uuid, marks(auto))
+    this.host.showUser(input, composed, uuid, marks(auto, extra.relay))
     this.host.startTurn({ evenIfWaiting: true })
-    this.transmit(driver, { ...input, text: composed }, uuid, auto)
+    this.transmit(driver, { ...input, text: composed }, uuid, auto, extra.priority)
   }
 
   /**
@@ -159,39 +187,47 @@ export class QueueController {
    * once, no new turn. Its echo is still expected — such a CLI may run it as
    * a turn of its own, and echo it — until the result that carried it.
    */
-  private foldNow(input: UserInput, uuid: string, auto: boolean): void {
+  private foldNow(input: UserInput, uuid: string, auto: boolean, extra: Extra = {}): void {
     const driver = this.host.driver()
     if (!driver) return
     const composed = composeText(input)
-    this.host.showUser(input, composed, uuid, marks(auto))
-    this.transmit(driver, { ...input, text: composed }, uuid, auto)
+    this.host.showUser(input, composed, uuid, marks(auto, extra.relay))
+    this.transmit(driver, { ...input, text: composed }, uuid, auto, extra.priority)
   }
 
   /** What is on screen goes to the agent; before init it is also kept for a resend. */
-  private transmit(driver: AgentDriver, sent: UserInput, uuid: string, auto: boolean): void {
+  private transmit(driver: AgentDriver, sent: UserInput, uuid: string, auto: boolean, priority?: SendPriority): void {
     this.host.remember(sent, marks(auto))
-    driver.send(sent, { uuid })
+    driver.send(sent, priority ? { uuid, priority } : { uuid })
   }
 
   /** Onto the strip and to the CLI; its lifecycle frames take it from there. */
-  private enqueue(input: UserInput, uuid: string, priority?: SendPriority, auto = false): void {
+  private enqueue(input: UserInput, uuid: string, priority?: SendPriority, auto = false, relay?: RelayMeta): void {
     const driver = this.host.driver()
     if (!driver) return
     const composed = composeText(input)
-    this.outbox.add({ uuid, input, composed, state: 'sending', ...(auto ? { auto: true as const } : {}) })
+    this.outbox.add({
+      uuid,
+      input,
+      composed,
+      state: 'sending',
+      ...(auto ? { auto: true as const } : {}),
+      ...(relay ? { relay } : {})
+    })
     this.emitQueue()
     // Without a priority the CLI takes it as 'next': read at the next step boundary.
     driver.send({ ...input, text: composed }, priority ? { uuid, priority } : { uuid })
   }
 
   /** Held until the agent is up. The uuid is the one it will go with (ruling R2). */
-  hold(input: UserInput, opts: { auto?: boolean } = {}): void {
+  hold(input: UserInput, opts: { auto?: boolean } & Extra = {}): void {
     this.outbox.add({
       uuid: randomUUID(),
       input,
       composed: composeText(input),
       state: 'waiting',
-      ...(opts.auto ? { auto: true as const } : {})
+      ...(opts.auto ? { auto: true as const } : {}),
+      ...extraOf(opts)
     })
     this.emitQueue()
   }
@@ -202,7 +238,7 @@ export class QueueController {
     if (!this.host.driver() || waiting.length === 0) return false
     for (const entry of waiting) {
       this.outbox.remove(entry.uuid)
-      this.dispatch(entry.input, entry.uuid, entry.auto === true)
+      this.dispatch(entry.input, entry.uuid, entry.auto === true, extraOf(entry))
     }
     this.emitQueue()
     return true
@@ -267,12 +303,14 @@ export class QueueController {
     // has the copy, and main reads it again on the next send. Nothing goes
     // back from a strip that was handed to a successor meanwhile. Qclod's own
     // «продолжай» is taken off but not put in the person's input field.
+    // A message to a subagent is not either: the instruction is not the person's text (Review Focus 4).
     const returned: UserInput[] = []
     if (epoch === this.outboxEpoch) {
       for (const entry of handing) {
         if (cancelled.has(entry.uuid)) {
           this.outbox.remove(entry.uuid)
-          if (!entry.auto) returned.push(withoutCopiedBytes(entry.input))
+          if (entry.relay) this.host.relayCancelled(entry.relay)
+          else if (!entry.auto) returned.push(withoutCopiedBytes(entry.input))
         } else if (this.outbox.get(entry.uuid) === entry) {
           // The CLI kept it, or the agent read it first: it is as it was.
           entry.requestedCancel = false
@@ -299,7 +337,7 @@ export class QueueController {
     // gone: nothing to ask anyone.
     if (entry.state === 'waiting' || !driver) {
       this.dropEntry(id)
-      return withoutCopiedBytes(entry.input)
+      return this.handedBack(entry)
     }
     const was = entry.state
     entry.requestedCancel = true
@@ -312,7 +350,7 @@ export class QueueController {
     if (answer === true) {
       // Its `cancelled` frame may have taken it off the strip already.
       this.dropEntry(id)
-      return withoutCopiedBytes(entry.input)
+      return this.handedBack(entry)
     }
     if (this.outbox.get(id) === entry) {
       entry.requestedCancel = false
@@ -320,6 +358,18 @@ export class QueueController {
       this.emitQueue()
     }
     return null
+  }
+
+  /**
+   * What «Отменить» gives the input field. Nothing for a message to a
+   * subagent: the field would get the instruction, not what the person wrote.
+   */
+  private handedBack(entry: OutboxEntry): UserInput | null {
+    if (entry.relay) {
+      this.host.relayCancelled(entry.relay)
+      return null
+    }
+    return withoutCopiedBytes(entry.input)
   }
 
   /**
@@ -353,7 +403,7 @@ export class QueueController {
     if (answer === true) {
       // Off and on again in one go, so the tab is not let go in between.
       this.outbox.remove(id)
-      this.enqueue(entry.input, randomUUID(), 'now', entry.auto === true)
+      this.enqueue(entry.input, randomUUID(), 'now', entry.auto === true, entry.relay)
       return true
     }
     if (this.outbox.get(id) === entry) entry.requestedCancel = false
@@ -376,7 +426,7 @@ export class QueueController {
    * dropped, not handed over: the successor is the person's messages only
    * (decision 12), and the core decides afresh whether it carries on.
    */
-  take(): UserInput[] {
+  take(): QueuedInput[] {
     const strip = this.outbox.pending()
     const resent = [...this.resending.values()]
       .map((r) => r.entry)
@@ -386,20 +436,20 @@ export class QueueController {
     this.outboxEpoch += 1
     for (const entry of strip) this.outbox.remove(entry.uuid)
     if (strip.length > 0) this.emitQueue()
-    return entries.filter((e) => !e.auto).map((e) => e.input)
+    return entries.filter((e) => !e.auto).map((e) => (e.relay ? { ...e.input, relay: e.relay } : e.input))
   }
 
   /**
    * Takes over a predecessor's strip. A session that is up sends it all at
    * once, as if just typed; one that is not holds it until it is.
    */
-  requeue(inputs: UserInput[]): void {
+  requeue(inputs: QueuedInput[]): void {
     if (inputs.length === 0) return
     if (!this.host.driver()) {
-      for (const input of inputs) this.hold(input)
+      for (const input of inputs) this.hold(plain(input), input.relay ? { relay: input.relay } : {})
       return
     }
-    for (const input of inputs) this.dispatch(input, randomUUID())
+    for (const input of inputs) this.dispatch(plain(input), randomUUID(), false, input.relay ? { relay: input.relay } : {})
   }
 
   /** init comes again with every turn; what it says of the queue only ever turns it on. */
@@ -444,8 +494,10 @@ export class QueueController {
           break
         }
         this.dropEntry(entry.uuid)
+        // Asked for, the one who asked has settled it (Стоп, «Отменить»).
         if (!entry.requestedCancel) {
-          this.host.notice(`${NOT_DELIVERED} — «${entry.input.text}»`, 'error')
+          if (entry.relay) this.host.relayCancelled(entry.relay)
+          this.host.notice(`${NOT_DELIVERED} — «${entry.relay?.text ?? entry.input.text}»`, 'error')
         }
         break
       default:
@@ -507,7 +559,7 @@ export class QueueController {
     // expectation that could swallow the same words typed later (ruling R10).
     // One that starts a turn of its own may be, until that turn's result.
     const folded = this.host.turnRunning() && !this.heldByQueue
-    this.host.showUser(entry.input, entry.composed, folded ? null : entry.uuid, marks(entry.auto))
+    this.host.showUser(entry.input, entry.composed, folded ? null : entry.uuid, marks(entry.auto, entry.relay))
     this.host.remember({ ...entry.input, text: entry.composed }, marks(entry.auto))
     if (folded) return
     this.heldByQueue = false
@@ -561,5 +613,13 @@ export class QueueController {
 
   private emitQueue(): void {
     this.host.emitQueue(this.view())
+  }
+}
+
+/** Only what is there: an absent priority or relay stays absent. */
+function extraOf(from: Extra): Extra {
+  return {
+    ...(from.priority ? { priority: from.priority } : {}),
+    ...(from.relay ? { relay: from.relay } : {})
   }
 }

@@ -280,6 +280,24 @@ function personText(value: unknown, max: number): string | undefined {
   return text !== '' && text.length <= max ? text : undefined
 }
 
+/** What the person writes to a subagent: as long as a message can sensibly be. */
+const MAX_SUBAGENT_TEXT = 50_000
+
+/**
+ * A message to a subagent (stage 4), trimmed: null when it is not a string,
+ * empty after trimming, or longer than 50 000 characters.
+ */
+export function sanitizeSubagentText(value: unknown): string | null {
+  return personText(value, MAX_SUBAGENT_TEXT) ?? null
+}
+
+/** A ribbon card's id from the window (stage 4): a short string, never an SDK id. */
+const MAX_CARD_ID = 64
+
+export function sanitizeCardId(value: unknown): string | null {
+  return isString(value) && value !== '' && value.length <= MAX_CARD_ID ? value : null
+}
+
 /**
  * The user's comments on the options chosen in a question card: question text
  * -> comment, trimmed. An empty or over-long comment is none.

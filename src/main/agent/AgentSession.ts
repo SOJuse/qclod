@@ -18,13 +18,15 @@ import type {
   RibbonChange,
   RibbonItem,
   SessionStatus,
+  SubagentSendResult,
   TabId,
   TaskOutput,
   TodoItem,
   UserInput
 } from '../../shared/types'
 import { REMOTE_OFF, explainRemoteError, isRemoteLive, remoteFromMessage } from '../../shared/remote'
-import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
+import type { AgentDriver, DriverFactory, DriverOptions, SendPriority } from './driver'
+import { agentRef, relayInstruction, subagentRoute, type RelayMeta } from './subagentRelay'
 import type { AskedQuestion as CoreQuestion, AutonomyInput } from '../../core/autonomy/types'
 import type { ToolPermissionContext } from './permissionContext'
 import { parseExtraFlags } from './launchFlags'
@@ -108,13 +110,14 @@ export interface AgentSessionOptions {
 /** The default of `autoAnswerMinutes`. */
 const AUTO_ANSWER_MINUTES = 5
 
-/**
- * How a message is sent — one object for stages 3 and 4 (cross-plan check F18).
- * Stage 4 (task 10) adds `priority?: SendPriority` and `relay?: RelayMeta` here.
- */
+/** How a message is sent — one object for stages 3 and 4 (cross-plan check F18). */
 export interface SendOptions {
   /** Sent by Qclod itself («продолжай»): the bubble says «авто», and it is not the person acting. */
   auto?: boolean
+  /** Stage 4: how soon the CLI takes it; 'next' when absent. */
+  priority?: SendPriority
+  /** Stage 4: the person's message to a subagent, which this instruction carries. */
+  relay?: RelayMeta
 }
 
 /** The questions of an AskUserQuestion input as the core reads them: labels as they came. */
@@ -262,6 +265,8 @@ export class AgentSession {
   >()
   /** `claude_code_version` from system/init: how a card's comments and edits can reach this CLI. */
   private cliVersion: string | null = null
+  /** The last system/init: which tools this CLI has (stage 4, `subagentRoute`). */
+  private lastInit: Record<string, unknown> | null = null
   /** Permission questions still waiting on the user; aborting one refuses it. */
   private readonly openPermissions = new Map<string, { controller: AbortController; turn: number }>()
   /**
@@ -302,7 +307,8 @@ export class AgentSession {
       remember: (sent, opts) => this.remember(sent, opts),
       emitQueue: (view) => this.emitPanel(this.collector.setQueue(view)),
       notice: (text, tone) => this.emit(this.builder.notice(text, tone)),
-      cancelWaits: (scope) => this.cancelWaits(scope)
+      cancelWaits: (scope) => this.cancelWaits(scope),
+      relayCancelled: (relay) => this.emit(this.builder.markRelay(relay.relayId, 'cancelled'))
     })
   }
 
@@ -900,15 +906,61 @@ export class AgentSession {
     const auto = opts.auto === true
     const starting = !this.driver && this.state === 'starting'
     if (!this.driver && !starting) return false
+    const how = {
+      ...(auto ? { auto } : {}),
+      ...(opts.priority ? { priority: opts.priority } : {}),
+      ...(opts.relay ? { relay: opts.relay } : {})
+    }
     if (starting) {
       if (this.queue.size >= MAX_QUEUED) return false
-      this.queue.hold(input, auto ? { auto } : {})
+      this.queue.hold(input, how)
     } else {
       if (this.queue.wouldOverflow()) return false
-      this.queue.submit(input, auto ? { auto } : {})
+      this.queue.submit(input, how)
     }
     if (!auto) this.feedAutonomy({ type: 'personActed' })
     return true
+  }
+
+  /**
+   * Writes to a subagent through the main agent (stage 4, decisions 4, 5, 9).
+   * The window names only the card; the agent's id comes from this ribbon.
+   * A foreground agent holds the main agent's turn, so it is first moved to
+   * the background and the message goes as 'next'; if it cannot be moved, as
+   * 'now' — the CLI moves what it can by itself. The person's message shows
+   * in the agent's ribbon at once, and moves on from `sent` as the main
+   * agent reads it and passes it on.
+   */
+  async sendToSubagent(cardId: string, text: string): Promise<SubagentSendResult> {
+    const body = text.trim()
+    if (body === '') return { ok: false, reason: 'empty' }
+    if (this.disposed) return { ok: false, reason: 'not-running' }
+    const card = this.builder.subagentCard(cardId)
+    if (!card) return { ok: false, reason: 'unknown-agent' }
+    const ref = agentRef(card)
+    if (ref === null) return { ok: false, reason: 'not-started' }
+    if (subagentRoute(this.lastInit) === 'none') return { ok: false, reason: 'no-send-message' }
+
+    let priority: SendPriority = 'next'
+    if (card.state === 'running' && card.background !== true) {
+      let moved: boolean | null = null
+      try {
+        moved = this.driver ? await this.driver.backgroundTask(card.toolUseId) : null
+      } catch {
+        moved = null
+      }
+      if (this.disposed) return { ok: false, reason: 'not-running' }
+      if (moved !== true) priority = 'now'
+    }
+
+    const relay: RelayMeta = { relayId: randomUUID(), cardId, agent: card.name, text: body }
+    this.emit(this.builder.addRelay(cardId, body, relay.relayId))
+    const taken = this.send({ text: relayInstruction(ref, body), attachments: [] }, { priority, relay })
+    if (!taken) {
+      this.emit(this.builder.markRelay(relay.relayId, 'cancelled'))
+      return { ok: false, reason: 'not-running' }
+    }
+    return { ok: true }
   }
 
   /** turn += 1 and the tab working, unless a card is open — or even then (`evenIfWaiting`). */
@@ -935,8 +987,21 @@ export class AgentSession {
     input: UserInput,
     composed: string,
     echoOf: string | null,
-    opts: { auto?: boolean } = {}
+    opts: { auto?: boolean; relay?: RelayMeta } = {}
   ): void {
+    // A message to a subagent: the bubble is what the person wrote, marked
+    // with whom it is for; the instruction is only the agent's to read. The
+    // echo, if one comes, is of the instruction.
+    const relay = opts.relay
+    if (relay) {
+      this.emit(
+        this.builder.addUser(relay.text, [], echoOf === null ? null : composed, echoOf ?? undefined, {
+          relay: { cardId: relay.cardId, agent: relay.agent }
+        })
+      )
+      this.emit(this.builder.markRelay(relay.relayId, 'read'))
+      return
+    }
     // The ribbon shows an image by its thumbnail, or by its copy on disk when
     // there is none (a large GIF or WebP); the full bytes (up to ~5 MB of
     // base64) would otherwise ride along in every snapshot.
@@ -1428,6 +1493,7 @@ export class AgentSession {
   }
 
   private onInit(m: Record<string, unknown>): void {
+    this.lastInit = m
     this.queue.onInit(m)
     if (typeof m['claude_code_version'] === 'string') this.cliVersion = m['claude_code_version']
     const id = typeof m['session_id'] === 'string' ? m['session_id'] : null

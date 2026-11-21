@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { TriangleAlert } from 'lucide-react'
-import { OFFLINE_STRIP_TEXT } from '../../shared/serverTexts'
+import { ShieldAlert, TriangleAlert } from 'lucide-react'
+import { KEY_CHANGED_STRIP_TEXT, OFFLINE_STRIP_TEXT, SERVER_REMOVED_TEXT } from '../../shared/serverTexts'
 import { ServerLoginDialog } from './servers/ServerLoginDialog'
 import type { FileSource, SessionSummary, TabId, UserInput } from '../../shared/types'
 import { FileViewer } from './viewer/FileViewer'
@@ -92,6 +92,10 @@ interface Props {
   /** Why the tab's ribbon could not be read; `onRetryRibbon` asks again. */
   ribbonError?: string | null
   onRetryRibbon?: () => void
+  /** Ctrl+K's palette, for the server terminal's Ctrl+Shift+K (R10). */
+  onOpenPalette?: () => void
+  /** A server's checklist in the servers' sheet — for a changed host key (R5). */
+  onOpenServerChecklist?: (hostId: string) => void
 }
 
 /**
@@ -115,7 +119,9 @@ export function ChatPane({
   notice,
   panelRequest = null,
   ribbonError = null,
-  onRetryRibbon
+  onRetryRibbon,
+  onOpenPalette,
+  onOpenServerChecklist
 }: Props): JSX.Element {
   const tabs = useAppStore((s) => s.tabs)
   const ribbonByTab = useAppStore((s) => s.ribbonByTab)
@@ -138,6 +144,11 @@ export function ChatPane({
   const servers = useAppStore((s) => s.servers)
   const server = tab?.server ? servers.find((s) => s.id === tab.server!.hostId) : undefined
   const serverAway = server !== undefined && server.state !== 'online' && server.state !== 'connecting'
+  /** A changed host key is a danger of its own (R5): the strip says what main said, in red. */
+  const keyChanged = server?.state === 'hostKeyChanged'
+  /** The chat's server is no longer in the list (R9): only once the list has come at all. */
+  const serversLoaded = useAppStore((s) => s.serversLoaded)
+  const serverGone = tab?.server !== undefined && server === undefined && serversLoaded
   /** Stage 6: «Войти» of the server's Claude account. */
   const [loginOpen, setLoginOpen] = useState(false)
   const status = tab?.status ?? 'stopped'
@@ -373,7 +384,9 @@ export function ChatPane({
           onTogglePanel={togglePanel}
           {...(split && onUnsplit ? { onUnsplit } : {})}
           server={server}
-          {...(server ? { onReconnect: () => void window.qclod.connectServer(server.id) } : {})}
+          {...(server ? { onReconnect: () => void window.qclod.connectServer(server.id).catch(() => undefined) } : {})}
+          {...(server && onOpenServerChecklist ? { onShowChecklist: () => onOpenServerChecklist(server.id) } : {})}
+          serverGone={serverGone}
           {...(server
             ? {
                 onToggleTerminal: () => useAppStore.getState().setTerminalShown(tabId, terminalShown !== true),
@@ -422,10 +435,22 @@ export function ChatPane({
 
             <NowLine tabId={tabId} status={status} since={busySinceByTab[tabId]} items={ribbonByTab[tabId] ?? []} />
 
-            {serverAway && (
-              <div className="server-offline-strip" data-testid="server-offline" role="status">
-                {OFFLINE_STRIP_TEXT}
+            {serverGone ? (
+              <div className="server-offline-strip is-danger" data-testid="server-removed" role="alert">
+                <TriangleAlert size={14} aria-hidden="true" />
+                <span>{SERVER_REMOVED_TEXT}</span>
               </div>
+            ) : keyChanged ? (
+              <div className="server-offline-strip is-danger" data-testid="server-key-changed" role="alert">
+                <ShieldAlert size={14} aria-hidden="true" />
+                <span>{server?.problem || KEY_CHANGED_STRIP_TEXT}</span>
+              </div>
+            ) : (
+              serverAway && (
+                <div className="server-offline-strip" data-testid="server-offline" role="status">
+                  {OFFLINE_STRIP_TEXT}
+                </div>
+              )
             )}
 
             {notice && (
@@ -526,6 +551,7 @@ export function ChatPane({
               onImagePrepared={applyPrepared}
               heldDraft={heldDraft}
               onInsertHeldDraft={insertHeldDraft}
+              blockedText={serverGone ? 'Сервер удалён' : null}
               onPickFiles={() => {
                 void window.qclod.pickFiles().then((paths) => {
                   if (paths.length === 0) return
@@ -553,7 +579,12 @@ export function ChatPane({
             tabId={tabId}
             label={server.label || server.target}
             shown={terminalShown}
-            onHide={() => useAppStore.getState().setTerminalShown(tabId, false)}
+            onHide={() => {
+              useAppStore.getState().setTerminalShown(tabId, false)
+              // R10: hidden, the keys go back to the input line.
+              paneRef.current?.querySelector<HTMLTextAreaElement>('[data-composer-input]')?.focus()
+            }}
+            {...(onOpenPalette ? { onOpenPalette } : {})}
           />
         )}
       </div>

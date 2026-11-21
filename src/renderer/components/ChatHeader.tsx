@@ -25,6 +25,10 @@ interface Props {
   server?: ServerView | undefined
   /** «Повторить» / «Подключиться» of a server that is not on line. */
   onReconnect?: () => void
+  /** A changed host key: the checklist that says what to do (R5). */
+  onShowChecklist?: () => void
+  /** The chat's server was removed from the list (R9). */
+  serverGone?: boolean
   /** Stage 6: «Терминал» of a server chat — the drawer under the ribbon. */
   onToggleTerminal?: () => void
   terminalOpen?: boolean
@@ -53,6 +57,8 @@ export function ChatHeader({
   agentsCount = 0,
   server,
   onReconnect,
+  onShowChecklist,
+  serverGone = false,
   onToggleTerminal,
   terminalOpen = false
 }: Props): JSX.Element {
@@ -78,8 +84,14 @@ export function ChatHeader({
           <ServerLink
             state={server.state}
             {...(onReconnect ? { onRetry: onReconnect, onConnect: onReconnect } : {})}
+            {...(onShowChecklist ? { onChecklist: onShowChecklist } : {})}
           />
         </>
+      )}
+      {!server && serverGone && (
+        <span className="server-badge is-gone" data-testid="server-badge-gone">
+          Сервер удалён
+        </span>
       )}
       <span className="chat-header-status" data-testid="chat-header-status" data-status={status}>
         {STATUS_LABEL[status]}

@@ -7,6 +7,7 @@ import { SplitView } from './SplitView'
 import { dropOnPane, type DropPayload, type DropWhere } from './paneOps'
 import { openAndPlace } from './dropSession'
 import { restartChat } from './restartChat'
+import { fileIndexAsk, fileIndexKept } from './fileIndexPolicy'
 import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { Sidebar } from '../components/sidebar/Sidebar'
 import { ChatPane, type PanelRequest } from '../components/ChatPane'
@@ -22,10 +23,10 @@ import { withLocalCommands } from '../../shared/commandFilter'
 import { UpdateBanner } from '../components/UpdateBanner'
 import { ServersSheet, type ServersSheetMode } from '../components/servers/ServersSheet'
 import { SshPromptDialog } from '../components/servers/SshPromptDialog'
-import type { SshPrompt } from '../../shared/types'
+import { useSshPrompts } from '../components/servers/sshPromptQueue'
 import { compactNow } from '../input/slash'
 import { reasonOf } from '../ui/StateView'
-import { resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
+import { paletteActionKeepsFocus, resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
 import './App.css'
 
 /** A failed first read of the tabs is asked once more after this long. */
@@ -73,7 +74,7 @@ export function App(): JSX.Element {
   const [palette, setPalette] = useState<{ scope?: PaletteSection; n: number } | null>(null)
   /** Stage 6: the servers' sheet — a new chat on a server — and the questions ssh asks, in order. */
   const [serversSheet, setServersSheet] = useState<ServersSheetMode | null>(null)
-  const [sshPrompts, setSshPrompts] = useState<SshPrompt[]>([])
+  const [sshPrompt, answerSshPrompt] = useSshPrompts()
   const servers = useAppStore((s) => s.servers)
   const connectSteps = useAppStore((s) => s.connectSteps)
   /** Ctrl+W was pressed once on a working tab; a second press within 3 s closes it. */
@@ -266,8 +267,7 @@ export function App(): JSX.Element {
       ),
       // Stage 6: the servers, their checklists, ssh's questions.
       window.qclod.onServersChanged((list) => useAppStore.getState().setServers(list)),
-      window.qclod.onConnectProgress((e) => useAppStore.getState().setConnectSteps(e.hostId, e.steps)),
-      window.qclod.onSshPrompt((prompt) => setSshPrompts((queue) => [...queue, prompt]))
+      window.qclod.onConnectProgress((e) => useAppStore.getState().setConnectSteps(e.hostId, e.steps))
     ]
     window.qclod.listServers().then(
       (list) => useAppStore.getState().setServers(list),
@@ -363,9 +363,16 @@ export function App(): JSX.Element {
     (cwd?: string, hostId?: string): void => {
       // A folder on a server: a chat there at once (stage 6).
       if (cwd && hostId) {
-        void window.qclod.openServerFolder(hostId, cwd).then((tab) => {
-          if (tab) activate(tab.id)
-        })
+        // Not opened — the server is not on line, or the call failed: its checklist
+        // connects and opens the folder after, and says why when it cannot.
+        const viaChecklist = (): void => setServersSheet({ kind: 'connect', hostId, path: cwd })
+        window.qclod.openServerFolder(hostId, cwd).then(
+          (tab) => (tab ? activate(tab.id) : viaChecklist()),
+          (err: unknown) => {
+            console.warn('[servers] чат на сервере не открылся:', reasonOf(err))
+            viaChecklist()
+          }
+        )
         return
       }
       const create = (folder: string): void => {
@@ -529,11 +536,15 @@ export function App(): JSX.Element {
       }
     return {
       activateChat: focused(activate),
-      openProject: focused((cwd: string) => newChat(cwd)),
+      openProject: focused((cwd: string, hostId?: string) => newChat(cwd, hostId)),
       openSession: focused(openPast),
       insertMention: focused((path: string) => intoDraft((draft) => withMention(draft, path))),
       insertCommand: focused((name: string) => intoDraft((draft) => withCommand(draft, name))),
-      runAction: focused((id: AppActionId, arg?: string) => runAction(id, arg)),
+      // A server's folder picker or terminal takes focus itself (R2): the input line must not.
+      runAction: (id: AppActionId, arg?: string) => {
+        if (!paletteActionKeepsFocus(id)) focusComposer()
+        runAction(id, arg)
+      },
       openLayer: (layer) => {
         const state = useAppStore.getState()
         if (state.activeTabId) state.setPaneLayer(state.activeTabId, layer)
@@ -581,10 +592,27 @@ export function App(): JSX.Element {
 
   // The file index backs @-mentions; it is per folder, so it is fetched once
   // per tab rather than on every keystroke.
+  // A server tab's waits for the server and is asked again when it comes back on line (fileIndexPolicy).
+  const activeServerState = useAppStore((s) => {
+    const hostId = s.tabs.find((t) => t.id === s.activeTabId)?.server?.hostId
+    return hostId ? (s.servers.find((x) => x.id === hostId)?.state ?? 'idle') : null
+  })
+  const lastServerState = useRef<{ tabId: string; state: string | null } | null>(null)
   useEffect(() => {
-    if (!activeTabId || fileIndexByTab[activeTabId]) return
-    void window.qclod.fileIndex(activeTabId).then((paths) => setFileIndex(activeTabId, paths))
-  }, [activeTabId, fileIndexByTab, setFileIndex])
+    const before = lastServerState.current
+    lastServerState.current = { tabId: activeTabId, state: activeServerState }
+    if (!activeTabId) return
+    const cameOnline =
+      activeServerState === 'online' && before?.tabId === activeTabId && before.state !== null && before.state !== 'online'
+    if (!fileIndexAsk({ cached: fileIndexByTab[activeTabId] !== undefined, serverState: activeServerState, cameOnline })) return
+    const tabId = activeTabId
+    window.qclod.fileIndex(tabId).then(
+      (paths) => {
+        if (fileIndexKept(activeServerState, paths)) setFileIndex(tabId, paths)
+      },
+      () => undefined
+    )
+  }, [activeTabId, fileIndexByTab, setFileIndex, activeServerState])
 
   // The first tab the main process reports is the one to show.
   useEffect(() => {
@@ -729,6 +757,8 @@ export function App(): JSX.Element {
                 onFocus={() => focusPane(id)}
                 onCycleMode={cycleMode}
                 onOpenHistory={() => togglePalette('history')}
+                onOpenPalette={() => togglePalette()}
+                onOpenServerChecklist={(hostId) => setServersSheet({ kind: 'status', hostId })}
                 onOpenSession={openSession}
                 panelRequest={panelRequest}
                 ribbonError={ribbonErrors[id] ?? null}
@@ -767,16 +797,6 @@ export function App(): JSX.Element {
           onOpened={(tab) => activate(tab.id)}
         />
       )}
-      {sshPrompts[0] && (
-        <SshPromptDialog
-          key={sshPrompts[0].promptId}
-          prompt={sshPrompts[0]}
-          onAnswer={(answer) => {
-            void window.qclod.answerSshPrompt(answer)
-            setSshPrompts((queue) => queue.filter((p) => p.promptId !== answer.promptId))
-          }}
-        />
-      )}
       {settingsOpen && (
         <SettingsScreen
           settings={settings}
@@ -793,6 +813,8 @@ export function App(): JSX.Element {
           onFocusLost={focusComposer}
         />
       )}
+      {/* Last and highest (R3): ssh may ask while the settings or Ctrl+K are open. */}
+      {sshPrompt && <SshPromptDialog key={sshPrompt.promptId} prompt={sshPrompt} onAnswer={answerSshPrompt} />}
     </div>
   )
 }

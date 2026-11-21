@@ -89,6 +89,8 @@ interface Props {
   onInsertHeldDraft?: () => void
   /** Этап 5's voice input; without it the microphone is Windows dictation (Win+H). */
   voice?: VoiceControls
+  /** Set when nothing can be sent from here at all (a chat of a removed server, R9): the field says why and is off. */
+  blockedText?: string | null
 }
 
 const MAX_MATCHES = 8
@@ -202,7 +204,8 @@ export function Composer({
   onImagePrepared,
   heldDraft = false,
   onInsertHeldDraft,
-  voice
+  voice,
+  blockedText = null
 }: Props): JSX.Element {
   const field = useRef<HTMLTextAreaElement | null>(null)
   const histories = useRef(new Map<string, InputHistory>())
@@ -327,7 +330,8 @@ export function Composer({
 
   // A crashed session cannot carry a message: accepting one would show it in
   // the ribbon, set the tab working, and deliver it nowhere (spec 6.10).
-  const dead = status === 'error'
+  const dead = status === 'error' || (blockedText !== undefined && blockedText !== null)
+  const crashed = status === 'error'
 
   /** Enter pressed while an image was still being prepared: send once it is. */
   const [sendWhenReady, setSendWhenReady] = useState(false)
@@ -547,7 +551,7 @@ export function Composer({
         )
       }}
     >
-      {dead && <DeadStrip canRetry={canRetry} onRetry={onRetry} onRestart={onRestart} />}
+      {crashed && <DeadStrip canRetry={canRetry} onRetry={onRetry} onRestart={onRestart} />}
 
       {heldDraft && onInsertHeldDraft && (
         <HeldDraftStrip
@@ -657,7 +661,7 @@ export function Composer({
           rows={1}
           disabled={dead}
           placeholder={
-            dead ? 'Сессия прервалась — запустите заново' : busy ? 'Агент работает — Esc прерывает' : 'Что делаем?'
+            blockedText ? blockedText : dead ? 'Сессия прервалась — запустите заново' : busy ? 'Агент работает — Esc прерывает' : 'Что делаем?'
           }
           value={draft}
           onChange={(ev) => {

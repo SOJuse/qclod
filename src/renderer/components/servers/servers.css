@@ -154,6 +154,37 @@
   overflow-wrap: anywhere;
 }
 
+/* A changed host key (R5): a danger, not a hint — red edge, icon, role="alert". */
+.server-problem.is-danger {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--status-critical);
+  border-radius: var(--radius);
+  color: var(--text);
+}
+
+.server-problem-icon {
+  flex: none;
+  margin-top: var(--gap-hair);
+  color: var(--status-critical);
+}
+
+/* ssh's question over everything, the settings and Ctrl+K included (R3). */
+.sheet-backdrop.server-prompt-backdrop {
+  z-index: 60;
+}
+
+.server-prompt-field {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.server-prompt-field .field {
+  flex: 1 1 auto;
+}
+
 .server-prompt-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -290,6 +321,13 @@ button.server-link {
   text-decoration: underline;
 }
 
+.server-link[data-danger='true'] {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-hair);
+  color: var(--status-critical);
+}
+
 .server-offline-strip {
   margin: 0 auto var(--strip-margin);
   padding: var(--strip-pad);
@@ -298,6 +336,27 @@ button.server-link {
   background: var(--surface-raised);
   color: var(--text-dim);
   font-size: var(--text-sm);
+}
+
+/* A changed key, a removed server: the strip says it in the colour of danger. */
+.server-offline-strip.is-danger {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  border-color: var(--status-critical);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.server-offline-strip.is-danger svg {
+  flex: none;
+  margin-top: var(--gap-hair);
+  color: var(--status-critical);
+}
+
+.server-badge.is-gone {
+  border-color: var(--status-critical);
+  color: var(--status-critical);
 }
 
 .server-colours {

@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ServerView } from '../../../shared/types'
+import { focusInto, useModalSheet } from '../../ui/modalFocus'
+import { reasonOf } from '../../ui/StateView'
 
 export interface LoginProgress {
   url?: string
@@ -57,9 +59,22 @@ export function ServerLoginView({
 }): JSX.Element {
   const [code, setCode] = useState('')
   const url = safeLoginUrl(progress?.url)
+  const sheet = useRef<HTMLDivElement>(null)
+  const onKeyDown = useModalSheet(sheet, onClose)
+  const step = progress?.state === 'done' || progress?.state === 'failed' ? progress.state : 'code'
+  // Modal (R2): focus in the code field, or on the sheet's first button once it is done or failed.
+  useEffect(() => focusInto(sheet.current), [step])
   return (
     <div className="sheet-backdrop" data-testid="server-login-dialog">
-      <div className="sheet server-sheet" role="dialog" aria-modal="true" aria-labelledby="server-login-title">
+      <div
+        ref={sheet}
+        className="sheet server-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="server-login-title"
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+      >
         <div className="sheet-head">
           <h2 className="sheet-title" id="server-login-title">
             Вход в Claude на сервере {server.label}
@@ -95,6 +110,7 @@ export function ServerLoginView({
                 <input
                   className="field"
                   data-testid="server-login-code"
+                  data-autofocus=""
                   maxLength={4096}
                   spellCheck={false}
                   value={code}
@@ -131,9 +147,7 @@ export function ServerLoginDialog({ server, onClose }: { server: ServerView; onC
   const [progress, setProgress] = useState<LoginProgress | null>(null)
   const start = (): void => {
     setProgress({ state: 'starting' })
-    window.qclod.serverLogin(server.id).catch((err: unknown) =>
-      setProgress({ state: 'failed', error: err instanceof Error ? err.message : String(err) })
-    )
+    window.qclod.serverLogin(server.id).catch((err: unknown) => setProgress({ state: 'failed', error: reasonOf(err) }))
   }
   useEffect(() => {
     const off = window.qclod.onServerLoginProgress((e) => {
@@ -150,7 +164,11 @@ export function ServerLoginDialog({ server, onClose }: { server: ServerView; onC
       server={server}
       progress={progress}
       onOpenLink={(url) => void window.qclod.openExternal(url)}
-      onCode={(code) => void window.qclod.serverLoginCode(server.id, code)}
+      onCode={(code) =>
+        void window.qclod
+          .serverLoginCode(server.id, code)
+          .catch((err: unknown) => setProgress({ state: 'failed', error: reasonOf(err) }))
+      }
       onRetry={start}
       onClose={onClose}
     />

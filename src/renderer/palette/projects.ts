@@ -3,7 +3,8 @@ import { points, ranked } from './rank'
 
 /**
  * The projects, by name. Enter goes to the project's last open chat;
- * a project with none gets a new chat in it (решение 17).
+ * a project with none gets a new chat in it (решение 17) — on its own server
+ * for a server's project (R8), whose hint names the server.
  */
 export const projectsProvider: PaletteProvider = {
   section: 'projects',
@@ -22,8 +23,13 @@ export const projectsProvider: PaletteProvider = {
         key: `project:${project.key}`,
         section: 'projects',
         title: project.name,
-        hint: project.cwd,
-        run: () => (last ? ctx.run.activateChat(last.id) : ctx.run.openProject(project.cwd))
+        hint: project.remote ? `${project.remote.label} · ${project.cwd}` : project.cwd,
+        run: () =>
+          last
+            ? ctx.run.activateChat(last.id)
+            : project.remote
+              ? ctx.run.openProject(project.cwd, project.remote.hostId)
+              : ctx.run.openProject(project.cwd)
       }
     })
   }

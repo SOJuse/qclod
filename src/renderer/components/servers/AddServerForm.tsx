@@ -111,17 +111,24 @@ export function AddServerForm({ initial, canRemember, busy = false, error, onSub
         </label>
       ) : (
         <>
-          <label className="settings-field">
-            <span className="field-label">Пароль</span>
-            <input
-              className="field"
-              type="password"
-              data-testid="server-password"
-              maxLength={4096}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </label>
+          {/* A password is taken only to be kept: without «Запомнить» ssh asks for it on connecting. */}
+          {canRemember && remember ? (
+            <label className="settings-field">
+              <span className="field-label">Пароль</span>
+              <input
+                className="field"
+                type="password"
+                data-testid="server-password"
+                maxLength={4096}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </label>
+          ) : (
+            <p className="field-hint" data-testid="server-password-asked">
+              Пароль спросят при подключении
+            </p>
+          )}
           <label className="settings-toggle">
             <input
               type="checkbox"

@@ -3,13 +3,15 @@ import type { ResolvedPath, TabId } from '../../shared/types'
 import { linkify } from './linkify'
 import { PathMenu } from './PathMenu'
 import { freshTarget } from './useResolvedPaths'
+import { useAppStore } from '../state/useAppStore'
 import './Paths.css'
 
 /**
  * A path in the text that exists on disk. It reads as the text around it; a
  * click opens it with its program (a folder in Explorer, anything that could
- * run is only shown there — main decides). Right click or Shift+F10 opens
- * the menu.
+ * run is only shown there — main decides). In a server chat the path is the
+ * server's (R7): a file opens in the pane's viewer at its line, a folder's
+ * path is copied. Right click or Shift+F10 opens the menu.
  */
 export function PathLink({
   tabId,
@@ -25,7 +27,15 @@ export function PathLink({
 
   const open = (): void => {
     void freshTarget(tabId, target).then((fresh) => {
-      if (fresh) void window.qclod.openPath(tabId, fresh.absPath)
+      if (!fresh) return
+      const state = useAppStore.getState()
+      if (state.tabs.find((t) => t.id === tabId)?.server === undefined) {
+        void window.qclod.openPath(tabId, fresh.absPath)
+      } else if (fresh.isDir) {
+        void navigator.clipboard.writeText(fresh.absPath).catch(() => undefined)
+      } else {
+        state.setPaneLayer(tabId, { kind: 'file', path: fresh.absPath, ...(fresh.line ? { line: fresh.line } : {}) })
+      }
     })
   }
 

@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createFakeSdk, type FakeStep } from '../fixtures/fake-sdk/index.mjs'
+import { createFakeSdk, type FakeScript, type FakeStep } from '../fixtures/fake-sdk/index.mjs'
 
 /**
  * One turn's worth of messages. The stream does not end after an answer — a
@@ -1628,5 +1628,389 @@ describe('createFakeSdk: ответы на карточки', () => {
     const driver = createFakeSdk({ steps: [{ kind: 'text', text: 'ок' }], init: { claudeCodeVersion: '2.1.300' } })
     const out = await collect(driver)
     expect(out[0]).toMatchObject({ type: 'system', subtype: 'init', claude_code_version: '2.1.300' })
+  })
+})
+
+// ---------------------------------------------------------------- этап 4
+
+const RELAY = (ref: string, text: string): string =>
+  `Передай агенту ${ref} через SendMessage (to: "${ref}") это сообщение от пользователя, дословно:\n\n${text}`
+
+function sub(m: Message): string {
+  return `${String(m['type'])}${m['subtype'] ? '/' + String(m['subtype']) : ''}`
+}
+
+function blocksOf(m: Message): Array<Record<string, unknown>> {
+  const content = (m['message'] as { content?: unknown } | undefined)?.content
+  return Array.isArray(content) ? (content as Array<Record<string, unknown>>) : []
+}
+
+describe('createFakeSdk: этап 4 — сабагенты', () => {
+  test('сабагент на переднем плане: tool_use, task_started local_agent, шаги с agent_id, task_updated completed, tool_result — по порядку', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        {
+          kind: 'subagent',
+          name: 'обзор',
+          agentType: 'Explore',
+          agentId: 'a0000000000000001',
+          label: 'scout',
+          prompt: 'посмотри src',
+          model: 'claude-haiku-5-5',
+          steps: [
+            { kind: 'textStream', pieces: ['смот', 'рю'] },
+            { kind: 'tool', name: 'Read', input: { file_path: 'a.ts' }, result: 'ок' }
+          ]
+        }
+      ]
+    })
+    const out = await collect(driver)
+    const call = toolUses(out).find((t) => t.name === 'Agent')!
+    const callMsg = out.find((m) => blocksOf(m).some((b) => b['id'] === call.id))!
+    expect(blocksOf(callMsg)[0]!['input']).toMatchObject({
+      description: 'обзор',
+      subagent_type: 'Explore',
+      prompt: 'посмотри src',
+      name: 'scout'
+    })
+
+    const started = out.find((m) => m['subtype'] === 'task_started')!
+    expect(started).toMatchObject({
+      task_id: 'a0000000000000001',
+      tool_use_id: call.id,
+      task_type: 'local_agent',
+      is_backgrounded: false,
+      spawn_depth: 1,
+      subagent_type: 'Explore',
+      description: 'обзор',
+      prompt: 'посмотри src'
+    })
+    expect(typeof started['run_id']).toBe('string')
+    expect(started['parent_task_id']).toBeUndefined()
+
+    const nested = out.filter((m) => m['parent_tool_use_id'] === call.id)
+    expect(nested.length).toBeGreaterThanOrEqual(4) // prompt, text, Read call, Read result
+    for (const m of nested) {
+      expect(m).toMatchObject({ agent_id: 'a0000000000000001', subagent_type: 'Explore', task_description: 'обзор' })
+      expect(typeof m['timestamp']).toBe('string')
+    }
+    // Проба 05b: stream_event от сабагента не приходит, только целые сообщения.
+    expect(nested.some((m) => m['type'] === 'stream_event')).toBe(false)
+    expect(nested.some((m) => blocksOf(m).some((b) => b['type'] === 'text' && b['text'] === 'смотрю'))).toBe(true)
+    // Его промпт — user-кадр сабагента.
+    expect(nested[0]).toMatchObject({ type: 'user', message: { content: 'посмотри src' } })
+
+    const order = out.map(sub)
+    const at = (pred: (m: Message) => boolean): number => out.findIndex(pred)
+    const iCall = at((m) => m === callMsg)
+    const iStarted = at((m) => m === started)
+    const iNested = at((m) => m === nested[0])
+    const iUpdated = at((m) => m['subtype'] === 'task_updated')
+    const iNotice = at((m) => m['subtype'] === 'task_notification')
+    const iResult = at((m) => toolResultOf(m)?.['tool_use_id'] === call.id)
+    expect(iCall).toBeLessThan(iStarted)
+    expect(iStarted).toBeLessThan(iNested)
+    expect(iNested).toBeLessThan(iUpdated)
+    expect(iUpdated).toBeLessThan(iNotice)
+    expect(iNotice).toBeLessThan(iResult)
+    expect(order.at(-1)).toBe('result/success')
+    expect(out[iUpdated]).toMatchObject({ task_id: 'a0000000000000001', patch: { status: 'completed' } })
+    expect(typeof (out[iUpdated]!['patch'] as Record<string, unknown>)['end_time']).toBe('number')
+    expect(out[iNotice]).toMatchObject({ task_id: 'a0000000000000001', status: 'completed', tool_use_id: call.id })
+    expect(out[iResult]!['tool_use_result']).toMatchObject({
+      status: 'completed',
+      agentId: 'a0000000000000001',
+      resolvedModel: 'claude-haiku-5-5'
+    })
+  })
+
+  test('forwardSubagentText false убирает текст сабагента, вызовы остаются', async () => {
+    const driver = createFakeSdk({
+      forwardSubagentText: false,
+      steps: [
+        {
+          kind: 'subagent',
+          name: 'обзор',
+          steps: [
+            { kind: 'thinking', text: 'думаю' },
+            { kind: 'text', text: 'вижу' },
+            { kind: 'tool', name: 'Grep', input: { pattern: 'x' }, result: 'ок' }
+          ]
+        },
+        { kind: 'text', text: 'главный пишет' }
+      ]
+    })
+    const out = await collect(driver)
+    const call = toolUses(out).find((t) => t.name === 'Agent')!
+    const nested = out.filter((m) => m['parent_tool_use_id'] === call.id && m['type'] === 'assistant')
+    const types = nested.flatMap((m) => blocksOf(m).map((b) => b['type']))
+    expect(types).toEqual(['tool_use'])
+    // Главный агент свой текст пишет как прежде.
+    expect(
+      out.some((m) => m['parent_tool_use_id'] == null && blocksOf(m).some((b) => b['text'] === 'главный пишет'))
+    ).toBe(true)
+  })
+
+  test('task_progress несёт summary', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        {
+          kind: 'backgroundAgent',
+          name: 'фон',
+          agentId: 'a00000000000000b1',
+          progress: [{ tokens: 10, toolUses: 1, durationMs: 100, summary: 'читает тесты', lastTool: 'Read' }],
+          finish: { status: 'completed', summary: 'готово', tokens: 20, toolUses: 2, durationMs: 200 }
+        },
+        {
+          kind: 'subagent',
+          name: 'передний',
+          agentId: 'a00000000000000f1',
+          progress: [{ tokens: 5, toolUses: 1, durationMs: 50, summary: 'смотрит код' }],
+          steps: []
+        }
+      ]
+    })
+    const reader = streamReader(driver)
+    await reader.until((m) => m['subtype'] === 'task_notification' && m['task_id'] === 'a00000000000000b1')
+    const started = reader.out.find((m) => m['subtype'] === 'task_started' && m['task_id'] === 'a00000000000000b1')!
+    expect(typeof started['run_id']).toBe('string')
+    const progress = reader.out.filter((m) => m['subtype'] === 'task_progress')
+    expect(progress.find((m) => m['task_id'] === 'a00000000000000b1')).toMatchObject({
+      summary: 'читает тесты',
+      last_tool_name: 'Read'
+    })
+    expect(progress.find((m) => m['task_id'] === 'a00000000000000f1')).toMatchObject({ summary: 'смотрит код' })
+    await driver.dispose()
+  })
+
+  test('backgroundTask уводит работающего в фон и сразу отдаёт async_launched; чужой id — false; выключенный фон — ошибка', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        { kind: 'subagent', name: 'долгий', agentId: 'a00000000000000c1', holdMs: 60_000, steps: [] },
+        { kind: 'text', text: 'дальше' }
+      ]
+    })
+    const reader = streamReader(driver)
+    await reader.until((m) => m['subtype'] === 'task_started')
+    const toolUseId = String(reader.out.at(-1)!['tool_use_id'])
+    await reader.within(50)
+    expect(reader.out.some((m) => toolResultOf(m) !== undefined)).toBe(false)
+
+    expect(await driver.backgroundTask('чужой')).toBe(false)
+    expect(await driver.backgroundTask(toolUseId)).toBe(true)
+    await reader.until((m) => toolResultOf(m)?.['tool_use_id'] === toolUseId)
+    const launched = reader.out.at(-1)!
+    expect(launched['tool_use_result']).toMatchObject({
+      status: 'async_launched',
+      isAsync: true,
+      agentId: 'a00000000000000c1',
+      description: 'долгий',
+      prompt: 'долгий'
+    })
+    expect(typeof (launched['tool_use_result'] as Record<string, unknown>)['outputFile']).toBe('string')
+    const changed = reader.out.find((m) => m['subtype'] === 'background_tasks_changed')!
+    expect(changed['tasks']).toEqual([
+      expect.objectContaining({ task_id: 'a00000000000000c1', task_type: 'local_agent' })
+    ])
+    expect(reader.out.find((m) => m['subtype'] === 'task_updated')).toMatchObject({
+      task_id: 'a00000000000000c1',
+      patch: { is_backgrounded: true }
+    })
+    // Ход главного идёт дальше, не дожидаясь агента.
+    await reader.until(isResult)
+    expect(reader.out.some((m) => blocksOf(m).some((b) => b['text'] === 'дальше'))).toBe(true)
+    expect(reader.out.some((m) => m['subtype'] === 'task_notification')).toBe(false)
+    expect(driver.backgrounded).toEqual(['чужой', toolUseId])
+    // Уже в фоне — второй раз не уводится.
+    expect(await driver.backgroundTask(toolUseId)).toBe(false)
+    await driver.dispose()
+
+    const disabled = createFakeSdk({
+      backgroundTasksDisabled: true,
+      steps: [{ kind: 'subagent', name: 'долгий', holdMs: 60_000, steps: [] }]
+    })
+    const r2 = streamReader(disabled)
+    await r2.until((m) => m['subtype'] === 'task_started')
+    await expect(disabled.backgroundTask(String(r2.out.at(-1)!['tool_use_id']))).rejects.toThrow(
+      'background tasks are disabled'
+    )
+    await disabled.dispose()
+  })
+
+  test('stopTask останавливает агента на переднем плане: stopped, killed, tool_result is_error', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        { kind: 'subagent', name: 'долгий', agentId: 'a00000000000000d1', holdMs: 60_000, steps: [] },
+        { kind: 'text', text: 'главный продолжил' }
+      ]
+    })
+    const reader = streamReader(driver)
+    await reader.until((m) => m['subtype'] === 'task_started')
+    const toolUseId = String(reader.out.at(-1)!['tool_use_id'])
+    await driver.stopTask('a00000000000000d1')
+    await reader.until(isResult)
+    const killed = reader.out.findIndex(
+      (m) => m['subtype'] === 'task_updated' && (m['patch'] as Record<string, unknown>)['status'] === 'killed'
+    )
+    const stopped = reader.out.findIndex((m) => m['subtype'] === 'task_notification' && m['status'] === 'stopped')
+    const result = reader.out.findIndex((m) => toolResultOf(m)?.['tool_use_id'] === toolUseId)
+    expect(killed).toBeGreaterThan(0)
+    expect(stopped).toBeGreaterThan(killed)
+    expect(result).toBeGreaterThan(stopped)
+    expect(toolResultOf(reader.out[result]!)).toMatchObject({ is_error: true })
+    expect(resultText(toolResultOf(reader.out[result]!)!)).toContain('Request interrupted by user for tool use')
+    expect(reader.out.some((m) => blocksOf(m).some((b) => b['text'] === 'главный продолжил'))).toBe(true)
+    expect(driver.stopped).toEqual(['a00000000000000d1'])
+    await driver.dispose()
+  })
+
+  test('stopTask фонового агента: killed, stopped и список без него, вне хода', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'backgroundAgent', name: 'фон', agentId: 'a00000000000000e1', finish: null }]
+    })
+    const reader = streamReader(driver)
+    await reader.until(isResult)
+    await driver.stopTask('a00000000000000e1')
+    await reader.until((m) => m['subtype'] === 'background_tasks_changed')
+    const tail = reader.out.slice(reader.out.findIndex(isResult))
+    expect(tail.find((m) => m['subtype'] === 'task_updated')).toMatchObject({
+      task_id: 'a00000000000000e1',
+      patch: { status: 'killed' }
+    })
+    expect(tail.find((m) => m['subtype'] === 'task_notification')).toMatchObject({
+      task_id: 'a00000000000000e1',
+      status: 'stopped'
+    })
+    expect(reader.out.at(-1)!['tasks']).toEqual([])
+    await driver.dispose()
+  })
+
+  test('foregroundStop ignored: stopTask агента на переднем плане ничего не меняет', async () => {
+    const driver = createFakeSdk({
+      foregroundStop: 'ignored',
+      steps: [{ kind: 'subagent', name: 'долгий', agentId: 'a00000000000000d2', holdMs: 150, steps: [] }]
+    })
+    const reader = streamReader(driver)
+    await reader.until((m) => m['subtype'] === 'task_started')
+    await driver.stopTask('a00000000000000d2')
+    await reader.until(isResult)
+    expect(reader.out.some((m) => m['subtype'] === 'task_notification' && m['status'] === 'stopped')).toBe(false)
+    expect(reader.out.find((m) => m['subtype'] === 'task_updated')).toMatchObject({ patch: { status: 'completed' } })
+    const result = reader.out.find((m) => toolResultOf(m) !== undefined && m['parent_tool_use_id'] == null)!
+    expect(toolResultOf(result)!['is_error']).toBeUndefined()
+    expect(driver.stopped).toEqual(['a00000000000000d2'])
+    await driver.dispose()
+  })
+
+  test('поручение: SendMessage с to и message; законченный агент возобновляется тем же task_id с новым run_id', async () => {
+    const driver = createFakeSdk({
+      steps: [
+        { kind: 'subagent', name: 'счётчик', agentId: 'a00000000000000a1', steps: [{ kind: 'text', text: '7' }] }
+      ],
+      resumeReply: 'восемь'
+    })
+    const reader = streamReader(driver)
+    await reader.until(isResult)
+    const firstStart = reader.out.find((m) => m['subtype'] === 'task_started')!
+    const agentToolUse = String(firstStart['tool_use_id'])
+    const before = reader.out.length
+
+    driver.send({ text: RELAY('a00000000000000a1', 'напиши про 8'), attachments: [] }, { uuid: 'u-relay' })
+    await reader.until((m) => m['subtype'] === 'task_notification' && m['tool_use_id'] !== agentToolUse)
+    const turn = reader.out.slice(before)
+    const calls = toolUses(turn)
+    // Проба 05b: SendMessage отложен — сначала ToolSearch.
+    expect(calls.map((c) => c.name)).toEqual(['ToolSearch', 'SendMessage'])
+    const sendMsg = turn.find((m) => blocksOf(m).some((b) => b['name'] === 'SendMessage'))!
+    expect(blocksOf(sendMsg)[0]!['input']).toMatchObject({ to: 'a00000000000000a1', message: 'напиши про 8' })
+    expect(driver.relayed).toEqual([{ to: 'a00000000000000a1', message: 'напиши про 8' }])
+
+    const resumed = turn.find((m) => m['subtype'] === 'task_started')!
+    expect(resumed).toMatchObject({
+      task_id: 'a00000000000000a1',
+      is_backgrounded: true,
+      tool_use_id: calls[1]!.id,
+      prompt: 'напиши про 8'
+    })
+    expect(resumed['run_id']).not.toBe(firstStart['run_id'])
+    // Возобновление — после хода главного.
+    expect(turn.findIndex(isResult)).toBeLessThan(turn.indexOf(resumed))
+    const reply = turn.find((m) => blocksOf(m).some((b) => b['text'] === 'восемь'))!
+    // Проба 05b: кадры второго прогона несут parent_tool_use_id исходного Agent.
+    expect(reply).toMatchObject({ agent_id: 'a00000000000000a1', parent_tool_use_id: agentToolUse })
+    expect(reader.out.at(-1)).toMatchObject({
+      task_id: 'a00000000000000a1',
+      status: 'completed',
+      tool_use_id: calls[1]!.id
+    })
+    await reader.until(
+      (m) => m['type'] === 'user' && (m['origin'] as Record<string, unknown> | undefined)?.['kind'] === 'task-notification'
+    )
+    await driver.dispose()
+  })
+
+  test('поручение работающему агенту — только relayed, без возобновления; relay false — обычный текст', async () => {
+    const driver = createFakeSdk({
+      steps: [{ kind: 'backgroundAgent', name: 'фон', agentId: 'a00000000000000a2', finish: null }]
+    })
+    const reader = streamReader(driver)
+    await reader.until(isResult)
+    driver.send({ text: RELAY('a00000000000000a2', 'и ещё'), attachments: [] }, { uuid: 'u1' })
+    await reader.until(isResult)
+    await reader.within(50)
+    expect(driver.relayed).toEqual([{ to: 'a00000000000000a2', message: 'и ещё' }])
+    expect(reader.out.filter((m) => m['subtype'] === 'task_started')).toHaveLength(1)
+    await driver.dispose()
+
+    const deaf = createFakeSdk({ relay: false, steps: [] })
+    const r2 = streamReader(deaf)
+    deaf.send({ text: RELAY('a1', 'привет'), attachments: [] }, { uuid: 'u2' })
+    await r2.until(isResult)
+    expect(toolUses(r2.out)).toEqual([])
+    expect(deaf.relayed).toEqual([])
+    await deaf.dispose()
+  })
+
+  test('init без SendMessage при noSendMessage', async () => {
+    const withIt = await collect(createFakeSdk({ steps: [{ kind: 'text', text: 'ок' }] }))
+    expect(withIt[0]!['tools']).toContain('SendMessage')
+    const without = await collect(createFakeSdk({ noSendMessage: true, steps: [{ kind: 'text', text: 'ок' }] }))
+    expect(without[0]!['tools']).not.toContain('SendMessage')
+  })
+
+  test('nestedToolCalls false: от вложенного только task_started с parent_task_id', async () => {
+    const script = (nestedToolCalls?: boolean): FakeScript => ({
+      ...(nestedToolCalls === undefined ? {} : { nestedToolCalls }),
+      steps: [
+        {
+          kind: 'subagent',
+          name: 'внешний',
+          agentId: 'a00000000000000o1',
+          steps: [
+            {
+              kind: 'subagent',
+              name: 'внутренний',
+              agentId: 'a00000000000000i1',
+              steps: [{ kind: 'text', text: 'внутри' }]
+            }
+          ]
+        }
+      ]
+    })
+    const full = await collect(createFakeSdk(script()))
+    const inner = full.find((m) => m['subtype'] === 'task_started' && m['task_id'] === 'a00000000000000i1')!
+    expect(inner).toMatchObject({ parent_task_id: 'a00000000000000o1', spawn_depth: 2 })
+    expect(full.some((m) => m['agent_id'] === 'a00000000000000i1')).toBe(true)
+    // Вызов внутреннего Agent — кадр внешнего агента.
+    const innerCall = full.find((m) =>
+      blocksOf(m).some((b) => b['name'] === 'Agent' && b['id'] === inner['tool_use_id'])
+    )!
+    expect(innerCall['agent_id']).toBe('a00000000000000o1')
+
+    const hidden = await collect(createFakeSdk(script(false)))
+    const started = hidden.find((m) => m['subtype'] === 'task_started' && m['task_id'] === 'a00000000000000i1')!
+    expect(started).toMatchObject({ parent_task_id: 'a00000000000000o1', spawn_depth: 2 })
+    expect(hidden.some((m) => m['agent_id'] === 'a00000000000000i1')).toBe(false)
+    expect(toolUses(hidden).filter((t) => t.name === 'Agent')).toHaveLength(1)
   })
 })

@@ -34,12 +34,26 @@ export type FakeStep =
       kind: 'subagent'
       name: string
       agentType?: string
+      /** task_id = AgentOutput.agentId; `a` and 16 hex digits when not given. */
+      agentId?: string
+      /** AgentInput.name (the CLI takes only [A-Za-z0-9_-], up to 64). */
+      label?: string
+      /** AgentInput.prompt; `name` when not given. */
+      prompt?: string
+      /** AgentOutput.resolvedModel. */
+      model?: string
+      /** One task_progress each, before the end. */
+      progress?: FakeProgress[]
+      /** Pause before task_updated and the tool_result: time to stop it or move it to the background. */
+      holdMs?: number
       /** Run totals under the names AgentOutput uses (sdk-tools.d.ts). */
       stats?: { totalTokens?: number; totalDurationMs?: number; totalToolUseCount?: number }
       /** What it writes back: AgentOutput content text and the tool_result text. Default «подагент закончил». */
       report?: string
       steps: FakeStep[]
     }
+  /** The main agent calls SendMessage (after ToolSearch the first time); what a relay instruction plays. */
+  | { kind: 'sendMessage'; to: string; message: string }
   | FakeBackgroundAgentStep
   | FakeBackgroundBashStep
   | { kind: 'compact'; preTokens: number; postTokens: number; trigger?: 'auto' | 'manual' }
@@ -62,6 +76,15 @@ export type FakeStep =
   /** A question answered on the phone: its signal aborts after afterMs (default 50), then `decision` rules. */
   | { kind: 'remoteAnswer'; name: string; input?: object; decision: 'allow' | 'deny'; afterMs?: number }
 
+/** One task_progress of a subagent; `summary` only when given (probe 05b saw none in 25 s). */
+export interface FakeProgress {
+  summary?: string
+  tokens: number
+  toolUses: number
+  durationMs: number
+  lastTool?: string
+}
+
 /** An Agent call with run_in_background; its progress and notification come after the turn. */
 export interface FakeBackgroundAgentStep {
   kind: 'backgroundAgent'
@@ -71,7 +94,7 @@ export interface FakeBackgroundAgentStep {
   agentId?: string
   /** Pause between the events this step emits. */
   pauseMs?: number
-  progress?: Array<{ tokens: number; toolUses: number; durationMs: number; lastTool?: string }>
+  progress?: FakeProgress[]
   /** null: the agent never finishes, no notification ever comes. */
   finish?: {
     status: 'completed' | 'failed' | 'stopped'
@@ -158,6 +181,21 @@ export interface FakeScript {
   taskOutputUnavailable?: boolean
   /** stopTask() rejects with this message and the task keeps running. */
   stopTaskError?: string
+  // — этап 4: сабагенты
+  /** false: the subagent's text and thinking are not forwarded (the CLI's default); its calls still are. */
+  forwardSubagentText?: boolean
+  /** false: a nested (second-level) agent sends only its task events, no call and no steps. */
+  nestedToolCalls?: boolean
+  /** backgroundTask() rejects with «background tasks are disabled». */
+  backgroundTasksDisabled?: boolean
+  /** 'ignored': stopTask() of a foreground agent changes nothing. */
+  foregroundStop?: 'ignored'
+  /** What an agent answers a SendMessage with; «продолжил: <текст>» by default. */
+  resumeReply?: string
+  /** false: the model ignores a relay instruction; it stays plain text. */
+  relay?: boolean
+  /** system/init.tools without SendMessage. */
+  noSendMessage?: boolean
   remoteControl?: FakeRemoteControl
   /** false: a CLI without msg_lifecycle_v1 (2.1.200) — no frames, no receipt, cancel gives null. */
   lifecycle?: boolean
@@ -228,6 +266,7 @@ export interface FakeDriver {
   }>
   taskOutput(taskId: string): Promise<FakeTaskOutput | null>
   stopTask(taskId: string): Promise<void>
+  /** true — moved to the background; false — no such agent in the foreground; rejects with backgroundTasksDisabled. */
   backgroundTask(toolUseId: string): Promise<boolean | null>
   remoteAvailability(): Promise<FakeRemoteAvailability>
   setRemoteControl(
@@ -240,6 +279,12 @@ export interface FakeDriver {
 
   readonly remoteCalls: Array<{ enabled: boolean; name?: string }>
   readonly sent: Array<{ text: string; attachments: unknown[] }>
+  /** SendMessage calls the main agent made. */
+  readonly relayed: Array<{ to: string; message: string }>
+  /** Every backgroundTask() argument, in order. */
+  readonly backgrounded: string[]
+  /** Every stopTask() argument, in order. */
+  readonly stopped: string[]
   readonly permissionRequests: Array<{ name: string; input: object }>
   /** Every answer canUseTool gave, in order. */
   readonly permissionLog: Array<{

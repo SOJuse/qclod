@@ -22,9 +22,11 @@
  * @typedef {{kind:'askQuestion', question?:string, header?:string, options?:string[], questions?:Array<{question:string, header?:string, options:string[], multiSelect?:boolean}>, echoAnswers?:boolean, echo?:boolean}} AskQuestionStep
  * @typedef {{kind:'plan', plan:string, echo?:boolean}} PlanStep
  * @typedef {{kind:'todo', items:Array<{content:string,status:string,activeForm?:string}>}} TodoStep
- * @typedef {{kind:'subagent', name:string, agentType?:string, stats?:{totalTokens?:number, totalDurationMs?:number, totalToolUseCount?:number}, report?:string, steps:Array<object>}} SubagentStep
+ * @typedef {{kind:'subagent', name:string, agentType?:string, agentId?:string, label?:string, prompt?:string, model?:string,
+ *   progress?:Array<{summary?:string, tokens:number, toolUses:number, durationMs:number, lastTool?:string}>, holdMs?:number,
+ *   stats?:{totalTokens?:number, totalDurationMs?:number, totalToolUseCount?:number}, report?:string, steps:Array<object>}} SubagentStep
  * @typedef {{kind:'backgroundAgent', name:string, agentType?:string, agentId?:string, pauseMs?:number,
- *   progress?:Array<{tokens:number, toolUses:number, durationMs:number, lastTool?:string}>,
+ *   progress?:Array<{summary?:string, tokens:number, toolUses:number, durationMs:number, lastTool?:string}>,
  *   finish?:{status:'completed'|'failed'|'stopped', summary:string, tokens:number, toolUses:number, durationMs:number}|null}} BackgroundAgentStep
  * @typedef {{kind:'backgroundBash', command:string, description?:string, taskId?:string, chunks?:string[], pauseMs?:number,
  *   finish?:'completed'|'failed'|null}} BackgroundBashStep
@@ -33,6 +35,7 @@
  * @typedef {{kind:'limitHit', type?:'five_hour'|'seven_day', resetsInMs:number, times?:number}} LimitHitStep
  * @typedef {{kind:'reportInput'}} ReportInputStep
  * @typedef {{kind:'remoteAnswer', name:string, input?:object, decision:'allow'|'deny', afterMs?:number}} RemoteAnswerStep
+ * @typedef {{kind:'sendMessage', to:string, message:string}} SendMessageStep
  */
 
 import { randomUUID } from 'node:crypto'
@@ -125,6 +128,22 @@ function pause(ms) {
   return ms ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve()
 }
 
+/** A task run's id as the CLI writes it (probe 05b): `0mwos8yev-fb27af7f`. */
+function runId() {
+  return `${Date.now().toString(36)}-${randomUUID().replace(/-/g, '').slice(0, 8)}`
+}
+
+/**
+ * The relay instruction Qclod sends the main agent (stage 4, decision 5):
+ * the address after `to:`, the message after the first blank line.
+ */
+function parseRelay(text) {
+  const to = /через SendMessage \(to: "([^"]+)"\)/.exec(text ?? '')
+  if (!to) return null
+  const at = text.indexOf('\n\n')
+  return { to: to[1], message: at >= 0 ? text.slice(at + 2) : '' }
+}
+
 export function createFakeSdk(script = {}) {
   const steps = script.steps ?? []
   // Decided as the session is made, so each session counts once.
@@ -155,16 +174,195 @@ export function createFakeSdk(script = {}) {
    */
   const shells = new Map()
 
-  /** REPLACE semantics: every shell still running, as sdk.d.ts describes it. */
+  /**
+   * Subagents by task id (which is their agentId, probe 05b): what
+   * backgroundTask(), stopTask() and SendMessage need of each. `phase`:
+   * foreground — holding its Agent call; background — on its own; resuming —
+   * a SendMessage will wake it after the turn; done; stopped.
+   */
+  const agents = new Map()
+  /** SendMessage calls the main agent made: `{ to, message }`. */
+  const relayed = []
+  /** Every backgroundTask() and stopTask() argument, in order. */
+  const backgroundedCalls = []
+  const stoppedCalls = []
+  /** SendMessage is a deferred tool (probe 05b): the first call is preceded by ToolSearch. */
+  let sendMessageLoaded = false
+
+  function registerAgent(fields) {
+    const rec = { queued: [], runs: 1, signal: null, wake: null, ...fields }
+    agents.set(rec.agentId, rec)
+    return rec
+  }
+
+  /** Tells a foreground agent what to do now: background, stop. Wakes it from its hold. */
+  function signalAgent(rec, signal) {
+    rec.signal = signal
+    const wake = rec.wake
+    rec.wake = null
+    wake?.()
+  }
+
+  /** The pause before a foreground agent's tool_result; a signal or dispose() cuts it short. */
+  function holdAgent(rec, ms) {
+    if (!ms || rec.signal) return Promise.resolve()
+    return new Promise((resolve) => {
+      const timer = setTimeout(done, ms)
+      function done() {
+        clearTimeout(timer)
+        rec.wake = null
+        resolve()
+      }
+      rec.wake = done
+    })
+  }
+
+  function findAgent(ref) {
+    return agents.get(ref) ?? [...agents.values()].find((a) => a.label && a.label === ref)
+  }
+
+  /**
+   * A message of the subagent's own conversation, as CLI 2.1.317 forwards it
+   * (probe 05b): every one carries the call's id, agent_id, subagent_type,
+   * task_description and timestamp. Its stream_event never comes — only whole
+   * messages; with forwardSubagentText false its text and thinking do not
+   * either. null: the CLI would not forward it.
+   */
+  function subagentFrame(message, rec) {
+    if (message.type === 'stream_event') return null
+    if (message.type !== 'assistant' && message.type !== 'user') return message
+    // A nested agent's own message: already marked with its id.
+    if (message.agent_id) return message
+    let marked = message
+    if (message.type === 'assistant' && script.forwardSubagentText === false) {
+      const content = (message.message?.content ?? []).filter((b) => b.type !== 'text' && b.type !== 'thinking')
+      if (content.length === 0) return null
+      marked = { ...message, message: { ...message.message, content } }
+    }
+    return {
+      ...marked,
+      parent_tool_use_id: rec.toolUseId,
+      agent_id: rec.agentId,
+      subagent_type: rec.subagentType,
+      task_description: rec.description,
+      timestamp: new Date().toISOString()
+    }
+  }
+
+  function agentOutputFile(agentId) {
+    return `C:\\Users\\fake\\AppData\\Local\\Temp\\claude\\tasks\\${agentId}.output`
+  }
+
+  function taskEvent(subtype, fields) {
+    return { type: 'system', subtype, uuid: randomUUID(), session_id: sessionId, ...fields }
+  }
+
+  function agentProgress(rec, toolUseId, progress) {
+    return taskEvent('task_progress', {
+      task_id: rec.agentId,
+      tool_use_id: toolUseId,
+      description: progress.description ?? rec.description,
+      subagent_type: rec.subagentType,
+      usage: { total_tokens: progress.tokens, tool_uses: progress.toolUses, duration_ms: progress.durationMs },
+      ...(progress.lastTool ? { last_tool_name: progress.lastTool } : {}),
+      ...(progress.summary ? { summary: progress.summary } : {})
+    })
+  }
+
+  /** What the agent says on reading a SendMessage: `resumeReply`, or «продолжил: <текст>». */
+  function replyTo(message) {
+    return script.resumeReply ?? `продолжил: ${message}`
+  }
+
+  function taskNotificationText(rec, toolUseId, status, summary) {
+    return (
+      '<task-notification>\n' +
+      `<task-id>${rec.agentId}</task-id>\n` +
+      `<tool-use-id>${toolUseId}</tool-use-id>\n` +
+      `<output-file>${agentOutputFile(rec.agentId)}</output-file>\n` +
+      `<status>${status}</status>\n` +
+      `<summary>${summary}</summary>\n` +
+      '</task-notification>'
+    )
+  }
+
+  /**
+   * The end of an agent running on its own (moved to the background, or
+   * resumed by SendMessage), as probe 05b saw it: what it was sent meanwhile
+   * answered at its next round, then task_updated, the notification, the
+   * emptied list and the main agent's <task-notification>.
+   */
+  async function* finishAgent(rec, toolUseId, summary) {
+    for (const message of rec.queued.splice(0)) {
+      if (rec.phase !== 'background') return
+      yield subagentFrame(assistant([{ type: 'text', text: replyTo(message) }]), rec)
+    }
+    if (rec.phase !== 'background') return
+    rec.phase = 'done'
+    yield taskEvent('task_updated', { task_id: rec.agentId, patch: { status: 'completed', end_time: Date.now() } })
+    yield taskEvent('task_notification', {
+      task_id: rec.agentId,
+      tool_use_id: toolUseId,
+      status: 'completed',
+      output_file: agentOutputFile(rec.agentId),
+      summary,
+      usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 }
+    })
+    yield backgroundTasksChanged()
+    yield {
+      type: 'user',
+      uuid: randomUUID(),
+      session_id: sessionId,
+      parent_tool_use_id: null,
+      origin: { kind: 'task-notification' },
+      message: { role: 'user', content: taskNotificationText(rec, toolUseId, 'completed', summary) }
+    }
+  }
+
+  /**
+   * A finished agent woken by SendMessage, after the turn that sent it
+   * (probe 05b): the same task_id with a new run_id, backgrounded, and the
+   * SendMessage call's id as tool_use_id — while its own messages still
+   * carry the original Agent call's id as parent_tool_use_id.
+   */
+  async function* resumeAgent(rec, message, sendId) {
+    if (rec.phase !== 'resuming') return
+    rec.phase = 'background'
+    rec.runs += 1
+    yield backgroundTasksChanged()
+    yield taskEvent('task_started', {
+      task_id: rec.agentId,
+      run_id: runId(),
+      tool_use_id: sendId,
+      description: rec.description,
+      subagent_type: rec.subagentType,
+      task_type: 'local_agent',
+      is_backgrounded: true,
+      spawn_depth: rec.depth,
+      prompt: message
+    })
+    if (rec.phase !== 'background') return
+    const reply = replyTo(message)
+    yield subagentFrame(assistant([{ type: 'text', text: reply }]), rec)
+    yield agentProgress(rec, sendId, { tokens: 0, toolUses: 0, durationMs: 0 })
+    yield* finishAgent(rec, sendId, reply)
+  }
+
+  /** REPLACE semantics: every shell and agent still running in the background, as sdk.d.ts describes it. */
   function backgroundTasksChanged() {
     return {
       type: 'system',
       subtype: 'background_tasks_changed',
       uuid: randomUUID(),
       session_id: sessionId,
-      tasks: [...shells]
-        .filter(([, shell]) => !shell.stopped)
-        .map(([taskId, shell]) => ({ task_id: taskId, task_type: 'local_bash', description: shell.description }))
+      tasks: [
+        ...[...shells]
+          .filter(([, shell]) => !shell.stopped)
+          .map(([taskId, shell]) => ({ task_id: taskId, task_type: 'local_bash', description: shell.description })),
+        ...[...agents.values()]
+          .filter((a) => a.phase === 'background')
+          .map((a) => ({ task_id: a.agentId, task_type: 'local_agent', description: a.description }))
+      ]
     }
   }
 
@@ -309,7 +507,8 @@ export function createFakeSdk(script = {}) {
     }
   }
 
-  async function* play(stepList) {
+  /** `ctx`: the subagent whose steps these are, for a nested one's parent_task_id and spawn_depth. */
+  async function* play(stepList, ctx = null) {
     for (const step of stepList) {
       switch (step.kind) {
         case 'text':
@@ -541,9 +740,52 @@ export function createFakeSdk(script = {}) {
           ])
           break
 
+        // A foreground agent, in the order probe 05b saw on CLI 2.1.317: the
+        // call, task_started, its prompt as its own user message, its steps
+        // (whole messages, marked with agent_id), progress, task_updated
+        // completed, the notification — and only then the call's result.
         case 'subagent': {
           const id = randomUUID()
-          const agentId = agentHexId()
+          const parent = ctx?.agent ?? null
+          const prompt = step.prompt ?? step.name
+          const rec = registerAgent({
+            agentId: step.agentId ?? agentHexId(),
+            toolUseId: id,
+            description: step.name,
+            subagentType: step.agentType ?? 'general-purpose',
+            ...(step.label ? { label: step.label } : {}),
+            depth: (ctx?.depth ?? 0) + 1,
+            phase: 'foreground'
+          })
+          const started = taskEvent('task_started', {
+            task_id: rec.agentId,
+            run_id: runId(),
+            tool_use_id: id,
+            description: step.name,
+            subagent_type: rec.subagentType,
+            task_type: 'local_agent',
+            is_backgrounded: false,
+            spawn_depth: rec.depth,
+            ...(parent ? { parent_task_id: parent.agentId } : {}),
+            prompt
+          })
+          const report = step.report ?? 'подагент закончил'
+
+          // A nested agent whose calls the CLI does not forward: only its
+          // task events reach the stream (stage 4, Review Focus 5).
+          if (parent && script.nestedToolCalls === false) {
+            yield started
+            rec.phase = 'done'
+            yield taskEvent('task_notification', {
+              task_id: rec.agentId,
+              tool_use_id: id,
+              status: 'completed',
+              output_file: agentOutputFile(rec.agentId),
+              summary: report
+            })
+            break
+          }
+
           yield assistant([
             {
               type: 'tool_use',
@@ -552,16 +794,93 @@ export function createFakeSdk(script = {}) {
               name: 'Agent',
               input: {
                 description: step.name,
-                ...(step.agentType ? { subagent_type: step.agentType } : {})
+                ...(step.agentType ? { subagent_type: step.agentType } : {}),
+                prompt,
+                ...(step.label ? { name: step.label } : {})
               }
             }
           ])
-          for await (const nested of play(step.steps ?? [])) {
-            // A nested subagent has already marked its own steps with its id.
-            yield { ...nested, parent_tool_use_id: nested.parent_tool_use_id || id }
+          yield started
+          yield subagentFrame(
+            { type: 'user', uuid: randomUUID(), session_id: sessionId, message: { role: 'user', content: prompt } },
+            rec
+          )
+          for await (const nested of play(step.steps ?? [], { agent: rec, depth: rec.depth })) {
+            const frame = subagentFrame(nested, rec)
+            if (frame) yield frame
+            if (rec.signal) break
           }
+          for (const progress of step.progress ?? []) {
+            if (rec.signal) break
+            yield agentProgress(rec, id, progress)
+          }
+          await holdAgent(rec, step.holdMs)
+
+          // backgroundTask(), or a 'now' message (probe 05b, 3b and 3c): the
+          // call returns async_launched at once, the rest comes after the turn.
+          if (rec.signal === 'background') {
+            rec.signal = null
+            rec.phase = 'background'
+            yield backgroundTasksChanged()
+            yield taskEvent('task_updated', { task_id: rec.agentId, patch: { is_backgrounded: true } })
+            yield {
+              ...toolResult(id, [
+                {
+                  type: 'text',
+                  text:
+                    'Async agent launched successfully.\n' +
+                    `agentId: ${rec.agentId} (internal ID - do not mention to user.)\n` +
+                    'The agent is working in the background. ' +
+                    'You will be notified automatically when it completes.'
+                }
+              ]),
+              tool_use_result: {
+                isAsync: true,
+                status: 'async_launched',
+                agentId: rec.agentId,
+                description: step.name,
+                ...(step.model ? { resolvedModel: step.model } : {}),
+                prompt,
+                outputFile: agentOutputFile(rec.agentId),
+                canReadOutputFile: true,
+                canContinueAgent: true
+              }
+            }
+            afterTurn.push(() => finishAgent(rec, id, report))
+            break
+          }
+
+          // stopTask() (probe 05b, 3a): killed, stopped, and the call errs.
+          if (rec.signal === 'stop') {
+            rec.signal = null
+            rec.phase = 'stopped'
+            yield taskEvent('task_updated', { task_id: rec.agentId, patch: { status: 'killed', end_time: Date.now() } })
+            yield taskEvent('task_notification', {
+              task_id: rec.agentId,
+              tool_use_id: id,
+              status: 'stopped',
+              output_file: agentOutputFile(rec.agentId),
+              summary: step.name
+            })
+            yield toolResult(id, 'Error: [Request interrupted by user for tool use]', true)
+            break
+          }
+
+          rec.phase = 'done'
+          yield taskEvent('task_updated', { task_id: rec.agentId, patch: { status: 'completed', end_time: Date.now() } })
+          yield taskEvent('task_notification', {
+            task_id: rec.agentId,
+            tool_use_id: id,
+            status: 'completed',
+            output_file: agentOutputFile(rec.agentId),
+            summary: report,
+            usage: {
+              total_tokens: step.stats?.totalTokens ?? 0,
+              tool_uses: step.stats?.totalToolUseCount ?? 0,
+              duration_ms: step.stats?.totalDurationMs ?? 0
+            }
+          })
           // What the agent wrote back: the step's own report, line breaks and all.
-          const report = step.report ?? 'подагент закончил'
           yield {
             type: 'user',
             uuid: randomUUID(),
@@ -574,7 +893,8 @@ export function createFakeSdk(script = {}) {
             // sdk-tools.d.ts: the run totals a card shows.
             tool_use_result: {
               status: 'completed',
-              agentId,
+              agentId: rec.agentId,
+              ...(step.model ? { resolvedModel: step.model } : {}),
               totalTokens: step.stats?.totalTokens ?? 0,
               totalDurationMs: step.stats?.totalDurationMs ?? 0,
               totalToolUseCount: step.stats?.totalToolUseCount ?? 0,
@@ -587,10 +907,52 @@ export function createFakeSdk(script = {}) {
                 service_tier: null,
                 cache_creation: null
               },
-              prompt: step.name,
+              prompt,
               content: [{ type: 'text', text: report }]
             }
           }
+          break
+        }
+
+        // The main agent writes to a subagent (probe 05b): SendMessage is a
+        // deferred tool, loaded by ToolSearch before its first call. A working
+        // agent gets it at its next round; a finished one is resumed after
+        // the turn.
+        case 'sendMessage': {
+          if (!sendMessageLoaded) {
+            sendMessageLoaded = true
+            yield* play([{ kind: 'tool', name: 'ToolSearch', input: { query: 'select:SendMessage' }, result: 'SendMessage' }])
+          }
+          const id = randomUUID()
+          yield assistant([
+            {
+              type: 'tool_use',
+              id,
+              name: 'SendMessage',
+              input: { to: step.to, message: step.message, summary: step.message.slice(0, 60) }
+            }
+          ])
+          relayed.push({ to: step.to, message: step.message })
+          const rec = findAgent(step.to)
+          if (!rec) {
+            yield toolResult(id, `Error: no agent "${step.to}"`, true)
+            break
+          }
+          let answer
+          if (rec.phase === 'foreground' || rec.phase === 'background' || rec.phase === 'resuming') {
+            rec.queued.push(step.message)
+            answer = {
+              success: true,
+              message:
+                `Message queued for delivery to ${step.to} at its next tool round. ` +
+                'If it finishes first, it is resumed with the message and notifies again.'
+            }
+          } else {
+            rec.phase = 'resuming'
+            afterTurn.push(() => resumeAgent(rec, step.message, id))
+            answer = { success: true, message: `Resuming agent ${rec.agentId}`, resumedAgentId: rec.agentId }
+          }
+          yield { ...toolResult(id, [{ type: 'text', text: JSON.stringify(answer) }]), tool_use_result: answer }
           break
         }
 
@@ -604,6 +966,14 @@ export function createFakeSdk(script = {}) {
           const description = step.name
           const subagentType = step.agentType ?? 'general-purpose'
           const outputFile = `C:\\Users\\fake\\AppData\\Local\\Temp\\claude\\tasks\\${agentId}.output`
+          const rec = registerAgent({
+            agentId,
+            toolUseId: id,
+            description,
+            subagentType,
+            depth: (ctx?.depth ?? 0) + 1,
+            phase: 'background'
+          })
           let first = true
           const between = async () => {
             if (!first) await pause(step.pauseMs)
@@ -652,38 +1022,34 @@ export function createFakeSdk(script = {}) {
             uuid: randomUUID(),
             session_id: sessionId,
             task_id: agentId,
+            run_id: runId(),
             tool_use_id: id,
             description,
             subagent_type: subagentType,
             task_type: 'local_agent',
             is_backgrounded: true,
+            spawn_depth: rec.depth,
+            ...(ctx?.agent ? { parent_task_id: ctx.agent.agentId } : {}),
             prompt: description
           }
 
           afterTurn.push(async function* () {
             for (const progress of step.progress ?? []) {
               await between()
-              yield {
-                type: 'system',
-                subtype: 'task_progress',
-                uuid: randomUUID(),
-                session_id: sessionId,
-                task_id: agentId,
-                tool_use_id: id,
-                description,
-                subagent_type: subagentType,
-                usage: {
-                  total_tokens: progress.tokens,
-                  tool_uses: progress.toolUses,
-                  duration_ms: progress.durationMs
-                },
-                ...(progress.lastTool ? { last_tool_name: progress.lastTool } : {})
-              }
+              // Stopped meanwhile: stopTask() has said all there is.
+              if (rec.phase !== 'background') return
+              yield agentProgress(rec, id, { ...progress, description })
             }
             const finish = step.finish
             // finish: null — the agent never ends, and nothing says it did.
             if (!finish) return
             await between()
+            for (const message of rec.queued.splice(0)) {
+              if (rec.phase !== 'background') return
+              yield subagentFrame(assistant([{ type: 'text', text: replyTo(message) }]), rec)
+            }
+            if (rec.phase !== 'background') return
+            rec.phase = finish.status === 'stopped' ? 'stopped' : 'done'
             yield {
               type: 'system',
               subtype: 'task_notification',
@@ -913,10 +1279,31 @@ export function createFakeSdk(script = {}) {
     return true
   }
 
-  function abortTurn() {
+  /**
+   * `now`: a message sent with priority 'now' cuts the turn, and the CLI
+   * moves a foreground agent to the background by itself (probe 05b, 3c);
+   * with background tasks disabled it is stopped instead. An interrupt stops
+   * a foreground agent with the turn — not taken from a live CLI.
+   */
+  function abortTurn(reason = 'interrupt') {
     state.interrupted = true
     for (const controller of openAsks) controller.abort()
     if (turn) turn.aborted = true
+    for (const rec of agents.values()) {
+      if (rec.phase !== 'foreground' || rec.signal) continue
+      signalAgent(rec, reason === 'now' && !script.backgroundTasksDisabled ? 'background' : 'stop')
+    }
+  }
+
+  /**
+   * The model obeying Qclod's relay instruction (stage 4, decision 5): a
+   * SendMessage to the agent it names, with the text after the blank line.
+   * `relay: false` — the model did not listen; the text is just text.
+   */
+  function relaySteps(input) {
+    if (script.relay === false) return []
+    const relay = parseRelay(input?.text)
+    return relay ? [{ kind: 'sendMessage', to: relay.to, message: relay.message }] : []
   }
 
   /** The foreign `cancelled` frame a phone sends, once, after the first message. */
@@ -939,11 +1326,11 @@ export function createFakeSdk(script = {}) {
   async function* foldPending() {
     while (pending.length > 0) {
       if (turn.aborted) return
-      const { uuid } = pending.shift()
+      const { uuid, input } = pending.shift()
       turn.folded.push(uuid)
       state.folded.push(uuid)
       yield* announce('started', uuid)
-      const reply = script.turns?.[answered] ?? script.nextTurn ?? []
+      const reply = [...relaySteps(input), ...(script.turns?.[answered] ?? script.nextTurn ?? [])]
       answered += 1
       yield* playTurn(reply)
     }
@@ -978,7 +1365,8 @@ export function createFakeSdk(script = {}) {
       permissionMode: state.permissionMode,
       mcp_servers: script.init?.mcpServers ?? [],
       slash_commands: script.init?.slashCommands ?? DEFAULT_COMMANDS.map((c) => c.name),
-      tools: ['Read', 'Edit', 'Bash'],
+      // Probe 05b: init calls the subagent tool «Task»; the stream calls it «Agent».
+      tools: ['Read', 'Edit', 'Bash', 'Task', ...(script.noSendMessage ? [] : ['SendMessage']), 'ToolSearch'],
       claude_code_version: script.init?.claudeCodeVersion ?? (lifecycle ? '2.1.317' : '2.1.200'),
       ...(lifecycle
         ? {
@@ -1054,7 +1442,7 @@ export function createFakeSdk(script = {}) {
       if (input.phone) {
         turnSteps = input.steps ?? script.nextTurn ?? []
       } else {
-        turnSteps = script.turns?.[answered] ?? script.nextTurn ?? []
+        turnSteps = [...relaySteps(input), ...(script.turns?.[answered] ?? script.nextTurn ?? [])]
         answered += 1
       }
       yield* playTurn(turnSteps)
@@ -1194,7 +1582,7 @@ export function createFakeSdk(script = {}) {
       } else if (opts.priority === 'now') {
         // The simplified model: the running turn is cut short, this starts the next.
         inbox.unshift({ input, uuid })
-        abortTurn()
+        abortTurn('now')
       } else {
         pending.push({ input, uuid })
       }
@@ -1315,8 +1703,32 @@ export function createFakeSdk(script = {}) {
     },
     /** Ends a running shell: its notification and the emptied list, outside any turn. */
     async stopTask(taskId) {
+      stoppedCalls.push(taskId)
       // A CLI that refuses: the task goes on as if nothing was asked.
       if (script.stopTaskError) throw new Error(script.stopTaskError)
+      const rec = agents.get(taskId)
+      if (rec) {
+        // In the foreground its end comes in the turn's own stream (probe 05b, 3a).
+        if (rec.phase === 'foreground') {
+          if (script.foregroundStop !== 'ignored' && !rec.signal) signalAgent(rec, 'stop')
+          return
+        }
+        if (rec.phase !== 'background' && rec.phase !== 'resuming') return
+        rec.phase = 'stopped'
+        // Probe 05b, 3b: killed, stopped, and the list without it.
+        pushOutOfBand(taskEvent('task_updated', { task_id: taskId, patch: { status: 'killed', end_time: Date.now() } }))
+        pushOutOfBand(
+          taskEvent('task_notification', {
+            task_id: taskId,
+            tool_use_id: rec.toolUseId,
+            status: 'stopped',
+            output_file: agentOutputFile(taskId),
+            summary: rec.description
+          })
+        )
+        pushOutOfBand(backgroundTasksChanged())
+        return
+      }
       const shell = shells.get(taskId)
       if (!shell || shell.stopped) return
       shell.stopped = true
@@ -1332,13 +1744,24 @@ export function createFakeSdk(script = {}) {
       })
       pushOutOfBand(backgroundTasksChanged())
     },
-    /** этап 4 (задача 2): заглушка; настоящая — задача 3. */
-    async backgroundTask(_toolUseId) {
-      return null
+    /**
+     * Moves the foreground agent of this Agent call to the background (probe
+     * 05b, 3b): true — moved; false — no such agent in the foreground.
+     * `backgroundTasksDisabled` — rejects, as a CLI with background tasks off.
+     */
+    async backgroundTask(toolUseId) {
+      backgroundedCalls.push(toolUseId)
+      if (script.backgroundTasksDisabled) throw new Error('background tasks are disabled')
+      const rec = [...agents.values()].find((a) => a.toolUseId === toolUseId && a.phase === 'foreground' && !a.signal)
+      if (!rec) return false
+      signalAgent(rec, 'background')
+      return true
     },
     async dispose() {
       state.disposed = true
       closed = true
+      // A held agent's timer would keep the process up.
+      for (const rec of agents.values()) rec.wake?.()
       if (phoneCancelTimer) clearTimeout(phoneCancelTimer)
       if (wake) {
         const resume = wake
@@ -1349,6 +1772,15 @@ export function createFakeSdk(script = {}) {
 
     get sent() {
       return state.sent
+    },
+    get relayed() {
+      return relayed
+    },
+    get backgrounded() {
+      return backgroundedCalls
+    },
+    get stopped() {
+      return stoppedCalls
     },
     get remoteCalls() {
       return remoteCalls

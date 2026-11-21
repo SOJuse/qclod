@@ -60,7 +60,8 @@ interface Term {
   backlog: string[]
   backlogSize: number
   /** Releases what the terminal held (its askpass token). */
-  onEnd?: () => void
+  /** `exitCode` when ssh exited by itself; none when the drawer closed it. */
+  onEnd?: (exitCode?: number) => void
 }
 
 /** Every open server terminal, by id; a tab may have more than one. */
@@ -75,7 +76,7 @@ export class TerminalHub {
     cwd: string,
     askpassEnv: Record<string, string>,
     size: { cols: number; rows: number },
-    onEnd?: () => void
+    onEnd?: (exitCode?: number) => void
   ): string {
     const args = [
       ...sshBaseArgs(target, {
@@ -98,7 +99,7 @@ export class TerminalHub {
     args: string[],
     size: { cols: number; rows: number },
     env: NodeJS.ProcessEnv,
-    onEnd?: () => void
+    onEnd?: (exitCode?: number) => void
   ): string {
     const termId = randomUUID()
     const pty = this.deps.spawnPty(file, args, { cols: size.cols, rows: size.rows, env, name: 'xterm-256color' })
@@ -112,7 +113,7 @@ export class TerminalHub {
     pty.onExit(({ exitCode }) => {
       if (this.terms.get(termId) !== term) return
       this.terms.delete(termId)
-      term.onEnd?.()
+      term.onEnd?.(exitCode)
       this.deps.send(CHANNELS.terminalExit, { termId, exitCode })
     })
     return termId

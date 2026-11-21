@@ -128,6 +128,8 @@ export const CHANNELS = Object.freeze({
   terminalAttach: 'terminal:attach',
   // renderer -> main (send)
   terminalInput: 'terminal:input',
+  /** A local file the person dropped or pasted (the preload, from webUtils): it may go to a server. */
+  filesSeen: 'files:seen',
   // main -> renderer (events)
   serversChanged: 'servers:changed',
   serversPrompt: 'servers:prompt',
@@ -256,6 +258,7 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
 /** Fire-and-forget: the renderer sends, nothing comes back. */
 export const SEND_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.rendererError,
-  // stage 6: keystrokes for a server's terminal
-  CHANNELS.terminalInput
+  // stage 6: keystrokes for a server's terminal; a dropped/pasted file main may upload
+  CHANNELS.terminalInput,
+  CHANNELS.filesSeen
 ])

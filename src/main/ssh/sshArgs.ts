@@ -5,7 +5,37 @@
  * host keys go to Qclod's own known_hosts (decision 4), and every question ssh
  * asks goes through askpass to the window (task 16).
  */
+import { lstatSync, mkdirSync, type Stats } from 'node:fs'
 import { join, posix, win32 } from 'node:path'
+
+/**
+ * What ssh may be given as its target: letters, digits and `._@[]:%+-`, not
+ * starting with `-`. ssh before 9.6 hands `%`-expanded names to a shell in
+ * ProxyCommand/LocalCommand (CVE-2023-51385): no quote, no `;`, no `$`, no
+ * space ever gets that far. The same rule holds for the form, servers.json
+ * and ~/.ssh/config.
+ */
+export function isSafeSshTarget(target: unknown): target is string {
+  return typeof target === 'string' && target.length <= 1024 && /^[A-Za-z0-9._@[\]:%+-]+$/.test(target) && !target.startsWith('-')
+}
+
+export interface PrivateDirFs {
+  mkdirSync: (dir: string, o: { recursive: true; mode: number }) => unknown
+  lstatSync: (dir: string) => Pick<Stats, 'isSymbolicLink' | 'isDirectory' | 'uid' | 'mode'>
+}
+
+/**
+ * A folder in /tmp only this user can use (POSIX): made 0700 if it is not
+ * there; refused when it is a link, someone else's, or open to others —
+ * whoever made it could have put a socket of their own in it.
+ */
+export function ensurePrivateDir(dir: string, uid: number, fs: PrivateDirFs = { mkdirSync, lstatSync }): void {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const st = fs.lstatSync(dir)
+  if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`${dir} — не папка, Qclod её не использует`)
+  if (st.uid !== uid) throw new Error(`${dir} принадлежит другому пользователю, Qclod её не использует`)
+  if ((st.mode & 0o077) !== 0) throw new Error(`${dir} открыта другим пользователям, Qclod её не использует. Удалите её: rm -rf ${dir}`)
+}
 
 export interface SshTarget {
   target: string

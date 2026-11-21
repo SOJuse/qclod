@@ -58,7 +58,8 @@ export interface ProbeResult {
 }
 
 function firstVersion(text: string | undefined): string | null {
-  return text ? (/\d+\.\d+\.\d+/.exec(text)?.[0] ?? null) : null
+  // With a pre-release part (1.0.0-rc.1): the relay's versions are compared by semver (I7).
+  return text ? (/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/.exec(text)?.[0] ?? null) : null
 }
 
 export function parseProbe(stdout: string): ProbeResult | null {

@@ -6,7 +6,10 @@ import { join } from 'node:path'
 type Handler = (e: unknown, ...args: unknown[]) => unknown
 const handlers = vi.hoisted(() => new Map<string, Handler>())
 vi.mock('electron', () => ({
-  ipcMain: { handle: (channel: string, fn: Handler) => handlers.set(channel, fn) },
+  ipcMain: {
+    handle: (channel: string, fn: Handler) => handlers.set(channel, fn),
+    on: (channel: string, fn: Handler) => handlers.set(channel, fn)
+  },
   dialog: {},
   BrowserWindow: class {},
   shell: { openPath: vi.fn(), showItemInFolder: vi.fn() },
@@ -424,6 +427,13 @@ describe('этап 6: файлы серверного чата', () => {
     })
     serverTab = true
     expect(await call(CHANNELS.filesUploadRemote, 't1', 5)).toMatchObject({ error: expect.any(String) })
+    // A path the person never chose here goes nowhere.
+    expect(await call(CHANNELS.filesUploadRemote, 't1', file)).toEqual({
+      error: 'Не удалось загрузить на сервер: файл не был выбран в Qclod'
+    })
+    expect(relayCalls).toEqual([])
+    // Dropped (the preload says so): it goes.
+    call(CHANNELS.filesSeen, file)
     expect(await call(CHANNELS.filesUploadRemote, 't1', file)).toEqual({ remotePath: '/home/u/.qclod/uploads/s1/1-note.txt' })
     expect(relayCalls[0]).toEqual([
       'fs.upload',

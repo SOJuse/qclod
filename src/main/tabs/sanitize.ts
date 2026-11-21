@@ -15,6 +15,7 @@ import {
   type UserInput
 } from '../../shared/types'
 import { isInsidePasteDir } from '../files/imagePaste'
+import { isSafeSshTarget } from '../ssh/sshArgs'
 
 const MAX_TITLE = 200
 const OVERRIDE_KEYS = ['model', 'permissionMode', 'extraFlags', 'effort'] as const
@@ -459,8 +460,8 @@ export function sanitizeServerEntry(value: unknown): {
   if (!isPlainObject(value)) return null
   const { id, label, target, port, identityFile, auth, colour, fromConfig } = value
   if (!isString(target) || target === '' || target.length > MAX_TARGET) return null
-  // eslint-disable-next-line no-control-regex
-  if (/[\s\u0000-\u001f\u007f]/.test(target) || target.startsWith('-')) return null
+  // Letters, digits and ._@[]:%+- only, never a leading `-` (I10, CVE-2023-51385).
+  if (!isSafeSshTarget(target)) return null
   if (label !== undefined && (!isString(label) || label.length > MAX_TITLE || /[\r\n\0]/.test(label))) return null
   let cleanPort: number | undefined
   if (port !== undefined && port !== null) {

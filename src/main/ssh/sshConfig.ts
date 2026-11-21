@@ -6,6 +6,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join } from 'node:path'
+import { isSafeSshTarget } from './sshArgs'
 
 const MAX_INCLUDE_DEPTH = 5
 
@@ -37,8 +38,9 @@ function splitLine(line: string): { key: string; words: string[] } | null {
   return { key: words[0]!.toLowerCase(), words: words.slice(1) }
 }
 
+/** Not a pattern, and nothing ssh could take for an option or a shell would split (I10). */
 function isPlainName(name: string): boolean {
-  return name !== '' && !/[*?!]/.test(name)
+  return name !== '' && !/[*?!]/.test(name) && isSafeSshTarget(name)
 }
 
 /**

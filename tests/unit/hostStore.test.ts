@@ -41,6 +41,45 @@ describe('HostStore', () => {
     expect(store.password(e.id)).toBeNull()
   })
 
+  test('I1: смена хоста, порта или ключа сбрасывает сохранённый пароль; та же цель — оставляет', () => {
+    const store = new HostStore(dir, fakeBox())
+    const e = store.save(manual)
+    store.setPassword(e.id, 'pw', 'me@home')
+    expect(store.passwordFor(e.id)).toBe('me@home')
+    store.save({ ...manual, id: e.id, label: 'Дом 2' })
+    expect(store.password(e.id)).toBe('pw')
+    expect(store.passwordFor(e.id)).toBe('me@home')
+    store.save({ ...manual, id: e.id, target: 'me@elsewhere' })
+    expect(store.hasPassword(e.id)).toBe(false)
+    expect(store.passwordFor(e.id)).toBeNull()
+    for (const change of [{ port: 2222 }, { identityFile: '/k' }]) {
+      store.save({ ...manual, id: e.id, target: 'me@elsewhere' })
+      store.setPassword(e.id, 'pw')
+      store.save({ ...manual, id: e.id, target: 'me@elsewhere', ...change })
+      expect(store.hasPassword(e.id)).toBe(false)
+    }
+    // A password set from the form names no user@host.
+    store.setPassword(e.id, 'pw2')
+    expect(store.passwordFor(e.id)).toBeNull()
+  })
+
+  test('I10: сервер с опасной целью в servers.json не читается, из ~/.ssh/config не берётся', () => {
+    writeFileSync(
+      join(dir, 'servers.json'),
+      JSON.stringify({
+        servers: [
+          { id: 'a', target: 'me@ok.lan', auth: 'key' },
+          { id: 'b', target: "x';touch /tmp/p;'", auth: 'key' },
+          { id: 'c', target: '-oProxyCommand=calc', auth: 'key' }
+        ]
+      })
+    )
+    const store = new HostStore(dir, fakeBox())
+    expect(store.list().map((e) => e.id)).toEqual(['a'])
+    store.mergeConfigHosts(['good', 'bad$(id)'])
+    expect(store.list().map((e) => e.target)).toEqual(['me@ok.lan', 'good'])
+  })
+
   test('available:false — setPassword ничего не пишет', () => {
     const store = new HostStore(dir, fakeBox(false))
     const e = store.save(manual)

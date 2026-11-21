@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import {
+  CLOSING_FILE,
   HostManager,
   INSTALLING_TEXT,
+  QUIET_CHECKLIST_MS,
+  hostKeyChangedText,
   NOT_LOGGED_IN_TEXT,
   RELAY_PROTO_TEXT,
   lingerText,
@@ -46,6 +49,11 @@ interface FakeLink extends RelayLink {
   calls: Array<{ m: string; p: unknown }>
   connectError?: Error
   answers: Record<string, unknown>
+  connects: number
+  closed: number
+  callError?: Record<string, Error>
+  /** The state the channel says it is in, as RelayClient would. */
+  become(s: RelayLink['state']): void
 }
 
 function fakeLink(): FakeLink {
@@ -53,6 +61,12 @@ function fakeLink(): FakeLink {
   const listeners = new Set<(s: RelayLink['state']) => void>()
   const link: FakeLink = {
     calls: [],
+    connects: 0,
+    closed: 0,
+    become: (s) => {
+      state = s
+      for (const l of listeners) l(state)
+    },
     answers: {
       'host.info': { hostname: 'box', user: 'me', home: '/home/me', arch: 'x64', relay: '1.0.0', supervisor: 'systemd', linger: 'yes' },
       'auth.status': { loggedIn: true, email: 'me@x.io', plan: 'Max', claudePath: '/c', claudeVersion: '2.1.317' },
@@ -62,6 +76,7 @@ function fakeLink(): FakeLink {
       return state
     },
     connect: async () => {
+      link.connects++
       if (link.connectError) throw link.connectError
       state = 'online'
       for (const l of listeners) l(state)
@@ -69,6 +84,8 @@ function fakeLink(): FakeLink {
     },
     call: async <T,>(m: string, p: unknown) => {
       link.calls.push({ m, p })
+      const err = link.callError?.[m]
+      if (err) throw err
       return link.answers[m] as T
     },
     onState: (cb) => {
@@ -76,6 +93,7 @@ function fakeLink(): FakeLink {
       return () => listeners.delete(cb)
     },
     close: () => {
+      link.closed++
       state = 'idle'
     }
   }
@@ -102,7 +120,9 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-function setup(opts: { probe?: string; manifest?: RelayManifest; link?: FakeLink; probeCode?: number; probeErr?: string } = {}) {
+function setup(
+  opts: { probe?: string; manifest?: RelayManifest; link?: FakeLink; probeCode?: number; probeErr?: string; now?: () => number } = {}
+) {
   const store = new HostStore(dir, box)
   const entry = store.save({ label: 'Дом', target: 'me@box', auth: 'key', fromConfig: false })
   const runs: Array<{ remote: string; stdin?: Buffer | string }> = []
@@ -129,9 +149,11 @@ function setup(opts: { probe?: string; manifest?: RelayManifest; link?: FakeLink
     rules: () => [{ id: 'r1', toolName: 'Bash', behavior: 'allow' }],
     autoAnswerMs: () => 300000,
     makeClient: () => link,
-    run
+    run,
+    ...(opts.now ? { now: opts.now } : {})
   })
-  return { hm, store, entry, runs, progress, link, opened, last: () => progress.at(-1)! }
+  const probes = () => runs.filter((r) => r.remote === "'sh' '-s'").length
+  return { hm, store, entry, runs, progress, link, opened, probes, last: () => progress.at(-1)! }
 }
 
 describe('HostManager.connect', () => {
@@ -239,6 +261,94 @@ describe('HostManager.connect', () => {
     expect(await s.hm.connect(s.entry.id, true)).toBe(false)
     expect(s.hm.list()[0]!.state).toBe('needsAuth')
     expect(s.last().find((x) => x.id === 'auth')!.state).toBe('fail')
+  })
+
+  test('C1: client() при needsAuth не запускает ни ssh, ни чек-лист — ждёт человека', async () => {
+    const s = setup({ probeCode: 255, probeErr: 'me@box: Permission denied (password).' })
+    expect(await s.hm.connect(s.entry.id, false)).toBe(false)
+    expect(s.probes()).toBe(1)
+    // Every call of the window — tabs, files, @-list, history — gets the reason, and no ssh.
+    for (let i = 0; i < 5; i++) await expect(s.hm.client(s.entry.id)).rejects.toThrow()
+    expect(s.probes()).toBe(1)
+    // «Подключить»: the person is there — one more try.
+    await s.hm.connect(s.entry.id, true)
+    expect(s.probes()).toBe(2)
+  })
+
+  test('C1: client() при hostKeyChanged — тоже ни одной попытки', async () => {
+    const s = setup({ probeCode: 255, probeErr: 'WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!' })
+    await s.hm.connect(s.entry.id, false)
+    await expect(s.hm.client(s.entry.id)).rejects.toThrow(/изменился/)
+    expect(s.probes()).toBe(1)
+  })
+
+  test('I2: канал есть, но переподключается — client() сразу отказывает, паузы ведёт RelayClient', async () => {
+    const s = setup()
+    expect(await s.hm.connect(s.entry.id, true)).toBe(true)
+    expect(s.link.connects).toBe(1)
+    s.link.become('reconnecting')
+    for (let i = 0; i < 5; i++) await expect(s.hm.client(s.entry.id)).rejects.toThrow('Сервер не на связи')
+    expect(s.link.connects).toBe(1)
+    expect(s.probes()).toBe(1)
+    s.link.become('online')
+    expect(await s.hm.client(s.entry.id)).toBe(s.link)
+  })
+
+  test('I2: без канала тихий чек-лист — не чаще раза в минуту, одновременные вызовы — один', async () => {
+    let now = 1_000_000
+    const s = setup({ probeCode: 255, probeErr: 'ssh: connect to host box port 22: Connection timed out', now: () => now })
+    await Promise.all([1, 2, 3].map(() => s.hm.client(s.entry.id).catch(() => undefined)))
+    expect(s.probes()).toBe(1)
+    now += QUIET_CHECKLIST_MS - 1
+    await expect(s.hm.client(s.entry.id)).rejects.toThrow()
+    expect(s.probes()).toBe(1)
+    now += 2
+    await expect(s.hm.client(s.entry.id)).rejects.toThrow()
+    expect(s.probes()).toBe(2)
+  })
+
+  test('I6: «закрыть» без связи хранится в userData и уходит при следующей связи', async () => {
+    const s = setup()
+    s.hm.closeLater(s.entry.id, 'sess-1')
+    s.hm.closeLater(s.entry.id, 'sess-2')
+    expect(JSON.parse(readFileSync(join(dir, CLOSING_FILE), 'utf8')).hosts[s.entry.id]).toEqual(['sess-1', 'sess-2'])
+    // Qclod restarted meanwhile: the list is read back.
+    const again = setup({ link: s.link })
+    expect(again.hm.pendingCloses(s.entry.id)).toEqual(['sess-1', 'sess-2'])
+    // setup() saved a second server; the list is the first one's.
+    const hm = again.hm
+    s.link.callError = { 'session.close': new RelayCallError('offline', 'нет связи') }
+    expect(await s.hm.connect(s.entry.id, true)).toBe(true)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(s.hm.pendingCloses(s.entry.id)).toEqual(['sess-1', 'sess-2'])
+    delete s.link.callError
+    s.link.become('reconnecting')
+    s.link.become('online')
+    await vi.waitFor(() => expect(s.hm.pendingCloses(s.entry.id)).toEqual([]))
+    expect(s.link.calls.filter((c) => c.m === 'session.close').map((c) => c.p)).toEqual([
+      { s: 'sess-1' },
+      { s: 'sess-1' },
+      { s: 'sess-2' }
+    ])
+    expect(JSON.parse(readFileSync(join(dir, CLOSING_FILE), 'utf8')).hosts).toEqual({})
+    void hm
+  })
+
+  test('save с другим хостом закрывает старый канал', async () => {
+    const s = setup()
+    await s.hm.connect(s.entry.id, true)
+    s.hm.save({ id: s.entry.id, label: 'Дом', target: 'me@box', auth: 'key', fromConfig: false })
+    expect(s.link.closed).toBe(0)
+    s.hm.save({ id: s.entry.id, label: 'Дом', target: 'me@box', port: 2222, auth: 'key', fromConfig: false })
+    expect(s.link.closed).toBe(1)
+    expect(s.hm.existingClient(s.entry.id)).toBeNull()
+  })
+
+  test('совет при смене ключа: порт не 22 — [host]:port, и обе команды', () => {
+    const text = hostKeyChangedText('box', dir, 2222)
+    expect(text).toContain(`ssh-keygen -R "[box]:2222" -f "${join(dir, 'ssh', 'known_hosts')}"`)
+    expect(text).toMatch(/~\/\.ssh\/known_hosts, ещё ssh-keygen -R "\[box\]:2222"$/)
+    expect(hostKeyChangedText('box', dir, 22)).toContain('ssh-keygen -R box -f')
   })
 
   test('openFolder кладёт путь в недавние и открывает вкладку с server.hostId', async () => {

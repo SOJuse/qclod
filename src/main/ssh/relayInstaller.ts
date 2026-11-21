@@ -123,7 +123,45 @@ export const INSTALL_SCRIPT = (gzip: boolean): string =>
     `mv -f ${NEW} ${BIN}`
   ].join('\n')
 
+/** `1.2.3` or `1.2.3-rc.1`: the parts semver compares; null for anything else. */
+function parseVersion(v: string): { nums: [number, number, number]; pre: string[] } | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(v.trim())
+  if (!m) return null
+  return { nums: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ? m[4].split('.') : [] }
+}
+
+/** Semver order: <0 when a is older, 0 the same, >0 newer; null when either is not a version. */
+export function compareVersions(a: string, b: string): number | null {
+  const x = parseVersion(a)
+  const y = parseVersion(b)
+  if (!x || !y) return null
+  for (let i = 0; i < 3; i++) if (x.nums[i] !== y.nums[i]) return x.nums[i]! - y.nums[i]!
+  // A release is newer than any of its pre-releases.
+  if (x.pre.length === 0 || y.pre.length === 0) return y.pre.length - x.pre.length
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    const p = x.pre[i]
+    const q = y.pre[i]
+    if (p === undefined) return -1
+    if (q === undefined) return 1
+    if (p === q) continue
+    const pn = /^\d+$/.test(p)
+    const qn = /^\d+$/.test(q)
+    if (pn && qn) return Number(p) - Number(q)
+    if (pn !== qn) return pn ? -1 : 1
+    return p < q ? -1 : 1
+  }
+  return 0
+}
+
+/**
+ * What the server's relay needs (I7): only an older one is replaced. A newer
+ * one — put there by a newer Qclod on the other machine — stays, so a PC and
+ * a Mac of different versions do not take turns reinstalling it. Whether it
+ * still talks to this Qclod is the hello's to say (proto).
+ */
 export function needsUpdate(installed: string | null, app: string): 'none' | 'install' | 'update' {
   if (installed === null) return 'install'
-  return installed === app ? 'none' : 'update'
+  const order = compareVersions(installed, app)
+  if (order === null) return installed === app ? 'none' : 'update'
+  return order >= 0 ? 'none' : 'update'
 }

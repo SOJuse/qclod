@@ -163,7 +163,10 @@ const api = {
   // learn where a dropped or pasted file lives on disk.
   pathForFile: (file: File): string | null => {
     try {
-      return webUtils.getPathForFile(file) || null
+      const path = webUtils.getPathForFile(file) || null
+      // Stage 6: main uploads to a server only files it knows were chosen (filesUploadRemote).
+      if (path) ipcRenderer.send(CHANNELS.filesSeen, path)
+      return path
     } catch {
       return null
     }

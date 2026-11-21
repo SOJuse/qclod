@@ -18,6 +18,11 @@ asarUnpack:
   # Stage 6: the server terminal's native module (task 26) loads from a real file.
   - node_modules/node-pty/**
 
+# Stage 6 (I8): Electron's fuses — no Node inspector from the command line,
+# no NODE_OPTIONS — set before signing. ssh runs Qclod.exe as askpass with a
+# question the server writes; RunAsNode stays (the Mac's askpass.sh needs it).
+afterPack: scripts/fuses.cjs
+
 # Stage 6: the hashes of the relay binaries this version installs on a server
 # (scripts/relay-manifest.mjs; decision 3). The binaries themselves are
 # downloaded from the release, not shipped.

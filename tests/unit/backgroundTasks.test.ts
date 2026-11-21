@@ -180,13 +180,31 @@ describe('BackgroundTracker', () => {
     expect(t.tasks).toEqual([])
   })
 
-  test('новые первыми, не больше 20', () => {
+  test('новые первыми; законченных не больше, чем до 20 в списке', () => {
     for (let i = 0; i < 25; i++) {
       t.apply(taskStarted({ task_id: `b${i}`, task_type: 'local_bash', is_backgrounded: true }))
+      t.apply(notification(`b${i}`, 'completed'))
     }
     expect(t.tasks).toHaveLength(20)
     expect(t.tasks[0]?.taskId).toBe('b24')
     expect(t.tasks[19]?.taskId).toBe('b5')
+  })
+
+  test('21 работающая задача: ни одна не вытолкнута; выталкиваются только законченные', () => {
+    t.apply(taskStarted({ task_id: 'old', task_type: 'local_bash', is_backgrounded: true }))
+    t.apply(notification('old', 'completed'))
+    for (let i = 0; i < 21; i++) {
+      t.apply(taskStarted({ task_id: `a${i}`, task_type: 'local_agent', is_backgrounded: true }))
+    }
+    expect(t.tasks).toHaveLength(21)
+    expect(t.tasks.every((x) => x.status === 'running')).toBe(true)
+    expect(t.tasks.map((x) => x.taskId)).toContain('a0')
+    // The first to run still gets its end.
+    expect(t.apply(notification('a0', 'completed'))?.find((x) => x.taskId === 'a0')).toMatchObject({ status: 'completed' })
+    // A new one pushes out the finished, never a running one.
+    t.apply(taskStarted({ task_id: 'a21', task_type: 'local_agent', is_backgrounded: true }))
+    expect(t.tasks.map((x) => x.taskId)).not.toContain('a0')
+    expect(t.tasks.filter((x) => x.status === 'running')).toHaveLength(21)
   })
 
   test('отданный список не меняется задним числом', () => {

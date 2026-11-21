@@ -244,8 +244,21 @@ export class BackgroundTracker {
     return this.copy()
   }
 
+  /**
+   * Newest first. Past MAX_TASKS the oldest finished rows go; a running task
+   * never does — it would lose its «Остановить» and its end.
+   */
   private add(task: BackgroundTask): BackgroundTask[] {
-    this.list = [task, ...this.list].slice(0, MAX_TASKS)
+    const list = [task, ...this.list]
+    let excess = list.length - MAX_TASKS
+    for (let i = list.length - 1; i >= 0 && excess > 0; i--) {
+      const old = list[i]!
+      if (old.status === 'running') continue
+      this.guessed.delete(old.taskId)
+      list.splice(i, 1)
+      excess -= 1
+    }
+    this.list = list
     return this.copy()
   }
 

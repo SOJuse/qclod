@@ -10,6 +10,8 @@ files:
   - out/**/*
   - package.json
   - '!**/*.map'
+  # Claude Code is the user's own; the SDK's per-platform binaries are not shipped.
+  - '!node_modules/@anthropic-ai/claude-agent-sdk-*/**'
 
 # The SDK spawns the user's own claude executable as a child process and reads
 # its own files from node_modules, so it must stay outside the asar archive.
@@ -63,6 +65,40 @@ publish:
   repo: qclod
   releaseType: release
 
-# macOS arrives in stage 6; the icon is ready for it.
+# The Mac's menu-bar template image (main/tray.ts reads resources/tray/).
+extraResources:
+  - from: build/tray
+    to: tray
+    filter:
+      - '*.png'
+
 mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
   icon: build/icon.icns
+  category: public.app-category.developer-tools
+  minimumSystemVersion: '11.0'
+  darkModeSupport: true
+  # electron-builder 25 does not know an ad-hoc identity ("-"): afterPack signs.
+  identity: null
+  hardenedRuntime: false
+  notarize: false
+
+dmg:
+  artifactName: Qclod-${version}-arm64.${ext}
+  background: build/dmgBackground.png
+  window:
+    width: 540
+    height: 380
+  contents:
+    - x: 140
+      y: 190
+      type: file
+    - x: 400
+      y: 190
+      type: link
+      path: /Applications
+
+afterPack: build/afterPack.cjs

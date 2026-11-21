@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { cmdShellArgs, installWithFallback, InstallSlot, quoteArg, runInstaller, type InstallHandle } from '@main/setup/install'
+import { withPlatform } from './platform'
 
 function alive(pid: number): boolean {
   try {
@@ -69,8 +70,11 @@ async function startTree(): Promise<{
   return { handle, childPid, done, doneCalls: () => calls }
 }
 
+// Cancelling kills the whole tree: taskkill /T on Windows, the process group elsewhere.
+const winTree = test
+
 describe('runInstaller', () => {
-  test('отмена убивает и внука, а не только cmd.exe', async () => {
+  winTree('отмена убивает и внука, а не только cmd.exe', async () => {
     const { handle, childPid, done } = await startTree()
     expect(alive(childPid)).toBe(true)
 
@@ -78,6 +82,52 @@ describe('runInstaller', () => {
 
     expect(await done).toBe(false)
     await expect.poll(() => alive(childPid), { timeout: 10000 }).toBe(false)
+  }, 30000)
+
+  // The POSIX branch from any host: the platform is pinned to darwin around the
+  // kill call, and process.kill is observed (the real tree test runs on a Mac).
+  test('POSIX: процесс стартует лидером группы, отмена шлёт сигнал группе (-pid)', async () => {
+    const real = process.kill.bind(process)
+    const calls: Array<[number, string | number | undefined]> = []
+    const kill = vi.spyOn(process, 'kill').mockImplementation(((pid: number, sig?: string | number) => {
+      calls.push([pid, sig])
+      // Windows has no groups: end the child itself so nothing leaks.
+      return real(Math.abs(pid), sig === 'SIGTERM' ? 'SIGKILL' : sig)
+    }) as typeof process.kill)
+    try {
+      let resolveDone!: (ok: boolean) => void
+      const done = new Promise<boolean>((r) => (resolveDone = r))
+      const handle = withPlatform('darwin', () =>
+        runInstaller('node', ['-e', 'setInterval(() => {}, 1000)'], () => undefined, resolveDone)
+      )
+      await new Promise((r) => setTimeout(r, 300))
+      withPlatform('darwin', () => handle.cancel())
+      const term = calls.find(([, sig]) => sig === 'SIGTERM')
+      expect(term).toBeDefined()
+      expect(term![0]).toBeLessThan(0)
+      expect(await done).toBe(false)
+    } finally {
+      kill.mockRestore()
+    }
+  }, 30000)
+
+  test('POSIX: нет группы — запасной child.kill()', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(((pid: number, sig?: string | number) => {
+      if (pid < 0) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
+      return process.kill.call(process, pid, sig)
+    }) as typeof process.kill)
+    try {
+      let resolveDone!: (ok: boolean) => void
+      const done = new Promise<boolean>((r) => (resolveDone = r))
+      const handle = withPlatform('darwin', () =>
+        runInstaller('node', ['-e', 'setInterval(() => {}, 1000)'], () => undefined, resolveDone)
+      )
+      await new Promise((r) => setTimeout(r, 300))
+      withPlatform('darwin', () => handle.cancel())
+      expect(await done).toBe(false)
+    } finally {
+      kill.mockRestore()
+    }
   }, 30000)
 
   test('onDone вызывается один раз', async () => {
@@ -129,7 +179,7 @@ describe('InstallSlot', () => {
     expect(slot.start(fakeInstall().begin)).toBeInstanceOf(Promise)
   })
 
-  test('с настоящим деревом: отмена и тут же вторая установка — вторая ждёт, пока внук не умрёт', async () => {
+  winTree('с настоящим деревом: отмена и тут же вторая установка — вторая ждёт, пока внук не умрёт', async () => {
     const slot = new InstallSlot()
     let childPid = 0
     let resolvePid!: (pid: number) => void

@@ -42,6 +42,9 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
  * bridge, so the renderer can only reach what is listed here.
  */
 const api = {
+  /** `process.platform` for the window: key labels, the Mac title bar. */
+  platform: process.platform as 'win32' | 'darwin' | 'linux',
+
   /**
    * e2e only (QCLOD_E2E_THROW_IN_PANE): false in a release build. Chromium on
    * Windows lowercases switch names, so the renderer sees
@@ -216,6 +219,10 @@ const api = {
   /** The window that would not start: try it again. */
   retryRenderer: (): Promise<void> => ipcRenderer.invoke(CHANNELS.rendererRetry),
   openLogs: (): Promise<void> => ipcRenderer.invoke(CHANNELS.logsOpen),
+
+  // — stage 6
+  /** The Mac application menu (Настройки…): the window does what the key would. */
+  onAppAction: (cb: (id: 'settings' | 'newTab') => void) => on(CHANNELS.appAction, cb),
 
   // — stage 3: autonomy
   /** «Остановить таймер», or the person started answering: no auto-answer for this card. */

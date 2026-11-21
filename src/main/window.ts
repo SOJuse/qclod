@@ -17,14 +17,19 @@ export const FALLBACK_ENTRY = join(__dirname, '../renderer/fallback.html')
  */
 export const offScreen = __QCLOD_TEST_SEAMS__ && process.env['QCLOD_E2E_INVISIBLE'] === '1'
 
-export function mainWindowOptions(): BrowserWindowConstructorOptions {
+export function mainWindowOptions(
+  platform: NodeJS.Platform = process.platform
+): BrowserWindowConstructorOptions {
   return {
     width: 1180,
     height: 760,
     minWidth: 800,
     minHeight: 600,
     show: false,
-    frame: false,
+    // A Mac keeps its own traffic lights, inset into our bar; elsewhere the bar has its own buttons.
+    ...(platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 14 } }
+      : { frame: false }),
     backgroundColor: WINDOW_BG,
     title: 'Qclod',
     // Far past any monitor, and shown without being activated.

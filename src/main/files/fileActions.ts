@@ -74,6 +74,9 @@ export function revealPath(abs: string): void {
 function longName(abs: string): string | null {
   try {
     const real = realpathSync.native(abs)
+    // Off Windows the same job is done by resolving symlinks: `notes.md` that
+    // points at a script is judged as the script.
+    if (process.platform !== 'win32') return real.startsWith('/') ? real : null
     return /^[A-Za-z]:\\/.test(real) ? real : null
   } catch {
     return null
@@ -95,6 +98,13 @@ function openFolder(real: string): 'opened' | 'revealed' {
   }
   if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_FAKE_SHELL']) {
     record({ action: 'open', path: real })
+    return 'opened'
+  }
+  if (process.platform !== 'win32') {
+    // Finder/file manager via the OS; `.app` and other bundle names never get here (typeOf above).
+    void shell.openPath(real).then((error) => {
+      if (error !== '') shell.showItemInFolder(real)
+    })
     return 'opened'
   }
   try {
@@ -213,6 +223,60 @@ export function buildEditorCommand(
   })
 }
 
+/**
+ * POSIX counterpart of `buildEditorCommand`: the template split into an
+ * argument list, no shell involved. Quotes (single or double) group words;
+ * `{path}`, `{line}`, `{column}` are filled into each argument as plain text,
+ * so nothing in a path can mean anything to anyone. Throws an Error with a
+ * message for the user on an unbalanced quote.
+ */
+export function buildEditorArgv(
+  template: string,
+  target: { path: string; line?: number; column?: number }
+): string[] {
+  const values: Record<string, string> = {
+    path: target.path,
+    line: String(target.line ?? 1),
+    column: String(target.column ?? 1)
+  }
+  const words: string[] = []
+  let cur = ''
+  let has = false
+  let quote: '"' | "'" | null = null
+  for (const ch of template) {
+    if (quote) {
+      if (ch === quote) quote = null
+      else cur += ch
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+      has = true
+    } else if (/\s/.test(ch)) {
+      if (has || cur !== '') words.push(cur)
+      cur = ''
+      has = false
+    } else {
+      cur += ch
+    }
+  }
+  if (quote) throw new Error(EDITOR_UNBALANCED)
+  if (has || cur !== '') words.push(cur)
+  return words.map((w) => w.replace(PLACEHOLDER, (_m, key: string) => values[key]!))
+}
+
+/**
+ * The program and arguments to start on macOS/Linux. A program that is an
+ * application bundle (`Visual Studio Code.app`) goes through `open -a`; any
+ * other is run directly, with the usual tool folders added to PATH, since an
+ * app started from Finder does not inherit the shell's PATH (`code` lives in
+ * /usr/local/bin or /opt/homebrew/bin).
+ */
+export function editorSpawnPosix(argv: string[]): { cmd: string; args: string[] } | null {
+  const [program, ...rest] = argv
+  if (program === undefined || program === '') return null
+  if (/\.app\/?$/i.test(program)) return { cmd: 'open', args: ['-a', program, ...rest] }
+  return { cmd: program, args: rest }
+}
+
 /** cmd.exe's arguments for an editor line — the same as the installer's. */
 export const editorShellArgs = cmdShellArgs
 
@@ -222,9 +286,11 @@ export function openInEditor(
   target: { path: string; line?: number; column?: number }
 ): string | null {
   if (template.trim() === '') return null
-  let line: string
+  let line = ''
+  let posixRun: { cmd: string; args: string[] } | null = null
   try {
-    line = buildEditorCommand(template, target)
+    if (process.platform === 'win32') line = buildEditorCommand(template, target)
+    else posixRun = editorSpawnPosix(buildEditorArgv(template, target))
   } catch (error) {
     return error instanceof Error ? error.message : EDITOR_UNSAFE
   }
@@ -232,6 +298,24 @@ export function openInEditor(
     const entry: ShellEntry = { action: 'editor', path: target.path }
     if (target.line !== undefined) entry.line = target.line
     record(entry)
+    return null
+  }
+  if (process.platform !== 'win32') {
+    if (posixRun === null) return null
+    try {
+      const path = [process.env['PATH'], '/opt/homebrew/bin', '/usr/local/bin']
+        .filter((p): p is string => !!p)
+        .join(':')
+      const child = spawn(posixRun.cmd, posixRun.args, {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env, PATH: path }
+      })
+      child.on('error', () => undefined)
+      child.unref()
+    } catch {
+      // A missing editor is the user's setting to fix; the chat carries on.
+    }
     return null
   }
   try {

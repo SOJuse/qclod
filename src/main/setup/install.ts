@@ -179,6 +179,15 @@ function killTree(child: ChildProcess): void {
     } catch {
       /* fall through to a plain kill */
     }
+  } else if (process.platform !== 'win32' && child.pid !== undefined) {
+    // The child leads its own process group (`detached` at spawn): a negative
+    // pid signals the group, grandchildren included.
+    try {
+      process.kill(-child.pid, 'SIGTERM')
+      return
+    } catch {
+      /* no such group (already gone): plain kill */
+    }
   }
   child.kill()
 }
@@ -210,7 +219,7 @@ export function runInstaller(
             windowsHide: true,
             windowsVerbatimArguments: true
           })
-        : spawn(command, args, { windowsHide: true })
+        : spawn(command, args, { windowsHide: true, detached: true })
   } catch (error) {
     onOutput(error instanceof Error ? error.message : String(error))
     finish(false)

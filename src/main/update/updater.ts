@@ -97,6 +97,8 @@ export class UpdateFlow {
  * release build has no such branch (buildFlags.d.ts).
  */
 export function createUpdateSource(isPackaged: boolean): UpdateSource | null {
+  // A Mac build is unsigned and has no auto-update: it only tells (macNotifier.ts).
+  if (process.platform === 'darwin') return null
   const fakeSpec = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_UPDATE'] : undefined
   if (__QCLOD_TEST_SEAMS__ && fakeSpec !== undefined) {
     let spec: { version?: string; error?: string }

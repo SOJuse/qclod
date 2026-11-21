@@ -118,7 +118,10 @@ export const CHANNELS = Object.freeze({
   // этап 4: сабагенты
   // renderer -> main (invoke)
   agentSubagentSend: 'agent:subagentSend',
-  agentSubagentStop: 'agent:subagentStop'
+  agentSubagentStop: 'agent:subagentStop',
+  // stage 6
+  // main -> renderer (event): a menu item that does what a key does
+  appAction: 'app:action'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -217,7 +220,10 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.layoutChanged,
   // Stage 5: voice
   CHANNELS.voiceEvent,
-  CHANNELS.voiceModelsChanged
+  CHANNELS.voiceModelsChanged,
+  // stage 6
+
+  CHANNELS.appAction
 ])
 
 /** Fire-and-forget: the renderer sends, nothing comes back. */

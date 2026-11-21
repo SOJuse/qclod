@@ -1,8 +1,10 @@
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { pinPlatform } from './platform'
 
 vi.mock('electron', () => ({ app: {}, Menu: {}, nativeImage: {}, nativeTheme: {}, Tray: class {} }))
 
-import { TRAY_TOOLTIP, trayBitmap, trayStatus } from '../../src/main/tray'
+import { nativeImage } from 'electron'
+import { TRAY_TOOLTIP, trayBitmap, trayImageFor, trayStatus, trayTitleFor } from '../../src/main/tray'
 import type { SessionStatus, TabState } from '../../src/shared/types'
 
 const tab = (status: SessionStatus): TabState => ({ status }) as TabState
@@ -67,6 +69,8 @@ describe('иконка в трее', () => {
 })
 
 describe('refresh', () => {
+  // The Windows tray: icon by bitmap, no menu-bar title (the Mac one is at the end of the file).
+  pinPlatform('win32', { beforeEach, afterEach })
   test('два одинаковых вызова — один setImage', async () => {
     vi.resetModules()
     const setImage = vi.fn()
@@ -104,6 +108,7 @@ describe('refresh', () => {
 })
 
 describe('«не спать» в меню', () => {
+  pinPlatform('win32', { beforeEach, afterEach })
   async function build(active: boolean, tabs: TabState[]) {
     vi.resetModules()
     const built: Array<Array<{ label?: string; enabled?: boolean }>> = []
@@ -154,5 +159,35 @@ describe('подсказки', () => {
     expect(TRAY_TOOLTIP.working).toBe('Qclod — работает')
     expect(TRAY_TOOLTIP.waiting).toBe('Qclod — ждёт тебя')
     expect(TRAY_TOOLTIP.error).toBe('Qclod — ошибка')
+  })
+})
+
+describe('значок в строке меню Mac', () => {
+  test('на darwin — файл …Template.png из tray/, setTemplateImage(true)', () => {
+    const setTemplateImage = vi.fn()
+    const createFromPath = vi.fn(() => ({ setTemplateImage }))
+    Object.assign(nativeImage, { createFromPath })
+    trayImageFor('darwin', 'idle', '/res')
+    expect(createFromPath).toHaveBeenCalledTimes(1)
+    const path = (createFromPath.mock.calls[0] as unknown as [string])[0].split('\\').join('/')
+    expect(path).toBe('/res/tray/trayTemplate.png')
+    expect(path.endsWith('Template.png')).toBe(true)
+    expect(setTemplateImage).toHaveBeenCalledWith(true)
+  })
+
+  test('статус на Mac — заголовком, а не цветом', () => {
+    expect(trayTitleFor('idle')).toBe('')
+    expect(trayTitleFor('working')).toBe('•')
+    expect(trayTitleFor('waiting')).toBe('!')
+    expect(trayTitleFor('error')).toBe('!')
+  })
+
+  test('на Windows файлов нет: рисованный битмап', () => {
+    const createFromPath = vi.fn()
+    const addRepresentation = vi.fn()
+    Object.assign(nativeImage, { createFromPath, createEmpty: () => ({ addRepresentation }) })
+    trayImageFor('win32', 'working', '/res')
+    expect(createFromPath).not.toHaveBeenCalled()
+    expect(addRepresentation).toHaveBeenCalledTimes(3)
   })
 })

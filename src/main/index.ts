@@ -30,6 +30,9 @@ import {
   watchMount,
   watchRenderer
 } from './window'
+import { appMenuTemplate } from './menu'
+import { MacUpdateNotifier, parseFakeAvailable } from './update/macNotifier'
+import { loginShellPath, mergePath } from '../core/shellEnv'
 import { ErrorLog, type ErrorEntry } from './system/errorLog'
 import { installMainErrorHandlers } from './system/mainErrors'
 import { registerFallbackIpc } from './fallbackIpc'
@@ -306,8 +309,22 @@ app.on('web-contents-created', (_e, contents) => {
 })
 
 if (gotLock) void app.whenReady().then(async () => {
-  // No default menu: its accelerators (Close Window, Reload) would fight ours.
-  Menu.setApplicationMenu(null)
+  // No default menu on Windows: its accelerators (Close Window, Reload) would fight ours.
+  // A Mac has to have one (Правка brings ⌘C/⌘V to the fields), without Close and Reload.
+  const appMenu = appMenuTemplate(process.platform, {
+    version: app.getVersion(),
+    onAction: (id) => {
+      showWindow()
+      send(CHANNELS.appAction, id)
+    }
+  })
+  Menu.setApplicationMenu(appMenu ? Menu.buildFromTemplate(appMenu) : null)
+  // Started from Finder or the Dock, a Mac app has launchd's bare PATH: Claude Code in
+  // ~/.local/bin would not be found. The login shell knows the person's real one.
+  if (process.platform === 'darwin') {
+    const home = homedir()
+    process.env['PATH'] = mergePath(process.env['PATH'] ?? '', await loginShellPath({ home }), home)
+  }
   const userData = app.getPath('userData')
   let settings: AppSettings = loadSettings(userData)
   // Start at login: an installed build only, and never from an e2e run.
@@ -729,7 +746,28 @@ if (gotLock) void app.whenReady().then(async () => {
         log: (message) => console.warn('[update]', message)
       })
     : null
-  ipcMain.handle(CHANNELS.updateGet, () => updates?.state ?? { kind: 'idle' })
+  // A Mac build only tells that a newer release exists (no signing, so no auto-update).
+  // The e2e build can stand GitHub in with QCLOD_FAKE_UPDATE `{ available: '9.9.9' }`.
+  const fakeAvailable = __QCLOD_TEST_SEAMS__ ? parseFakeAvailable(process.env['QCLOD_FAKE_UPDATE']) : null
+  const macNotifier =
+    process.platform === 'darwin' && (app.isPackaged || fakeAvailable !== null)
+      ? new MacUpdateNotifier({
+          fetchJson: fakeAvailable
+            ? async () => ({
+                tag_name: `v${fakeAvailable}`,
+                html_url: `https://github.com/SOJuse/qclod/releases/tag/v${fakeAvailable}`
+              })
+            : async (url) => {
+                const res = await net.fetch(url, { headers: { Accept: 'application/vnd.github+json' } })
+                if (!res.ok) throw new Error(`HTTP ${res.status}`)
+                return res.json()
+              },
+          currentVersion: app.getVersion(),
+          onState: (state) => send(CHANNELS.updateChanged, state),
+          log: (message) => console.warn('[update]', message)
+        })
+      : null
+  ipcMain.handle(CHANNELS.updateGet, () => macNotifier?.state ?? updates?.state ?? { kind: 'idle' })
   ipcMain.handle(CHANNELS.updateRestart, () => {
     const ready = updates?.state.kind === 'ready'
     if (ready) quitReason.markInterrupted()
@@ -800,7 +838,8 @@ if (gotLock) void app.whenReady().then(async () => {
   }
 
   mainWindow.on('close', (event) => {
-    if (quitting || headless || !settings.closeToTray) return
+    // The red button on a Mac hides the window, closeToTray or not; ⌘Q quits.
+    if (quitting || headless || (process.platform !== 'darwin' && !settings.closeToTray)) return
     event.preventDefault()
     mainWindow?.hide()
   })
@@ -811,6 +850,7 @@ if (gotLock) void app.whenReady().then(async () => {
     void controller.restore()
     tray?.rebuild()
     updates?.start(updateSource?.firstCheckMs)
+    macNotifier?.start(fakeAvailable ? 0 : undefined)
   })
 
   app.on('before-quit', (event) => {
@@ -831,7 +871,9 @@ if (gotLock) void app.whenReady().then(async () => {
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    // The Dock icon brings back a hidden window, or makes one when there is none.
+    if (mainWindow && !mainWindow.isDestroyed()) showWindow()
+    else if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createMainWindow()
       watchWindow(mainWindow, (e) => errorLog.write(e))
       endVoiceWithPage(mainWindow)
@@ -841,5 +883,6 @@ if (gotLock) void app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  app.quit()
+  // A Mac app stays in the Dock with no windows.
+  if (process.platform !== 'darwin') app.quit()
 })

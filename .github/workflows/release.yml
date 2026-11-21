@@ -1,11 +1,14 @@
 name: release
+# One workflow for a release and for a dry run. A tag v*.*.* publishes; a push to
+# release/** or ci/** builds the same things and keeps them as artifacts, publishing nothing.
 on:
   push:
     tags: ['v*.*.*']
+    branches: ['release/**', 'ci/**']
 permissions:
   contents: write
 jobs:
-  release:
+  win:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,10 +17,58 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node scripts/check-release-tag.mjs
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: node scripts/check-release-tag.mjs
         env:
           RELEASE_TAG: ${{ github.ref_name }}
       - run: npm run typecheck
-      - run: npm run release
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: npm run release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: npm run dist
+      - if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: qclod-win
+          path: dist/*.exe
+          retention-days: 7
+  mac:
+    needs: win
+    runs-on: macos-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: node scripts/check-release-tag.mjs
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+      - run: npm run typecheck
+      - run: npx vitest run
+      - run: npm run dist:e2e:mac
+      - run: npx playwright test packaged mac
+        env:
+          QCLOD_PACKAGED_EXE: dist-e2e/mac-arm64/Qclod.app/Contents/MacOS/Qclod
+      - run: npm run dist:mac
+      - name: Signature must be ad-hoc
+        run: |
+          codesign --verify --deep --strict dist/mac-arm64/Qclod.app
+          codesign -dv dist/mac-arm64/Qclod.app 2>&1 | grep 'Signature=adhoc'
+      - name: Size of the bundle
+        run: du -sh dist/mac-arm64/Qclod.app dist/Qclod-*-arm64.dmg
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release upload "$GITHUB_REF_NAME" dist/Qclod-*-arm64.dmg --clobber
+      - if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: qclod-mac
+          path: dist/Qclod-*-arm64.dmg
+          retention-days: 7

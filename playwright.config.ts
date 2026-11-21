@@ -11,7 +11,8 @@ process.env['QCLOD_FAKE_SDK'] = resolve(__dirname, 'tests/fixtures/fake-sdk/inde
 process.env['QCLOD_HEADLESS'] = '1'
 // The window opens off screen and never takes focus, so the machine stays
 // usable while the suite runs (src/main/window.ts).
-process.env['QCLOD_E2E_INVISIBLE'] = '1'
+// (A Mac gives an off-screen window back to the screen, so there the run is visible.)
+if (process.platform !== 'darwin') process.env['QCLOD_E2E_INVISIBLE'] = '1'
 // The runner makes it once; its workers load this file again and inherit the
 // runner's environment, so they use the same folder. globalTeardown deletes it
 // when the run ends (Ruling M2).

@@ -1,4 +1,4 @@
-import { APP_ACTIONS } from '../app/shortcuts'
+import { APP_ACTIONS, actionKeys } from '../app/shortcuts'
 import { SECTION_CAP, type PaletteItem, type PaletteProvider } from './types'
 import { bestOf, points, ranked } from './rank'
 
@@ -27,7 +27,7 @@ export const commandsProvider: PaletteProvider = {
           key: `action:${action.id}`,
           section: 'commands',
           title: action.label,
-          ...(action.keys ? { keys: action.keys } : {}),
+          ...(action.keys ? { keys: actionKeys(action.id) } : {}),
           run: () => ctx.run.runAction(action.id)
         }
       })

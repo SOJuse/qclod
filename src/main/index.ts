@@ -36,6 +36,8 @@ import { loadSettings, saveSettings } from './store/settingsStore'
 import { LayoutStore } from './store/layoutStore'
 import { TemplateLibrary } from './store/templatesStore'
 import { registerTemplatesIpc } from './templatesIpc'
+import { HarvestService } from './templates/harvest'
+import { harvestExecutable, harvestQuery } from './templates/harvestQuery'
 import { HotkeyRegistrar } from './hotkey/globalHotkey'
 import { createTray, type TrayTone } from './tray'
 import { readTaskbarLight } from './system/systemTheme'
@@ -45,7 +47,7 @@ import { createDriverFactory } from './agent/createDriver'
 import { PermissionBroker } from './agent/permissions'
 import { loadRules, saveRules } from './agent/permissionStore'
 import { SessionHistory } from './agent/sessionHistory'
-import { loadTranscript } from './agent/transcript'
+import { claudeConfigDir, loadTranscript } from './agent/transcript'
 import { TabController } from './tabs/TabController'
 import { pickDefaultCwd } from './tabs/defaultCwd'
 import { mergeDefaults, sanitizeErrorReport } from './tabs/sanitize'
@@ -534,7 +536,15 @@ if (gotLock) void app.whenReady().then(async () => {
   })
   // этап 7: the owner's prompt templates, userData/templates.json (решение 2).
   const templates = new TemplateLibrary(userData)
-  registerTemplatesIpc({ library: templates, getWindow: () => mainWindow })
+  // «Собрать мои шаблоны»: the owner's transcripts, read only; one query, no tools, not saved.
+  const harvest = new HarvestService({
+    configDir: claudeConfigDir(process.env, homedir()),
+    query: harvestQuery,
+    executablePath: () => harvestExecutable(settings.agentPath),
+    tmpDir: join(userData, 'tmp', 'harvest'),
+    library: templates
+  })
+  registerTemplatesIpc({ library: templates, getWindow: () => mainWindow, harvest })
   ipcMain.handle(CHANNELS.hotkeyStatus, () => withFault(CHANNELS.hotkeyStatus, () => hotkey.status))
 
   // Voice input is Windows' own (Win+H), pressed for the person: the input

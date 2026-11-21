@@ -74,6 +74,26 @@ describe('templates IPC', () => {
   })
 })
 
+describe('harvest IPC', () => {
+  test('исключения — массив строк не длиннее 200, иначе []', async () => {
+    handlers.clear()
+    const asked: string[][] = []
+    const harvest = {
+      preview: async (ex: string[]) => (asked.push(ex), { projects: [] }),
+      run: async (ex: string[]) => (asked.push(ex), { kind: 'empty' }),
+      cancel: vi.fn()
+    }
+    registerTemplatesIpc({ library: new TemplateLibrary(dir), getWindow: () => null, harvest: harvest as never })
+    await call(CHANNELS.harvestPreview, ['a', 'b'])
+    await call(CHANNELS.harvestPreview, 'a')
+    await call(CHANNELS.harvestRun, Array.from({ length: 201 }, (_v, i) => String(i)))
+    await call(CHANNELS.harvestRun, ['ok', 42])
+    await call(CHANNELS.harvestCancel)
+    expect(asked).toEqual([['a', 'b'], [], [], []])
+    expect(harvest.cancel).toHaveBeenCalledOnce()
+  })
+})
+
 describe('sanitizeTemplateDraft', () => {
   test('поля проверяются и обрезаются по правилам', () => {
     expect(sanitizeTemplateDraft(null)).toBeNull()

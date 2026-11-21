@@ -2,7 +2,8 @@ import { ipcMain, type BrowserWindow } from 'electron'
 import { CHANNELS } from '../shared/channels'
 import type { TemplateDraft } from '../shared/types'
 import type { TemplateLibrary } from './store/templatesStore'
-import { isTemplateId, sanitizeTemplateDraft } from './tabs/sanitize'
+import type { HarvestService } from './templates/harvest'
+import { isTemplateId, sanitizeExcludedProjects, sanitizeTemplateDraft } from './tabs/sanitize'
 import { withFault } from './testSeams/ipcFaults'
 
 /**
@@ -11,7 +12,12 @@ import { withFault } from './testSeams/ipcFaults'
  * list must be an array. Every change goes back to the window as
  * `templates:changed` with the whole list.
  */
-export function registerTemplatesIpc(deps: { library: TemplateLibrary; getWindow: () => BrowserWindow | null }): void {
+export function registerTemplatesIpc(deps: {
+  library: TemplateLibrary
+  getWindow: () => BrowserWindow | null
+  /** «Собрать мои шаблоны»; without it the harvest channels are not registered. */
+  harvest?: HarvestService
+}): void {
   const { library } = deps
 
   library.onChange((list) => {
@@ -39,4 +45,15 @@ export function registerTemplatesIpc(deps: { library: TemplateLibrary; getWindow
   ipcMain.handle(CHANNELS.templatesDelete, (_e, raw: unknown) =>
     withFault(CHANNELS.templatesDelete, () => (isTemplateId(raw) ? library.remove(raw) : false))
   )
+
+  const harvest = deps.harvest
+  if (!harvest) return
+  // The window names projects to leave out, never texts: what is sent is what main read.
+  ipcMain.handle(CHANNELS.harvestPreview, (_e, raw: unknown) =>
+    withFault(CHANNELS.harvestPreview, () => harvest.preview(sanitizeExcludedProjects(raw)))
+  )
+  ipcMain.handle(CHANNELS.harvestRun, (_e, raw: unknown) =>
+    withFault(CHANNELS.harvestRun, () => harvest.run(sanitizeExcludedProjects(raw)))
+  )
+  ipcMain.handle(CHANNELS.harvestCancel, () => withFault(CHANNELS.harvestCancel, () => harvest.cancel()))
 }

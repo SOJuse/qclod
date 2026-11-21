@@ -440,6 +440,16 @@ export function sanitizeTemplateDraft(value: unknown): TemplateDraft | null {
   return id !== undefined ? { id: id as string, ...draft } : draft
 }
 
+/** At most this many projects left out of «Собрать мои шаблоны». */
+const MAX_EXCLUDED = 200
+
+/** The projects left out of «Собрать»: an array of at most 200 strings, else none. */
+export function sanitizeExcludedProjects(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > MAX_EXCLUDED) return []
+  if (!value.every((v) => isString(v) && v.length > 0 && v.length <= 1000)) return []
+  return value as string[]
+}
+
 /** A stored template id: what the window may name in «удалить». */
 export function isTemplateId(value: unknown): value is string {
   return isString(value) && TEMPLATE_ID.test(value)

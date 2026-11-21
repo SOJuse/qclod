@@ -5,7 +5,7 @@
 // that refuses the real agent, and must not reach a release. So is the error
 // the renderer's pane-throw seam throws.
 export const SEAM =
-  /QCLOD_(FAKE_SDK|FAKE_HISTORY|FAKE_SHELL|PICK_FOLDER|PICK_FILES|CONFIRM_BYPASS|PREPARE_DELAY_MS|PREPARE_FAIL|ALLOW_REAL|FAKE_INSTALL|FAKE_AUTH|FAKE_UPDATE|FAKE_SLOW|FAKE_FAIL_TIMES|FAKE_FAIL|E2E_INVISIBLE|E2E_THROW_IN_PANE|HANG_MS|MOUNT_MS)|__qclodShellLog|__qclodRealAgentStarts|__qclodLoginOpens|__qclodUpdateRestarts|__qclodHasSession|Тестовая сборка не запускает|e2e: render error in a pane/g
+  /QCLOD_(FAKE_SDK|FAKE_ONESHOT|FAKE_HISTORY|FAKE_SHELL|PICK_FOLDER|PICK_FILES|CONFIRM_BYPASS|PREPARE_DELAY_MS|PREPARE_FAIL|ALLOW_REAL|FAKE_INSTALL|FAKE_AUTH|FAKE_UPDATE|FAKE_SLOW|FAKE_FAIL_TIMES|FAKE_FAIL|E2E_INVISIBLE|E2E_THROW_IN_PANE|HANG_MS|MOUNT_MS)|__qclodShellLog|__qclodRealAgentStarts|__qclodLoginOpens|__qclodUpdateRestarts|__qclodHasSession|fakeOneShot|Тестовая сборка не запускает|e2e: render error in a pane/g
 
 /** Every part of the release build, relative to the project root: each is scanned. */
 export const RELEASE_DIRS = ['out/main', 'out/preload', 'out/renderer']

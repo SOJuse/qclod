@@ -185,3 +185,18 @@ for await (const message of driver.messages) { /* ... */ }
 Строки следуют за процентом: `used` вместе равны `totalTokens` (делятся
 30:12, как при 21 %), резерв — 9 000, пока есть место, `free` — остаток до
 `maxTokens`. Легенда на снимке с 13 % сходится с числом в полосе.
+
+## Разовый запрос (`fakeOneShot`, этап 7)
+
+`fakeOneShot(script)` стоит вместо `query()` SDK в одноразовой форме
+(«Собрать мои шаблоны»): `({ prompt, options })` отдаёт кадры одного ответа —
+`system/init` без инструментов, `assistant` с текстом, `result/success` с
+`result` и `total_cost_usd`, как у живого CLI 2.1.317 по пробе
+`.superpowers/research/07-oneshot-probe.md`. Без `text` ответ — JSON-массив из
+двух шаблонов. `delayMs` — пауза перед ответом, `abortController` из `options`
+её прерывает (итератор бросает, как SDK). `fail`: `notLoggedIn` — «Not logged
+in · Please run /login» с `error: 'authentication_failed'`, ошибочный `result`
+и исключение; `limit` — `rate_limit_event` с `status: 'rejected'`, ответ с
+`error: 'rate_limit'` и ошибочный `result`; `crash` — исключение. Свойство
+`calls` хранит каждый `prompt` и `options`. В e2e-сборке сценарий берётся из
+`QCLOD_FAKE_ONESHOT` (JSON).

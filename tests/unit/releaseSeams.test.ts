@@ -23,6 +23,9 @@ describe('проверка релизной сборки на тестовые �
       'QCLOD_E2E_INVISIBLE',
       'QCLOD_E2E_THROW_IN_PANE',
       'QCLOD_HANG_MS',
+      // этап 7: the one-off query's fixture and its script.
+      'QCLOD_FAKE_ONESHOT',
+      'fakeOneShot',
       '__qclodShellLog',
       '__qclodLoginOpens',
       '__qclodRealAgentStarts',

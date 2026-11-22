@@ -10,11 +10,38 @@ files:
   - out/**/*
   - package.json
   - '!**/*.map'
+  # Claude Code is the user's own; the SDK's per-platform binaries are not shipped.
+  - '!node_modules/@anthropic-ai/claude-agent-sdk-*/**'
 
 # The SDK spawns the user's own claude executable as a child process and reads
 # its own files from node_modules, so it must stay outside the asar archive.
 asarUnpack:
   - node_modules/@anthropic-ai/claude-agent-sdk/**/*
+  # The voice engine: a native module and its DLLs, which load from disk only
+  # and must stay side by side, as the packages lay them out (stage 5).
+  - node_modules/sherpa-onnx-node/**/*
+  - node_modules/sherpa-onnx-win-x64/**/*
+  - node_modules/sherpa-onnx-darwin-arm64/**/*
+  # Stage 6: the server terminal's native module (task 26) loads from a real file.
+  - node_modules/node-pty/**
+
+# node-pty is N-API and ships its prebuilds (win32/darwin, x64/arm64), which
+# Electron loads as they are; a rebuild would need a C++ toolchain the CI
+# runners do not have. sherpa-onnx-node (voice) ships prebuilt binaries too.
+
+npmRebuild: false
+
+# Stage 6: the hashes of the relay binaries this version installs on a server
+# (scripts/relay-manifest.mjs; decision 3). The binaries themselves are
+# downloaded from the release, not shipped.
+# The Mac's menu-bar template image (main/tray.ts reads resources/tray/).
+extraResources:
+  - from: build/relay-manifest.json
+    to: relay-manifest.json
+  - from: build/tray
+    to: tray
+    filter:
+      - '*.png'
 
 win:
   target:
@@ -24,7 +51,7 @@ win:
     - target: portable
       arch:
         - x64
-  icon: build/icon.png
+  icon: build/icon.ico
   # No code signing: the spec ships an unsigned installer.
   signAndEditExecutable: false
 
@@ -57,3 +84,44 @@ publish:
   owner: SOJuse
   repo: qclod
   releaseType: release
+
+# What the release page says (build/release-notes.md; tests/unit/releaseDocs.test.ts).
+releaseInfo:
+  releaseNotesFile: build/release-notes.md
+
+
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  icon: build/icon.icns
+  category: public.app-category.developer-tools
+  minimumSystemVersion: '11.0'
+  darkModeSupport: true
+  # electron-builder 25 does not know an ad-hoc identity ("-"): afterPack signs.
+  identity: null
+  hardenedRuntime: false
+  notarize: false
+
+dmg:
+  artifactName: Qclod-${version}-arm64.${ext}
+  background: build/dmgBackground.png
+  window:
+    width: 540
+    height: 380
+  contents:
+    - x: 140
+      y: 190
+      type: file
+    - x: 400
+      y: 190
+      type: link
+      path: /Applications
+
+# One afterPack (build/afterPack.cjs): Electron's fuses first (stage 6, I8 —
+# no Node inspector from the command line, no NODE_OPTIONS; scripts/fuses.cjs),
+# then the Mac's ad-hoc signature, so the signature covers the set fuses.
+afterPack: build/afterPack.cjs
+

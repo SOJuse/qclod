@@ -1,9 +1,11 @@
 import { test, expect, _electron as electron } from '@playwright/test'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 
 test('window.qclod есть, window.require нет', async () => {
-  const app = await electron.launch({ args: ['.'] })
+  const profile = mkdtempSync(join(tmpdir(), 'qclod-e2e-'))
+  const app = await electron.launch({ args: ['.'], env: { ...(process.env as Record<string, string>), QCLOD_USER_DATA: profile } })
   const win = await app.firstWindow()
   await win.locator('[data-testid="app-root"]').waitFor()
 
@@ -29,4 +31,5 @@ test('window.qclod есть, window.require нет', async () => {
   expect(version).toBe(JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8')).version)
 
   await app.close()
+  rmSync(profile, { recursive: true, force: true, maxRetries: 3 })
 })

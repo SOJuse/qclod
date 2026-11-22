@@ -138,6 +138,7 @@ function toMessage(line: Line): Line | null {
       parent_tool_use_id: null
     }
     if (line['toolUseResult'] !== undefined) message['tool_use_result'] = line['toolUseResult']
+    if (typeof line['timestamp'] === 'string') message['timestamp'] = line['timestamp']
     for (const flag of FLAGS) if (line[flag] !== undefined) message[flag] = line[flag]
     return message
   }
@@ -165,6 +166,8 @@ function toMessage(line: Line): Line | null {
   if (prompt !== undefined) {
     const typed = (line['attachment'] as Line)['commandMode'] === 'prompt'
     const message: Line = { type: 'user', uuid: line['uuid'] }
+    const at = line['timestamp'] ?? (line['attachment'] as Line)['timestamp']
+    if (typeof at === 'string') message['timestamp'] = at
     if (typed) return { ...message, message: { role: 'user', content: prompt }, parent_tool_use_id: null }
     const text = textOf(prompt)
     if (text.includes('<task-notification>')) {
@@ -225,7 +228,11 @@ function agentCalls(line: Line): string[] {
     .filter(Boolean)
 }
 
-/** tool_use id -> agentId, from the answers to the calls, then from each agent's meta.json. */
+/**
+ * tool_use id -> agentId, from the answers to the calls, then from each agent's
+ * meta.json. `lines` are the file whose Agent calls are being resolved: the
+ * session's own, or a subagent's when its nested agents are looked up.
+ */
 function agentIds(lines: Line[], subagentsDir: string): Map<string, string> {
   const ids = new Map<string, string>()
   for (const line of lines) {
@@ -258,16 +265,44 @@ function agentIds(lines: Line[], subagentsDir: string): Map<string, string> {
   return ids
 }
 
-async function subagentSteps(subagentsDir: string, agentId: string, toolUseId: string): Promise<Line[]> {
-  if (/[\\/]/.test(agentId)) return []
-  const path = join(subagentsDir, `agent-${agentId}.jsonl`)
-  if (!isFile(path)) return []
+/** Agents inside agents are followed this deep; the CLI's own spawn_depth is rarely past 2. */
+const MAX_AGENT_DEPTH = 3
+
+/**
+ * One subagent's steps, each tagged with the call that started it. Agents it
+ * started itself are opened right after their call, tagged with their own
+ * call's id (the live stream does the same, probe 05b scenario 4). `path` is
+ * the agentIds on the way down: one met again is a loop and is skipped.
+ */
+async function subagentSteps(
+  subagentsDir: string,
+  agentId: string,
+  toolUseId: string,
+  path: readonly string[] = []
+): Promise<Line[]> {
+  // Either slash: a backslash in the id would lead the read out of subagents/.
+  if (/[\\/]/.test(agentId) || path.includes(agentId)) return []
+  const file = join(subagentsDir, `agent-${agentId}.jsonl`)
+  if (!isFile(file)) return []
   try {
-    const lines = (await readLines(path)).map(asMainLine)
-    return chainOf(lines)
-      .map(toMessage)
-      .filter((m): m is Line => m !== null)
-      .map((m) => ({ ...m, parent_tool_use_id: toolUseId }))
+    const lines = (await readLines(file)).map(asMainLine)
+    const chain = chainOf(lines)
+    const deeper = path.length + 1 < MAX_AGENT_DEPTH
+    const nestedIds =
+      deeper && chain.some((line) => agentCalls(line).length > 0)
+        ? agentIds(lines, subagentsDir)
+        : new Map<string, string>()
+
+    const steps: Line[] = []
+    for (const line of chain) {
+      const message = toMessage(line)
+      if (message) steps.push({ ...message, parent_tool_use_id: toolUseId })
+      for (const callId of agentCalls(line)) {
+        const nested = nestedIds.get(callId)
+        if (nested) steps.push(...(await subagentSteps(subagentsDir, nested, callId, [...path, agentId])))
+      }
+    }
+    return steps
   } catch {
     return []
   }

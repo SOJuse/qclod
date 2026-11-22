@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, Image as ImageIcon, ImageOff, Mic, Paperclip, Square, X } from 'lucide-react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { ArrowUp, Image as ImageIcon, ImageOff, Paperclip, Square, X } from 'lucide-react'
 import type {
   Attachment,
   CommandInfo,
   EffortLevel,
   ModelOption,
+  PromptTemplate,
   SessionStatus
 } from '../../shared/types'
 import { markRemote, withLocalCommands } from '../../shared/commandFilter'
@@ -22,20 +23,26 @@ import {
 } from '../input/attachments'
 import { applyMention, findMentionQuery } from '../input/mentions'
 import { InputHistory } from '../input/history'
+import { applyTemplateFromSlash, insertTemplate } from '../input/templates'
 import { hint, hintKeys } from '../app/shortcuts'
 import {
   acceptCommand,
-  commandItems,
+  acceptTemplate,
   completeCommand,
   bareLocalStep,
   bareRemoteToggle,
   findSlashQuery,
+  slashItems,
   stepItems,
   type SlashOutcome,
   type SlashStep
 } from '../input/slash'
+import { longFieldClasses } from '../ui/longText'
 import { InlineMenu, type InlineMenuItem } from './InlineMenu'
 import { SlashMenu } from './SlashMenu'
+import { MicButton } from './composer/MicButton'
+import { useVoiceCaret, VoiceMenu, VoiceTentative } from './composer/VoiceParts'
+import type { VoiceControls } from './composer/voice'
 import './Composer.css'
 
 interface Props {
@@ -49,6 +56,10 @@ interface Props {
   /** What the session offers after `/`, as it sent it. */
   commands: CommandInfo[]
   recentCommands: string[]
+  /** этап 7: the owner's templates, offered after the commands in the `/` list. */
+  templates?: PromptTemplate[]
+  /** этап 7: text to put in at the caret (a template from Ctrl+K); each nonce once. */
+  insertRequest?: { text: string; nonce: number } | null
   /** For the second step of /model and /effort. */
   models: ModelOption[]
   model: string | null
@@ -81,17 +92,28 @@ interface Props {
   onPickFiles: () => void
   /** main has answered for a pasted image: its bounded copy, or an error. */
   onImagePrepared: (file: File, patch: Pick<PendingImage, 'prepared' | 'error'>) => void
+  /** A long draft held back after the window froze and was reloaded (state/heldDrafts.ts). */
+  heldDraft?: boolean
+  onInsertHeldDraft?: () => void
+  /** Этап 5's voice input; without it the microphone is Windows dictation (Win+H). */
+  voice?: VoiceControls
+  /** Set when nothing can be sent from here at all (a chat of a removed server, R9): the field says why and is off. */
+  blockedText?: string | null
 }
 
 const MAX_MATCHES = 8
 
 /** A pasted image's chip carries its thumbnail; a failed one says so in colour and words. */
 function chipClass(item: PendingAttachment): string {
-  if (item.kind !== 'image') return 'composer-chip'
+  // A server chat's file (stage 6): going up, or failed to.
+  if (item.kind !== 'image') {
+    return `composer-chip${item.error ? ' is-error' : ''}${item.uploading ? ' is-uploading' : ''}`
+  }
   return `composer-chip is-image${item.error ? ' is-error' : ''}`
 }
 
 const COMMANDS_STEP: SlashStep = { kind: 'commands' }
+const NO_TEMPLATES: PromptTemplate[] = []
 
 type Menu =
   | { kind: 'none' }
@@ -134,6 +156,22 @@ export function DeadStrip({
 }
 
 /**
+ * Above the field after the watchdog reloaded a frozen window: the long draft
+ * was kept but not put back, in case it is what froze it. «Вставить» puts it
+ * back.
+ */
+export function HeldDraftStrip({ onInsert }: { onInsert: () => void }): JSX.Element {
+  return (
+    <div className="composer-held" data-testid="composer-held" role="status">
+      <span>Окно зависло на длинном тексте. Черновик сохранён — вставить его снова?</span>
+      <button type="button" className="is-primary" data-testid="composer-held-insert" onClick={onInsert}>
+        Вставить
+      </button>
+    </div>
+  )
+}
+
+/**
  * The one input line.
  *
  * v1 had two — ours and the CLI's own — and the user's verdict on that was
@@ -150,6 +188,8 @@ export function Composer({
   fileIndex,
   commands,
   recentCommands,
+  templates = NO_TEMPLATES,
+  insertRequest = null,
   models,
   model,
   effort,
@@ -172,13 +212,25 @@ export function Composer({
   canRetry = false,
   onRetry,
   onPickFiles,
-  onImagePrepared
+  onImagePrepared,
+  heldDraft = false,
+  onInsertHeldDraft,
+  voice,
+  blockedText = null
 }: Props): JSX.Element {
   const field = useRef<HTMLTextAreaElement | null>(null)
   const histories = useRef(new Map<string, InputHistory>())
-  const [caret, setCaret] = useState(0)
-  /** Where the caret goes once a text we set ourselves is in the field. */
-  const pendingCaret = useRef<number | null>(null)
+  const [caret, setCaretState] = useState(0)
+  // The voice hears where the caret is: its next phrase goes there (этап 5).
+  const voiceRef = useRef(voice)
+  voiceRef.current = voice
+  const setCaret = useCallback((at: number): void => {
+    setCaretState(at)
+    voiceRef.current?.caretMoved(at)
+  }, [])
+  useVoiceCaret(voice, field, setCaretState)
+  /** Where the caret (or a selection: a template's {{…}}) goes once a text we set ourselves is in the field. */
+  const pendingCaret = useRef<{ start: number; end: number } | null>(null)
   /** The row picked with the arrows, remembered for the list it was picked in. */
   const [selection, setSelection] = useState({ key: '', index: 0 })
   /** The second list of /model or /effort, once its command was chosen. */
@@ -233,7 +285,7 @@ export function Composer({
 
     const slash = findSlashQuery(draft, caret)
     if (!slash) return { kind: 'none' }
-    const items = commandItems(available, slash.query, recentCommands)
+    const items = slashItems(available, templates, slash.query, recentCommands)
     return { kind: 'slash', step: COMMANDS_STEP, key: `commands:${slash.query}`, items, initial: 0 }
   })()
   const menuItems = menu.kind === 'none' ? [] : menu.items
@@ -250,11 +302,12 @@ export function Composer({
     const el = field.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 260)}px`
+    // Plus the sideways scrollbar a long unwrapped paragraph has (Composer.css .is-long).
+    el.style.height = `${Math.min(el.scrollHeight + el.offsetHeight - el.clientHeight, 260)}px`
     // Placed before the next keystroke can land: a frame later, fast typing
     // has already gone in at the old spot.
     if (pendingCaret.current !== null) {
-      el.setSelectionRange(pendingCaret.current, pendingCaret.current)
+      el.setSelectionRange(pendingCaret.current.start, pendingCaret.current.end)
       pendingCaret.current = null
     }
   }, [draft])
@@ -272,6 +325,22 @@ export function Composer({
   useEffect(() => {
     if (step.kind !== 'commands' && !draft.startsWith(`/${step.kind} `)) setStep(COMMANDS_STEP)
   }, [draft, step])
+
+  // этап 7: a template from Ctrl+K goes in where the caret (or the selection)
+  // was when the palette took the focus; its first {{…}} comes selected.
+  const doneInsert = useRef(insertRequest?.nonce ?? 0)
+  useEffect(() => {
+    if (!insertRequest || insertRequest.nonce === doneInsert.current) return
+    doneInsert.current = insertRequest.nonce
+    const el = field.current
+    const start = el ? el.selectionStart : draft.length
+    const end = el ? el.selectionEnd : draft.length
+    const result = insertTemplate(draft, start, end, insertRequest.text)
+    history.edit()
+    replaceDraft(result.text, result.selStart, result.selEnd)
+    el?.focus()
+    // Only a new request runs this; the draft and the field are read as they are now.
+  }, [insertRequest])
 
   // A list belongs to the tab it was opened in.
   useEffect(() => {
@@ -296,7 +365,8 @@ export function Composer({
 
   // A crashed session cannot carry a message: accepting one would show it in
   // the ribbon, set the tab working, and deliver it nowhere (spec 6.10).
-  const dead = status === 'error'
+  const dead = status === 'error' || (blockedText !== undefined && blockedText !== null)
+  const crashed = status === 'error'
 
   /** Enter pressed while an image was still being prepared: send once it is. */
   const [sendWhenReady, setSendWhenReady] = useState(false)
@@ -313,7 +383,7 @@ export function Composer({
       setDismissedFor(null)
       const text = `/${local.kind} `
       if (text === draft) return
-      pendingCaret.current = text.length
+      pendingCaret.current = { start: text.length, end: text.length }
       onDraftChange(text)
       setCaret(text.length)
       return
@@ -366,10 +436,10 @@ export function Composer({
   }
 
   /** Replaces the field's text and puts the caret where the next typing goes. */
-  function replaceDraft(text: string, at = text.length): void {
+  function replaceDraft(text: string, at = text.length, selEnd = at): void {
     // The same text re-renders nothing, so the caret is placed right here.
-    if (text === draft) field.current?.setSelectionRange(at, at)
-    else pendingCaret.current = at
+    if (text === draft) field.current?.setSelectionRange(at, selEnd)
+    else pendingCaret.current = { start: at, end: selEnd }
     onDraftChange(text)
     setCaret(at)
   }
@@ -397,6 +467,11 @@ export function Composer({
         setStep(outcome.step)
         replaceDraft(outcome.text)
         return
+      case 'template': {
+        const result = applyTemplateFromSlash(draft, caret, outcome.body)
+        replaceDraft(result.text, result.selStart, result.selEnd)
+        return
+      }
     }
   }
 
@@ -416,6 +491,11 @@ export function Composer({
       else onSetEffort(item.id as EffortLevel)
       setStep(COMMANDS_STEP)
       replaceDraft('')
+      return
+    }
+    const template = acceptTemplate(templates, item.id)
+    if (template.kind !== 'none') {
+      runOutcome(template)
       return
     }
     const command = available.find((c) => c.name === item.id)
@@ -502,6 +582,7 @@ export function Composer({
   }
 
   const busy = status === 'busy' || status === 'waiting'
+  const fieldClass = useMemo(() => ['composer-input', 'ring-on-parent', ...longFieldClasses(draft)].join(' '), [draft])
 
   return (
     <div
@@ -515,7 +596,16 @@ export function Composer({
         )
       }}
     >
-      {dead && <DeadStrip canRetry={canRetry} onRetry={onRetry} onRestart={onRestart} />}
+      {crashed && <DeadStrip canRetry={canRetry} onRetry={onRetry} onRestart={onRestart} />}
+
+      {heldDraft && onInsertHeldDraft && (
+        <HeldDraftStrip
+          onInsert={() => {
+            onInsertHeldDraft()
+            field.current?.focus()
+          }}
+        />
+      )}
 
       {attachments.length > 0 && (
         <div className="composer-chips" data-testid="composer-chips">
@@ -594,25 +684,20 @@ export function Composer({
         </button>
 
         {/* Beside the clip, not after the field: Tab from the field still goes to «Отправить». */}
-        <button
-          type="button"
-          className="composer-mic"
-          data-testid="composer-mic"
-          aria-label="Голосовой ввод"
-          title="Голосовой ввод — диктовка Windows (Win+H). Говорите, текст появится в поле"
+        <MicButton
+          {...(voice ? { voice } : {})}
           disabled={dead}
-          onClick={() => {
+          onFallback={() => {
             // Windows types into whatever has the focus, so the field gets it first.
             field.current?.focus()
             void window.qclod.startVoice()
           }}
-        >
-          <Mic size={16} aria-hidden="true" />
-        </button>
+        />
+        <VoiceMenu voice={voice} field={field} />
 
         <textarea
           ref={field}
-          className="composer-input ring-on-parent"
+          className={fieldClass}
           data-testid="composer-input"
           data-composer-input=""
           aria-autocomplete="list"
@@ -622,7 +707,7 @@ export function Composer({
           rows={1}
           disabled={dead}
           placeholder={
-            dead ? 'Сессия прервалась — запустите заново' : busy ? 'Агент работает — Esc прерывает' : 'Что делаем?'
+            blockedText ? blockedText : dead ? 'Сессия прервалась — запустите заново' : busy ? 'Агент работает — Esc прерывает' : 'Что делаем?'
           }
           value={draft}
           onChange={(ev) => {
@@ -635,11 +720,20 @@ export function Composer({
           onKeyDown={onKeyDown}
           onPaste={(ev) => {
             const items = attachmentsFromClipboard(ev.clipboardData, window.qclod.pathForFile)
-            if (items.length === 0) return
-            // A file copied in Explorer pastes nothing as text; it is an
-            // attachment, and the paste itself must not also insert a name.
-            ev.preventDefault()
-            addAttachments(items)
+            if (items.length > 0) {
+              // A file copied in Explorer pastes nothing as text; it is an
+              // attachment, and the paste itself must not also insert a name.
+              ev.preventDefault()
+              addAttachments(items)
+              return
+            }
+            // The browser lays the field out as part of the paste itself,
+            // before React hears of it: a paragraph that will be too long to
+            // wrap is unwrapped now, or that one layout freezes the window.
+            const el = ev.currentTarget
+            const pasted = ev.clipboardData.getData('text/plain')
+            const after = draft.slice(0, el.selectionStart) + pasted + draft.slice(el.selectionEnd)
+            el.classList.add(...longFieldClasses(after))
           }}
         />
 
@@ -654,6 +748,7 @@ export function Composer({
         >
           {busy ? <Square size={12} fill="currentColor" aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
         </button>
+        <VoiceTentative voice={voice} />
       </div>
     </div>
   )

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { RibbonBuilder } from '../../shared/ribbon'
 import type {
+  AutonomyView,
   CommandInfo,
   EffortLevel,
   ModelOption,
@@ -10,27 +11,49 @@ import type {
   PanelData,
   PanelSnapshot,
   PermissionAnswer,
+  PermissionMode,
   PermissionRequest,
+  PlanDecision,
   RemoteInfo,
   RibbonChange,
   RibbonItem,
   SessionStatus,
+  SubagentSendResult,
+  SubagentStopResult,
   TabId,
+  TabServer,
   TaskOutput,
   TodoItem,
   UserInput
 } from '../../shared/types'
+import type { PermResolved } from '../../shared/relayProtocol'
+import type { RelayDriver } from '../ssh/relayDriver'
+import { isRelayNotice, relayNoticeLine, seedInto } from '../ssh/relaySeed'
 import { REMOTE_OFF, explainRemoteError, isRemoteLive, remoteFromMessage } from '../../shared/remote'
-import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
+import type { AgentDriver, DriverFactory, DriverOptions, SendPriority } from './driver'
+import { agentRef, relayInstruction, subagentRoute, type RelayMeta } from './subagentRelay'
+import type { AskedQuestion as CoreQuestion, AutonomyInput } from '../../core/autonomy/types'
 import type { ToolPermissionContext } from './permissionContext'
 import { parseExtraFlags } from './launchFlags'
-import { composeText } from './userMessage'
+import { MAX_QUEUED, QueueController } from './queueController'
 import { PanelCollector, readProjectSettings } from './panelData'
 import { BackgroundTracker } from './backgroundTasks'
 import { displayTarget } from './permissionStore'
 import { locateAgent } from '../setup/findAgent'
 import { classifyStartFailure, LOGIN_NEEDED_TEXT } from './startFailure'
 import { sdkPermissionMode } from '../../shared/types'
+import {
+  askedQuestions,
+  denialText,
+  encodeAnswers,
+  encodeQuestionAnswer,
+  notesForChoices,
+  notesModeFor,
+  planEditModeFor,
+  planSendBackText,
+  planWithComment,
+  type AskedQuestion
+} from './questionAnswer'
 
 /** How a notice names a mode; the window has its own, longer labels. */
 const MODE_NAMES: Record<string, string> = {
@@ -85,10 +108,75 @@ export interface AgentSessionOptions {
   panelRefreshMs?: number
   /** A ribbon and panel already on screen, taken over instead of new ones. */
   seed?: SessionSeed
+  /** «Автономность»: minutes before Qclod answers a card by itself, as the «авто-да» line says; 5 when absent. */
+  autoAnswerMinutes?: () => number
+  /**
+   * Stage 6: the chat runs on this server, through its relay. No local
+   * claude is looked for; the relay's driver comes from createDriver.
+   */
+  server?: TabServer
+  /** Stage 6: a relay notice that asks for a system notification (alertNotification). */
+  onAlert?: (text: string) => void
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Stage 6: the driver of a server chat — its agent and autonomy core live in the relay. */
+function isRelayDriver(driver: AgentDriver): driver is RelayDriver {
+  return driver.hostsAutonomy === true && 'initial' in driver
+}
+
+/** The answers a relay's autonomy core gave a question, as the card shows them. */
+function answersOf(answer: PermissionAnswer | undefined): Record<string, string> {
+  const given = answer?.updatedInput?.['answers']
+  if (!isObject(given)) return {}
+  const out: Record<string, string> = {}
+  for (const [q, a] of Object.entries(given)) if (typeof a === 'string') out[q] = a
+  return out
+}
+
+/** The default of `autoAnswerMinutes`. */
+const AUTO_ANSWER_MINUTES = 5
+
+/** How a message is sent — one object for stages 3 and 4 (cross-plan check F18). */
+export interface SendOptions {
+  /** Sent by Qclod itself («продолжай»): the bubble says «авто», and it is not the person acting. */
+  auto?: boolean
+  /** Stage 4: how soon the CLI takes it; 'next' when absent. */
+  priority?: SendPriority
+  /** Stage 4: the person's message to a subagent, which this instruction carries. */
+  relay?: RelayMeta
+}
+
+/** The questions of an AskUserQuestion input as the core reads them: labels as they came. */
+function coreQuestions(input: Record<string, unknown>): CoreQuestion[] {
+  const questions = Array.isArray(input['questions']) ? (input['questions'] as unknown[]) : []
+  return questions.flatMap((q): CoreQuestion[] => {
+    if (typeof q !== 'object' || q === null) return []
+    const item = q as Record<string, unknown>
+    if (typeof item['question'] !== 'string') return []
+    const options = Array.isArray(item['options']) ? (item['options'] as unknown[]) : []
+    return [
+      {
+        question: item['question'],
+        options: options.flatMap((o) =>
+          typeof o === 'object' && o !== null && typeof (o as Record<string, unknown>)['label'] === 'string'
+            ? [(o as Record<string, unknown>)['label'] as string]
+            : []
+        ),
+        multiSelect: item['multiSelect'] === true
+      }
+    ]
+  })
 }
 
 /** The longest `dispose` waits for the agent process to go away. */
 export const DISPOSE_TIMEOUT_MS = 5000
+
+/** A subagent asked to stop that has not said so by then is reported as not stopping (stage 4). */
+export const SUBAGENT_STOP_WATCH_MS = 10_000
 
 /** The longest a closing tab waits for the bridge to say «выключено» to the phone. */
 export const REMOTE_OFF_TIMEOUT_MS = 1000
@@ -98,21 +186,11 @@ export const MCP_POLL_MS = 2000
 /** …this many times at most, so one that never comes up is not asked about forever. */
 export const MCP_POLL_MAX = 15
 
-/** Messages waiting their turn; one more is handed back rather than kept. */
-export const MAX_QUEUED = 20
+/** Messages on the strip, not read by the agent yet; one more is handed back rather than kept. */
+export { MAX_QUEUED }
 
 /** What a session whose agent simply went away says, and keeps as its error. */
 const AGENT_EXITED = 'Агент завершил работу'
-
-/** A queued image handed back to the window: its copy on disk stands for its bytes. */
-function withoutCopiedBytes(input: UserInput): UserInput {
-  return {
-    ...input,
-    attachments: input.attachments.map((a) =>
-      a.kind === 'image' && a.path ? { ...a, dataBase64: '' } : a
-    )
-  }
-}
 
 /**
  * Turns what the SDK said into something worth reading. «Claude Code process
@@ -150,14 +228,9 @@ export function seedFromTranscript(messages: unknown[]): SessionSeed {
   return { builder, collector }
 }
 
-/** The texts of an AskUserQuestion's questions — the keys its answers go under. */
-function questionTexts(input: Record<string, unknown>): string[] {
-  const questions = input['questions']
-  if (!Array.isArray(questions)) return []
-  return questions.flatMap((q: unknown) => {
-    const text = typeof q === 'object' && q !== null ? (q as Record<string, unknown>)['question'] : undefined
-    return typeof text === 'string' ? [text] : []
-  })
+/** How the user allowed a tool, as its card shows it. */
+function scopeOf(answer: PermissionAnswer): 'once' | 'always' | 'session' {
+  return answer.forSession ? 'session' : answer.remember ? 'always' : 'once'
 }
 
 type ChangeListener = (changes: RibbonChange[]) => void
@@ -198,9 +271,17 @@ export class AgentSession {
   private mode: string
   private todoItems: TodoItem[] = []
   private readonly idleWaiters: Array<() => void> = []
-  /** Messages given to the driver before system/init; see `sentBeforeInit`. */
-  private unintroduced: UserInput[] = []
+  /**
+   * Messages given to the driver before system/init; see `sentBeforeInit`.
+   * `auto` — Qclod's own, never sent again (decision 12).
+   */
+  private unintroduced: Array<{ sent: UserInput; auto: boolean }> = []
+  /** What AutonomyCore is fed from this session (stage 3). */
+  private readonly autonomyListeners: Array<(input: AutonomyInput) => void> = []
   private disposed = false
+  /** Stage 6: cards the relay closed — by its timer, another client — by card id, until the abort reaches them. */
+  private readonly remoteResolutions = new Map<string, PermResolved>()
+  private relayUnsubscribe: Array<() => void> = []
   /** Whether a driver was ever made; see `launched`. */
   private launchedAgent = false
   /**
@@ -216,8 +297,14 @@ export class AgentSession {
   >()
   private readonly pendingPlans = new Map<
     string,
-    { resolve: (answer: PermissionAnswer) => void; turn: number }
+    { input: Record<string, unknown>; resolve: (answer: PermissionAnswer) => void; turn: number }
   >()
+  /** `claude_code_version` from system/init: how a card's comments and edits can reach this CLI. */
+  private cliVersion: string | null = null
+  /** The last system/init: which tools this CLI has (stage 4, `subagentRoute`). */
+  private lastInit: Record<string, unknown> | null = null
+  /** Subagents asked to stop, by task id, until a frame says they have ended. */
+  private readonly stopWatch = new Map<string, ReturnType<typeof setTimeout>>()
   /** Permission questions still waiting on the user; aborting one refuses it. */
   private readonly openPermissions = new Map<string, { controller: AbortController; turn: number }>()
   /**
@@ -233,16 +320,10 @@ export class AgentSession {
    */
   private turnRunning = false
   /**
-   * Messages sent while a turn was under way, oldest first. They wait here —
-   * not in the ribbon — until the agent is free, and go one per turn.
+   * The user's messages the agent has not read yet — the strip — and the
+   * CLI's queue behind it (`queueController.ts`).
    */
-  private queue: Array<{ id: string; input: UserInput }> = []
-  /**
-   * How many «Стоп» are on their way. Meanwhile a message goes straight to
-   * the agent: the queue was handed back when Stop was pressed, and a message
-   * typed after that is meant to be sent, not pulled back too.
-   */
-  private stopsInFlight = 0
+  private readonly queue: QueueController
   private mcpTimer: ReturnType<typeof setTimeout> | null = null
   private refreshTimer: ReturnType<typeof setInterval> | null = null
   /** Repeats asked since the servers were last all settled. */
@@ -254,10 +335,115 @@ export class AgentSession {
     this.builder = options.seed?.builder ?? new RibbonBuilder()
     this.collector = options.seed?.collector ?? new PanelCollector()
     this.todoItems = this.builder.todo ?? []
+    this.queue = new QueueController({
+      driver: () => this.driver,
+      turnRunning: () => this.turnRunning,
+      startTurn: (opts) => this.startTurn(opts),
+      endTurn: () => this.endTurn(),
+      currentTurn: () => this.turn,
+      showUser: (input, composed, echoOf, opts) => this.showUser(input, composed, echoOf, opts),
+      remember: (sent, opts) => this.remember(sent, opts),
+      emitQueue: (view) => this.emitPanel(this.collector.setQueue(view)),
+      notice: (text, tone) => this.emit(this.builder.notice(text, tone)),
+      cancelWaits: (scope) => this.cancelWaits(scope),
+      relayCancelled: (relay) => this.emit(this.builder.markRelay(relay.relayId, 'cancelled'))
+    })
   }
 
   get status(): SessionStatus {
     return this.state
+  }
+
+  /**
+   * What AutonomyCore needs from this session: every frame, status and mode,
+   * the cards it could answer and how they closed, and the person acting.
+   * Returns a function that stops the listener.
+   */
+  onAutonomyInput(cb: (input: AutonomyInput) => void): () => void {
+    this.autonomyListeners.push(cb)
+    return () => {
+      const at = this.autonomyListeners.indexOf(cb)
+      if (at !== -1) this.autonomyListeners.splice(at, 1)
+    }
+  }
+
+  private feedAutonomy(input: AutonomyInput): void {
+    // A copy: a listener may stop itself while it is being told.
+    for (const listener of [...this.autonomyListeners]) listener(input)
+  }
+
+  /** The core's view of this tab — timers, a limit wait — whole, into the panel. */
+  setAutonomyView(view: AutonomyView): void {
+    this.emitPanel(this.collector.setAutonomy(view))
+  }
+
+  /** Stage 6: this chat's autonomy core is its server's. */
+  get hostsAutonomy(): boolean {
+    return this.driver?.hostsAutonomy === true || this.options.server !== undefined
+  }
+
+  /** Stage 6: «Подождать» / «Ответить сейчас» of a server chat's card go to its relay. False — not a server chat. */
+  async autonomyAct(cardId: string, action: 'hold' | 'answerNow'): Promise<boolean> {
+    const driver = this.driver
+    if (!driver || !isRelayDriver(driver)) return false
+    await driver.autonomy(cardId, action)
+    return true
+  }
+
+  /** Stage 6: the relay's id of this server chat's session. */
+  get relaySessionId(): string | null {
+    const driver = this.driver
+    return driver && isRelayDriver(driver) ? driver.relaySessionId : null
+  }
+
+  /**
+   * A server chat's driver is up: its journal becomes this ribbon (the CLI
+   * there echoes nothing, the journal has every message), and the relay's
+   * view of its cards and timers is followed from now on.
+   */
+  private adoptRelay(driver: RelayDriver): void {
+    const { snapshot, seed } = driver.initial
+    const { changes, panel } = seedInto(this.builder, this.collector, seed)
+    this.emit(changes)
+    if (Object.keys(panel).length > 0) this.emitPanel(panel)
+    if (snapshot.sdkSessionId && snapshot.sdkSessionId !== this.session) {
+      this.session = snapshot.sdkSessionId
+      this.unintroduced = []
+      for (const listener of this.sessionListeners) listener(snapshot.sdkSessionId)
+    }
+    if (snapshot.mode !== this.mode) {
+      this.setMode(snapshot.mode)
+      this.emitPanel(this.collector.setPermissionMode(snapshot.mode))
+    }
+    this.relayUnsubscribe.push(
+      driver.onResolvedRemotely((r) => {
+        const cardId = (r as PermResolved & { toolUseId?: string }).toolUseId ?? r.requestId
+        this.remoteResolutions.set(cardId, r)
+      }),
+      driver.onAutonomyView((view) => this.setAutonomyView(view))
+    )
+  }
+
+  /** How the relay closed this card, if it did; asked once. */
+  private takeRemote(cardId: string): PermResolved | undefined {
+    const r = this.remoteResolutions.get(cardId)
+    this.remoteResolutions.delete(cardId)
+    return r
+  }
+
+  /** A relay's notice: the text is built here, in this machine's time zone (сверка F5). */
+  private onRelayNotice(notice: unknown): void {
+    if (!isRelayNotice(notice)) return
+    const line = relayNoticeLine(notice)
+    this.emit(this.builder.notice(line.text, line.tone))
+    if (line.alert) this.options.onAlert?.(line.text)
+  }
+
+  /** Every change of `mode` goes through here, so the core hears of it. */
+  private setMode(mode: string): void {
+    if (mode === this.mode) return
+    this.mode = mode
+    this.feedAutonomy({ type: 'mode', mode: mode as PermissionMode })
   }
 
   get error(): string | undefined {
@@ -458,37 +644,93 @@ export class AgentSession {
    * `«Question» — answer` per question, just the answer for a single question —
    * which is what the user would have typed anyway. A stopped question is dropped
    * from `pendingQuestions` the moment it is stopped, so its card lands here.
+   *
+   * `notes` are the user's comments on the chosen options. One goes with an
+   * answer that is a choice (one option or several); an answer in the user's
+   * own words is the comment already. A CLI that reads `annotations` gets them
+   * there, an older one as «Вариант — комментарий» in the answer — and so does
+   * the message.
    */
-  answerQuestion(toolUseId: string, given: Record<string, string>): void {
+  answerQuestion(
+    toolUseId: string,
+    given: Record<string, string>,
+    notes: Record<string, string> = {}
+  ): void {
     const waiting = this.pendingQuestions.get(toolUseId)
     // The window only says which choice goes with which question; what the
     // questions are comes from here. Foreign keys are dropped, and a card
     // with a question left unanswered stays open and the agent stays held.
     const card = this.builder.items.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)
-    const asked = waiting
-      ? questionTexts(waiting.input)
+    const asked: AskedQuestion[] = waiting
+      ? askedQuestions(waiting.input)
       : card && card.kind === 'question'
-        ? card.questions.map((q) => q.question)
+        ? card.questions.map((q) => ({ question: q.question, labels: q.options.map((o) => o.label) }))
         : []
-    if (asked.length === 0 || !asked.every((q) => typeof given[q] === 'string')) return
-    const answers = Object.fromEntries(asked.map((q) => [q, given[q]!]))
-    this.emit(this.builder.answerQuestion(toolUseId, answers))
+    if (asked.length === 0 || !asked.every((q) => typeof given[q.question] === 'string')) return
+    const answers = Object.fromEntries(asked.map((q) => [q.question, given[q.question]!]))
+    const kept = notesForChoices(asked, answers, notes)
+    // The card keeps the labels as they are, and the comments beside them.
+    this.emit(this.builder.answerQuestion(toolUseId, answers, { notes: kept }))
 
     if (!waiting) {
-      const entries = Object.entries(answers)
+      const entries = Object.entries(encodeAnswers(answers, kept, 'inline').answers)
       const text =
         entries.length === 1
           ? entries[0]![1]
           : entries.map(([question, answer]) => `«${question}» — ${answer}`).join('\n')
+      // A message of the person's: `send` tells the core so.
       this.send({ text, attachments: [] })
       return
     }
     this.pendingQuestions.delete(toolUseId)
     this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId: toolUseId, by: 'person' })
+    this.feedAutonomy({ type: 'personActed' })
     waiting.resolve({
       behavior: 'allow',
-      updatedInput: { ...waiting.input, answers }
+      updatedInput: encodeQuestionAnswer(waiting.input, answers, kept, notesModeFor(this.cliVersion))
     })
+  }
+
+  /**
+   * AutonomyCore's answer to a question nobody answered in time: the labels it
+   * picked, as they came. Only a question still waited on is answered, in
+   * place; a closed one — stopped, answered on the phone, a dead process —
+   * gets false and nothing is sent, never a message (Review Focus 1).
+   */
+  autoAnswerQuestion(cardId: string, answers: Record<string, string>): boolean {
+    const waiting = this.pendingQuestions.get(cardId)
+    if (!waiting) return false
+    const asked = askedQuestions(waiting.input)
+    if (asked.length === 0 || !asked.every((q) => typeof answers[q.question] === 'string')) return false
+    const given = Object.fromEntries(asked.map((q) => [q.question, answers[q.question]!]))
+    this.emit(this.builder.answerQuestion(cardId, given, { auto: true }))
+    this.pendingQuestions.delete(cardId)
+    this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId, by: 'auto' })
+    waiting.resolve({
+      behavior: 'allow',
+      updatedInput: encodeQuestionAnswer(waiting.input, given, {}, notesModeFor(this.cliVersion))
+    })
+    return true
+  }
+
+  /**
+   * AutonomyCore approves a plan nobody decided in time. Only a plan still
+   * waited on. In «авто-да» the mode stays (decision 4: leaving it would turn
+   * the next auto-answers off); in plan mode it goes to acceptEdits, as a
+   * person's approval does.
+   */
+  async autoApprovePlan(cardId: string): Promise<boolean> {
+    const waiting = this.pendingPlans.get(cardId)
+    if (!waiting) return false
+    this.pendingPlans.delete(cardId)
+    this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId, by: 'auto' })
+    this.emit(this.builder.resolvePlan(cardId, 'approved', { auto: true }))
+    if (this.mode === 'plan') await this.setPermissionMode('acceptEdits')
+    waiting.resolve({ behavior: 'allow' })
+    return true
   }
 
   /**
@@ -507,24 +749,63 @@ export class AgentSession {
    *
    * Approving also leaves plan mode, because staying in it would stop the
    * agent from doing the very thing that was just approved.
+   *
+   * A rejection's comment is the refusal the agent reads. An approval with
+   * an edit or a comment goes, to a CLI known to carry it out, as
+   * ExitPlanMode's `updatedInput.plan`: the plan as edited, the comment under
+   * it. An older CLI has it sent back instead (ruling S2-R8): ExitPlanMode is
+   * refused with the edit and the comment, the mode stays «план», and the
+   * agent proposes the plan again — approving it first and correcting it by a
+   * message would let the agent start on the old plan, with edits unasked in
+   * acceptEdits. Nothing here goes as a message, so nothing can be lost to a
+   * full queue. An edit that is empty or changes nothing is no edit.
    */
-  async answerPlan(requestId: string, approve: boolean): Promise<void> {
+  async answerPlan(requestId: string, decision: PlanDecision): Promise<void> {
     // (4) Nothing is marked answered until there is something to answer: a
     // card with no pending plan behind it must not look settled.
     const waiting = this.pendingPlans.get(requestId)
     if (!waiting) return
     this.pendingPlans.delete(requestId)
     this.leaveWait()
+    this.feedAutonomy({ type: 'waitClosed', cardId: requestId, by: 'person' })
+    this.feedAutonomy({ type: 'personActed' })
 
-    this.emit(this.builder.resolvePlan(requestId, approve ? 'approved' : 'rejected'))
-    if (!approve) {
-      waiting.resolve({ behavior: 'deny' })
+    const comment = decision.comment || undefined
+    if (!decision.approve) {
+      this.emit(this.builder.resolvePlan(requestId, 'rejected', comment ? { comment } : {}))
+      waiting.resolve(comment ? { behavior: 'deny', message: comment } : { behavior: 'deny' })
       return
     }
 
-    // The mode must be in place before the tool runs, not racing it.
-    await this.setPermissionMode('acceptEdits')
-    waiting.resolve({ behavior: 'allow' })
+    const asked = typeof waiting.input['plan'] === 'string' ? waiting.input['plan'] : ''
+    const plan = decision.plan
+    const edited = plan !== undefined && plan.trim() !== '' && plan !== asked ? plan : undefined
+    const shown = {
+      ...(comment ? { comment } : {}),
+      ...(edited !== undefined ? { edited: true as const, plan: edited } : {})
+    }
+
+    if ((edited !== undefined || comment) && planEditModeFor(this.cliVersion) === 'sendBack') {
+      // Sent back for rework: the card reads as not approved — sent back,
+      // not refused — with the edit and the comment that went back.
+      this.emit(this.builder.resolvePlan(requestId, 'rejected', { ...shown, sentBack: true }))
+      waiting.resolve({ behavior: 'deny', message: planSendBackText(edited, comment) })
+      return
+    }
+
+    this.emit(this.builder.resolvePlan(requestId, 'approved', shown))
+    // The mode must be in place before the tool runs, not racing it. A plan
+    // card in «авто-да» (decision 4) leaves the tab in «авто-да»: acceptEdits
+    // would turn the timers off for the cards after it.
+    if (this.mode !== 'autoAllow') await this.setPermissionMode('acceptEdits')
+    waiting.resolve(
+      edited !== undefined || comment
+        ? {
+            behavior: 'allow',
+            updatedInput: { ...waiting.input, plan: planWithComment(edited ?? asked, comment) }
+          }
+        : { behavior: 'allow' }
+    )
   }
 
   /** Something Qclod itself needs to say — a crash, a session that would not resume. */
@@ -556,7 +837,7 @@ export class AgentSession {
     // settings default or an older tabs.json. Starting in it unasked would
     // walk around the confirmation entirely, so the check lives here too.
     if (!(await this.allowMode(this.mode))) {
-      this.mode = 'default'
+      this.setMode('default')
       this.emit(
         this.builder.notice(
           'Режим «без проверок» не подтверждён — сессия запущена в обычном режиме.',
@@ -569,8 +850,9 @@ export class AgentSession {
     // init; the mode is marked as ours so init does not overrule it.
     if (this.mode === 'autoAllow') this.emitPanel(this.collector.setPermissionMode(this.mode))
 
-    let executablePath: string
-    try {
+    let executablePath = ''
+    // A server chat's claude is the server's: the relay finds it (stage 6).
+    if (!this.options.server) try {
       const resolve =
         this.options.resolveAgent ??
         ((p: string) => {
@@ -603,9 +885,11 @@ export class AgentSession {
       cwd: this.options.cwd,
       executablePath,
       model: this.options.overrides.model,
-      permissionMode: sdkPermissionMode(this.mode),
+      // The relay knows Qclod's own modes («авто-да» is its core's): it gets the mode as it is.
+      permissionMode: this.options.server ? this.mode : sdkPermissionMode(this.mode),
       extraArgs: flags.args,
       resume: resumeId,
+      ...(this.options.server ? { server: this.options.server } : {}),
       canUseTool: (toolName, input, opts) => this.onToolPermission(toolName, input, opts)
     }
 
@@ -625,13 +909,14 @@ export class AgentSession {
     }
     this.driver = driver
     this.launchedAgent = true
+    if (isRelayDriver(driver)) this.adoptRelay(driver)
 
     this.pump = this.readMessages(this.driver)
     // The stored effort is asked for first, so the control request is on the
     // wire before the first queued message and that message runs at it.
     this.background(this.applyStoredEffort())
-    // What was sent while the agent was starting goes now.
-    if (!this.sendQueued()) this.setStatus('idle')
+    // What was sent while the agent was starting goes now, all of it.
+    if (!this.queue.flushWaiting()) this.setStatus('idle')
     this.emitPanel(this.collector.setProjectSettings(readProjectSettings(this.options.cwd)))
 
     // The panel is filled now rather than after the first answer. `system/init`
@@ -713,48 +998,231 @@ export class AgentSession {
   }
 
   /**
-   * A message from the user. While a turn is under way, or while the agent
-   * is still starting, it waits in the queue and goes when the agent is free;
-   * otherwise it goes now. False when the session cannot take it — not
-   * started, dead, or the queue full — so the window can give it back.
+   * A message from the user. It goes to the CLI at once, with a uuid of its
+   * own; during a turn the CLI reads it between the agent's steps, and the
+   * strip shows it until then. Only while the agent is still starting does it
+   * wait here. False when the session cannot take it — not started, dead, or
+   * the strip full — so the window can give it back. `auto` — Qclod's own
+   * «продолжай»: marked so, and not the person acting.
    */
-  send(input: UserInput): boolean {
+  send(input: UserInput, opts: SendOptions = {}): boolean {
     if (this.disposed) return false
+    const auto = opts.auto === true
     const starting = !this.driver && this.state === 'starting'
     if (!this.driver && !starting) return false
-    if (starting || (this.turnRunning && this.stopsInFlight === 0)) {
-      if (this.queue.length >= MAX_QUEUED) return false
-      this.queue.push({ id: randomUUID(), input })
-      this.emitQueue()
-      return true
+    const how = {
+      ...(auto ? { auto } : {}),
+      ...(opts.priority ? { priority: opts.priority } : {}),
+      ...(opts.relay ? { relay: opts.relay } : {})
     }
-    this.sendNow(input)
+    if (starting) {
+      if (this.queue.size >= MAX_QUEUED) return false
+      this.queue.hold(input, how)
+    } else {
+      if (this.queue.wouldOverflow()) return false
+      this.queue.submit(input, how)
+    }
+    if (!auto) this.feedAutonomy({ type: 'personActed' })
     return true
   }
 
-  private sendNow(input: UserInput): void {
-    if (!this.driver) return
-    // The text is composed once, here. The ribbon shows what the user typed
-    // with their files as chips; the agent — and therefore the echo that comes
-    // back — gets the composed version, which is what the dedup must match.
-    const text = composeText(input)
+  /**
+   * Writes to a subagent through the main agent (stage 4, decisions 4, 5, 9).
+   * The window names only the card; the agent's id comes from this ribbon.
+   * A foreground agent holds the main agent's turn, so it is first moved to
+   * the background and the message goes as 'next'; if it cannot be moved, as
+   * 'now' — the CLI moves what it can by itself. The person's message shows
+   * in the agent's ribbon at once, and moves on from `sent` as the main
+   * agent reads it and passes it on.
+   */
+  async sendToSubagent(cardId: string, text: string): Promise<SubagentSendResult> {
+    const body = text.trim()
+    if (body === '') return { ok: false, reason: 'empty' }
+    if (this.disposed) return { ok: false, reason: 'not-running' }
+    const card = this.builder.subagentCard(cardId)
+    if (!card) return { ok: false, reason: 'unknown-agent' }
+    const ref = agentRef(card)
+    if (ref === null) return { ok: false, reason: 'not-started' }
+    if (subagentRoute(this.lastInit) === 'none') return { ok: false, reason: 'no-send-message' }
+
+    // Every top-level agent in the foreground holds the main agent's turn, not
+    // only this one: they all go to the background, or the step boundary the
+    // 'next' message waits for comes only after the last of them.
+    const holding = this.items.filter(
+      (i): i is Extract<RibbonItem, { kind: 'subagent' }> =>
+        i.kind === 'subagent' &&
+        i.id !== card.id &&
+        i.state === 'running' &&
+        i.background !== true &&
+        i.parentId === undefined &&
+        i.toolUseId !== ''
+    )
+    const moving = card.state === 'running' && card.background !== true ? [card, ...holding] : holding
+    let priority: SendPriority = 'next'
+    if (moving.length > 0) {
+      const driver = this.driver
+      const results = await Promise.all(
+        moving.map(async (c): Promise<boolean | null> => {
+          try {
+            return driver ? await driver.backgroundTask(c.toolUseId) : null
+          } catch {
+            return null
+          }
+        })
+      )
+      if (this.disposed) return { ok: false, reason: 'not-running' }
+      // null — it cannot be moved: 'now', and the CLI moves what it can. false —
+      // nothing of that call is in the foreground any more: no reason to cut
+      // the main agent's step short.
+      if (results.includes(null)) priority = 'now'
+    }
+
+    const relay: RelayMeta = { relayId: randomUUID(), cardId, agent: card.name, text: body }
+    this.emit(this.builder.addRelay(cardId, body, relay.relayId))
+    const taken = this.send({ text: relayInstruction(ref, body), attachments: [] }, { priority, relay })
+    if (!taken) {
+      this.emit(this.builder.markRelay(relay.relayId, 'cancelled'))
+      return { ok: false, reason: 'not-running' }
+    }
+    return { ok: true }
+  }
+
+  /**
+   * Stops a subagent (stage 4). The window names only the card. One in the
+   * background is stopped where it is. One in the foreground is first moved
+   * to the background — the main agent's call then returns at once and its
+   * turn goes on — and stopped there (probe 05b, 3b); one that cannot be
+   * moved is stopped in place (3a). The card is closed by the CLI's own frame,
+   * not by this call; if none comes within 10 s, the ribbon says so.
+   */
+  async stopSubagent(cardId: string): Promise<SubagentStopResult> {
+    const card = this.builder.subagentCard(cardId)
+    if (!card || card.state !== 'running') return 'not-running'
+    const taskId = card.taskId
+    if (!taskId) return 'not-started'
+    const driver = this.driver
+    if (!driver || this.disposed) return 'not-running'
+    if (card.background !== true) {
+      try {
+        await driver.backgroundTask(card.toolUseId)
+      } catch {
+        // Background tasks are off: it is stopped where it is.
+      }
+    }
+    if (this.disposed) return 'not-running'
+    // Watched before the call: the CLI's killed/stopped frames may be read
+    // before stopTask() returns, and they are what settles the watch.
+    this.watchStop(taskId, cardId, card.name)
+    try {
+      await driver.stopTask(taskId)
+    } catch {
+      this.unwatchStop(taskId)
+      return 'failed'
+    }
+    return 'stopping'
+  }
+
+  private watchStop(taskId: string, cardId: string, name: string): void {
+    this.unwatchStop(taskId)
+    const timer = setTimeout(() => {
+      this.stopWatch.delete(taskId)
+      if (this.disposed) return
+      // Ended by a frame the watch did not read: nothing to report either.
+      if (this.builder.subagentCard(cardId)?.state !== 'running') return
+      this.emit(this.builder.notice(`Агент «${name}» не остановился за 10 секунд.`, 'error'))
+    }, SUBAGENT_STOP_WATCH_MS)
+    this.stopWatch.set(taskId, timer)
+  }
+
+  private unwatchStop(taskId: string): void {
+    const was = this.stopWatch.get(taskId)
+    if (was) clearTimeout(was)
+    this.stopWatch.delete(taskId)
+  }
+
+  /** A watched agent ended — stopped, or done before the stop landed: nothing to report. */
+  private settleStopWatch(m: Record<string, unknown>): void {
+    const taskId = typeof m['task_id'] === 'string' ? m['task_id'] : ''
+    const timer = taskId ? this.stopWatch.get(taskId) : undefined
+    if (!timer) return
+    const patch = m['patch']
+    const status =
+      m['subtype'] === 'task_notification'
+        ? m['status']
+        : m['subtype'] === 'task_updated' && typeof patch === 'object' && patch !== null
+          ? (patch as Record<string, unknown>)['status']
+          : undefined
+    if (status !== 'stopped' && status !== 'killed' && status !== 'completed' && status !== 'failed') return
+    clearTimeout(timer)
+    this.stopWatch.delete(taskId)
+  }
+
+  /** turn += 1 and the tab working, unless a card is open — or even then (`evenIfWaiting`). */
+  private startTurn(opts: { evenIfWaiting?: boolean } = {}): void {
+    this.turn += 1
+    this.turnRunning = true
+    if (opts.evenIfWaiting === true || this.waits === 0) this.setStatus('busy')
+  }
+
+  /** The turn is over: the tab is free, unless a card still waits on the user. */
+  private endTurn(): void {
+    this.turnRunning = false
+    if (this.waits === 0) this.setStatus('idle')
+  }
+
+  /**
+   * The user's bubble. The ribbon shows what the user typed with their files
+   * as chips; the agent — and therefore the echo that comes back — gets the
+   * composed version, which is what the dedup must match. `echoOf` is the
+   * uuid it went under, so the expectation ends with the turn that carried
+   * it (ruling R10); null — no echo is coming at all. `auto` — Qclod sent it.
+   */
+  private showUser(
+    input: UserInput,
+    composed: string,
+    echoOf: string | null,
+    opts: { auto?: boolean; relay?: RelayMeta } = {}
+  ): void {
+    // A message to a subagent: the bubble is what the person wrote, marked
+    // with whom it is for; the instruction is only the agent's to read. The
+    // echo, if one comes, is of the instruction.
+    const relay = opts.relay
+    if (relay) {
+      this.emit(
+        this.builder.addUser(relay.text, [], echoOf === null ? null : composed, echoOf ?? undefined, {
+          relay: { cardId: relay.cardId, agent: relay.agent }
+        })
+      )
+      this.emit(this.builder.markRelay(relay.relayId, 'read'))
+      return
+    }
     // The ribbon shows an image by its thumbnail, or by its copy on disk when
     // there is none (a large GIF or WebP); the full bytes (up to ~5 MB of
     // base64) would otherwise ride along in every snapshot.
     const shown = input.attachments.map((a) =>
       a.kind === 'image' && (a.thumbnail || a.path) ? { ...a, dataBase64: '' } : a
     )
-    this.emit(this.builder.addUser(input.text, shown, text))
-    this.deliver({ ...input, text })
+    this.emit(
+      this.builder.addUser(
+        input.text,
+        shown,
+        echoOf === null ? null : composed,
+        echoOf ?? undefined,
+        opts.auto ? { auto: true } : {}
+      )
+    )
   }
 
   /**
    * What was sent here before the CLI introduced itself. A resume that will
    * not open may only say so once it is spoken to, and takes these down with
-   * it; the session taking its place sends them again (`resend`).
+   * it; the session taking its place sends them again (`resend`). Qclod's own
+   * «продолжай» is not among them: without the conversation it means nothing
+   * (decision 12).
    */
   get sentBeforeInit(): UserInput[] {
-    return this.session === null ? [...this.unintroduced] : []
+    if (this.session !== null) return []
+    return this.unintroduced.filter((u) => !u.auto).map((u) => u.sent)
   }
 
   /**
@@ -763,16 +1231,19 @@ export class AgentSession {
    * bubble, and the echo it brings back is matched to the first one.
    */
   resend(sent: UserInput): void {
-    this.deliver(sent)
+    const uuid = randomUUID()
+    // The dead process's expectations went with it; this one is for the new turn.
+    this.builder.expectEcho(sent.text, uuid)
+    const driver = this.driver
+    if (!driver) return
+    this.startTurn({ evenIfWaiting: true })
+    this.remember(sent)
+    driver.send(sent, { uuid })
   }
 
-  private deliver(sent: UserInput): void {
-    if (!this.driver) return
-    if (this.session === null) this.unintroduced.push(sent)
-    this.turn += 1
-    this.turnRunning = true
-    this.setStatus('busy')
-    this.driver.send(sent)
+  /** Before init, what went to the agent is kept for a resend (`sentBeforeInit`). */
+  private remember(sent: UserInput, opts: { auto?: boolean } = {}): void {
+    if (this.session === null) this.unintroduced.push({ sent, auto: opts.auto === true })
   }
 
   /**
@@ -784,76 +1255,63 @@ export class AgentSession {
    * The stop is for the turn under way when it was pressed. The user need
    * not wait for it to land: a message sent meanwhile starts a turn of its
    * own, and that turn — its status, its first question — is left alone.
+   * What was on the strip is taken back by the queue (`QueueController.stop`)
+   * and handed back here.
    */
   async interrupt(): Promise<UserInput[]> {
     if (!this.driver) return []
+    // The person's own «Стоп»: a turn they ended is no limit to wait out and carry on after.
+    this.feedAutonomy({ type: 'personActed' })
     const stopped = this.turn
-    // Taken before anything is awaited: the turn's result could otherwise
-    // arrive first and send the next one off after all (ruling C7). An image
-    // with its copy on disk goes back without its bytes: the window has the
-    // copy, and main reads it again on the next send.
-    const returned = this.takeQueue().map(withoutCopiedBytes)
     this.cancelWaits()
-    this.stopsInFlight += 1
-    try {
-      await this.driver.interrupt().catch(() => undefined)
-    } finally {
-      this.stopsInFlight -= 1
-    }
+    const returned = await this.queue.stop()
     // A question asked while the interrupt was on its way belongs to the
     // turn being stopped and is refused with it; left open, it would hold a
     // count of one behind an idle tab.
     this.cancelWaits({ upTo: stopped })
     if (this.turn !== stopped) return returned
-    this.turnRunning = false
-    this.setStatus('idle')
+    this.queue.onDead()
+    this.endTurn()
     return returned
   }
 
-  /** Takes a message off the queue before it goes. False when it is not there. */
-  cancelQueued(id: string): boolean {
-    const at = this.queue.findIndex((q) => q.id === id)
-    if (at === -1) return false
-    this.queue.splice(at, 1)
-    this.emitQueue()
-    return true
-  }
-
-  /** Empties the queue and hands over what was in it — to «Стоп», or to a successor. */
-  takeQueue(): UserInput[] {
-    if (this.queue.length === 0) return []
-    const taken = this.queue.map((q) => q.input)
-    this.queue = []
-    this.emitQueue()
-    return taken
+  /**
+   * «Отменить» (and «Изменить»): takes a message off the strip before the
+   * agent reads it, and hands it back. Null when it is not there, when the
+   * agent has read it already (its bubble is on its way), or when this CLI
+   * cannot take it back.
+   */
+  cancelQueued(id: string): Promise<UserInput | null> {
+    return this.queue.cancel(id)
   }
 
   /**
-   * Takes over a predecessor's queue. A free session sends the first message
-   * at once; one that is not up holds them all and sends nothing.
+   * «Отправить сейчас»: taken back and sent again with `priority: 'now'`.
+   * False when it is not on the strip, the agent has read it, or a «Стоп»
+   * came before the CLI answered (that Stop hands it back).
    */
-  requeue(inputs: UserInput[]): void {
-    if (inputs.length === 0) return
-    for (const input of inputs) this.queue.push({ id: randomUUID(), input })
-    this.emitQueue()
-    if (!this.turnRunning) this.sendQueued()
+  sendQueuedNow(id: string): Promise<boolean> {
+    return this.queue.sendNow(id)
   }
 
-  /** The agent is free: the oldest waiting message goes. */
-  private sendQueued(): boolean {
-    if (!this.driver || this.queue.length === 0) return false
-    const next = this.queue.shift()!
-    this.emitQueue()
-    this.sendNow(next.input)
-    return true
+  /**
+   * Empties the strip and hands over what was on it, to a successor. With
+   * the process gone, everything there is unread: the CLI lost its queue.
+   */
+  takeQueue(): UserInput[] {
+    return this.queue.take()
+  }
+
+  /**
+   * Takes over a predecessor's strip. A session that is up sends it all at
+   * once, as if just typed; one that is not holds it until it is.
+   */
+  requeue(inputs: UserInput[]): void {
+    this.queue.requeue(inputs)
   }
 
   private emitQueue(): void {
-    this.emitPanel(
-      this.collector.setQueue(
-        this.queue.map((q) => ({ id: q.id, text: q.input.text, attachments: q.input.attachments.length }))
-      )
-    )
+    this.emitPanel(this.collector.setQueue(this.queue.view()))
   }
 
   /**
@@ -876,12 +1334,14 @@ export class AgentSession {
     const questions = [...this.pendingQuestions].filter(([, wait]) => ours(wait))
     for (const [toolUseId, waiting] of questions) {
       this.pendingQuestions.delete(toolUseId)
+      this.feedAutonomy({ type: 'waitClosed', cardId: toolUseId, by: 'stop' })
       waiting.resolve({ behavior: 'deny' })
     }
 
     const plans = [...this.pendingPlans].filter(([, wait]) => ours(wait))
     for (const [requestId, waiting] of plans) {
       this.pendingPlans.delete(requestId)
+      this.feedAutonomy({ type: 'waitClosed', cardId: requestId, by: 'stop' })
       this.emit(this.builder.resolvePlan(requestId, 'rejected'))
       waiting.resolve({ behavior: 'deny' })
     }
@@ -914,9 +1374,11 @@ export class AgentSession {
     }
     const was = this.mode
     const driver = this.driver
-    if (driver && sdkPermissionMode(mode) !== sdkPermissionMode(was)) {
+    // A server chat's relay knows «авто-да» itself: it is told every change, as it is.
+    const hosted = driver?.hostsAutonomy === true
+    if (driver && (hosted ? mode !== was : sdkPermissionMode(mode) !== sdkPermissionMode(was))) {
       try {
-        await driver.setPermissionMode(sdkPermissionMode(mode))
+        await driver.setPermissionMode(hosted ? mode : sdkPermissionMode(mode))
       } catch (err) {
         // The CLI refused: the session stays where it was, and says so —
         // a mode that silently did not switch is how «без проверок» kept
@@ -933,13 +1395,16 @@ export class AgentSession {
         return
       }
     }
-    this.mode = mode
+    this.setMode(mode)
     this.emitPanel(this.collector.setPermissionMode(mode))
     if (mode === 'autoAllow' && was !== 'autoAllow') {
+      const minutes = this.options.autoAnswerMinutes?.() ?? AUTO_ANSWER_MINUTES
       this.emit(
         this.builder.notice(
           'Режим «авто-да»: Qclod сам отвечает «разрешить» на каждый запрос агента. ' +
-            'Сохранённые запреты по-прежнему действуют, вопросы и планы — за вами.',
+            'Сохранённые запреты по-прежнему действуют. ' +
+            `На вопрос или план, на который вы не ответите за ${minutes} мин, Qclod ответит сам: ` +
+            'выберет рекомендуемый вариант или одобрит план.',
           'info'
         )
       )
@@ -1063,13 +1528,26 @@ export class AgentSession {
     return this.collector.snapshot
   }
 
-  async dispose(): Promise<void> {
+  /** `detachOnly` (stage 6): a server chat lets go of its agent and leaves it running there. */
+  async dispose(opts?: { detachOnly?: boolean }): Promise<void> {
+    // Only a server chat is let go of: a local one is stopped as ever, its
+    // Remote Control turned off first (I5, stage 4).
+    if (opts?.detachOnly && !this.options.server) opts = undefined
     this.disposed = true
     this.turnRunning = false
-    // The queue is dropped with the session by design: a closed tab's
+    // A late answer about the strip — a cancel the CLI confirms after the
+    // close — finds no turn held for it to let go.
+    this.queue.onDead()
+    // This process echoes nothing more. Done before anything is awaited: the
+    // ribbon goes on in a successor, which keeps expectations of its own.
+    this.builder.forgetEchoes()
+    // The strip is dropped with the session by design: a closed tab's
     // messages have nowhere to go. A swap takes it first (`takeQueue`).
     this.stopMcpPolling()
     this.stopPanelRefresh()
+    for (const off of this.relayUnsubscribe.splice(0)) off()
+    for (const timer of this.stopWatch.values()) clearTimeout(timer)
+    this.stopWatch.clear()
     // A question nobody can answer any more must not hold the agent open.
     this.cancelWaits()
 
@@ -1086,8 +1564,9 @@ export class AgentSession {
     const closing = (async () => {
       // The phone is told «выключено» rather than left to time out — briefly:
       // a bridge that does not answer must not hold the close.
-      if (driver && bridgeLive) await this.remoteOffBeforeClose(driver)
-      if (driver) await driver.dispose().catch(() => undefined)
+      // A server chat left running keeps its Remote Control too.
+      if (driver && bridgeLive && !opts?.detachOnly) await this.remoteOffBeforeClose(driver)
+      if (driver) await (opts ? driver.dispose(opts) : driver.dispose()).catch(() => undefined)
       await pump?.catch(() => undefined)
     })()
     await Promise.race([closing, limit])
@@ -1150,18 +1629,21 @@ export class AgentSession {
   }
 
   private onMessage(message: unknown): void {
+    if (isObject(message) && message['type'] === 'qclod_relay_notice') return this.onRelayNotice(message['notice'])
+    // Stage 6: the relay's stream was cut (a break, a late attach) — whole messages take over (I4).
+    if (isObject(message) && message['type'] === 'qclod_stream_reset') return this.emit(this.builder.resetStream())
+    this.feedAutonomy({ type: 'sdk', message })
     const changes = this.builder.apply(message)
     this.emit(changes)
+    const fromPhone = changes.some((c) => c.kind === 'append' && c.item.kind === 'user' && c.item.remote)
     // A message typed on the phone starts a turn of its own — unless one is
     // under way, which it then joins: the bubble shows, nothing is counted twice.
-    if (
-      !this.turnRunning &&
-      changes.some((c) => c.kind === 'append' && c.item.kind === 'user' && c.item.remote)
-    ) {
+    if (!this.turnRunning && fromPhone) {
       this.turn += 1
       this.turnRunning = true
       if (this.waits === 0) this.setStatus('busy')
     }
+    if (fromPhone) this.feedAutonomy({ type: 'personActed' })
     const remote = remoteFromMessage(message, this.remoteInfo)
     if (remote) {
       this.setRemoteInfo(remote)
@@ -1173,7 +1655,7 @@ export class AgentSession {
     if (panel) {
       // The collector is the one place that knows the current mode — it also
       // knows not to let a restart overrule what the user chose.
-      this.mode = this.collector.data.permissionMode
+      this.setMode(this.collector.data.permissionMode)
       this.emitPanel(panel)
     }
     const tasks = this.backgroundTasks.apply(message)
@@ -1186,6 +1668,7 @@ export class AgentSession {
 
     switch (m['type']) {
       case 'system':
+        if (this.stopWatch.size > 0) this.settleStopWatch(m)
         if (m['subtype'] === 'init') this.onInit(m)
         else if (m['subtype'] === 'commands_changed') {
           this.onCommandsChanged(m)
@@ -1193,11 +1676,11 @@ export class AgentSession {
           this.background(this.refreshMcp())
         } else if (m['subtype'] === 'plugin_install') this.background(this.refreshMcp())
         break
+      case 'command_lifecycle':
+        this.queue.onLifecycle(m)
+        break
       case 'result':
-        this.turnRunning = false
-        // A message waiting its turn goes straight on: the tab stays busy
-        // rather than flicking to idle (and chiming) in between.
-        if (!this.sendQueued()) this.setStatus('idle')
+        this.onResult(m)
         this.background(this.refreshContext())
         // A turn spends the plan; rate_limit_event does not always say so.
         this.background(this.refreshLimits())
@@ -1207,7 +1690,20 @@ export class AgentSession {
     }
   }
 
+  /**
+   * The end of a turn. The tab is free only when the CLI has nothing more of
+   * its to run (ruling R4, `QueueController.onResult`); otherwise it stays busy.
+   */
+  private onResult(m: Record<string, unknown>): void {
+    if (this.queue.onResult(m) === 'hold') return
+    this.turnRunning = false
+    this.setStatus('idle')
+  }
+
   private onInit(m: Record<string, unknown>): void {
+    this.lastInit = m
+    this.queue.onInit(m)
+    if (typeof m['claude_code_version'] === 'string') this.cliVersion = m['claude_code_version']
     const id = typeof m['session_id'] === 'string' ? m['session_id'] : null
     if (id && id !== this.session) {
       this.session = id
@@ -1260,6 +1756,9 @@ export class AgentSession {
     input: Record<string, unknown>,
     opts: ToolPermissionContext
   ): Promise<PermissionAnswer> {
+    // A closed session asks nobody: a card answered «до конца сессии» now
+    // would leave a rule for this tab that its successor would inherit.
+    if (this.disposed) return { behavior: 'deny' }
     const ask = this.options.askPermission
 
     // A question is not a permission: it has options, not «allow» and «deny»
@@ -1270,7 +1769,11 @@ export class AgentSession {
     // A plan is a document to read, not a tool call to wave through. In plan
     // mode the agent finishes by calling ExitPlanMode with what it intends to
     // do, and that is the moment the user decides (spec 6.4).
-    if (toolName === 'ExitPlanMode' && this.mode === 'plan') return this.askPlan(input, opts)
+    // In «авто-да» too (decision 4): the plan gets its card, and the core's
+    // timer, rather than being waved through with the tools.
+    if (toolName === 'ExitPlanMode' && (this.mode === 'plan' || this.mode === 'autoAllow')) {
+      return this.askPlan(input, opts)
+    }
 
     // The tool call's own id, so two questions about one message's tools are
     // two requests. A clock is no id: two asks in one millisecond collided.
@@ -1282,10 +1785,14 @@ export class AgentSession {
     if (this.mode === 'autoAllow') {
       if (opts.signal?.aborted) return { behavior: 'deny' }
       try {
-        return await ask(
+        const answer = await ask(
           { requestId, tabId: this.options.tabId, toolName, target, input, auto: true },
           opts.signal ?? new AbortController().signal
         )
+        // A saved deny is the user's refusal too, and is read as one.
+        return answer.behavior === 'deny' && !opts.signal?.aborted
+          ? { behavior: 'deny', message: denialText(answer.message) }
+          : answer
       } catch {
         return { behavior: 'deny' }
       }
@@ -1308,6 +1815,7 @@ export class AgentSession {
     this.enterWait()
 
     let answer: PermissionAnswer
+    let failed = false
     try {
       answer = await ask(
         { requestId, tabId: this.options.tabId, toolName, target, input },
@@ -1316,23 +1824,44 @@ export class AgentSession {
     } catch {
       // A gate that failed is not a gate that said yes.
       answer = { behavior: 'deny' }
+      failed = true
     } finally {
       opts.signal?.removeEventListener('abort', cancel)
     }
     // An answer to a question nobody waits on any more is no answer.
-    if (controller.signal.aborted) answer = { behavior: 'deny' }
+    const abandoned = controller.signal.aborted
+    if (abandoned) answer = { behavior: 'deny' }
 
     // Still open unless «Стоп» already closed it — and marked its card.
     if (this.openPermissions.get(requestId) === wait) {
       this.openPermissions.delete(requestId)
       this.leaveWait()
-      const state =
-        sdkAborted && isRemoteLive(this.remoteInfo)
+      // A server chat: the relay says who closed it — its own timer, or another client.
+      const remote = sdkAborted ? this.takeRemote(requestId) : undefined
+      const state = remote
+        ? remote.by === 'autonomy'
+          ? remote.answer?.behavior === 'deny'
+            ? 'denied'
+            : 'allowed'
+          : 'elsewhere'
+        : sdkAborted && isRemoteLive(this.remoteInfo)
           ? 'elsewhere'
           : answer.behavior === 'allow'
             ? 'allowed'
             : 'denied'
-      this.emit(this.builder.resolvePermission(requestId, state))
+      // The card says how it was allowed, or why it was refused.
+      const extra =
+        state === 'allowed'
+          ? { scope: scopeOf(answer) }
+          : state === 'denied' && answer.message
+            ? { reason: answer.message }
+            : {}
+      this.emit(this.builder.resolvePermission(requestId, state, extra))
+    }
+    // The user's refusal, with their reason, in words the agent cannot take
+    // for a remark: probe 05b saw a bare reason walked around with another tool.
+    if (answer.behavior === 'deny' && !failed && !abandoned) {
+      return { behavior: 'deny', message: denialText(answer.message) }
     }
     return answer
   }
@@ -1357,9 +1886,17 @@ export class AgentSession {
         if (this.pendingPlans.get(requestId)?.resolve !== settle) return
         this.pendingPlans.delete(requestId)
         this.leaveWait()
-        this.emit(
-          this.builder.resolvePlan(requestId, isRemoteLive(this.remoteInfo) ? 'elsewhere' : 'rejected')
-        )
+        const remote = this.takeRemote(requestId)
+        if (remote?.by === 'autonomy') {
+          // The server's timer approved it (stage 6), as the local one would.
+          const approved = remote.answer?.behavior !== 'deny'
+          this.emit(this.builder.resolvePlan(requestId, approved ? 'approved' : 'rejected', { auto: true }))
+          resolve({ behavior: 'deny' })
+          return
+        }
+        const elsewhere = remote !== undefined || isRemoteLive(this.remoteInfo)
+        this.feedAutonomy({ type: 'waitClosed', cardId: requestId, by: elsewhere ? 'elsewhere' : 'stop' })
+        this.emit(this.builder.resolvePlan(requestId, elsewhere ? 'elsewhere' : 'rejected'))
         resolve({ behavior: 'deny' })
       }
       const settle = (answer: PermissionAnswer): void => {
@@ -1367,7 +1904,10 @@ export class AgentSession {
         resolve(answer)
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
-      this.pendingPlans.set(requestId, { resolve: settle, turn: this.turn })
+      // The input is kept: an edited plan goes back as the same call's input.
+      this.pendingPlans.set(requestId, { input, resolve: settle, turn: this.turn })
+      // Told once the plan is waited on, so the core can answer it at once.
+      this.feedAutonomy({ type: 'planOpened', cardId: requestId })
     })
   }
 
@@ -1394,8 +1934,17 @@ export class AgentSession {
         if (this.pendingQuestions.get(toolUseId)?.resolve !== settle) return
         this.pendingQuestions.delete(toolUseId)
         this.leaveWait()
+        const remote = this.takeRemote(toolUseId)
+        if (remote?.by === 'autonomy') {
+          // The server's timer answered (stage 6): the card closes «авто», once.
+          this.emit(this.builder.answerQuestion(toolUseId, answersOf(remote.answer), { auto: true }))
+          resolve({ behavior: 'deny' })
+          return
+        }
+        const elsewhere = remote !== undefined || isRemoteLive(this.remoteInfo)
+        this.feedAutonomy({ type: 'waitClosed', cardId: toolUseId, by: elsewhere ? 'elsewhere' : 'stop' })
         // Answered on the phone: the card closes rather than waiting for a click.
-        if (isRemoteLive(this.remoteInfo)) this.emit(this.builder.closeQuestionElsewhere(toolUseId))
+        if (elsewhere) this.emit(this.builder.closeQuestionElsewhere(toolUseId))
         resolve({ behavior: 'deny' })
       }
       const settle = (answer: PermissionAnswer): void => {
@@ -1404,6 +1953,8 @@ export class AgentSession {
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
       this.pendingQuestions.set(toolUseId, { input, resolve: settle, turn: this.turn })
+      // Told once the question is waited on: `autoAnswerQuestion` finds it.
+      this.feedAutonomy({ type: 'questionOpened', cardId: toolUseId, questions: coreQuestions(input) })
     })
   }
 
@@ -1435,10 +1986,16 @@ export class AgentSession {
     // would write into a ribbon its successor carries on.
     if (this.disposed) return
     this.turnRunning = false
+    this.queue.onDead()
     this.stopPanelRefresh()
     const text = err instanceof Error ? err.message : String(err)
     const dead = this.driver
     this.driver = null
+    // No echo comes from a dead process; a resend expects its own (`resend`).
+    this.builder.forgetEchoes()
+    // The strip stays, unread, for the session taking this one's place
+    // (`takeQueue`); nothing on it can be hurried any more.
+    if (this.queue.size > 0) this.emitQueue()
     // The process may still be alive; and cards nobody can answer any more
     // must not stay live (a click could save a rule from a dead session).
     this.cancelWaits()
@@ -1475,10 +2032,14 @@ export class AgentSession {
   }
 
   private setStatus(status: SessionStatus): void {
+    // A closed session only ever becomes «stopped»: whatever answers late
+    // must not set the tab idle or busy after it (the core reads statuses).
+    if (this.disposed && status !== 'stopped') return
     if (this.state === status) return
     this.state = status
     // A copy: a listener may stop itself while it is being told.
     for (const listener of [...this.statusListeners]) listener(status)
+    this.feedAutonomy({ type: 'status', status })
     if (this.settled()) {
       const waiters = this.idleWaiters.splice(0)
       for (const resolve of waiters) resolve()

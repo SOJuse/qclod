@@ -1,8 +1,8 @@
 import type { PendingAttachment, PendingImage } from '../input/attachments'
 
 /**
- * What a reloaded window gets back (Ctrl+R): drafts, attachments by path, the
- * second pane and the active tab. It lives in sessionStorage: it survives a
+ * What a reloaded window gets back (Ctrl+R): drafts and attachments by path.
+ * The panes and the active chat are main's (layout.json). It lives in sessionStorage: it survives a
  * reload and goes with the window, and a closed tab's entry is dropped when
  * the store forgets the tab.
  *
@@ -16,11 +16,11 @@ export const UI_KEY = 'qclod.ui'
 export interface PersistedUi {
   draftByTab: Record<string, string>
   attachmentsByTab: Record<string, PendingAttachment[]>
-  splitTabId: string | null
-  activeTabId: string
+  /** этап 4: the agents layer's view; kept only when it is not the graph (сверка F14). */
+  agentsView?: 'graph' | 'timeline'
 }
 
-const EMPTY = (): PersistedUi => ({ draftByTab: {}, attachmentsByTab: {}, splitTabId: null, activeTabId: '' })
+const EMPTY = (): PersistedUi => ({ draftByTab: {}, attachmentsByTab: {} })
 
 export function serializeUi(state: PersistedUi): string {
   const draftByTab: Record<string, string> = {}
@@ -37,8 +37,7 @@ export function serializeUi(state: PersistedUi): string {
   return JSON.stringify({
     draftByTab,
     attachmentsByTab,
-    splitTabId: state.splitTabId,
-    activeTabId: state.activeTabId
+    ...(state.agentsView === 'timeline' ? { agentsView: 'timeline' } : {})
   })
 }
 
@@ -80,6 +79,7 @@ export function loadUi(storage: Pick<Storage, 'getItem'> | null): PersistedUi {
         if (typeof text === 'string' && text !== '') out.draftByTab[id] = text
       }
     }
+    if (parsed['agentsView'] === 'timeline') out.agentsView = 'timeline'
     if (isRecord(parsed['attachmentsByTab'])) {
       for (const [id, items] of Object.entries(parsed['attachmentsByTab'])) {
         if (!Array.isArray(items)) continue
@@ -96,8 +96,6 @@ export function loadUi(storage: Pick<Storage, 'getItem'> | null): PersistedUi {
         if (kept.length > 0) out.attachmentsByTab[id] = kept
       }
     }
-    if (typeof parsed['splitTabId'] === 'string') out.splitTabId = parsed['splitTabId']
-    if (typeof parsed['activeTabId'] === 'string') out.activeTabId = parsed['activeTabId']
   } catch {
     return EMPTY()
   }

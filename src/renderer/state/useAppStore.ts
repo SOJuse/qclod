@@ -1,9 +1,16 @@
 import { create } from 'zustand'
 import type { PendingAttachment } from '../input/attachments'
 import { UI_KEY, loadUi, serializeUi } from './uiPersist'
+import { startHeldDrafts } from './heldDrafts'
+import { MAX_PANES, nextPanes, type ProjectHistory } from '../chat/sidebarModel'
+import { projectKey } from '../../shared/projects'
+import { DEFAULT_LAYOUT, NO_AUTONOMY, type LayoutState } from '../../shared/types'
+import type { PanelOverride } from '../app/panelVisibility'
 import type {
   AppSettings,
   CommandInfo,
+  ConnectStep,
+  ServerView,
   PanelData,
   PanelSnapshot,
   ResolvedPath,
@@ -25,8 +32,15 @@ const PER_TAB_KEYS = [
   'attachmentsByTab',
   'fileIndexByTab',
   'commandsByTab',
-  'pathsByTab'
+  'pathsByTab',
+  'layerByTab',
+  'panelChoiceByTab',
+  'terminalShownByTab',
+  'terminalIdByTab'
 ] as const
+
+/** How the agents layer shows a chat's subagents (этап 4). */
+export type AgentsView = 'graph' | 'timeline'
 
 const RECENT_COMMANDS = 6
 /** Answers about paths kept per tab; the oldest go first past this. */
@@ -100,6 +114,82 @@ function forgetClosed(state: AppState, tabs: TabState[]): Partial<AppState> {
   return next as Partial<AppState>
 }
 
+export { MAX_PANES }
+
+/** What a pane can lay over its ribbon: subagents (этап 4), a file (этап 6), git (этап 7). */
+export type PaneLayerKind = 'agents' | 'git' | 'file'
+
+/** One layer over a pane's ribbon. agentId — этап 4; path, line — этапы 6, 7. */
+export interface PaneLayerState {
+  kind: PaneLayerKind
+  agentId?: string
+  path?: string
+  line?: number
+}
+
+/**
+ * The panes and the active tab once the tab list changed (or main's layout
+ * came): a pane whose tab was closed stops being a pane, and the active one
+ * is replaced by its neighbour. `want` is the layout to fit instead of the
+ * window's own panes, and `was` the chat that was active there before. An
+ * active chat that is not a pane takes the slot of the chat that was active
+ * before it, so no other pane is pushed out.
+ */
+function paneStateAfter(
+  state: Pick<AppState, 'paneTabIds' | 'activeTabId'>,
+  tabs: TabState[],
+  want?: { panes: TabId[]; active: TabId | null; was?: TabId }
+): { paneTabIds: TabId[]; activeTabId: TabId } {
+  const alive = (id: TabId): boolean => tabs.some((t) => t.id === id)
+  const source = want?.panes ?? state.paneTabIds
+  // Cut to the row first: an active chat past the fourth then takes a slot instead of falling off.
+  const paneTabIds = [...new Set(source)].filter(alive).slice(0, MAX_PANES)
+  let activeTabId = want?.active ?? state.activeTabId
+  if (!alive(activeTabId)) {
+    const was = source.indexOf(activeTabId)
+    const near = was === -1 ? paneTabIds[0] : paneTabIds[Math.min(was, paneTabIds.length - 1)]
+    activeTabId = near ?? tabs[0]?.id ?? ''
+  }
+  if (activeTabId && !paneTabIds.includes(activeTabId)) {
+    const slot = paneTabIds.indexOf(want?.was ?? state.activeTabId)
+    if (paneTabIds.length === 0) paneTabIds.push(activeTabId)
+    else if (slot !== -1 || paneTabIds.length >= MAX_PANES) paneTabIds[Math.max(0, slot)] = activeTabId
+    else paneTabIds.unshift(activeTabId)
+  }
+  // The same panes keep the same array: effects and storage writes key on it.
+  const same =
+    paneTabIds.length === state.paneTabIds.length && paneTabIds.every((id, i) => id === state.paneTabIds[i])
+  return { paneTabIds: same ? state.paneTabIds : paneTabIds, activeTabId }
+}
+
+/**
+ * Whether this list brings chats that main's saved panes name and the earlier
+ * list did not hold, while the window's panes are still just what that earlier
+ * list let through: then the saved panes are laid over again, so a split that
+ * arrives in several pushes is not cut down.
+ */
+function savedPanesArrived(state: AppState, tabs: TabState[]): boolean {
+  const had = new Set(state.tabs.map((t) => t.id))
+  const has = new Set(tabs.map((t) => t.id))
+  const saved = state.layout.panes
+  if (!saved.some((id) => has.has(id) && !had.has(id))) return false
+  const then = saved.filter((id) => had.has(id))
+  return then.length === state.paneTabIds.length && then.every((id, i) => id === state.paneTabIds[i])
+}
+
+/** Main's layout laid over the tabs the window knows. */
+function applyLayout(
+  state: AppState,
+  layout: LayoutState,
+  tabs: TabState[],
+  was?: TabId
+): Pick<AppState, 'paneTabIds' | 'activeTabId' | 'paneWidths' | 'layoutPending'> {
+  const fit = paneStateAfter(state, tabs, { panes: layout.panes, active: layout.active, ...(was ? { was } : {}) })
+  const widths = layout.paneWidths.length === fit.paneTabIds.length ? layout.paneWidths : []
+  const sameWidths = widths.length === state.paneWidths.length && widths.every((w, i) => w === state.paneWidths[i])
+  return { ...fit, paneWidths: sameWidths ? state.paneWidths : widths, layoutPending: false }
+}
+
 export const EMPTY_PANEL: PanelData = Object.freeze({
   context: null,
   cost: null,
@@ -111,14 +201,24 @@ export const EMPTY_PANEL: PanelData = Object.freeze({
   mcp: [],
   projectSettings: null,
   queue: [],
-  backgroundTasks: []
+  backgroundTasks: [],
+  autonomy: NO_AUTONOMY,
+  costRates: null
 })
 
 interface AppState {
   settings: AppSettings | null
   activeTabId: TabId
-  /** The conversation shown beside the active one, when the view is split. */
-  splitTabId: TabId | null
+  /** The panes left to right; one of them is always the active tab. [] while there are no tabs. */
+  paneTabIds: TabId[]
+  /** Shares of the row, one per pane; [] means equal. Main's, via the layout. */
+  paneWidths: number[]
+  /** The layout as main last said it: panes, active and widths are applied from it, the rest is read from it. */
+  layout: LayoutState
+  /** The layout came before any tab did; the first list lays it over them. */
+  layoutPending: boolean
+  /** The past conversations per project, by projectKey. */
+  historyByProject: Record<string, ProjectHistory>
   tabs: TabState[]
   /** Ids of tabs that were closed: late events and answers for them are dropped. */
   closedTabs: ReadonlySet<TabId>
@@ -144,11 +244,35 @@ interface AppState {
   pathsByTab: Record<TabId, ReadonlyMap<string, PathAnswer>>
   /** The last commands run, newest first — they head the list before anything is typed. */
   recentCommands: string[]
+  /** The one layer each pane shows over its ribbon (сверка F9); in memory only, never saved. */
+  layerByTab: Record<TabId, PaneLayerState | null>
+  /** Each pane's own panel choice (S2-R23): open or closed by hand; absent — the setting decides. In memory only. */
+  panelChoiceByTab: Record<TabId, PanelOverride>
+  /** этап 4: graph or timeline in every agents layer; survives a reload of the window (uiPersist), not a restart. */
+  agentsView: AgentsView
+  /** этап 4: what is typed to a subagent, by `${tabId}:${cardId}`; in memory only. */
+  agentDrafts: Record<string, string>
+  /** Stage 6: the servers Qclod knows, as main sees them. */
+  servers: ServerView[]
+  /** The list came from main at least once: a chat's server missing from it is gone, not unknown yet (R9). */
+  serversLoaded: boolean
+  /** Stage 6: the last checklist of each server's connect, by server id. */
+  connectSteps: Record<string, ConnectStep[]>
+  /** этап 7: text for a pane's input, put in at its caret (a template from Ctrl+K); nonce — each request once. */
+  composerInsert: { tabId: TabId; text: string; nonce: number } | null
 
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
   setActiveTabId: (id: TabId) => void
-  setSplitTabId: (id: TabId | null) => void
+  /** Sets the panes: no duplicates or closed tabs, at most MAX_PANES. */
+  setPanes: (ids: TabId[]) => void
+  /** Makes a pane the active one without moving any pane. */
+  focusPane: (id: TabId) => void
+  /** Takes main's layout: panes, active and widths at once if the tabs are known, otherwise with the list. */
+  setLayout: (layout: LayoutState) => void
+  setPaneWidths: (widths: number[]) => void
+  /** Asks main for a folder's past conversations; once, unless forced. */
+  loadProjectHistory: (cwd: string, force?: boolean, hostId?: string) => void
   setTabs: (tabs: TabState[]) => void
   setRibbon: (id: TabId, snapshot: RibbonSnapshot) => void
   applyRibbon: (id: TabId, changes: RibbonChange[], rev: number) => void
@@ -160,6 +284,27 @@ interface AppState {
   setCommands: (id: TabId, commands: CommandInfo[]) => void
   setPaths: (id: TabId, answers: ReadonlyArray<readonly [string, ResolvedPath | null]>) => void
   noteCommand: (name: string) => void
+  /** A new layer replaces the one before it; null closes it. */
+  setPaneLayer: (tabId: TabId, layer: PaneLayerState | null) => void
+  setPanelChoice: (tabId: TabId, choice: PanelOverride) => void
+  /** этап 4: the agents layer over this pane's ribbon; with `agentId` (a card id) — that subagent's own ribbon. */
+  openAgents: (tabId: TabId, agentId?: string | null) => void
+  closeAgents: (tabId: TabId) => void
+  setAgentsView: (view: AgentsView) => void
+  setAgentDraft: (key: string, text: string) => void
+  setServers: (servers: ServerView[]) => void
+  setConnectSteps: (hostId: string, steps: ConnectStep[]) => void
+  /** Stage 6: a server chat's terminal drawer is shown; hiding it keeps its session. */
+  terminalShownByTab: Record<TabId, boolean>
+  setTerminalShown: (tabId: TabId, shown: boolean) => void
+  /**
+   * Stage 6 (R1): the terminal each server chat's drawer opened, by tab. It
+   * outlives the drawer: a chat that leaves the panes and comes back takes up
+   * the same session. Only closing the chat closes it (main's closeTab).
+   */
+  terminalIdByTab: Record<TabId, string>
+  setTerminalId: (tabId: TabId, termId: string | null) => void
+  requestComposerInsert: (tabId: TabId, text: string) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -214,13 +359,22 @@ function ui(): Storage | null {
   }
 }
 
+/** The history reads under way, by projectKey; `again` — a forced read was asked for meanwhile. */
+const historyReads = new Map<string, { again: boolean }>()
+
 /** What the window held before it was reloaded; a tab that is gone is dropped by setTabs. */
 const restored = loadUi(ui())
+/** After the watchdog's reload a long draft is held back, not put into the field (heldDrafts.ts). */
+const restoredDrafts = startHeldDrafts(restored.draftByTab, ui())
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   settings: null,
-  activeTabId: restored.activeTabId,
-  splitTabId: restored.splitTabId,
+  activeTabId: '',
+  paneTabIds: [],
+  paneWidths: [],
+  layout: { ...DEFAULT_LAYOUT, panes: [], paneWidths: [], projects: [] },
+  layoutPending: false,
+  historyByProject: {},
   tabs: [],
   closedTabs: new Set(),
   ribbonByTab: {},
@@ -229,40 +383,121 @@ export const useAppStore = create<AppState>((set) => ({
   panelByTab: {},
   panelRevByTab: {},
   busySinceByTab: {},
-  draftByTab: restored.draftByTab,
+  draftByTab: restoredDrafts,
   attachmentsByTab: restored.attachmentsByTab,
   fileIndexByTab: {},
   commandsByTab: {},
   pathsByTab: {},
   recentCommands: [],
+  layerByTab: {},
+  terminalShownByTab: {},
+  terminalIdByTab: {},
+  panelChoiceByTab: {},
+  agentsView: restored.agentsView ?? 'graph',
+  agentDrafts: {},
+  servers: [],
+  serversLoaded: false,
+  connectSteps: {},
+  composerInsert: null,
 
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
     set((state) => (state.settings ? { settings: { ...state.settings, ...patch } } : state)),
-  setActiveTabId: (activeTabId) => set({ activeTabId }),
-  setSplitTabId: (splitTabId) => set({ splitTabId }),
+  setActiveTabId: (activeTabId) =>
+    set((state) => {
+      // A late word about a chat already closed changes nothing.
+      if (state.closedTabs.has(activeTabId)) return state
+      // A tab from outside the panes takes the place of the active pane.
+      if (state.paneTabIds.length === 0 || state.paneTabIds.includes(activeTabId)) return { activeTabId }
+      const at = Math.max(0, state.paneTabIds.indexOf(state.activeTabId))
+      return { activeTabId, paneTabIds: state.paneTabIds.map((id, i) => (i === at ? activeTabId : id)) }
+    }),
+  setPanes: (ids) =>
+    set((state) => {
+      const open = ids.filter((id) => !state.closedTabs.has(id))
+      // An empty row is never asked for: the active chat stays its one pane.
+      const keep = open.length === 0 && state.tabs.some((t) => t.id === state.activeTabId) ? [state.activeTabId] : open
+      const next = nextPanes(state, keep)
+      const same =
+        next.paneTabIds.length === state.paneTabIds.length && next.paneTabIds.every((id, i) => id === state.paneTabIds[i])
+      return {
+        paneTabIds: same ? state.paneTabIds : next.paneTabIds,
+        activeTabId: next.activeTabId,
+        // The shares belong to the panes they were made for.
+        ...(next.paneTabIds.length === state.paneWidths.length ? {} : { paneWidths: [] })
+      }
+    }),
+  focusPane: (id) => set((state) => (state.paneTabIds.includes(id) ? { activeTabId: id } : state)),
+
+  setLayout: (layout) =>
+    set((state) =>
+      state.tabs.length === 0
+        ? { layout, layoutPending: true }
+        : layout.active !== null && !state.tabs.some((t) => t.id === layout.active)
+          ? // Main made a chat active that the list does not hold yet: its own activation and the list follow.
+            { layout }
+          : // The new active chat takes the slot of the one main had active, as main's panes know it.
+            { layout, ...applyLayout(state, layout, state.tabs, state.layout.active ?? undefined) }
+    ),
+  setPaneWidths: (paneWidths) => set({ paneWidths }),
+
+  loadProjectHistory: (cwd, force = false, hostId) => {
+    const key = projectKey(cwd, hostId)
+    const running = historyReads.get(key)
+    if (running) {
+      // The answer on its way may predate what changed (a chat closed meanwhile): one more read follows it.
+      if (force) running.again = true
+      return
+    }
+    const known = get().historyByProject[key]
+    const list = known !== undefined && known !== 'loading' && known.error === undefined ? known : null
+    if (list && !force) return
+    const read = { again: false }
+    historyReads.set(key, read)
+    // A list already shown stays while it is read again (S2-R18).
+    set((state) => ({
+      historyByProject: { ...state.historyByProject, [key]: list ? { items: list.items, reading: true } : 'loading' }
+    }))
+    const done = (entry: ProjectHistory): void => {
+      historyReads.delete(key)
+      set((state) => ({ historyByProject: { ...state.historyByProject, [key]: entry } }))
+      if (read.again) get().loadProjectHistory(cwd, true, hostId)
+    }
+    window.qclod.projectHistory(cwd, hostId).then(
+      (items) => done({ items }),
+      (err: unknown) => done({ items: [], error: err instanceof Error ? err.message : String(err) })
+    )
+  },
 
   setTabs: (tabs) =>
-    set((state) => ({
-      tabs,
-      // A closed tab's data goes with it. Only tabs this store has seen in
-      // `tabs` are forgotten: a new tab's ribbon events can precede the list.
-      ...forgetClosed(state, tabs),
-      closedTabs: closedAfter(state, tabs),
-      busySinceByTab: tabs.reduce<Record<TabId, number>>((acc, tab) => {
+    set((state) => {
+      const busySince = tabs.reduce<Record<TabId, number>>((acc, tab) => {
         const working = tab.status === 'busy' || tab.status === 'waiting'
         const previous = state.tabs.find((t) => t.id === tab.id)
         const wasWorking = previous?.status === 'busy' || previous?.status === 'waiting'
         if (working) acc[tab.id] = wasWorking ? (state.busySinceByTab[tab.id] ?? Date.now()) : Date.now()
         return acc
-      }, {}),
-      // Keep a valid selection if the active tab went away.
-      activeTabId: tabs.some((t) => t.id === state.activeTabId)
-        ? state.activeTabId
-        : (tabs[0]?.id ?? ''),
-      // A pane whose tab was closed stops being a pane.
-      splitTabId: tabs.some((t) => t.id === state.splitTabId) ? state.splitTabId : null
-    })),
+      }, {})
+      const before = state.busySinceByTab
+      // Statuses that did not change keep the same object: readers key on it.
+      const unchanged =
+        Object.keys(busySince).length === Object.keys(before).length &&
+        Object.entries(busySince).every(([id, at]) => before[id] === at)
+      return {
+        tabs,
+        // A closed tab's data goes with it. Only tabs this store has seen in
+        // `tabs` are forgotten: a new tab's ribbon events can precede the list.
+        ...forgetClosed(state, tabs),
+        closedTabs: closedAfter(state, tabs),
+        busySinceByTab: unchanged ? before : busySince,
+        // Main's layout may have come before the tabs: it is applied now, once.
+        ...(state.layoutPending && tabs.length > 0
+          ? applyLayout(state, state.layout, tabs)
+          : savedPanesArrived(state, tabs)
+            ? applyLayout(state, { ...state.layout, active: state.activeTabId }, tabs)
+            : paneStateAfter(state, tabs))
+      }
+    }),
 
   // The snapshot is the whole ribbon at its revision: it replaces whatever
   // the window holds unless that is already newer. Events it already holds
@@ -351,8 +586,41 @@ export const useAppStore = create<AppState>((set) => ({
   noteCommand: (name) =>
     set((state) => ({
       recentCommands: [name, ...state.recentCommands.filter((n) => n !== name)].slice(0, RECENT_COMMANDS)
-    }))
+    })),
 
+  setPaneLayer: (tabId, layer) => set((state) => ({ layerByTab: { ...state.layerByTab, [tabId]: layer } })),
+  setTerminalShown: (tabId, shown) =>
+    set((state) => ({ terminalShownByTab: { ...state.terminalShownByTab, [tabId]: shown } })),
+  setTerminalId: (tabId, termId) =>
+    set((state) => {
+      if (termId !== null) return { terminalIdByTab: { ...state.terminalIdByTab, [tabId]: termId } }
+      if (!(tabId in state.terminalIdByTab)) return {}
+      const { [tabId]: _gone, ...rest } = state.terminalIdByTab
+      return { terminalIdByTab: rest }
+    }),
+  setServers: (servers) => set({ servers, serversLoaded: true }),
+  setConnectSteps: (hostId, steps) => set((state) => ({ connectSteps: { ...state.connectSteps, [hostId]: steps } })),
+  setPanelChoice: (tabId, choice) =>
+    set((state) =>
+      (state.panelChoiceByTab[tabId] ?? null) === choice
+        ? state
+        : { panelChoiceByTab: { ...state.panelChoiceByTab, [tabId]: choice } }
+    ),
+  // One layer per pane (сверка F9): the agents replace a git or file layer.
+  openAgents: (tabId, agentId) =>
+    get().setPaneLayer(tabId, agentId ? { kind: 'agents', agentId } : { kind: 'agents' }),
+  closeAgents: (tabId) => get().setPaneLayer(tabId, null),
+  setAgentsView: (agentsView) => set((state) => (state.agentsView === agentsView ? state : { agentsView })),
+  setAgentDraft: (key, text) =>
+    set((state) => {
+      if ((state.agentDrafts[key] ?? '') === text) return state
+      const agentDrafts = { ...state.agentDrafts }
+      if (text === '') delete agentDrafts[key]
+      else agentDrafts[key] = text
+      return { agentDrafts }
+    }),
+  requestComposerInsert: (tabId, text) =>
+    set((state) => ({ composerInsert: { tabId, text, nonce: (state.composerInsert?.nonce ?? 0) + 1 } }))
 }))
 
 // Written on change, so a reload (Ctrl+R) at any moment finds the latest.
@@ -360,8 +628,7 @@ useAppStore.subscribe((state, before) => {
   if (
     state.draftByTab === before.draftByTab &&
     state.attachmentsByTab === before.attachmentsByTab &&
-    state.splitTabId === before.splitTabId &&
-    state.activeTabId === before.activeTabId
+    state.agentsView === before.agentsView
   ) {
     return
   }

@@ -5,6 +5,7 @@ import type {
   ModelOption,
   PanelData,
   PermissionAnswer,
+  TabServer,
   TaskOutput,
   UserInput
 } from '../../shared/types'
@@ -23,8 +24,10 @@ import type { ToolPermissionContext } from './permissionContext'
 export interface AgentDriver {
   /** The session's message stream. It ends only when the session does. */
   readonly messages: AsyncIterable<unknown>
-  send(input: UserInput): void
-  interrupt(): Promise<void>
+  send(input: UserInput, opts?: SendOptions): void
+  /** true — снято с очереди; false — уже ушло агенту; null — этот SDK или CLI не умеет. */
+  cancelQueued(uuid: string): Promise<boolean | null>
+  interrupt(opts?: { cancelQueued?: boolean }): Promise<InterruptReceipt | undefined>
   setPermissionMode(mode: string): Promise<void>
   supportedCommands(): Promise<CommandInfo[]>
   mcpServerStatus(): Promise<McpServerInfo[]>
@@ -46,6 +49,8 @@ export interface AgentDriver {
    */
   taskOutput(taskId: string): Promise<TaskOutput | null>
   stopTask(taskId: string): Promise<void>
+  /** Уводит в фон задачу этого tool_use. true — увёл; false — нет такой на переднем плане; null — этот SDK/CLI не умеет или фон выключен. */
+  backgroundTask(toolUseId: string): Promise<boolean | null>
   /** Whether this SDK, CLI and login can run Remote Control, and if not, why. */
   remoteAvailability(): Promise<RemoteAvailability>
   /**
@@ -53,7 +58,30 @@ export interface AgentDriver {
    * Rejects when the CLI refuses; the caller explains it.
    */
   setRemoteControl(enabled: boolean, name?: string): Promise<RemoteLink | null>
-  dispose(): Promise<void>
+  /**
+   * Ends the session. `detachOnly` (stage 6): a relay driver lets go of the
+   * server's session and leaves its agent running; local drivers ignore it.
+   */
+  dispose(opts?: { detachOnly?: boolean }): Promise<void>
+  /**
+   * Stage 6: set by the relay's driver — this tab's AutonomyCore lives on the
+   * server, so main makes none for it (AutonomyHost.tabAdded, task 19).
+   */
+  readonly hostsAutonomy?: true
+}
+
+export type SendPriority = 'now' | 'next' | 'later'
+export interface SendOptions {
+  uuid?: string
+  priority?: SendPriority
+}
+export interface InterruptReceipt {
+  stillQueued: string[]
+  /**
+   * Absent — this CLI has a receipt but cannot cancel on interrupt
+   * (no interrupt_cancel_queued_v1): not the same as «nothing cancelled».
+   */
+  cancelled?: string[]
 }
 
 export interface RemoteLink {
@@ -90,6 +118,10 @@ export interface DriverOptions {
     input: Record<string, unknown>,
     context: ToolPermissionContext
   ) => Promise<PermissionAnswer>
+  /** Stage 6: the tab's agent runs on this server, through its relay. */
+  server?: TabServer | undefined
+  /** Stage 6, the relay: claude's environment (the login shell's PATH). Absent — the process's own. */
+  env?: Record<string, string | undefined> | undefined
 }
 
 export type DriverFactory = (options: DriverOptions) => AgentDriver | Promise<AgentDriver>

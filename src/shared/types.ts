@@ -1,3 +1,9 @@
+import type { VoiceSettings } from './voice'
+
+import type { HostInfo, ServerAuth } from './relayProtocol'
+
+import type { DiffHunk } from './toolView'
+
 export type TabId = string
 
 /** What a tab's agent is doing right now. */
@@ -119,6 +125,10 @@ export type RibbonItem =
       remote?: true
       /** When it was sent, ms since the epoch; absent in a record that has no time. */
       at?: number
+      /** Sent by Qclod itself («продолжай» after a crash, a limit or a restore), not by the person. */
+      auto?: true
+      /** этап 4: the person wrote this to a subagent; the main agent passes it on. */
+      relay?: { cardId: string; agent: string }
     })
   /** The agent finished a turn: when, and how long the turn took. */
   | (RibbonBase & { kind: 'turnEnd'; at: number; durationMs?: number; failed?: true })
@@ -165,6 +175,30 @@ export type RibbonItem =
       tokens?: number
       durationMs?: number
       toolCalls?: number
+      // — этап 4
+      /** AgentInput.prompt, at most 8000 characters. */
+      prompt?: string
+      /** AgentInput.name — the address for SendMessage while the agent works. */
+      label?: string
+      /** AgentOutput.resolvedModel (or async_launched.resolvedModel). */
+      model?: string
+      /** ms since the epoch; in history — from the transcript line's timestamp. */
+      startedAt?: number
+      endedAt?: number
+      /** 2 and more once SendMessage has resumed it. */
+      runs?: number
+    })
+  /** этап 4: one message of the conversation with a subagent, in its ribbon. */
+  | (RibbonBase & {
+      kind: 'agentMessage'
+      /** person — набрал человек в ленте сабагента; main — главный агент сам вызвал SendMessage. */
+      from: 'person' | 'main'
+      text: string
+      at?: number
+      /** Only with from: 'person'. */
+      relayId?: string
+      /** Only with from: 'person'. */
+      state?: RelayState
     })
   | (RibbonBase & {
       kind: 'permission'
@@ -172,12 +206,33 @@ export type RibbonItem =
       toolName: string
       target: string
       state: 'pending' | 'allowed' | 'denied' | 'elsewhere'
+      /** How it was allowed; absent means `once` (and in a record from before it existed). */
+      scope?: 'once' | 'always' | 'session'
+      /** What the user said with a deny. */
+      reason?: string
+      /** Answered by «авто-да», not by the user. */
+      auto?: true
     })
   | (RibbonBase & {
       kind: 'plan'
       requestId: string
       text: string
       state: 'pending' | 'approved' | 'rejected' | 'elsewhere'
+      /** What the user said with the decision. */
+      comment?: string
+      /**
+       * The user edited the plan; `text` is the edited plan. With `approved` it
+       * runs as edited; with `rejected` it was sent back for the agent to
+       * propose again (a CLI older than 2.1.317, ruling S2-R8).
+       */
+      edited?: true
+      /**
+       * With `rejected`: the user approved it with an edit or a comment, and a
+       * CLI older than 2.1.317 had it sent back for rework instead (S2-R8) —
+       * not a refusal, though the agent reads one.
+       */
+      sentBack?: true
+      auto?: true
     })
   | (RibbonBase & {
       kind: 'question'
@@ -187,6 +242,9 @@ export type RibbonItem =
       answers: Record<string, string> | null
       /** Answered on another device (Remote Control): closed, with no answers of ours. */
       elsewhere?: true
+      /** Question text -> the user's comment on the chosen option. */
+      notes?: Record<string, string>
+      auto?: true
     })
   | (RibbonBase & {
       kind: 'compaction'
@@ -209,6 +267,29 @@ export type RibbonItem =
     })
 
 export type NoticeAction = 'login' | 'terminal'
+
+// ---------------------------------------------------- этап 4: сабагенты
+
+export type SubagentItem = Extract<RibbonItem, { kind: 'subagent' }>
+
+/**
+ * What became of a message the person wrote to a subagent: sent — waiting for
+ * the main agent; read — the main agent took it; passed — it called
+ * SendMessage to that agent; cancelled — it never went.
+ */
+export type RelayState = 'sent' | 'read' | 'passed' | 'cancelled'
+
+export type SubagentSendResult =
+  | { ok: true }
+  | { ok: false; reason: 'empty' | 'unknown-agent' | 'not-started' | 'no-send-message' | 'not-running' }
+
+export type SubagentStopResult = 'stopping' | 'not-running' | 'not-started' | 'unsupported' | 'failed'
+
+/** USD per token, worked out from the session's own result.modelUsage. */
+export interface CostRates {
+  byModel: Record<string, number>
+  average: number
+}
 
 export interface TodoItem {
   content: string
@@ -290,7 +371,47 @@ export interface PanelData {
   queue: QueuedMessage[]
   /** Background shells and the like, newest first; subagents have their own cards. */
   backgroundTasks: BackgroundTask[]
+  /** What Qclod is about to do by itself: answer timers, a limit wait, giving up (stage 3). */
+  autonomy: AutonomyView
+  /** этап 4: what a token costs, for a subagent's estimate; null until the first result. */
+  costRates: CostRates | null
 }
+
+// ----------------------------------------------------- stage 3: autonomy
+
+/** One running auto-answer countdown, for PinnedCard's `autoAnswer` prop. */
+export interface AutoAnswerTimer {
+  /** The question's toolUseId or the plan's requestId — the card's own id. */
+  cardId: string
+  kind: 'question' | 'plan'
+  /** epoch ms */
+  deadline: number
+  /** What Qclod will do: «Qclod выберет «Да»», «Qclod одобрит план». */
+  label: string
+}
+
+export interface AutonomyView {
+  timers: AutoAnswerTimer[]
+  /** Waiting out a usage limit; continueAt — when «продолжай» goes. */
+  limitWait: { resetsAt: number | null; continueAt: number; weekly: boolean } | null
+  /** Qclod stopped carrying on by itself; cleared by the person's next message. */
+  gaveUp: 'crashes' | 'limits' | null
+}
+
+export const NO_AUTONOMY: AutonomyView = { timers: [], limitWait: null, gaveUp: null }
+
+/** What tabs.json keeps for autonomy; absent fields mean «нет». */
+export interface TabAutonomyRecord {
+  working?: true
+  remote?: true
+  limitUntil?: number
+}
+
+/**
+ * waiting — агент ещё запускается, сообщение у Qclod; sending — ушло в CLI, ответа нет;
+ * queued — CLI поставил в очередь; cancelling — просили отменить, ждём ответа.
+ */
+export type QueuedState = 'waiting' | 'sending' | 'queued' | 'cancelling'
 
 /** A message waiting its turn: what the strip above the input field shows of it. */
 export interface QueuedMessage {
@@ -298,6 +419,10 @@ export interface QueuedMessage {
   text: string
   /** How many files and pictures go with it. */
   attachments: number
+  state: QueuedState
+  canSendNow: boolean
+  /** этап 4: a message to a subagent, passed on by the main agent — the strip offers no «Изменить». */
+  relay?: true
 }
 
 /**
@@ -307,6 +432,11 @@ export interface QueuedMessage {
 export interface BackgroundTask {
   taskId: string
   toolUseId?: string
+  /** этап 4: a shell command or a subagent. */
+  kind: 'command' | 'agent'
+  subagentType?: string
+  /** task_progress.summary */
+  summary?: string
   /** task_type as the SDK names it: local_bash, monitor, … */
   type: string
   description: string
@@ -343,6 +473,10 @@ export interface PersistedTab {
   overrides: LaunchOverrides
   /** Lets the tab pick its conversation back up after a restart (spec 6.9). */
   lastSessionId?: string
+  /** Whether it was working, Remote Control wanted, a limit waited out (stage 3). */
+  autonomy?: TabAutonomyRecord
+  /** stage 6: the chat runs on a server, through its relay. Kept in tabs.json. */
+  server?: TabServer
 }
 
 export interface TabState extends PersistedTab {
@@ -402,6 +536,10 @@ export interface PermissionRequest {
 export interface PermissionAnswer {
   behavior: 'allow' | 'deny'
   remember?: boolean
+  /** «Разрешить до конца сессии»: until this tab's process ends; never written to disk. */
+  forSession?: true
+  /** Why the user denied it, for the agent to read. */
+  message?: string
   /**
    * The tool's input as it should run — how a question's answers reach the
    * agent. Set only inside the main process: the window's answer never
@@ -410,6 +548,50 @@ export interface PermissionAnswer {
    */
   updatedInput?: Record<string, unknown>
 }
+
+/** What the user decided about a plan; the window never sends the tool's input itself. */
+export interface PlanDecision {
+  approve: boolean
+  comment?: string
+  /** The plan as the user edited it; absent when it was not edited. */
+  plan?: string
+}
+
+// ------------------------------------------------------- projects and layout
+
+/** A folder in the sidebar. */
+export interface ProjectEntry {
+  cwd: string
+  collapsed: boolean
+  /** этап 6 */
+  hostId?: string
+}
+
+/** The window's layout, kept by main (userData/layout.json): window state, not a setting. */
+export interface LayoutState {
+  /** Left to right, at most 4. */
+  panes: TabId[]
+  active: TabId | null
+  /** Fractions, one per pane, summing to 1. */
+  paneWidths: number[]
+  sidebarCollapsed: boolean
+  /** In the order they first appeared. */
+  projects: ProjectEntry[]
+}
+
+export type LayoutPatch = Partial<Pick<LayoutState, 'panes' | 'paneWidths' | 'sidebarCollapsed'>> & {
+  /** `hostId` (stage 6): a project on that server. */
+  projectCollapsed?: { cwd: string; collapsed: boolean; hostId?: string }
+}
+
+/** Frozen through and through: copy it, never change it in place. */
+export const DEFAULT_LAYOUT: LayoutState = Object.freeze({
+  panes: Object.freeze([]) as unknown as TabId[],
+  active: null,
+  paneWidths: Object.freeze([]) as unknown as number[],
+  sidebarCollapsed: false,
+  projects: Object.freeze([]) as unknown as ProjectEntry[]
+})
 
 export interface AppSettings {
   agentPath: string
@@ -423,6 +605,12 @@ export interface AppSettings {
    * means no editor, and the path menu has no such item.
    */
   editorCommand: string
+  /** «Авто-да»: minutes before Qclod answers a question or a plan by itself, 1…60. */
+  autoAnswerMinutes: number
+  /** Start Qclod when Windows starts (an installed build only). */
+  openAtLogin: boolean
+  /** Stage 5: voice input — the chosen model and the replacement dictionary. */
+  voice: VoiceSettings
   defaults: LaunchOverrides
 }
 
@@ -441,7 +629,14 @@ export type AuthStatus = 'in' | 'out' | 'unknown'
 export type LoginProgress = 'waiting' | 'in' | 'timeout'
 
 /** The app's own update: nothing to say yet, or a new version downloaded and waiting for a restart. */
-export type UpdateState = { kind: 'idle' } | { kind: 'ready'; version: string }
+/**
+ * `ready`: downloaded, installs on restart (Windows). `available`: a newer release exists and the
+ * person downloads it by hand (Mac, no auto-update); `url` is its release page.
+ */
+export type UpdateState =
+  | { kind: 'idle' }
+  | { kind: 'ready'; version: string }
+  | { kind: 'available'; version: string; url: string }
 
 /** What the machine has, for the setup screen. */
 export interface EnvironmentReport {
@@ -508,4 +703,187 @@ export interface ResolvedPath {
   isDir: boolean
   line?: number
   column?: number
+}
+
+// stage 6: servers over SSH
+
+export type ServerColour = 'blue' | 'violet' | 'green' | 'amber' | 'rose' | 'cyan'
+
+export interface ServerEntry {
+  id: string
+  label: string
+  /** user@host or a Host of ~/.ssh/config. */
+  target: string
+  port?: number
+  identityFile?: string
+  auth: 'key' | 'password'
+  colour: ServerColour
+  /** Folders opened there, newest first. */
+  recent: string[]
+  /** Came from ~/.ssh/config rather than the form. */
+  fromConfig: boolean
+}
+
+export type ServerConnState =
+  | 'idle'
+  | 'connecting'
+  | 'online'
+  | 'reconnecting'
+  | 'offline'
+  | 'needsAuth'
+  | 'hostKeyChanged'
+  | 'error'
+
+export interface ServerView extends ServerEntry {
+  state: ServerConnState
+  problem?: string
+  hasPassword: boolean
+  info?: HostInfo & { claudeVersion: string | null }
+  account?: ServerAuth
+  relayUpdate?: 'pending' | 'required'
+  /** Stage 6 (task 20): whether a password can be kept (safeStorage works on this machine). */
+  canStorePassword?: boolean
+}
+
+/** Which server a tab's chat runs on; relaySessionId once the relay has opened it. */
+export interface TabServer {
+  hostId: string
+  relaySessionId?: string
+}
+
+/** A question ssh asks through askpass, for the window to put to the person. */
+export type SshPrompt =
+  | { promptId: string; hostId: string; kind: 'hostKey'; host: string; keyType: string; fingerprint: string }
+  | {
+      promptId: string
+      hostId: string
+      kind: 'password' | 'passphrase' | 'other'
+      text: string
+      canRemember: boolean
+      retry: boolean
+    }
+
+export type SshPromptAnswer =
+  | { promptId: string; ok: false }
+  | { promptId: string; ok: true; value: string; remember?: boolean }
+
+/** One line of the connection checklist. */
+export interface ConnectStep {
+  id: 'ssh' | 'auth' | 'claude' | 'relay' | 'login'
+  state: 'pending' | 'running' | 'ok' | 'warn' | 'fail'
+  text: string
+  hint?: string
+}
+
+export type FileSource = { kind: 'local' } | { kind: 'remote'; hostId: string }
+
+export type ViewerContent =
+  | { kind: 'text'; text: string; language: string; size: number; truncated: boolean }
+  | { kind: 'image'; dataUrl: string; size: number }
+  | { kind: 'binary'; size: number }
+  | { kind: 'error'; message: string }
+
+/** An error the window caught in itself, sent to the main process for the log. */
+export interface RendererErrorReport {
+  scope: 'app' | 'pane' | 'window'
+  message: string
+  stack?: string
+  componentStack?: string
+}
+
+// ------------------------------------------- этап 7: шаблоны, Git, поиск по истории
+
+/** Limits of the owner's prompt templates (userData/templates.json). */
+export const TEMPLATE_LIMITS = { maxCount: 500, title: 80, body: 20_000, saveMany: 50 } as const
+
+/** A prompt template: inserted at the caret; `{{что подставить}}` marks a place to fill. */
+export interface PromptTemplate {
+  id: string
+  title: string
+  body: string
+  origin: 'manual' | 'harvest'
+  createdAt: number
+  updatedAt: number
+}
+
+/** What the window sends to save: no id — a new template. */
+export interface TemplateDraft {
+  id?: string
+  title: string
+  body: string
+  origin?: 'manual' | 'harvest'
+}
+
+/** One project in «Собрать мои шаблоны»: how much of it would be read. */
+export interface HarvestProject {
+  key: string
+  label: string
+  sessions: number
+  prompts: number
+  chars: number
+}
+
+/** Exactly what would go to Claude: the person's messages only, within the limits. */
+export interface HarvestPreview {
+  projects: HarvestProject[]
+  items: { projectKey: string; text: string }[]
+  prompts: number
+  sessions: number
+  chars: number
+  sinceDays: number
+  truncated: boolean
+  model: string
+}
+
+/** A template Claude proposes; `duplicate` — one like it is already saved. */
+export interface TemplateProposal {
+  title: string
+  body: string
+  why: string
+  duplicate: boolean
+}
+
+export type HarvestErrorReason = 'noAgent' | 'notLoggedIn' | 'limit' | 'timeout' | 'cancelled' | 'badAnswer' | 'failed'
+
+export type HarvestOutcome =
+  | { kind: 'ok'; proposals: TemplateProposal[]; costUsd: number | null }
+  | { kind: 'empty' }
+  | { kind: 'error'; reason: HarvestErrorReason; detail?: string }
+
+export type GitChangeKind = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict' | 'typechange'
+
+export interface GitChange {
+  path: string
+  oldPath?: string
+  kind: GitChangeKind
+}
+
+export type GitStatus =
+  | { kind: 'ok'; branch: string | null; detachedAt: string | null; initial: boolean; changes: GitChange[]; truncated: boolean }
+  | { kind: 'notRepo' }
+  | { kind: 'noGit' }
+  | { kind: 'unavailable'; reason: string }
+  | { kind: 'error'; message: string }
+
+export type GitFileDiff =
+  | { kind: 'text'; hunks: DiffHunk[]; added: number; removed: number; truncatedLines: number }
+  | { kind: 'binary' }
+  | { kind: 'tooLarge'; bytes: number }
+  | { kind: 'error'; message: string }
+
+export type CommitResult =
+  | { ok: true; hash: string; summary: string }
+  | { ok: false; reason: 'identity' | 'nothing' | 'locked' | 'conflict' | 'stale' | 'busy' | 'failed'; message: string }
+
+/** One match of the full-text search over past conversations. */
+export interface HistoryHit {
+  sessionId: string
+  cwd: string
+  projectLabel: string
+  title: string
+  snippet: string
+  matchStart: number
+  matchLength: number
+  role: 'user' | 'assistant'
+  updatedAt: number
 }

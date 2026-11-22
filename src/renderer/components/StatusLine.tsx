@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Cpu, Gauge, RotateCcw, ShieldCheck, Smartphone } from 'lucide-react'
+import { Cpu, Gauge, ShieldCheck, Smartphone } from 'lucide-react'
 import { LEVEL_LABEL, LevelIcon } from '../ui/icons'
 import {
   EFFORT_LEVELS,
@@ -11,11 +11,13 @@ import {
   type RemoteInfo
 } from '../../shared/types'
 import { REMOTE_BLOCK_TEXT, REMOTE_STATE_LABEL, isRemoteLive } from '../../shared/remote'
-import { clockTime, untilReset } from '../../shared/format'
+import { untilReset } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
 import { EFFORT_LABEL, EFFORT_SHORT, MODE_LABEL } from '../labels'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import { BackgroundTasks } from './BackgroundTasks'
+import { cardForTask } from '../agents/cardForTask'
+import { useAppStore } from '../state/useAppStore'
 import '../ui/meter.css'
 import './StatusLine.css'
 
@@ -23,7 +25,7 @@ interface Props {
   tabId: string
   data: PanelData
   started: boolean
-  /** Room for another indicator beside the limits; background tasks have their own place after them. */
+  /** Room for another indicator beside the limit alert; background tasks have their own place after them. */
   slot?: ReactNode
   /** Remote Control of this tab, and its switch. */
   remote: RemoteInfo
@@ -47,6 +49,31 @@ const MODE_OPTIONS: DropdownOption[] = PERMISSION_MODES.map((mode) => ({
 }))
 
 const tokens = (n: number): string => n.toLocaleString('ru-RU')
+
+/** From this share of a plan window on, the line shows it as an alert chip; below it the panel holds it. */
+export const LIMIT_ALERT = 0.8
+
+/** One plan window as the line words it: the chip's short name and the hint's full one. */
+const LIMIT_NAMES = {
+  fiveHour: { short: '5 ч', full: 'Лимит на 5 часов' },
+  sevenDay: { short: 'Неделя', full: 'Лимит на неделю' }
+} as const
+type LimitKey = keyof typeof LIMIT_NAMES
+const LIMIT_KEYS: readonly LimitKey[] = ['fiveHour', 'sevenDay']
+
+/** A window still counting. One whose reset has passed is spent no more: nothing until the next refresh. */
+function liveShare(window: LimitWindow | null, now: number): number | null {
+  if (!window) return null
+  if (window.resetsAt > 0 && window.resetsAt * 1000 <= now) return null
+  return window.utilization
+}
+
+/** «Лимит на 5 часов: 85 %, сброс через 2 ч 0 мин». */
+function limitTitle(key: LimitKey, window: LimitWindow, now: number): string {
+  const percent = Math.round(window.utilization * 100)
+  const reset = window.resetsAt > 0 ? `, сброс ${untilReset(window.resetsAt, now)}` : ''
+  return `${LIMIT_NAMES[key].full}: ${percent} %${reset}`
+}
 
 /**
  * The line right under the input: how the agent works on the left, how much
@@ -93,6 +120,13 @@ export function StatusLine({ tabId, data, started, slot, remote, onToggleRemote 
         context.estimated ? ' — оценка по записи разговора' : ''
       }`
     : `Контекст появится ${waitingFor}`
+  // Below 80 % the limits leave the line, but not its hints: a pane whose panel is
+  // closed (a split, a narrow window) still has them under the context meter.
+  const now = useNow(30_000)
+  const limitLines = LIMIT_KEYS.flatMap((key) => {
+    const window = data.limits[key]
+    return window && liveShare(window, now) !== null ? [limitTitle(key, window, now)] : []
+  })
 
   return (
     <div className="status-line" data-testid="status-line">
@@ -136,15 +170,19 @@ export function StatusLine({ tabId, data, started, slot, remote, onToggleRemote 
           primary
           percent={context ? context.percent : null}
           approximate={context?.estimated === true}
-          title={contextTitle}
+          title={[contextTitle, ...limitLines].join('\n')}
         />
-        {/* The plan's limits are secondary: smaller, set apart by a hairline. */}
-        <span className="status-limits">
-          <LimitMeter testId="status-limit-5h" label="5 ч" name="Лимит на 5 часов" window={data.limits.fiveHour} waitingFor={waitingFor} showReset />
-          <LimitMeter testId="status-limit-7d" label="нед" name="Лимит на неделю" window={data.limits.sevenDay} waitingFor={waitingFor} />
-          {slot}
-        </span>
-        <BackgroundTasks tabId={tabId} tasks={data.backgroundTasks} />
+        <LimitAlert limits={data.limits} now={now} />
+        {slot}
+        <BackgroundTasks
+          tabId={tabId}
+          tasks={data.backgroundTasks}
+          // An agent's row opens its own ribbon in this pane's agents layer (этап 4).
+          onOpenAgent={(taskId) => {
+            const state = useAppStore.getState()
+            state.openAgents(tabId, cardForTask(state.ribbonByTab[tabId] ?? [], taskId))
+          }}
+        />
       </div>
     </div>
   )
@@ -190,42 +228,36 @@ function useNow(everyMs: number): number {
   return now
 }
 
-function LimitMeter({
-  testId,
-  label,
-  name,
-  window,
-  waitingFor,
-  showReset = false
-}: {
-  testId: string
-  label: string
-  name: string
-  window: LimitWindow | null
-  waitingFor: string
-  /** The reset's time stands beside the bar, not only in its hint. */
-  showReset?: boolean
-}): JSX.Element {
-  const now = useNow(30_000)
-  // A window whose reset has passed is spent no more: it reads 0% until the
-  // next refresh brings the new one, rather than the old number for hours.
-  const reset = window && window.resetsAt > 0 ? window.resetsAt * 1000 : null
-  const expired = reset !== null && reset <= now
-  const percent = window ? (expired ? 0 : window.utilization * 100) : null
-  const title = !window
-    ? `${name} — появится ${waitingFor}`
-    : expired
-      ? `${name}: сброшен в ${clockTime(reset!, now, false)}`
-      : `${name}: ${Math.round(window.utilization * 100)}%.` +
-        (reset ? ` Сброс в ${clockTime(reset, now, false)} (${untilReset(window.resetsAt, now)})` : '')
+/**
+ * A plan window at 80 % or more, as one quiet chip: «5 ч: 85 %» or «Неделя: 91 %»;
+ * both that full — the fuller one. The hint says when it resets; the panel has the rest.
+ * No narrow-line rule hides it: when the pane's panel is closed it is the only sign.
+ */
+function LimitAlert({ limits, now }: { limits: PanelData['limits']; now: number }): JSX.Element | null {
+  let worst: { key: LimitKey; window: LimitWindow; share: number } | null = null
+  for (const key of LIMIT_KEYS) {
+    const window = limits[key]
+    const share = liveShare(window, now)
+    if (window && share !== null && share >= LIMIT_ALERT && (!worst || share > worst.share)) {
+      worst = { key, window, share }
+    }
+  }
+  if (!worst) return null
+  const percent = Math.min(100, Math.round(worst.share * 100))
+  // 80 % and up is never `ok`; the level picks the icon and its colour.
+  const level = contextLevel(percent) === 'critical' ? 'critical' : 'warn'
   return (
-    <Meter
-      testId={testId}
-      label={label}
-      percent={percent}
-      title={title}
-      suffix={showReset && reset && !expired ? clockTime(reset, now, false) : undefined}
-    />
+    <span
+      className={`status-limit-alert is-${level}`}
+      data-testid="status-limit-alert"
+      data-limit={worst.key}
+      title={limitTitle(worst.key, worst.window, now)}
+    >
+      <LevelIcon level={level} label={LEVEL_LABEL.limit[level]} size={12} />
+      <span className="status-limit-text">
+        {`${LIMIT_NAMES[worst.key].short}: ${percent} %`}
+      </span>
+    </span>
   )
 }
 
@@ -240,18 +272,15 @@ function Meter({
   percent,
   approximate = false,
   primary = false,
-  title,
-  suffix
+  title
 }: {
   testId: string
   label: string
   percent: number | null
   approximate?: boolean
-  /** The context meter: larger than the limits, the line's main number. */
+  /** The context meter: the line's main number. */
   primary?: boolean
   title: string
-  /** A short note after the number: when the window resets. */
-  suffix?: string | undefined
 }): JSX.Element {
   // The level follows the whole percent shown, so «90%» is always critical.
   // Nothing is ever fuller than full: a count past the window reads 100%.
@@ -281,12 +310,6 @@ function Meter({
       <span className="meter-label status-meter-value">
         {shown === null ? '—' : `${approximate ? '≈' : ''}${shown}%`}
       </span>
-      {suffix && (
-        <span className="status-meter-reset" data-testid={`${testId}-reset`}>
-          <RotateCcw size={10} aria-hidden="true" />
-          {suffix}
-        </span>
-      )}
       {level !== 'ok' && (
         <span className="status-meter-alert" data-testid={`${testId}-alert`}>
           <LevelIcon level={level} label={LEVEL_LABEL[primary ? 'context' : 'limit'][level]} size={12} />

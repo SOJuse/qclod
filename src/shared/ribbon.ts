@@ -2,14 +2,17 @@ import type {
   Attachment,
   NoticeAction,
   QuestionView,
+  RelayState,
   RibbonChange,
   RibbonItem,
+  SubagentItem,
   SubagentState,
   TodoItem,
   ToolState
 } from './types'
 import { clipForView, clipText } from './clip'
 import { clip, lines } from './format'
+import { parseRelayInstruction } from './relayText'
 
 /**
  * Turns the SDK's message stream into the ribbon the user reads.
@@ -36,7 +39,10 @@ interface Clock {
   replay?: boolean
 }
 
-/** A content block currently being streamed, keyed by its index in the message. */
+/**
+ * A content block currently being streamed, keyed by its parent card and its
+ * index in the message: ten subagents streaming at once all use index 0.
+ */
 interface OpenBlock {
   itemId: string
   kind: 'agentText' | 'thinking'
@@ -65,6 +71,10 @@ function basename(path: string): string {
  * the command, the pattern — the detail lives behind the click.
  */
 export function toolTarget(name: string, input: Record<string, unknown>): string {
+  if (name === 'SendMessage') {
+    const to = str(input['to'])
+    return to ? `→ ${clip(to)}` : ''
+  }
   const path = str(input['file_path']) || str(input['path']) || str(input['notebook_path'])
   if (path) return basename(path)
   if (name === 'Bash') return clip(str(input['command']))
@@ -167,12 +177,33 @@ function subagentStats(result: unknown): {
   }
 }
 
+/** A subagent whose call named no type, until the CLI says which one it ran. */
+const UNNAMED_AGENT = 'подагент'
+
+/**
+ * A task event's counters that say something: a zero is «not counted», and
+ * must not wipe what the card already knows — a run resumed by SendMessage
+ * may report nothing of its own (stage 4).
+ */
+function counted(usage: { tokens: number; toolCalls: number; durationMs: number }): Partial<SubagentItem> {
+  return {
+    ...(usage.tokens > 0 ? { tokens: usage.tokens } : {}),
+    ...(usage.toolCalls > 0 ? { toolCalls: usage.toolCalls } : {}),
+    ...(usage.durationMs > 0 ? { durationMs: usage.durationMs } : {})
+  }
+}
+
 /** The most a subagent's report keeps: enough to read, not a book. */
 const REPORT_CLIP = 8000
 
 function clipReport(text: string): string {
   return clipText(text, REPORT_CLIP)
 }
+
+/** A subagent's prompt, kept on its card. */
+const PROMPT_CLIP = 8000
+/** One text or thought of a subagent's own conversation, whole from the CLI. */
+const NESTED_CLIP = 20000
 
 /**
  * What a finished subagent wrote back, whole: the text blocks of AgentOutput's
@@ -269,7 +300,6 @@ const NOTICE_STATE: Record<TaskNotice['status'], SubagentState> = {
   killed: 'stopped'
 }
 
-type SubagentItem = Extract<RibbonItem, { kind: 'subagent' }>
 
 function imageAttachment(block: Record<string, unknown>): Attachment | null {
   const source = block['source']
@@ -284,19 +314,36 @@ function imageAttachment(block: Record<string, unknown>): Attachment | null {
 export class RibbonBuilder {
   private readonly list: RibbonItem[] = []
   private readonly byToolUseId = new Map<string, string>()
-  /** task_id of a subagent's task events -> its card, learnt from task_started. */
-  private readonly byTaskId = new Map<string, string>()
+  /**
+   * A subagent's agent_id / task_id (one and the same, probe 05b) -> its
+   * card: from task_started, AgentOutput.agentId and async_launched.agentId.
+   * Its messages are routed by it first: a resumed agent's may point at the
+   * SendMessage call rather than at its own Agent call.
+   */
+  private readonly byAgentId = new Map<string, string>()
   /** When each subagent card was placed, for timing it ourselves. */
   private readonly startedAt = new Map<string, number>()
-  private readonly openBlocks = new Map<number, OpenBlock>()
+  /** Keyed `${parentId ?? ''}:${index}`. */
+  private readonly openBlocks = new Map<string, OpenBlock>()
   /** Message ids whose text already reached the ribbon as deltas. */
   private readonly streamed = new Set<string>()
+  /** The message each stream (by parent) is writing now: the one its last message_start named. */
+  private readonly streamOf = new Map<string, string>()
+  /** The text and thinking items each message's deltas made, in order. */
+  private readonly streamItems = new Map<string, Array<{ itemId: string; kind: 'agentText' | 'thinking' }>>()
+  /**
+   * Stage 6 (I4): messages whose stream was cut — their whole message, when
+   * it comes, puts its text over what the deltas managed to bring.
+   */
+  private readonly cutStreams = new Set<string>()
+  /** After a cut, a stream's deltas count only once its message_start is seen again. */
+  private needStart = false
   private todoList: TodoItem[] | null = null
   /**
    * Text already shown because the user just typed it. The CLI echoes every
    * message back, and the echo must not become a second copy of it on screen.
    */
-  private readonly pendingEchoes: string[] = []
+  private readonly pendingEchoes: Array<{ text: string; uuid?: string }> = []
   private seq = 0
   /** When the message before the current one arrived: a thinking block that comes whole took that long. */
   private previousEventAt: number | undefined
@@ -306,7 +353,9 @@ export class RibbonBuilder {
    * the end of the block before. Thinking starts there, not at its first
    * delta, which comes only after the model has been thinking for a while.
    */
-  private blockBoundaryAt: number | undefined
+  private readonly blockBoundaryAt = new Map<string, number>()
+  /** The message being applied: what a subagent card's end time is read from. */
+  private current: Record<string, unknown> | null = null
   private readonly now: () => number
   private replaying: boolean
   private remoteLive = false
@@ -324,15 +373,96 @@ export class RibbonBuilder {
     return this.todoList
   }
 
+  /** The subagent card with this id — what the window names when it writes to or stops an agent. */
+  subagentCard(cardId: string): SubagentItem | undefined {
+    const item = this.find(cardId)
+    return item?.kind === 'subagent' ? item : undefined
+  }
+
   /**
    * The user's own message, when it is not coming back from the SDK as an echo
    * — a replayed history entry arrives as a `user` message instead.
    */
-  addUser(text: string, attachments: Attachment[] = [], echoKey = text): RibbonChange[] {
+  addUser(
+    text: string,
+    attachments: Attachment[] = [],
+    echoKey: string | null = text,
+    uuid?: string,
+    opts: { auto?: boolean; relay?: { cardId: string; agent: string } } = {}
+  ): RibbonChange[] {
     // What is shown and what will be echoed are not always the same string:
     // an attached file reaches the agent as an @-mention appended to the text.
-    this.pendingEchoes.push(echoKey)
-    return [this.append({ kind: 'user', id: this.nextId(), text, attachments, at: this.now() })]
+    // null: no echo is coming (a message the CLI folded into a turn).
+    if (echoKey !== null) this.expectEcho(echoKey, uuid)
+    // `auto`: sent by Qclod itself («продолжай»), not by the person.
+    // `relay`: written to a subagent; the bubble shows the person's words, not the instruction.
+    return [
+      this.append({
+        kind: 'user',
+        id: this.nextId(),
+        text,
+        attachments,
+        at: this.now(),
+        ...(opts.auto ? { auto: true as const } : {}),
+        ...(opts.relay ? { relay: { cardId: opts.relay.cardId, agent: opts.relay.agent } } : {})
+      })
+    ]
+  }
+
+  /**
+   * What the person wrote to a subagent, in that agent's ribbon: `sent` until
+   * the main agent reads it, then `read`, `passed` when it calls SendMessage
+   * to that agent, `cancelled` when it never went.
+   */
+  addRelay(cardId: string, text: string, relayId: string): RibbonChange[] {
+    if (!this.subagentCard(cardId)) return []
+    return [
+      this.append({
+        kind: 'agentMessage',
+        id: this.nextId(),
+        from: 'person',
+        text,
+        at: this.now(),
+        relayId,
+        state: 'sent',
+        parentId: cardId
+      })
+    ]
+  }
+
+  /** Moves a relayed message on; nothing once it has been passed on or cancelled. */
+  markRelay(relayId: string, state: RelayState): RibbonChange[] {
+    const item = this.list.find((i) => i.kind === 'agentMessage' && i.relayId === relayId)
+    if (!item || item.kind !== 'agentMessage') return []
+    if (item.state === 'passed' || item.state === 'cancelled' || item.state === state) return []
+    item.state = state
+    return [this.update(item.id, { state })]
+  }
+
+  /**
+   * An echo to swallow when it comes. With the uuid the message went under,
+   * the expectation ends at the result of the turn that carried it: CLI
+   * 2.1.317 echoes nothing, and a stale one would swallow the same words
+   * typed later — on the phone, say.
+   */
+  expectEcho(text: string, uuid?: string): void {
+    this.pendingEchoes.push(uuid ? { text, uuid } : { text })
+  }
+
+  /** Nothing more comes back from a process that is gone. */
+  forgetEchoes(): void {
+    this.pendingEchoes.length = 0
+  }
+
+  /** The turn is over: an echo of what it carried that has not come will not. */
+  private expireEchoes(message: Record<string, unknown>): void {
+    const carried = message['user_message_uuids']
+    if (!Array.isArray(carried)) return
+    const done = new Set(carried.filter((u): u is string => typeof u === 'string'))
+    for (let i = this.pendingEchoes.length - 1; i >= 0; i -= 1) {
+      const uuid = this.pendingEchoes[i]!.uuid
+      if (uuid !== undefined && done.has(uuid)) this.pendingEchoes.splice(i, 1)
+    }
   }
 
   /**
@@ -357,18 +487,45 @@ export class RibbonBuilder {
     return [this.append({ kind: 'plan', id: this.nextId(), requestId, text, state: 'pending' })]
   }
 
-  resolvePlan(requestId: string, state: 'approved' | 'rejected' | 'elsewhere'): RibbonChange[] {
+  /**
+   * The plan decided. `comment` is what the user said with it; `edited` with
+   * `plan` — the plan was approved as the user changed it, and the card shows
+   * that text from now on. `sentBack` with `rejected` — it was approved so,
+   * and sent back for rework rather than refused (S2-R8).
+   */
+  resolvePlan(
+    requestId: string,
+    state: 'approved' | 'rejected' | 'elsewhere',
+    extra: { comment?: string; edited?: true; plan?: string; sentBack?: true; auto?: boolean } = {}
+  ): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'plan' && i.requestId === requestId)
     if (!item || item.kind !== 'plan') return []
-    item.state = state
-    return [this.update(item.id, { state })]
+    const patch: Partial<Extract<RibbonItem, { kind: 'plan' }>> = { state }
+    if (extra.comment) patch.comment = extra.comment
+    // Decided by Qclod's timer in «авто-да», not by the person.
+    if (extra.auto) patch.auto = true
+    if (extra.sentBack && state === 'rejected') patch.sentBack = true
+    if (extra.edited && extra.plan !== undefined) {
+      patch.text = extra.plan
+      patch.edited = true
+    }
+    Object.assign(item, patch)
+    return [this.update(item.id, patch)]
   }
 
-  resolvePermission(requestId: string, state: 'allowed' | 'denied' | 'elsewhere'): RibbonChange[] {
+  /** The permission answered: how it was allowed (`scope`), or why it was denied (`reason`). */
+  resolvePermission(
+    requestId: string,
+    state: 'allowed' | 'denied' | 'elsewhere',
+    extra: { scope?: 'once' | 'always' | 'session'; reason?: string } = {}
+  ): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'permission' && i.requestId === requestId)
     if (!item || item.kind !== 'permission') return []
-    item.state = state
-    return [this.update(item.id, { state })]
+    const patch: Partial<Extract<RibbonItem, { kind: 'permission' }>> = { state }
+    if (extra.scope) patch.scope = extra.scope
+    if (extra.reason) patch.reason = extra.reason
+    Object.assign(item, patch)
+    return [this.update(item.id, patch)]
   }
 
   /** Whether a card for this tool call is already in the ribbon. */
@@ -376,14 +533,22 @@ export class RibbonBuilder {
     return this.byToolUseId.has(toolUseId)
   }
 
-  /** Records the user's answer to a question card. */
-  answerQuestion(toolUseId: string, answers: Record<string, string>): RibbonChange[] {
+  /** Records the user's answer to a question card, with the comments on the chosen options. */
+  answerQuestion(
+    toolUseId: string,
+    answers: Record<string, string>,
+    extra: { notes?: Record<string, string>; auto?: boolean } = {}
+  ): RibbonChange[] {
     const item = this.list.find((i) => i.kind === 'question' && i.toolUseId === toolUseId)
     if (!item || item.kind !== 'question') return []
     // Kept on the item itself: a snapshot (reload, split pane, a session
     // taking this ribbon over) is built from the items, not from the events.
-    item.answers = answers
-    return [this.update(item.id, { answers })]
+    const patch: Partial<Extract<RibbonItem, { kind: 'question' }>> = { answers }
+    if (extra.notes && Object.keys(extra.notes).length > 0) patch.notes = extra.notes
+    // Answered by Qclod's timer in «авто-да», not by the person.
+    if (extra.auto) patch.auto = true
+    Object.assign(item, patch)
+    return [this.update(item.id, patch)]
   }
 
   /**
@@ -437,10 +602,40 @@ export class RibbonBuilder {
     return this.closeOpen()
   }
 
+  /**
+   * Stage 6: a server's journal has been replayed, and its process is still
+   * there. Live from here on — and what still runs stays running: unlike
+   * finishReplay, nothing is closed, the relay's agent will report back.
+   */
+  continueLive(): void {
+    this.replaying = false
+  }
+
+  /** Stage 6: the records that come next are a server's journal, not live events. */
+  beginReplay(): void {
+    this.replaying = true
+  }
+
+  /**
+   * Stage 6 (I4): the live stream was cut — the channel broke, or this
+   * client came in the middle of a message. Deltas lost on the way must not
+   * leave a hole, nor half a message appear twice: what is streaming stops,
+   * each message cut here gets its whole text from the full message later,
+   * and deltas of a message whose start was not seen are not shown at all.
+   */
+  resetStream(): RibbonChange[] {
+    const changes = this.closeOpenBlocks()
+    for (const id of this.streamOf.values()) this.cutStreams.add(id)
+    this.streamOf.clear()
+    this.needStart = true
+    return changes
+  }
+
   apply(message: unknown): RibbonChange[] {
     if (!isObject(message)) return []
     this.previousEventAt = this.lastEventAt
     this.lastEventAt = this.now()
+    this.current = message
     switch (message['type']) {
       case 'stream_event':
         return this.onStreamEvent(message)
@@ -451,6 +646,7 @@ export class RibbonBuilder {
       case 'system':
         return this.onSystem(message)
       case 'result':
+        this.expireEchoes(message)
         return [...this.closeOpenBlocks(), ...this.onResult(message)]
       case 'permission_denied':
         return [
@@ -504,17 +700,29 @@ export class RibbonBuilder {
     const event = message['event']
     if (!isObject(event)) return []
 
+    const parentId = this.parentOf(message)
+    const scope = parentId ?? ''
+
     if (event['type'] === 'message_start') {
       const inner = event['message']
       const id = isObject(inner) ? str(inner['id']) : ''
-      if (id) this.streamed.add(id)
-      this.blockBoundaryAt = this.now()
+      if (id) {
+        this.streamed.add(id)
+        // The message before in this stream is over: its items need no keeping, unless it was cut.
+        const before = this.streamOf.get(scope)
+        if (before && before !== id && !this.cutStreams.has(before)) this.streamItems.delete(before)
+        this.streamOf.set(scope, id)
+      }
+      this.blockBoundaryAt.set(scope, this.now())
       return []
     }
+    // After a cut, a stream whose message began unseen shows nothing of it: the whole message comes later.
+    if (this.needStart && !this.streamOf.has(scope)) return []
 
+    const key = `${scope}:${Number(event['index'] ?? 0)}`
     if (event['type'] === 'content_block_stop') {
-      const changes = this.closeBlock(Number(event['index'] ?? 0))
-      this.blockBoundaryAt = this.now()
+      const changes = this.closeBlock(key)
+      this.blockBoundaryAt.set(scope, this.now())
       return changes
     }
 
@@ -522,26 +730,23 @@ export class RibbonBuilder {
     const delta = event['delta']
     if (!isObject(delta)) return []
 
-    const index = Number(event['index'] ?? 0)
-    const parentId = this.parentOf(message)
-
     if (delta['type'] === 'text_delta') {
-      return this.appendDelta(index, 'agentText', str(delta['text']), parentId)
+      return this.appendDelta(key, 'agentText', str(delta['text']), parentId)
     }
     if (delta['type'] === 'thinking_delta') {
-      return this.appendDelta(index, 'thinking', str(delta['thinking']), parentId)
+      return this.appendDelta(key, 'thinking', str(delta['thinking']), parentId)
     }
     return []
   }
 
   private appendDelta(
-    index: number,
+    key: string,
     kind: 'agentText' | 'thinking',
     text: string,
     parentId: string | undefined
   ): RibbonChange[] {
     if (!text) return []
-    const open = this.openBlocks.get(index)
+    const open = this.openBlocks.get(key)
 
     if (open && open.kind === kind) {
       const item = this.find(open.itemId)
@@ -552,22 +757,28 @@ export class RibbonBuilder {
       }
     }
 
-    const closed = open ? this.closeBlock(index) : []
+    const closed = open ? this.closeBlock(key) : []
     const id = this.nextId()
     const item: RibbonItem =
       kind === 'agentText'
         ? { kind: 'agentText', id, text, streaming: true, ...(parentId ? { parentId } : {}) }
         : { kind: 'thinking', id, text, done: false, durationMs: 0, ...(parentId ? { parentId } : {}) }
 
-    const startedAt = kind === 'thinking' ? (this.blockBoundaryAt ?? this.now()) : this.now()
-    this.openBlocks.set(index, { itemId: id, kind, startedAt })
+    const startedAt = kind === 'thinking' ? (this.blockBoundaryAt.get(parentId ?? '') ?? this.now()) : this.now()
+    this.openBlocks.set(key, { itemId: id, kind, startedAt })
+    const msg = this.streamOf.get(parentId ?? '')
+    if (msg) {
+      const list = this.streamItems.get(msg) ?? []
+      list.push({ itemId: id, kind })
+      this.streamItems.set(msg, list)
+    }
     return [...closed, this.append(item)]
   }
 
-  private closeBlock(index: number): RibbonChange[] {
-    const open = this.openBlocks.get(index)
+  private closeBlock(key: string): RibbonChange[] {
+    const open = this.openBlocks.get(key)
     if (!open) return []
-    this.openBlocks.delete(index)
+    this.openBlocks.delete(key)
 
     const item = this.find(open.itemId)
     if (!item) return []
@@ -592,31 +803,58 @@ export class RibbonBuilder {
     return Math.max(0, this.now() - this.previousEventAt)
   }
 
-  private closeOpenBlocks(): RibbonChange[] {
+  /** With `parentId` given, only that stream's blocks: another agent may still be writing. */
+  private closeOpenBlocks(parentId?: string | null): RibbonChange[] {
     const changes: RibbonChange[] = []
-    for (const index of [...this.openBlocks.keys()]) changes.push(...this.closeBlock(index))
+    const prefix = parentId === undefined ? null : `${parentId ?? ''}:`
+    for (const key of [...this.openBlocks.keys()]) {
+      if (prefix === null || key.startsWith(prefix)) changes.push(...this.closeBlock(key))
+    }
     return changes
   }
 
   // ---------------------------------------------------------- the assistant
 
   private onAssistant(message: Record<string, unknown>): RibbonChange[] {
-    const changes = this.closeOpenBlocks()
+    const parentId = this.parentOf(message)
+    // The message closes its own stream, not a neighbour's still being written.
+    const changes = this.closeOpenBlocks(parentId ?? null)
     const inner = message['message']
     if (!isObject(inner)) return changes
 
     // The complete message always follows the stream that produced it; its
     // text is already on screen, so only the blocks the stream cannot carry
     // (tool calls) are new.
-    const alreadyStreamed = this.streamed.has(str(inner['id']))
-    const parentId = this.parentOf(message)
+    const messageId = str(inner['id'])
+    const alreadyStreamed = this.streamed.has(messageId)
+    // A subagent's whole text comes in one piece; a book of it is not kept.
+    const nested = (text: string): string => (parentId ? clipText(text, NESTED_CLIP) : text)
+    // A cut stream (I4): the whole text goes over what the deltas brought, in order, kind by kind.
+    const cut = alreadyStreamed && this.cutStreams.has(messageId)
+    const takeStreamed = (kind: 'agentText' | 'thinking'): RibbonItem | undefined => {
+      const list = this.streamItems.get(messageId)
+      const at = list?.findIndex((x) => x.kind === kind) ?? -1
+      if (!list || at < 0) return undefined
+      const [taken] = list.splice(at, 1)
+      return this.find(taken!.itemId)
+    }
+    const fillCut = (kind: 'agentText' | 'thinking', text: string): boolean => {
+      const item = takeStreamed(kind)
+      if (!item || (item.kind !== 'agentText' && item.kind !== 'thinking')) return false
+      if (item.text !== text) {
+        item.text = text
+        changes.push(this.update(item.id, { text }))
+      }
+      return true
+    }
 
     for (const block of asArray(inner['content'])) {
       if (!isObject(block)) continue
       switch (block['type']) {
         case 'text': {
-          if (alreadyStreamed) break
+          if (alreadyStreamed && !cut) break
           if (!str(block['text']).trim()) break
+          if (cut && fillCut('agentText', nested(str(block['text'])))) break
           // «/chrome isn't available in this environment.» is the CLI talking,
           // not the model: it becomes a notice with a way out.
           const local = inner['model'] === '<synthetic>' ? this.commandNotice(str(block['text'])) : null
@@ -628,7 +866,7 @@ export class RibbonBuilder {
             this.append({
               kind: 'agentText',
               id: this.nextId(),
-              text: str(block['text']),
+              text: nested(str(block['text'])),
               streaming: false,
               ...(parentId ? { parentId } : {})
             })
@@ -637,12 +875,13 @@ export class RibbonBuilder {
         }
 
         case 'thinking':
-          if (alreadyStreamed) break
+          if (alreadyStreamed && !cut) break
+          if (cut && fillCut('thinking', nested(str(block['thinking'])))) break
           changes.push(
             this.append({
               kind: 'thinking',
               id: this.nextId(),
-              text: str(block['thinking']),
+              text: nested(str(block['thinking'])),
               done: true,
               durationMs: this.wholeThinkingMs(),
               ...(parentId ? { parentId } : {})
@@ -651,7 +890,10 @@ export class RibbonBuilder {
           break
 
         case 'tool_use':
-          changes.push(...this.onToolUse(block, parentId))
+          changes.push(...this.onToolUse(block, parentId, this.messageTime(message)))
+          if (block['name'] === 'SendMessage' && !parentId) {
+            changes.push(...this.onSendMessage(block, this.messageTime(message)))
+          }
           break
 
         default:
@@ -661,7 +903,90 @@ export class RibbonBuilder {
     return changes
   }
 
-  private onToolUse(block: Record<string, unknown>, parentId: string | undefined): RibbonChange[] {
+  /**
+   * The main agent writes to a subagent. If the person had asked it to, the
+   * oldest of their messages still on the way is now passed on; otherwise it
+   * is the main agent's own word, and the agent's ribbon shows it as such.
+   * The call keeps its ordinary card in the main ribbon either way.
+   */
+  private onSendMessage(block: Record<string, unknown>, at: number | undefined): RibbonChange[] {
+    const input = isObject(block['input']) ? block['input'] : {}
+    const card = this.cardByRef(str(input['to']))
+    if (!card) return []
+    const waiting = this.list.find(
+      (i) =>
+        i.kind === 'agentMessage' &&
+        i.parentId === card.id &&
+        i.from === 'person' &&
+        (i.state === 'sent' || i.state === 'read')
+    )
+    if (waiting && waiting.kind === 'agentMessage') {
+      waiting.state = 'passed'
+      return [this.update(waiting.id, { state: 'passed' })]
+    }
+    const said = [input['message'], input['content'], input['text']].find((v) => typeof v === 'string')
+    const raw = said ?? input['message'] ?? input['content'] ?? input['text']
+    const text = typeof said === 'string' ? said : raw === undefined ? '' : clip(JSON.stringify(raw), 2000)
+    return [
+      this.append({
+        kind: 'agentMessage',
+        id: this.nextId(),
+        from: 'main',
+        text,
+        ...(at !== undefined ? { at } : {}),
+        parentId: card.id
+      })
+    ]
+  }
+
+  /** The subagent card a SendMessage address names: its agent id, task id, or given name. */
+  private cardByRef(ref: string): SubagentItem | undefined {
+    if (!ref) return undefined
+    return this.list.find(
+      (i): i is SubagentItem => i.kind === 'subagent' && (i.agentId === ref || i.taskId === ref || i.label === ref)
+    )
+  }
+
+  /** «→ Explore «Обзор вставки»» for an agent the ribbon knows; the bare address otherwise. */
+  private sendTarget(input: Record<string, unknown>): string {
+    const card = this.cardByRef(str(input['to']))
+    if (!card) return toolTarget('SendMessage', input)
+    return `→ ${clip(card.task ? `${card.name} «${card.task}»` : card.name)}`
+  }
+
+  /**
+   * A message the person typed — or, in a conversation read back, the
+   * instruction that carried their words to a subagent: then the bubble is
+   * those words, marked for the agent, and the agent's ribbon has them as read
+   * (the next SendMessage to it passes them on).
+   */
+  private userOrRelay(text: string, attachments: Attachment[], at: number | undefined): RibbonChange[] {
+    const relay = parseRelayInstruction(text)
+    if (!relay) return this.appendUser(text, attachments, at)
+    const card = this.cardByRef(relay.ref)
+    if (!card) return this.appendUser(relay.text, attachments, at)
+    return [
+      this.append({
+        kind: 'user',
+        id: this.nextId(),
+        text: relay.text,
+        attachments,
+        ...(at !== undefined ? { at } : {}),
+        relay: { cardId: card.id, agent: card.name }
+      }),
+      this.append({
+        kind: 'agentMessage',
+        id: this.nextId(),
+        from: 'person',
+        text: relay.text,
+        ...(at !== undefined ? { at } : {}),
+        state: 'read',
+        parentId: card.id
+      })
+    ]
+  }
+
+  private onToolUse(block: Record<string, unknown>, parentId: string | undefined, at?: number): RibbonChange[] {
     const toolUseId = str(block['id'])
     const name = str(block['name'])
     const input = isObject(block['input']) ? block['input'] : {}
@@ -720,15 +1045,20 @@ export class RibbonBuilder {
       const id = this.nextId()
       this.byToolUseId.set(toolUseId, id)
       this.startedAt.set(id, this.now())
+      const prompt = str(input['prompt'])
+      const label = str(input['name'])
       return [
         this.append({
           kind: 'subagent',
           id,
           toolUseId,
-          name: str(input['subagent_type']) || 'подагент',
-          task: str(input['description']) || clip(str(input['prompt']), 120),
+          name: str(input['subagent_type']) || UNNAMED_AGENT,
+          task: str(input['description']) || clip(prompt, 120),
           state: 'running' as SubagentState,
           summary: '',
+          ...(prompt ? { prompt: clipText(prompt, PROMPT_CLIP) } : {}),
+          ...(label ? { label } : {}),
+          ...(at !== undefined ? { startedAt: at } : {}),
           ...(parentId ? { parentId } : {})
         })
       ]
@@ -742,7 +1072,7 @@ export class RibbonBuilder {
         id,
         toolUseId,
         name,
-        target: toolTarget(name, input),
+        target: name === 'SendMessage' ? this.sendTarget(input) : toolTarget(name, input),
         summary: '',
         detail: '',
         state: 'running' as ToolState,
@@ -786,7 +1116,7 @@ export class RibbonBuilder {
     if (typeof content === 'string') {
       if (message['isSynthetic'] === true || fromAgent || this.consumeEcho(content)) return noticed
       const text = userText(content)
-      return text === '' ? noticed : [...noticed, ...this.appendUser(text, [], this.messageTime(message))]
+      return text === '' ? noticed : [...noticed, ...this.userOrRelay(text, [], this.messageTime(message))]
     }
 
     const blocks = asArray(content).filter(isObject)
@@ -814,7 +1144,7 @@ export class RibbonBuilder {
 
     if (!text && attachments.length === 0) return noticed
     if (this.consumeEcho(text)) return noticed
-    return [...noticed, ...this.appendUser(text, attachments, this.messageTime(message))]
+    return [...noticed, ...this.userOrRelay(text, attachments, this.messageTime(message))]
   }
 
   private onToolResult(
@@ -834,9 +1164,9 @@ export class RibbonBuilder {
       // A failed subagent stays a subagent: it still has a place in the
       // panel's list and its nested stream, now marked as failed.
       if (item.kind === 'subagent') {
-        const patch = { state: 'failed' as SubagentState, summary: clip(text, 160) }
-        Object.assign(item, patch)
-        return [this.update(item.id, patch)]
+        // Stopped: the call's error that follows («Request interrupted…») is the stop itself.
+        if (item.state === 'stopped') return []
+        return this.patchSubagent(item, { state: 'failed', summary: clip(text, 160) })
       }
       const name = item.kind === 'tool' ? item.name : ''
       const target = item.kind === 'tool' ? item.target : ''
@@ -863,15 +1193,25 @@ export class RibbonBuilder {
       // result, so the summary is left alone.
       if (isObject(result) && (result['status'] === 'async_launched' || result['isAsync'] === true)) {
         const agentId = str(result['agentId'])
-        const launch: Partial<Extract<RibbonItem, { kind: 'subagent' }>> = {
+        const model = str(result['resolvedModel'])
+        if (agentId) this.byAgentId.set(agentId, item.id)
+        return this.patchSubagent(item, {
           background: true,
-          ...(agentId ? { agentId } : {})
-        }
-        Object.assign(item, launch)
-        return [this.update(item.id, launch)]
+          ...(agentId ? { agentId } : {}),
+          ...(model ? { model } : {})
+        })
       }
 
       const patch: Partial<Extract<RibbonItem, { kind: 'subagent' }>> = { state: 'done', summary: clip(text, 160) }
+      if (isObject(result)) {
+        const agentId = str(result['agentId'])
+        if (agentId) {
+          this.byAgentId.set(agentId, item.id)
+          patch.agentId = agentId
+        }
+        const model = str(result['resolvedModel'])
+        if (model) patch.model = model
+      }
       const report = subagentReport(result, whole)
       if (report) patch.report = report
       const stats = subagentStats(result)
@@ -886,8 +1226,7 @@ export class RibbonBuilder {
         // worth printing; «0 с» reads as a broken number.
         if (measured > 0) patch.durationMs = measured
       }
-      Object.assign(item, patch)
-      return [this.update(item.id, patch)]
+      return this.patchSubagent(item, patch)
     }
 
     if (item.kind === 'tool') {
@@ -941,36 +1280,95 @@ export class RibbonBuilder {
     }
   }
 
+  /**
+   * The card a task event is about: by its task id first — the agent's
+   * identity; a resumed run's tool_use_id is the SendMessage call's — then
+   * by the call.
+   */
   private subagentFor(toolUseId: string, taskId: string): SubagentItem | undefined {
-    const id = (toolUseId && this.byToolUseId.get(toolUseId)) || (taskId && this.byTaskId.get(taskId))
-    const item = id ? this.find(id) : undefined
-    return item?.kind === 'subagent' ? item : undefined
+    for (const id of [taskId && this.byAgentId.get(taskId), toolUseId && this.byToolUseId.get(toolUseId)]) {
+      const item = id ? this.find(id) : undefined
+      if (item?.kind === 'subagent') return item
+    }
+    return undefined
   }
 
+  /** A card leaving `running` gets its end time: this message's, or now. */
   private patchSubagent(item: SubagentItem, patch: Partial<SubagentItem>): RibbonChange[] {
+    const ending = patch.state !== undefined && patch.state !== 'running'
+    if (item.state === 'running' && ending && patch.endedAt === undefined) {
+      const at = this.current ? this.messageTime(this.current) : undefined
+      if (at !== undefined) patch = { ...patch, endedAt: at }
+    }
     Object.assign(item, patch)
     return [this.update(item.id, patch)]
   }
 
   private onTaskStarted(message: Record<string, unknown>): RibbonChange[] {
     const taskId = str(message['task_id'])
-    const item = this.subagentFor(str(message['tool_use_id']), '')
-    if (!item || !taskId) return []
-    this.byTaskId.set(taskId, item.id)
-    const patch: Partial<SubagentItem> = { taskId }
-    if (typeof message['is_backgrounded'] === 'boolean') patch.background = message['is_backgrounded']
-    return this.patchSubagent(item, patch)
+    if (!taskId) return []
+    const toolUseId = str(message['tool_use_id'])
+    const backgrounded = typeof message['is_backgrounded'] === 'boolean' ? message['is_backgrounded'] : undefined
+
+    // The same agent started again — SendMessage resumed it: the same card, running anew.
+    const known = this.subagentFor('', taskId)
+    if (known && known.state !== 'running') {
+      return this.patchSubagent(known, {
+        state: 'running',
+        runs: (known.runs ?? 1) + 1,
+        endedAt: undefined,
+        summary: '',
+        ...(backgrounded !== undefined ? { background: backgrounded } : {})
+      })
+    }
+
+    const item = known ?? this.subagentFor(toolUseId, '')
+    if (item) {
+      this.byAgentId.set(taskId, item.id)
+      const patch: Partial<SubagentItem> = { taskId }
+      if (backgrounded !== undefined) patch.background = backgrounded
+      // A call that named no type: the CLI says which one it ran, as the task list does.
+      const type = str(message['subagent_type'])
+      if (type && item.name === UNNAMED_AGENT) patch.name = type
+      return this.patchSubagent(item, patch)
+    }
+
+    // An agent whose call never reached the stream — a nested one the CLI did
+    // not forward: a card of its own, under its parent's when that is known.
+    if (str(message['task_type']) !== 'local_agent') return []
+    const id = this.nextId()
+    if (toolUseId) this.byToolUseId.set(toolUseId, id)
+    this.byAgentId.set(taskId, id)
+    this.startedAt.set(id, this.now())
+    const parentTask = str(message['parent_task_id'])
+    const parentId = parentTask ? this.byAgentId.get(parentTask) : undefined
+    const at = this.messageTime(message)
+    return [
+      this.append({
+        kind: 'subagent',
+        id,
+        toolUseId,
+        name: str(message['subagent_type']) || UNNAMED_AGENT,
+        task: str(message['description']),
+        state: 'running',
+        summary: '',
+        background: backgrounded === true,
+        taskId,
+        ...(at !== undefined ? { startedAt: at } : {}),
+        ...(parentId ? { parentId } : {})
+      })
+    ]
   }
 
   private onTaskProgress(message: Record<string, unknown>): RibbonChange[] {
     const item = this.subagentFor(str(message['tool_use_id']), str(message['task_id']))
     if (!item || item.state !== 'running') return []
     const usage = isObject(message['usage']) ? message['usage'] : {}
-    const patch: Partial<SubagentItem> = {
+    const patch: Partial<SubagentItem> = counted({
       tokens: Number(usage['total_tokens'] ?? 0) || 0,
       toolCalls: Number(usage['tool_uses'] ?? 0) || 0,
       durationMs: Number(usage['duration_ms'] ?? 0) || 0
-    }
+    })
     const last = str(message['last_tool_name'])
     if (last) patch.lastTool = last
     const summary = str(message['summary'])
@@ -982,14 +1380,17 @@ export class RibbonBuilder {
     const item = this.subagentFor('', str(message['task_id']))
     if (!item || item.state !== 'running') return []
     const patch = isObject(message['patch']) ? message['patch'] : {}
+    // Moved to the background: by backgroundTask(), or the CLI itself on a 'now' message.
+    const moved =
+      patch['is_backgrounded'] === true && item.background !== true ? this.patchSubagent(item, { background: true }) : []
     const status = patch['status']
-    if (status === 'completed') return this.patchSubagent(item, { state: 'done' })
-    if (status === 'killed') return this.patchSubagent(item, { state: 'stopped' })
+    if (status === 'completed') return [...moved, ...this.patchSubagent(item, { state: 'done' })]
+    if (status === 'killed') return [...moved, ...this.patchSubagent(item, { state: 'stopped' })]
     if (status === 'failed') {
       const error = str(patch['error'])
-      return this.patchSubagent(item, { state: 'failed', ...(error ? { summary: clip(error, 160) } : {}) })
+      return [...moved, ...this.patchSubagent(item, { state: 'failed', ...(error ? { summary: clip(error, 160) } : {}) })]
     }
-    return []
+    return moved
   }
 
   private onTaskNotification(message: Record<string, unknown>): RibbonChange[] {
@@ -1022,13 +1423,7 @@ export class RibbonBuilder {
       // A background agent's only words back are the notice's summary; a
       // foreground one already has its whole report from the tool's output.
       ...(notice.summary && (item.background || !item.report) ? { report: clipReport(notice.summary) } : {}),
-      ...(notice.usage
-        ? {
-            tokens: notice.usage.tokens,
-            toolCalls: notice.usage.toolCalls,
-            durationMs: notice.usage.durationMs
-          }
-        : {})
+      ...(notice.usage ? counted(notice.usage) : {})
     }
     return this.patchSubagent(item, patch)
   }
@@ -1067,7 +1462,7 @@ export class RibbonBuilder {
 
   /** True when this text is the echo of a message we have already shown. */
   private consumeEcho(text: string): boolean {
-    const at = this.pendingEchoes.indexOf(text)
+    const at = this.pendingEchoes.findIndex((e) => e.text === text)
     if (at === -1) return false
     this.pendingEchoes.splice(at, 1)
     return true
@@ -1075,6 +1470,14 @@ export class RibbonBuilder {
 
   private appendUser(text: string, attachments: Attachment[] = [], at?: number): RibbonChange[] {
     const remote = this.remoteLive && !this.replaying
+    // Stage 6: a server's relay sent it on its own («продолжай» of its autonomy core).
+    const auto = this.current?.['qclod_auto'] === true
+    // Stage 6: the bubble of a message another client sent, built from the relay's journal: a CLI
+    // that echoes it will echo it under the same uuid, and that echo is no second bubble.
+    if (this.current?.['qclod_echo_follows'] === true) {
+      const uuid = this.current['uuid']
+      this.expectEcho(text, typeof uuid === 'string' ? uuid : undefined)
+    }
     return [
       this.append({
         kind: 'user',
@@ -1082,6 +1485,7 @@ export class RibbonBuilder {
         text,
         attachments,
         ...(remote ? { remote: true as const } : {}),
+        ...(auto ? { auto: true as const } : {}),
         ...(at !== undefined ? { at } : {})
       })
     ]
@@ -1130,7 +1534,15 @@ export class RibbonBuilder {
     return null
   }
 
+  /**
+   * The card a nested message belongs to: its agent_id first, then the call
+   * it names. A resumed agent's messages keep their agent_id while the call
+   * they name may be the SendMessage that woke it (Review Focus 2).
+   */
   private parentOf(message: Record<string, unknown>): string | undefined {
+    const agent = str(message['agent_id'])
+    const byAgent = agent ? this.byAgentId.get(agent) : undefined
+    if (byAgent) return byAgent
     const parent = str(message['parent_tool_use_id'])
     if (!parent) return undefined
     return this.byToolUseId.get(parent)

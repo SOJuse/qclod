@@ -1,4 +1,4 @@
-import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test'
+import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -77,148 +77,173 @@ async function close(app: ElectronApplication, profile: string): Promise<void> {
   rmSync(profile, { recursive: true, force: true })
 }
 
-test('экран истории показывает сессии текущей папки с датой и первой репликой', async () => {
+/** The project the first chat works in: the only one at start. */
+const firstProject = (win: Page) => win.locator('[data-testid="project"]').first()
+const sessions = (win: Page) => win.locator('[data-testid="sidebar-session"]')
+const tabs = (win: Page) => win.locator('[data-testid="tab"]')
+
+test('прошлые сессии видны в боковой панели под проектом, с короткой датой', async () => {
   const { app, profile } = await launch(HISTORY)
   try {
     const win = await app.firstWindow()
     await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
 
-    await win.keyboard.press('Control+H')
-    const screen = win.locator('[data-testid="history-screen"]')
-    await expect(screen).toBeVisible()
-
-    const items = screen.locator('[data-testid="history-item"]')
-    await expect(items).toHaveCount(2)
-    await expect(items.first()).toContainText('Починка вставки файлов')
-    await expect(items.first()).toContainText('вставка файлов не работает')
-    // A date a person can read, not a timestamp.
-    await expect(items.first()).not.toContainText('17')
+    await expect(win.locator('[data-testid="project"]')).toHaveCount(1)
+    await expect(win.locator('[data-testid="sidebar-past-head"]')).toHaveText('Прошлые')
+    await expect(sessions(win)).toHaveCount(2)
+    // Newest first, a title and a date a person can read, not a timestamp.
+    await expect(sessions(win).first()).toContainText('Починка вставки файлов')
+    await expect(sessions(win).nth(1)).toContainText('Переезд на SDK')
+    await expect(sessions(win).first().locator('.past-when')).not.toHaveText(/\d{5,}/)
+    await expect(sessions(win).first().locator('.past-when')).not.toHaveText('')
   } finally {
     await close(app, profile)
   }
 })
 
-test('поиск по истории фильтрует список', async () => {
+test('клик по прошлой сессии открывает чат с её лентой; открытая в «Прошлые» не попадает, закрытая — возвращается', async () => {
   const { app, profile } = await launch(HISTORY)
   try {
     const win = await app.firstWindow()
     await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
-    await win.keyboard.press('Control+H')
+    await expect(tabs(win)).toHaveCount(1)
+    await expect(sessions(win)).toHaveCount(2)
 
-    await win.locator('[data-testid="history-query"]').fill('sdk')
-    const items = win.locator('[data-testid="history-item"]')
-    await expect(items).toHaveCount(1)
-    await expect(items.first()).toContainText('Переезд на SDK')
-
-    // Searching the first message too, not only the title.
-    await win.locator('[data-testid="history-query"]').fill('перепишем')
-    await expect(items).toHaveCount(1)
-
-    await win.locator('[data-testid="history-query"]').fill('щщщ')
-    await expect(win.locator('[data-testid="history-empty"]')).toContainText('Ничего не нашлось')
-  } finally {
-    await close(app, profile)
-  }
-})
-
-test('история водится с клавиатуры: Enter открывает первое, стрелки ходят по списку, Esc закрывает', async () => {
-  const { app, profile } = await launch(HISTORY)
-  try {
-    const win = await app.firstWindow()
-    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
-    const query = win.locator('[data-testid="history-query"]')
-    const items = win.locator('[data-testid="history-item"]')
-
-    // The first match is the chosen one while you type.
-    await win.keyboard.press('Control+H')
-    await expect(query).toBeFocused()
-    await expect(items).toHaveCount(2)
-    await expect(items.nth(0)).toHaveAttribute('aria-current', 'true')
-
-    // Down goes into the list and along it; Up from the first row comes back to the field.
-    await query.press('ArrowDown')
-    await expect(items.nth(0)).toBeFocused()
-    await win.keyboard.press('ArrowDown')
-    await expect(items.nth(1)).toBeFocused()
-    await expect(items.nth(1)).toHaveAttribute('aria-current', 'true')
-    await win.keyboard.press('ArrowDown')
-    await expect(items.nth(1)).toBeFocused()
-    await win.keyboard.press('ArrowUp')
-    await win.keyboard.press('ArrowUp')
-    await expect(query).toBeFocused()
-
-    // Esc from the field closes the sheet.
-    await query.press('Escape')
-    await expect(win.locator('[data-testid="history-screen"]')).toHaveCount(0)
-
-    // Typing narrows the list; Enter opens the first match without leaving the field.
-    await win.keyboard.press('Control+H')
-    await query.fill('sdk')
-    await expect(items).toHaveCount(1)
-    await query.press('Enter')
-    await expect(win.locator('[data-testid="history-screen"]')).toHaveCount(0)
-    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
-    await expect(win.locator('[data-testid="tab"]').last()).toContainText('Переезд на SDK')
-  } finally {
-    await close(app, profile)
-  }
-})
-
-test('у папки без сессий — понятная пустота, а не пустой список', async () => {
-  const { app, profile } = await launch({ sessions: [] })
-  try {
-    const win = await app.firstWindow()
-    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
-    await win.keyboard.press('Control+H')
-
-    await expect(win.locator('[data-testid="history-empty"]')).toContainText(
-      'ещё не было разговоров'
-    )
-    await expect(win.locator('[data-testid="history-item"]')).toHaveCount(0)
-  } finally {
-    await close(app, profile)
-  }
-})
-
-test('открытие сессии поднимает её в новой вкладке с восстановленной лентой', async () => {
-  const { app, profile } = await launch(HISTORY)
-  try {
-    const win = await app.firstWindow()
-    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
-    await expect(win.locator('[data-testid="tab"]')).toHaveCount(1)
-
-    await win.keyboard.press('Control+H')
-    await win.locator('[data-testid="history-item"]').first().click()
-
-    await expect(win.locator('[data-testid="history-screen"]')).toHaveCount(0)
-    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+    await sessions(win).first().click()
+    await expect(tabs(win)).toHaveCount(2, { timeout: 15000 })
+    const opened = win.locator('[data-testid="tab"].is-active')
+    await expect(opened).toContainText('Починка вставки файлов')
 
     // The conversation itself is back, both sides of it.
     const ribbon = win.locator('[data-testid="ribbon"]')
     await expect(ribbon).toContainText('вставка файлов не работает', { timeout: 15000 })
     await expect(ribbon).toContainText('clipboardData.files')
+
+    // An open conversation is a chat, not a past one.
+    await expect(sessions(win)).toHaveCount(1)
+    await expect(sessions(win).first()).toContainText('Переезд на SDK')
+
+    // Closed, it is a past conversation again.
+    await opened.locator('.tab-close').click()
+    await expect(tabs(win)).toHaveCount(1)
+    await expect(sessions(win)).toHaveCount(2, { timeout: 15000 })
+    await expect(sessions(win).first()).toContainText('Починка вставки файлов')
   } finally {
     await close(app, profile)
   }
 })
 
-test('кнопка в заголовке открывает историю', async () => {
-  // A hotkey nobody told you about is not a feature.
+test('свёрнутый проект прячет чаты и прошлое; Ctrl+H находит его прошлые в палитре', async () => {
   const { app, profile } = await launch(HISTORY)
   try {
     const win = await app.firstWindow()
     await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+    const toggle = firstProject(win).locator('[data-testid="project-toggle"]')
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
 
-    await win.locator('[data-testid="open-history"]').click()
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(tabs(win)).toHaveCount(0)
+    await expect(sessions(win)).toHaveCount(0)
 
-    await expect(win.locator('[data-testid="history-screen"]')).toBeVisible()
-    await expect(win.locator('[data-testid="history-item"]')).toHaveCount(2)
+    // Task 7: Ctrl+H is the palette kept to the past conversations, not a fold.
+    await win.keyboard.press('Control+H')
+    const palette = win.locator('[data-testid="action-palette"]')
+    await expect(palette.locator('[data-testid="palette-scope"]')).toHaveText('Прошлые разговоры')
+    await expect(palette.locator('[data-testid="action-item"][data-section="history"]')).toHaveCount(2)
+    await expect(palette.locator('[data-testid="action-item"]:not([data-section="history"])')).toHaveCount(0)
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
   } finally {
     await close(app, profile)
   }
 })
 
-test('/resume из списка команд открывает историю, а не уходит агенту', async () => {
+test('Ctrl+H: поиск по прошлым — по названию и первому сообщению, Enter открывает, Backspace снимает раздел', async () => {
+  const { app, profile } = await launch(HISTORY)
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+    await expect(sessions(win)).toHaveCount(2)
+    const palette = win.locator('[data-testid="action-palette"]')
+    const query = palette.locator('[data-testid="action-query"]')
+    const past = palette.locator('[data-testid="action-item"][data-section="history"]')
+
+    await win.keyboard.press('Control+H')
+    await expect(query).toBeFocused()
+    await query.fill('sdk')
+    await expect(past).toHaveCount(1)
+    await expect(past.first()).toContainText('Переезд на SDK')
+    // The first message counts too, not only the title.
+    await query.fill('перепишем')
+    await expect(past).toHaveCount(1)
+    await expect(past.first()).toContainText('Переезд на SDK')
+
+    await query.fill('щщщ')
+    await expect(palette.locator('[data-state="empty"]')).toContainText('Ничего не нашлось')
+    await expect(palette.locator('[data-testid="action-item"]')).toHaveCount(0)
+
+    // Backspace in the empty field takes the chip off: the search is over everything again.
+    await query.fill('')
+    await query.press('Backspace')
+    await expect(palette.locator('[data-testid="palette-scope"]')).toHaveCount(0)
+    await expect(palette.locator('[data-testid="action-item"][data-section="commands"]')).toHaveCount(8)
+
+    // Ctrl+H on the open palette keeps it to the past ones again; Enter opens the chosen one in its own chat.
+    await win.keyboard.press('Control+H')
+    await expect(palette.locator('[data-testid="palette-scope"]')).toHaveText('Прошлые разговоры')
+    await query.fill('sdk')
+    await expect(past).toHaveCount(1)
+    await query.press('Enter')
+    await expect(palette).toHaveCount(0)
+    await expect(tabs(win)).toHaveCount(2, { timeout: 15000 })
+    await expect(win.locator('[data-testid="tab"].is-active')).toContainText('Переезд на SDK')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('у папки без сессий в боковой панели нет ни подзаголовка «Прошлые», ни строк', async () => {
+  const { app, profile } = await launch({ sessions: [] })
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+    await expect(tabs(win)).toHaveCount(1)
+    // The read is done once the empty tab has drawn its tips.
+    await expect(win.locator('[data-testid="empty-tips"]')).toBeVisible()
+    await expect(win.locator('[data-testid="sidebar-past-head"]')).toHaveCount(0)
+    await expect(sessions(win)).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('Ctrl+H, пока история читается или не прочиталась, говорит это, а не «Ничего не нашлось»; «Повторить» читает снова', async () => {
+  const { app, profile } = await launch(HISTORY, {
+    QCLOD_FAKE_SLOW: '{"projects:history":1500}',
+    QCLOD_FAKE_FAIL: '{"projects:history":"нет доступа"}',
+    QCLOD_FAKE_FAIL_TIMES: '{"projects:history":1}'
+  })
+  try {
+    const win = await app.firstWindow()
+    await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
+    const palette = win.locator('[data-testid="action-palette"]')
+
+    await win.keyboard.press('Control+H')
+    await expect(palette.locator('[data-state="loading"]')).toContainText('Загружаю…')
+    await expect(palette.locator('[data-state="empty"]')).toHaveCount(0)
+
+    const err = palette.locator('[data-state="error"]')
+    await expect(err).toContainText('Не удалось прочитать историю', { timeout: 10000 })
+    await expect(err).toContainText('нет доступа')
+    await err.getByRole('button', { name: 'Повторить' }).click()
+    await expect(palette.locator('[data-testid="action-item"][data-section="history"]')).toHaveCount(2, { timeout: 10000 })
+    await expect(err).toHaveCount(0)
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('/resume из списка команд открывает палитру с прошлыми, а не уходит агенту', async () => {
   const { app, profile } = await launch(HISTORY)
   try {
     const win = await app.firstWindow()
@@ -232,7 +257,11 @@ test('/resume из списка команд открывает историю, 
     await expect(item).toContainText('Открыть прошлый разговор')
     await input.press('Enter')
 
-    await expect(win.locator('[data-testid="history-screen"]')).toBeVisible()
+    // Task 7: the palette kept to the past conversations, as Ctrl+H.
+    const palette = win.locator('[data-testid="action-palette"]')
+    await expect(palette.locator('[data-testid="palette-scope"]')).toHaveText('Прошлые разговоры')
+    await expect(palette.locator('[data-testid="action-item"][data-section="history"]')).toHaveCount(2)
+    await expect(input).toHaveValue('')
     // Forwarding it would have shown "/resume" in the ribbon and done nothing.
     await expect(win.locator('[data-testid="ribbon-user"]')).toHaveCount(0)
   } finally {
@@ -260,9 +289,8 @@ test('открытая из истории сессия показывает т�
   try {
     const win = await app.firstWindow()
     await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
-    await win.keyboard.press('Control+H')
-    await win.locator('[data-testid="history-item"]').first().click()
-    await expect(win.locator('[data-testid="tab"]')).toHaveCount(2, { timeout: 15000 })
+    await sessions(win).first().click()
+    await expect(tabs(win)).toHaveCount(2, { timeout: 15000 })
 
     const ribbon = win.locator('[data-testid="ribbon"]').last()
     // Before the compaction: the first question and the answer to it.

@@ -133,6 +133,17 @@
   padding: 2px 0;
 }
 
+/* A paragraph of more than 10 000 characters (ui/longText.ts) stays on one
+   line and scrolls sideways: wrapped, Blink would lay it out in quadratic time
+   and freeze the window. The text itself is untouched. */
+.composer-input.is-long {
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
 .composer-input::placeholder {
   color: var(--text-faint);
 }
@@ -193,11 +204,28 @@
 }
 
 /* The buttons sit together at the right end, «Повторить» first. */
-.composer-dead > span {
+.composer-dead > span,
+.composer-held > span {
   margin-right: auto;
 }
 
-.composer-dead button {
+/* A long draft held back after the window froze (state/heldDrafts.ts): the
+   dead strip's shape, in neutral tones — nothing is broken now. */
+.composer-held {
+  display: flex;
+  align-items: center;
+  gap: var(--strip-gap);
+  margin-bottom: var(--strip-margin);
+  padding: var(--strip-pad);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--strip-radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.composer-dead button,
+.composer-held button {
   padding: var(--button-sm-pad);
   border: 1px solid var(--border);
   border-radius: var(--button-sm-radius);
@@ -208,11 +236,13 @@
   cursor: pointer;
 }
 
-.composer-dead button:hover {
+.composer-dead button:hover,
+.composer-held button:hover {
   border-color: var(--border-accent);
 }
 
-.composer-dead button.is-primary {
+.composer-dead button.is-primary,
+.composer-held button.is-primary {
   border-color: var(--border-accent);
   color: var(--accent);
 }
@@ -220,4 +250,105 @@
 .composer-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* A long Russian paragraph takes its spaces from Inter's Cyrillic file as well
+   (styles/longText.css): the same glyphs, a fraction of the layout time. */
+.composer-input.is-cyrillic {
+  font-family: var(--font-long-cyrillic);
+}
+
+/* --------------------------------------------------------- the microphone */
+
+/* Этап 5's states (MicButton): listening is the accent; a model on its way draws a ring. */
+.composer-mic {
+  position: relative;
+}
+
+.composer-mic[data-state='listening'] {
+  background: var(--accent-fill);
+  color: var(--accent);
+}
+
+.composer-mic[data-state='unavailable'] {
+  color: var(--text-faint);
+}
+
+.composer-mic-progress {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  fill: none;
+  pointer-events: none;
+}
+
+.composer-mic-track {
+  stroke: var(--border-strong);
+  stroke-width: 2;
+}
+
+.composer-mic-sweep {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: stroke-dasharray var(--dur) var(--ease);
+}
+
+/* Этап 5: the grey line of the phrase being said, a line of its own inside the frame (decision 4). */
+.composer-row:has(.composer-voice-tentative) {
+  flex-wrap: wrap;
+}
+
+.composer-row:has(.composer-voice-tentative) .composer-input {
+  flex-basis: 0;
+  min-width: 0;
+}
+
+.composer-voice-tentative {
+  order: 10;
+  flex: 0 0 100%;
+  padding: 0 6px 2px;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-style: italic;
+  color: var(--text-faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The microphone's menu (download, unavailable), over the input like the @ and / lists. */
+.voice-menu {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-width: 260px;
+  padding: var(--space-1);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-menu);
+}
+
+.voice-menu-item {
+  height: var(--menu-row-h);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.voice-menu-item:hover,
+.voice-menu-item:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text);
 }

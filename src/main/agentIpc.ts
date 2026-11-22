@@ -1,31 +1,49 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFileSync } from 'node:fs'
+import { isAbsolute, resolve as resolvePath } from 'node:path'
 import { CHANNELS } from '../shared/channels'
 import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
+import { projectKey } from '../shared/projects'
 import type {
   EffortLevel,
   LaunchOverrides,
+  LayoutState,
   PanelSnapshot,
   RibbonSnapshot,
+  SessionSummary,
+  SubagentSendResult,
+  SubagentStopResult,
   TabId,
+  TabState,
   UserInput
 } from '../shared/types'
-import { buildFileIndex } from './files/fileIndex'
+import { FILE_INDEX_LIMIT, buildFileIndex } from './files/fileIndex'
+import { RemoteIndexCache, UPLOAD_TOO_LARGE_TEXT, uploadFailedText, uploadFile } from './ssh/uploads'
 import { MAX_PER_CALL, type PathResolver } from './files/pathResolver'
 import { openInEditor, openPath, revealPath } from './files/fileActions'
 import { pasteMediaType, pasteRealPath } from './files/imagePaste'
 import { prepareImage } from './files/prepareImage'
-import type { TabController } from './tabs/TabController'
+import { viewerAccess } from './files/viewerIpc'
+import type { RelayReader } from './ssh/remoteFiles'
+import type { TabController, TabHistory } from './tabs/TabController'
+import type { LayoutStore } from './store/layoutStore'
+import type { AutonomyHost } from './autonomy/autonomyHost'
 import { EMPTY_PANEL } from './agent/panelData'
 import { withFault } from './testSeams/ipcFaults'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
 import type { PermissionBroker } from './agent/permissions'
+import type { HistorySearch } from './history/historySearch'
 import {
   sanitizeAnswer,
   sanitizeQuestionAnswers,
   sanitizeInput,
+  sanitizeLayoutPatch,
   sanitizeOverrides,
-  sanitizeTabPatch
+  sanitizePlanDecision,
+  sanitizeQuestionNotes,
+  sanitizeTabPatch,
+  sanitizeCardId,
+  sanitizeSubagentText
 } from './tabs/sanitize'
 
 export interface AgentIpcDeps {
@@ -43,6 +61,22 @@ export interface AgentIpcDeps {
   userData: string
   /** Opens Claude Code in a console in this folder. */
   openTerminal: (cwd: string) => void
+  /** userData/layout.json, shared with the controller. */
+  layout: LayoutStore
+  /** Past conversations of a folder, for a project in the sidebar. */
+  history: Pick<TabHistory, 'list'>
+  /** The per-tab autonomy cores (stage 3). */
+  autonomy?: Pick<AutonomyHost, 'hold' | 'answerNow' | 'remoteWanted'>
+  /** Stage 6: a server project's past conversations, from its relay. */
+  serverHistory?: (cwd: string, hostId: string) => Promise<SessionSummary[]>
+  /** Stage 6: whether this id is a server Qclod knows. */
+  knownServer?: (hostId: string) => boolean
+  /** Stage 6: a server's relay, raised if need be — a server chat's files are read through it. */
+  serverClient?: (hostId: string) => Promise<RelayReader>
+  /** Stage 6: «Закрыть чат» closes what belongs to it, its server terminal too. */
+  onTabClosed?: (id: TabId) => void
+  /** этап 7: the full-text search over past conversations (Ctrl+K «В разговорах»). */
+  historySearch?: Pick<HistorySearch, 'search' | 'knowsFolder'>
 }
 
 function isString(value: unknown): value is string {
@@ -96,8 +130,24 @@ function lineNumber(value: unknown): number | undefined {
  * the renderer is the least privileged part of the app and a bug there must
  * not be able to point a session at another folder or fake a status.
  */
+/** How many chosen local files main keeps in mind for uploads to a server. */
+const MAX_SEEN_FILES = 1000
+
 export function registerAgentIpc(deps: AgentIpcDeps): void {
   const { controller, manager, broker } = deps
+  // Stage 6: the read-only viewer and a server chat's paths (task 24).
+  const viewer = viewerAccess({
+    tab: (id) => controller.list().find((t) => t.id === id),
+    knowsLocal: (absPath, id) => deps.resolver.knows(absPath, id),
+    client: (hostId) =>
+      deps.serverClient ? deps.serverClient(hostId) : Promise.reject(new Error('серверы недоступны')),
+    userData: deps.userData,
+    openPath
+  })
+  // Stage 6 (task 25): a server chat's @-list, kept a minute per tab.
+  const remoteIndex = new RemoteIndexCache()
+  const serverClient = (hostId: string): Promise<RelayReader> =>
+    deps.serverClient ? deps.serverClient(hostId) : Promise.reject(new Error('серверы недоступны'))
 
   ipcMain.handle(CHANNELS.tabsList, () => withFault(CHANNELS.tabsList, () => controller.list()))
 
@@ -110,6 +160,9 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!isString(id)) return
     broker.cancelTab(id)
     deps.resolver.forget(id)
+    viewer.forget(id)
+    remoteIndex.forget(id)
+    deps.onTabClosed?.(id)
     await controller.close(id)
   })
 
@@ -149,10 +202,25 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     return (await manager.get(id)?.interrupt()) ?? []
   })
 
-  ipcMain.handle(CHANNELS.agentQueueCancel, (_e, id: unknown, queuedId: unknown): boolean => {
-    if (!isString(id) || !isString(queuedId)) return false
-    return manager.get(id)?.cancelQueued(queuedId) ?? false
-  })
+  // «Отменить» and «Изменить» on the strip: the message taken back, for the
+  // input field — an image without the bytes its copy on disk stands for —
+  // or null when the agent had read it already or it is gone.
+  ipcMain.handle(
+    CHANNELS.agentQueueCancel,
+    async (_e, id: unknown, queuedId: unknown): Promise<UserInput | null> => {
+      if (!isString(id) || !isString(queuedId)) return null
+      return (await manager.get(id)?.cancelQueued(queuedId)) ?? null
+    }
+  )
+
+  // «Отправить сейчас»: false when there was nothing to hurry.
+  ipcMain.handle(
+    CHANNELS.agentQueueSendNow,
+    async (_e, id: unknown, queuedId: unknown): Promise<boolean> => {
+      if (!isString(id) || !isString(queuedId)) return false
+      return (await manager.get(id)?.sendQueuedNow(queuedId)) ?? false
+    }
+  )
 
   // The mode decides whether the agent asks at all, so an unknown string must
   // never reach the session: it would be rejected deep inside the SDK, far
@@ -208,6 +276,10 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!session) return
     // The session name the phone shows is the tab's title.
     const title = controller.list().find((tab) => tab.id === id)?.title
+    // The person's own switch is what the core keeps on (decision 9) — told
+    // before the CLI answers: that may take a minute, and a first attempt
+    // that fails is the core's to retry.
+    deps.autonomy?.remoteWanted(id, enabled)
     await session.setRemote(enabled, title)
   })
 
@@ -247,6 +319,30 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     await manager.get(id)?.stopTask(taskId)
   })
 
+  // — этап 4: сабагенты. The window names only a card of the ribbon and
+  // the text; the session finds the agent behind the card in its own ribbon,
+  // so a made-up id never reaches the agent.
+  ipcMain.handle(
+    CHANNELS.agentSubagentSend,
+    async (_e, id: unknown, cardId: unknown, text: unknown): Promise<SubagentSendResult> => {
+      const card = sanitizeCardId(cardId)
+      const body = sanitizeSubagentText(text)
+      if (!isString(id) || card === null || body === null) return { ok: false, reason: 'empty' }
+      const session = manager.get(id)
+      if (!session) return { ok: false, reason: 'not-running' }
+      return session.sendToSubagent(card, body)
+    }
+  )
+
+  ipcMain.handle(
+    CHANNELS.agentSubagentStop,
+    async (_e, id: unknown, cardId: unknown): Promise<SubagentStopResult> => {
+      const card = sanitizeCardId(cardId)
+      if (!isString(id) || card === null) return 'not-running'
+      return (await manager.get(id)?.stopSubagent(card)) ?? 'not-running'
+    }
+  )
+
   // Claude Code itself, in a console in the tab's folder: for the commands
   // that exist only in the terminal. The folder is the tab's, never the window's.
   ipcMain.handle(CHANNELS.agentOpenTerminal, (_e, id: unknown) => {
@@ -261,19 +357,128 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     broker.answer(requestId, sanitizeAnswer(answer))
   })
 
-  ipcMain.handle(CHANNELS.questionAnswer, (_e, id: unknown, toolUseId: unknown, answers: unknown) => {
-    if (!isString(id) || !isString(toolUseId)) return
-    const clean = sanitizeQuestionAnswers(answers)
-    // Nothing usable is no answer: the card stays open rather than sending an empty one.
-    if (Object.keys(clean).length === 0) return
-    manager.get(id)?.answerQuestion(toolUseId, clean)
+  // The fourth argument is the comments on the chosen options; which of them
+  // belong to a chosen option is the session's call, which knows the options.
+  ipcMain.handle(
+    CHANNELS.questionAnswer,
+    (_e, id: unknown, toolUseId: unknown, answers: unknown, notes: unknown) => {
+      if (!isString(id) || !isString(toolUseId)) return
+      const clean = sanitizeQuestionAnswers(answers)
+      // Nothing usable is no answer: the card stays open rather than sending an empty one.
+      if (Object.keys(clean).length === 0) return
+      manager.get(id)?.answerQuestion(toolUseId, clean, sanitizeQuestionNotes(notes))
+    }
+  )
+
+  // Anything but a literal true is not an approval, and an unusable decision
+  // is no answer: the card stays open.
+  ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, given: unknown) => {
+    if (!isString(id) || !isString(requestId)) return
+    const decision = sanitizePlanDecision(given)
+    if (decision === null) return
+    return manager.get(id)?.answerPlan(requestId, decision)
   })
 
-  ipcMain.handle(CHANNELS.planAnswer, (_e, id: unknown, requestId: unknown, approve: unknown) => {
-    if (!isString(id) || !isString(requestId)) return
-    // Anything but a literal true is not an approval.
-    manager.get(id)?.answerPlan(requestId, approve === true)
+  // — этап 2: проекты и раскладка.
+  const { layout } = deps
+
+  /**
+   * The folder a project request may act on, as main knows it: a project's
+   * first spelling (П13), or the folder of an open chat. Anything else — a
+   * folder the window made up — is null. A folder on another machine
+   * (`hostId`) is none until этап 6 can reach it.
+   */
+  const knownFolder = (cwd: unknown, hostId: unknown): string | null => {
+    if (!isString(cwd) || cwd === '') return null
+    if (hostId !== undefined && hostId !== '') {
+      // Stage 6: a folder on a server — a project of that server, or one of its open chats.
+      if (!isString(hostId) || hostId.length > 200 || !deps.knownServer?.(hostId)) return null
+      const remoteKey = projectKey(cwd, hostId)
+      const remote = layout.get().projects.find((p) => p.hostId === hostId && projectKey(p.cwd, hostId) === remoteKey)
+      if (remote) return remote.cwd
+      return (
+        controller.list().find((tab) => tab.server?.hostId === hostId && projectKey(tab.cwd, hostId) === remoteKey)?.cwd ??
+        null
+      )
+    }
+    const key = projectKey(cwd)
+    const project = layout.get().projects.find((p) => !p.hostId && projectKey(p.cwd) === key)
+    if (project) return project.cwd
+    const open = controller.list().find((tab) => projectKey(tab.cwd) === key)?.cwd
+    if (open) return open
+    // этап 7: a folder the search over the owner's own history found a session in.
+    return deps.historySearch?.knowsFolder(cwd) ? cwd : null
+  }
+
+  ipcMain.handle(CHANNELS.layoutGet, (): LayoutState => layout.get())
+
+  // One patch, one write, one layoutChanged: the panes (live chats only, as
+  // setPanes keeps them) and the widths for their new count together. setPanes
+  // then finds them in place and only starts the agents.
+  ipcMain.handle(CHANNELS.layoutSet, async (_e, given: unknown): Promise<LayoutState> => {
+    const patch = sanitizeLayoutPatch(given)
+    if (patch.panes) {
+      const live = new Set(controller.list().map((tab) => tab.id))
+      patch.panes = patch.panes.filter((id) => live.has(id))
+    }
+    layout.patch(patch)
+    if (patch.panes) await controller.setPanes(patch.panes)
+    return layout.get()
   })
+
+  // A project with open chats stays: nothing changes.
+  ipcMain.handle(CHANNELS.projectForget, (_e, cwd: unknown, hostId: unknown): LayoutState => {
+    if (!isString(cwd) || cwd === '' || (hostId !== undefined && !isString(hostId))) return layout.get()
+    const open = controller.list().map((tab) => projectKey(tab.cwd, tab.server?.hostId))
+    layout.forgetProject(cwd, open, hostId === '' ? undefined : hostId)
+    return layout.get()
+  })
+
+  ipcMain.handle(
+    CHANNELS.projectHistory,
+    (_e, cwd: unknown, hostId: unknown): Promise<SessionSummary[]> =>
+      // e2e sees the sidebar's «Загружаю…» and «Не удалось прочитать историю» through this.
+      withFault(CHANNELS.projectHistory, async () => {
+        const folder = knownFolder(cwd, hostId)
+        if (folder === null) return []
+        // A server project's history is its relay's (сверка F21).
+        if (isString(hostId) && hostId !== '') return deps.serverHistory ? deps.serverHistory(folder, hostId) : []
+        return deps.history.list(folder)
+      })
+  )
+
+  ipcMain.handle(
+    CHANNELS.projectOpenSession,
+    (_e, cwd: unknown, sessionId: unknown, title: unknown, hostId: unknown): TabState | null => {
+      if (!isString(sessionId) || sessionId === '') return null
+      const folder = knownFolder(cwd, hostId)
+      if (folder === null) return null
+      const host = isString(hostId) && hostId !== '' ? hostId : undefined
+      return controller.openSession(folder, sessionId, isString(title) ? title : undefined, host)
+    }
+  )
+
+
+  // The timer of a question or plan card: stop it, or answer now. Only a known
+  // tab and short strings reach the host.
+  const autonomyCall = (id: unknown, cardId: unknown, run: (id: TabId, cardId: string) => void | undefined): void => {
+    if (!isString(id) || !isString(cardId) || id.length > 200 || cardId.length > 200) return
+    if (!controller.list().some((tab) => tab.id === id)) return
+    run(id, cardId)
+  }
+  // Stage 6 (сверка F5): a server chat's core is its relay's — the card's action goes there.
+  const serverAct = (id: TabId, cardId: string, action: 'hold' | 'answerNow'): boolean => {
+    const session = manager.get(id)
+    if (!session?.hostsAutonomy) return false
+    session.autonomyAct(cardId, action).catch(() => undefined)
+    return true
+  }
+  ipcMain.handle(CHANNELS.autonomyHold, (_e, id: unknown, cardId: unknown): void =>
+    autonomyCall(id, cardId, (t, c) => (serverAct(t, c, 'hold') ? undefined : deps.autonomy?.hold(t, c)))
+  )
+  ipcMain.handle(CHANNELS.autonomyAnswerNow, (_e, id: unknown, cardId: unknown): void =>
+    autonomyCall(id, cardId, (t, c) => (serverAct(t, c, 'answerNow') ? undefined : deps.autonomy?.answerNow(t, c)))
+  )
 
   ipcMain.handle(CHANNELS.permissionRules, () => withFault(CHANNELS.permissionRules, () => broker.rules()))
 
@@ -288,6 +493,13 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     })
   )
 
+  // этап 7: a query of at most 200 characters; anything else finds nothing.
+  ipcMain.handle(CHANNELS.historySearch, (_e, query: unknown) =>
+    withFault(CHANNELS.historySearch, () =>
+      isString(query) && query.length <= 200 && deps.historySearch ? deps.historySearch.search(query) : []
+    )
+  )
+
   ipcMain.handle(CHANNELS.historyOpen, (_e, id: unknown, sessionId: unknown, title: unknown) => {
     if (!isString(id) || !isString(sessionId)) return null
     const tab = controller.list().find((t) => t.id === id)
@@ -299,7 +511,48 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!isString(id)) return []
     const tab = controller.list().find((t) => t.id === id)
     if (!tab || tab.missingCwd) return []
+    // A server chat's files are the server's: fs.index of its folder (stage 6).
+    if (tab.server) {
+      const { hostId } = tab.server
+      return remoteIndex.files(() => serverClient(hostId), id, tab.cwd, FILE_INDEX_LIMIT).catch(() => [])
+    }
     return buildFileIndex(tab.cwd)
+  })
+
+  // Stage 6: a file goes to a server only when main saw the person choose it —
+  // picked in the dialog here, or dropped/pasted (the preload tells, from
+  // webUtils, which knows only real files). A window that names any path
+  // cannot send ~/.ssh/id_ed25519 to a server.
+  const seenFiles = new Set<string>()
+  const seeFile = (path: string): void => {
+    if (!isString(path) || path === '' || path.length > 4096 || path.includes('\0') || !isAbsolute(path)) return
+    const key = resolvePath(path)
+    seenFiles.delete(key)
+    seenFiles.add(key)
+    if (seenFiles.size > MAX_SEEN_FILES) seenFiles.delete(seenFiles.values().next().value!)
+  }
+  ipcMain.on(CHANNELS.filesSeen, (_e, path: unknown) => seeFile(path as string))
+
+  // Stage 6: a file attached in a server chat goes to the server at once; the
+  // message carries its path there. Images still go as base64 (decision 8).
+  ipcMain.handle(CHANNELS.filesUploadRemote, async (_e, id: unknown, localPath: unknown) => {
+    if (!isString(id) || !isString(localPath) || localPath === '' || localPath.length > 4096) {
+      return { error: uploadFailedText('неверный запрос') }
+    }
+    const tab = controller.list().find((t) => t.id === id)
+    if (!tab?.server) return { error: uploadFailedText('это не чат на сервере') }
+    const s = tab.server.relaySessionId
+    if (!s) return { error: uploadFailedText('чат на сервере ещё не открыт') }
+    if (!isAbsolute(localPath) || !seenFiles.has(resolvePath(localPath))) {
+      return { error: uploadFailedText('файл не был выбран в Qclod') }
+    }
+    try {
+      const remotePath = await uploadFile(await serverClient(tab.server.hostId), s, localPath)
+      return { remotePath }
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e)
+      return { error: why === UPLOAD_TOO_LARGE_TEXT ? why : uploadFailedText(why) }
+    }
   })
 
   // Which of the paths in a tab's text exist, relative to the tab's folder.
@@ -311,11 +564,11 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     const tab = controller.list().find((t) => t.id === id)
     if (!tab) return raws.map(() => null)
     const valid = raws.map((r) => isString(r) && r !== '' && r.length <= MAX_RAW_LENGTH)
-    const answers = await deps.resolver.resolve(
-      tab.cwd,
-      raws.filter((_r, i) => valid[i]) as string[],
-      id
-    )
+    const asked = raws.filter((_r, i) => valid[i]) as string[]
+    // A server chat's paths are the server's: one fs.stat through its relay (stage 6).
+    const answers = tab.server
+      ? await viewer.resolveRemote(id, tab.cwd, tab.server.hostId, asked)
+      : await deps.resolver.resolve(tab.cwd, asked, id)
     let next = 0
     return valid.map((ok) => (ok ? (answers[next++] ?? null) : null))
   })
@@ -371,6 +624,10 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     }
   })
 
+  // Stage 6: the read-only viewer, here or on the tab's server.
+  ipcMain.handle(CHANNELS.viewerRead, (_e, source: unknown, id: unknown, path: unknown) => viewer.read(source, id, path))
+  ipcMain.handle(CHANNELS.viewerDownloadOpen, (_e, id: unknown, path: unknown) => viewer.downloadOpen(id, path))
+
   ipcMain.handle(
     CHANNELS.filesOpenInEditor,
     (_e, id: unknown, absPath: unknown, line: unknown, column: unknown) => {
@@ -402,12 +659,18 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
 
   ipcMain.handle(CHANNELS.dialogPickFiles, async () => {
     const stubbed = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_PICK_FILES'] : undefined
-    if (stubbed) return stubbed.split(';').filter(Boolean)
+    if (stubbed) {
+      const paths = stubbed.split(';').filter(Boolean)
+      for (const p of paths) seeFile(p)
+      return paths
+    }
 
     const win = deps.getWindow()
     if (!win) return []
     const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] })
-    return result.canceled ? [] : result.filePaths
+    if (result.canceled) return []
+    for (const p of result.filePaths) seeFile(p)
+    return result.filePaths
   })
 }
 

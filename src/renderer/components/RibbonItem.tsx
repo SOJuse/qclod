@@ -1,34 +1,35 @@
-import { useEffect, useRef, useState } from 'react'
-import { Brain, Image as ImageIcon, Smartphone } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowRight, Image as ImageIcon, Smartphone } from 'lucide-react'
 import { clockTime, seconds } from '../../shared/format'
 import type { Attachment, RibbonItem as Item } from '../../shared/types'
-import { PermissionCard } from './PermissionCard'
-import { PlanCard } from './PlanCard'
-import { QuestionCard } from './QuestionCard'
+import type { CardAnswers } from '../chat/cardAnswers'
+import type { RowModel } from '../chat/groupRows'
+import { CardSummary } from './cards/CardSummary'
+import { AutoTag } from './AutoTag'
+import { ThinkingRow } from './ThinkingRow'
+import { ToolGroup } from './ToolGroup'
+import { QuestionCard } from './cards/QuestionCard'
 import { NO_STEPS, SubagentCard } from './SubagentCard'
 import { ToolCard } from './ToolCard'
 import { Markdown } from '../markdown/Markdown'
+import { AgentMessage } from './agents/AgentMessage'
 import { ERROR_ICON } from '../ui/icons'
+import { PIECE, mostlyCyrillic, textPieces } from '../ui/longText'
 
 interface Props {
   item: Item
+  /** Set when the row is a folded run of calls; `item` is then its first one. */
+  group?: Extract<RowModel, { kind: 'toolGroup' }>
+  /** A question the conversation moved past: a line that opens into the old card. */
+  stale?: boolean
   /** Every subagent's own items, by its id (childrenByParent), built once per render. */
   byParent: ReadonlyMap<string, Item[]>
   /** The tab's folder: where its commands run. */
   cwd: string
   tabId: string
-  /** The permission the keys answer, if any. */
-  activePermissionId?: string | null
   onMeasure: (id: string, height: number) => void
-  onAnswerPermission: (requestId: string, behavior: 'allow' | 'deny', remember?: boolean) => void
-  onAnswerQuestion: (toolUseId: string, answers: Record<string, string>) => void
-  onAnswerPlan: (requestId: string, approve: boolean) => void
-}
-
-/** «Думал 12 с»; a block that came whole has no length to print. «Думает…» while it streams. */
-function thinkingLabel(item: Extract<Item, { kind: 'thinking' }>): string {
-  if (!item.done) return 'Думает…'
-  return item.durationMs >= 100 ? `Думал ${seconds(item.durationMs)}` : 'Думал'
+  /** How the cards answer the agent. */
+  answers: CardAnswers
 }
 
 /**
@@ -149,6 +150,47 @@ function OpenableImage({
 }
 
 /**
+ * What the person wrote, whole. A long text goes in pieces, each its own text
+ * node, so that one long paragraph is not laid out in quadratic time
+ * (ui/longText.ts); a long Russian one takes Inter's Cyrillic file for its
+ * spaces too (styles/longText.css). It reads, wraps and copies as one.
+ */
+function UserText({ text }: { text: string }): JSX.Element {
+  const pieces = useMemo(() => (text.length > PIECE ? textPieces(text) : null), [text])
+  const cyrillic = useMemo(() => pieces !== null && mostlyCyrillic(text), [pieces, text])
+  return (
+    <div className={cyrillic ? 'row-user-text is-cyrillic' : 'row-user-text'}>
+      {pieces ? pieces.map((piece, i) => <span key={i}>{piece}</span>) : text}
+    </div>
+  )
+}
+
+/** A question nobody answered before the talk moved on: one line, the old card behind a click. */
+function StaleQuestion({
+  item,
+  answers
+}: {
+  item: Extract<Item, { kind: 'question' }>
+  answers: CardAnswers
+}): JSX.Element {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="card-summary is-stale" data-testid="stale-question">
+      <button
+        type="button"
+        className="card-summary-line"
+        aria-expanded={open}
+        title="Открыть вопрос"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="card-summary-text">Вопрос остался без ответа</span>
+      </button>
+      {open && <QuestionCard item={item} answers={answers} focused />}
+    </div>
+  )
+}
+
+/**
  * One row of the conversation.
  *
  * Reports its own height so the ribbon can place the rows above and below it
@@ -157,21 +199,22 @@ function OpenableImage({
  */
 export function RibbonRow({
   item,
+  group,
+  stale = false,
   byParent,
   cwd,
   tabId,
-  activePermissionId = null,
   onMeasure,
-  onAnswerPermission,
-  onAnswerQuestion,
-  onAnswerPlan
+  answers
 }: Props): JSX.Element {
   const host = useRef<HTMLDivElement | null>(null)
+  /** A folded run is measured under its own id, which the ribbon keeps while the run grows. */
+  const rowId = group ? group.id : item.id
 
   useEffect(() => {
     const el = host.current
     if (!el) return
-    const report = (): void => onMeasure(item.id, el.getBoundingClientRect().height)
+    const report = (): void => onMeasure(rowId, el.getBoundingClientRect().height)
     report()
     const observer = new ResizeObserver(report)
     observer.observe(el)
@@ -179,12 +222,13 @@ export function RibbonRow({
   })
 
   return (
-    <div className="ribbon-row" ref={host} data-testid={`ribbon-${item.kind}`}>
+    <div className="ribbon-row" ref={host} data-testid={`ribbon-${group ? 'toolGroup' : item.kind}`}>
       {render()}
     </div>
   )
 
   function render(): JSX.Element {
+    if (group) return <ToolGroup group={group} cwd={cwd} tabId={tabId} />
     switch (item.kind) {
       case 'user':
         return (
@@ -199,7 +243,20 @@ export function RibbonRow({
                 с телефона
               </div>
             )}
-            <div className="row-user-text">{item.text}</div>
+            {/* Sent by Qclod itself — «продолжай» after a crash, a limit or a restart. */}
+            {item.auto && (
+              <div className="row-user-from" data-testid="user-auto">
+                <AutoTag />
+              </div>
+            )}
+            {/* этап 4: written to a subagent; the main agent passes it on. */}
+            {item.relay && (
+              <div className="row-user-relay" data-testid="user-relay">
+                <ArrowRight size={12} aria-hidden="true" />
+                агенту {item.relay.agent}:
+              </div>
+            )}
+            <UserText text={item.text} />
             {item.at !== undefined && (
               <div
                 className="row-user-time"
@@ -238,17 +295,7 @@ export function RibbonRow({
         )
 
       case 'thinking':
-        return (
-          <details className="thinking">
-            <summary className="thinking-head" data-testid="thinking-head">
-              <Brain size={14} aria-hidden="true" />
-              {thinkingLabel(item)}
-            </summary>
-            <div className="thinking-text" data-testid="thinking-text">
-              {item.text}
-            </div>
-          </details>
-        )
+        return <ThinkingRow item={item} />
 
       case 'tool':
       case 'toolError':
@@ -266,19 +313,15 @@ export function RibbonRow({
         )
 
       case 'plan':
-        return <PlanCard item={item} onAnswer={onAnswerPlan} />
-
       case 'permission':
-        return (
-          <PermissionCard
-            item={item}
-            active={item.id === activePermissionId}
-            onAnswer={onAnswerPermission}
-          />
-        )
+        // An open one is pinned above the input (PinnedCards) and never a row.
+        return <CardSummary item={item} tabId={tabId} />
 
       case 'question':
-        return <QuestionCard item={item} onAnswer={onAnswerQuestion} />
+        if (item.answers !== null || item.elsewhere) return <CardSummary item={item} tabId={tabId} />
+        if (stale) return <StaleQuestion item={item} answers={answers} />
+        // An open one is pinned above the input (PinnedCards) and never a row.
+        return <></>
 
       case 'compaction':
         return (
@@ -300,6 +343,9 @@ export function RibbonRow({
 
       case 'notice':
         return <NoticeRow item={item} tabId={tabId} />
+
+      case 'agentMessage':
+        return <AgentMessage item={item} />
 
       case 'turnEnd':
         return (

@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { costRatesFrom } from '../../shared/agentCost'
+import { NO_AUTONOMY } from '../../shared/types'
 import type {
+  AutonomyView,
   BackgroundTask,
   EffortLevel,
   LimitWindow,
@@ -83,7 +86,9 @@ export const EMPTY_PANEL: PanelData = {
   mcp: [],
   projectSettings: null,
   queue: [],
-  backgroundTasks: []
+  backgroundTasks: [],
+  autonomy: NO_AUTONOMY,
+  costRates: null
 }
 
 let lastPanelRev = 0
@@ -257,7 +262,11 @@ export class PanelCollector {
     return this.patch({ projectSettings: info })
   }
 
-  /** What waits to be sent: the session owns the messages, the panel shows them. */
+  /**
+   * The strip: messages the agent has not read yet, with where each one is
+   * (`state`) and whether it can be hurried. The session owns them (its
+   * outbox), the panel shows them.
+   */
   setQueue(queue: QueuedMessage[]): Partial<PanelData> {
     return this.patch({ queue })
   }
@@ -265,6 +274,14 @@ export class PanelCollector {
   /** The whole list each time: BackgroundTracker hands over a fresh one. */
   setBackgroundTasks(tasks: BackgroundTask[]): Partial<PanelData> {
     return this.patch({ backgroundTasks: tasks })
+  }
+
+  /**
+   * The tab's AutonomyCore view, whole each time (decision 2): timers, a limit
+   * wait, giving up. It lives in the panel so it survives a window reload.
+   */
+  setAutonomy(view: AutonomyView): Partial<PanelData> {
+    return this.patch({ autonomy: view })
   }
 
   private onInit(m: Record<string, unknown>): Partial<PanelData> {
@@ -311,12 +328,21 @@ export class PanelCollector {
   }
 
   private onResult(m: Record<string, unknown>): Partial<PanelData> | null {
+    const patch: Partial<PanelData> = {}
     const cost = m['total_cost_usd']
     // A turn that reported nothing is «ещё ничего», not «стоит ноль»: showing
     // $0.0000 reads as a broken counter.
-    if (typeof cost !== 'number' || cost <= 0) return null
     // The SDK reports the session total, not a per-turn delta.
-    return this.patch({ cost: this.resumed ? { session: cost, sinceOpen: true } : { session: cost } })
+    if (typeof cost === 'number' && cost > 0) {
+      patch.cost = this.resumed ? { session: cost, sinceOpen: true } : { session: cost }
+    }
+    // modelUsage is cumulative too: the newest result's rates are the ones.
+    // Same rates as before are not a change worth a push.
+    const rates = costRatesFrom(m['modelUsage'])
+    if (rates && JSON.stringify(rates) !== JSON.stringify(this.panel.costRates)) {
+      patch.costRates = rates
+    }
+    return Object.keys(patch).length === 0 ? null : this.patch(patch)
   }
 
   private patch(patch: Partial<PanelData>): Partial<PanelData> {

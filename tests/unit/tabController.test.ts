@@ -5,14 +5,28 @@ import { join } from 'node:path'
 import { createFakeSdk } from '../fixtures/fake-sdk/index.mjs'
 import { TabController } from '../../src/main/tabs/TabController'
 import { AgentSessionManager } from '../../src/main/agent/AgentSessionManager'
+import { AgentSession } from '../../src/main/agent/AgentSession'
+import { PermissionBroker } from '../../src/main/agent/permissions'
 import type { AgentDriver } from '../../src/main/agent/driver'
+import { toPermissionContext } from '../../src/main/agent/permissionContext'
 import { TABS_FILE } from '../../src/main/store/tabsStore'
+import { LAYOUT_FILE, LayoutStore } from '../../src/main/store/layoutStore'
 import { EMPTY_PANEL } from '../../src/main/agent/panelData'
 import { LOGIN_NEEDED_TEXT } from '../../src/main/agent/startFailure'
-import type { PanelEvent, RibbonEvent, StatusEvent, TabState } from '../../src/shared/types'
+import type { PanelEvent, PermissionRequest, RibbonEvent, StatusEvent, TabState } from '../../src/shared/types'
 import { readTranscript } from '../../src/main/agent/transcript'
 import { resumedSession, writeTranscript } from '../fixtures/transcript.mjs'
 import { useAppStore } from '../../src/renderer/state/useAppStore'
+import type { RibbonItem } from '../../src/shared/types'
+import { RelayDaemon } from '../../src/relay/daemon'
+import { Journal } from '../../src/relay/journal'
+import { relayPaths } from '../../src/relay/paths'
+import { CALL_TIMEOUT_MS, RelayClient } from '../../src/main/ssh/relayClient'
+import { createRelayDriver } from '../../src/main/ssh/relayDriver'
+import { socketTransport } from '../../src/main/ssh/transport'
+import { createDriverFactory } from '../../src/main/agent/createDriver'
+import type { RelaySnapshot } from '../../src/shared/relayProtocol'
+import { cleanTemps, fakeFactory, tempDir, until } from './relayHarness'
 
 let store = ''
 let projectA = ''
@@ -31,6 +45,7 @@ afterEach(() => {
 interface Harness {
   controller: TabController
   manager: AgentSessionManager
+  layout: LayoutStore
   changed: TabState[][]
   ribbon: RibbonEvent[]
   resumedWith: Array<string | undefined>
@@ -45,6 +60,10 @@ interface Harness {
   }>
   /** Every driver whose resume was made to fail, in order. */
   dead: Array<{ readonly sent: unknown[] }>
+  /** The permission broker as the app wires it: cards in the tab, rules cleared when its session closes. */
+  broker: PermissionBroker
+  /** Every question the broker put to the person. */
+  asked: PermissionRequest[]
   /**
    * Sends one message on a tab and waits for the answer. The CLI says nothing
    * — not even its session id — until it is spoken to.
@@ -116,6 +135,9 @@ function makeController(
      * what this returns for its folder; undefined, it works. Read on every start.
      */
     freshFailsOnSend?: (cwd: string) => string | undefined
+    /** Permission questions go to `broker` instead of being denied. */
+    brokered?: boolean
+    autonomy?: import('../../src/main/tabs/TabController').AutonomyHooks
   } = {}
 ): Harness {
   const changed: TabState[][] = []
@@ -130,13 +152,25 @@ function makeController(
     return driver
   }
 
+  const asked: PermissionRequest[] = []
+  const broker = new PermissionBroker({
+    loadRules: () => [],
+    saveRules: () => undefined,
+    ask: (request) => {
+      asked.push(request)
+      manager.get(request.tabId)?.showPermissionCard(request.requestId, request.toolName, request.target)
+    }
+  })
   const manager = new AgentSessionManager({
     getAgentPath: () => 'claude',
     resolveAgent: () => {
       if (options.agentMissing) throw new Error('Агент не найден: claude')
       return 'C:/bin/claude.exe'
     },
-    askPermission: async () => ({ behavior: 'deny' as const }),
+    askPermission: options.brokered
+      ? (r, signal) => broker.request(r.tabId, r.toolName, r.input, r.requestId, signal)
+      : async () => ({ behavior: 'deny' as const }),
+    onClosed: (id) => broker.clearSession(id),
     ...(options.confirmBypass ? { confirmBypass: options.confirmBypass } : {}),
     createDriver: (driverOptions) => {
       resumedWith.push(driverOptions.resume)
@@ -167,7 +201,17 @@ function makeController(
           'firstSend'
         )
       }
-      const driver = createFakeSdk(options.script ?? { steps: [] })
+      const script = options.script ?? { steps: [] }
+      const driver = createFakeSdk(
+        options.brokered
+          ? {
+              ...script,
+              // As the real driver does: the session's gate answers the fixture's questions.
+              canUseTool: (name, input, opts) =>
+                driverOptions.canUseTool(name, input, toPermissionContext(opts))
+            }
+          : script
+      )
       created.push({
         resume: driverOptions.resume,
         permissionMode: driverOptions.permissionMode,
@@ -178,9 +222,12 @@ function makeController(
     }
   })
 
+  const layout = new LayoutStore(store, () => undefined)
   const controller = new TabController({
     manager,
+    ...(options.autonomy ? { autonomy: options.autonomy } : {}),
     storeDir: store,
+    layout,
     defaultCwd: projectA,
     getDefaults: () => options.defaults ?? {},
     history: {
@@ -207,11 +254,15 @@ function makeController(
     await controller.whenSettled()
   }
 
-  return { controller, manager, changed, ribbon, resumedWith, transcriptReads, created, dead, speak }
+  return { controller, manager, layout, changed, ribbon, resumedWith, transcriptReads, created, dead, broker, asked, speak }
 }
 
 function writeStoredTabs(tabs: unknown[]): void {
   writeFileSync(join(store, TABS_FILE), JSON.stringify(tabs), 'utf8')
+}
+
+function writeStoredLayout(layout: unknown): void {
+  writeFileSync(join(store, LAYOUT_FILE), JSON.stringify(layout), 'utf8')
 }
 
 describe('TabController', () => {
@@ -498,6 +549,36 @@ describe('TabController', () => {
     expect(controller.sessionIdOf(id)).not.toBe(before)
   })
 
+  test('restart чистит правила сессии', async () => {
+    const { controller, manager, asked, broker, created } = makeController({
+      brokered: true,
+      script: { steps: [], nextTurn: [{ kind: 'askPermission', name: 'Bash', input: { command: 'npm test' } }] }
+    })
+    await controller.restore()
+    await controller.whenSettled()
+    const id = controller.list()[0]!.id
+
+    manager.get(id)!.send({ text: 'прогони тесты', attachments: [] })
+    await vi.waitFor(() => expect(asked).toHaveLength(1), { timeout: 2000 })
+    broker.answer(asked[0]!.requestId, { behavior: 'allow', forSession: true })
+    await controller.whenSettled()
+
+    // The same call again in the same session: no question.
+    manager.get(id)!.send({ text: 'ещё раз', attachments: [] })
+    await controller.whenSettled()
+    expect(asked).toHaveLength(1)
+    expect(created.at(-1)!.driver.executedTools).toEqual(['Bash', 'Bash'])
+
+    // «Начать заново» ends the chat's process, and its session rules with it.
+    await controller.restart(id)
+    await controller.whenSettled()
+    manager.get(id)!.send({ text: 'и снова', attachments: [] })
+    await vi.waitFor(() => expect(asked).toHaveLength(2), { timeout: 2000 })
+    expect(asked[1]).toMatchObject({ tabId: id, toolName: 'Bash' })
+    broker.answer(asked[1]!.requestId, { behavior: 'deny' })
+    await controller.whenSettled()
+  })
+
   test('Remote Control доходит до вкладки и не пишется в tabs.json', async () => {
     const { controller, manager, changed } = makeController()
     await controller.restore()
@@ -511,7 +592,10 @@ describe('TabController', () => {
     expect(raw).not.toContain('session_fake0001')
   })
 
-  test('перезапуск гасит значок и оставляет заметку', async () => {
+  // Rewritten on purpose (stage 3, decision 9): the controller no longer says
+  // «Remote Control выключен: сессия перезапущена» — whether Remote Control comes
+  // back, and what the ribbon says, is AutonomyCore's (autonomyHost.test.ts).
+  test('перезапуск гасит значок; заметку об этом контроллер больше не пишет', async () => {
     const { controller, manager, ribbon } = makeController()
     await controller.restore()
     await controller.whenSettled()
@@ -529,7 +613,7 @@ describe('TabController', () => {
         e.tabId === id &&
         e.changes.some((c) => c.kind === 'append' && c.item.kind === 'notice' && c.item.text === text)
     )
-    expect(told).toBe(true)
+    expect(told).toBe(false)
   })
 
   test('изменения ленты уходят наружу с номером вкладки', async () => {
@@ -777,6 +861,7 @@ describe('TabController: возобновление не ждёт агента',
     const controller = new TabController({
       manager,
       storeDir: store,
+      layout: new LayoutStore(store, () => undefined),
       defaultCwd: projectA,
       getDefaults: () => ({}),
       history: {
@@ -1744,12 +1829,14 @@ describe('TabController: очередь переходит к новой сес�
     const old = harness.manager.get(id)!
 
     old.send({ text: 'раз', attachments: [] })
+    // Once the CLI has said it keeps a queue, «два» waits on the strip for the agent to read it.
+    await vi.waitFor(() => expect(old.sessionId).toBeTruthy())
     old.send({ text: 'два', attachments: [] })
-    // The agent dies mid-answer, with «два» still waiting.
+    // The agent dies mid-answer, with «два» given to it and still unread.
     ;(old as unknown as { fail: (e: unknown) => void }).fail(new Error('агент умер'))
     expect(old.status).toBe('error')
     expect(old.panel.queue).toHaveLength(1)
-    expect(sentTexts(harness.created[0]!.driver)).toEqual(['раз'])
+    expect(sentTexts(harness.created[0]!.driver)).toEqual(['раз', 'два'])
 
     await harness.controller.restart(id)
     const fresh = harness.created.at(-1)!
@@ -1760,7 +1847,7 @@ describe('TabController: очередь переходит к новой сес�
     await harness.controller.whenSettled()
   })
 
-  test('«Повторить» после «не вошёл» отправляет и неотправленное, и очередь', async () => {
+  test('«Повторить» после «не вошёл» отправляет всё неотправленное, по разу', async () => {
     const options = { notLoggedInOnSend: true }
     const harness = makeController(options)
     writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'живая' }])
@@ -1772,9 +1859,11 @@ describe('TabController: очередь переходит к новой сес�
     dead.send({ text: 'и ещё', attachments: [] })
     await vi.waitFor(() => expect(harness.controller.list()[0]!.canRetry).toBe(true))
     await harness.controller.whenSettled()
-    // The dead session holds the queue and sends nothing from it.
-    expect(dead.panel.queue.map((q) => q.text)).toEqual(['и ещё'])
-    expect(harness.dead[0]!.sent).toHaveLength(1)
+    // Nothing said the CLI keeps a queue (ruling R6): both went at once and
+    // show, and neither reached an agent — both are unsent, none on the strip.
+    expect(dead.panel.queue).toEqual([])
+    expect(dead.sentBeforeInit.map((s) => s.text)).toEqual(['привет', 'и ещё'])
+    expect(harness.dead[0]!.sent).toHaveLength(2)
 
     options.notLoggedInOnSend = false
     await harness.controller.retry('a')
@@ -1837,5 +1926,590 @@ describe('TabController: очередь переходит к новой сес�
     expect(harness.manager.get(id)!.status).toBe('error')
     expect(harness.controller.send(id, { text: 'никуда', attachments: [] })).toBe(false)
     expect(harness.controller.send('нет-такой', { text: 'никуда', attachments: [] })).toBe(false)
+  })
+})
+
+describe('TabController: раскладка этапа 2 (layout.json)', () => {
+  const startedFor = (harness: Harness): string[] => {
+    const ids: string[] = []
+    const create = harness.manager.create.bind(harness.manager)
+    vi.spyOn(harness.manager, 'create').mockImplementation((tabId, ...rest) => {
+      ids.push(tabId)
+      return create(tabId, ...rest)
+    })
+    return ids
+  }
+
+  test('restore с устаревшей раскладкой', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    writeStoredLayout({ panes: ['gone', 'b'], active: 'gone', paneWidths: [0.2, 0.3, 0.5] })
+    const { controller, layout } = makeController()
+
+    await controller.restore()
+    await controller.whenSettled()
+
+    // П12: a dead active chat gives way to the first pane still alive.
+    expect(controller.activeTabId).toBe('b')
+    expect(layout.get()).toMatchObject({ panes: ['b'], active: 'b', paneWidths: [1] })
+    expect(JSON.parse(readFileSync(join(store, LAYOUT_FILE), 'utf8'))).toMatchObject({
+      panes: ['b'],
+      active: 'b',
+      paneWidths: [1]
+    })
+  })
+
+  test('restore: живой active из раскладки остаётся активным', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    writeStoredLayout({ active: 'b' })
+    const { controller } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    expect(controller.activeTabId).toBe('b')
+    expect(controller.list()[1]!.status).not.toBe('stopped')
+    expect(controller.list()[0]!.status).toBe('stopped')
+  })
+
+  test('restore: ни active, ни панелей в живых — первая вкладка', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    writeStoredLayout({ panes: ['gone'], active: 'gone' })
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    expect(controller.activeTabId).toBe('a')
+    expect(layout.get()).toMatchObject({ panes: [], active: 'a', paneWidths: [] })
+  })
+
+  test('restore запускает сессии для всех панелей', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} },
+      { id: 'c', cwd: projectB, title: 'C', overrides: {} }
+    ])
+    writeStoredLayout({ panes: ['a', 'b'], active: 'a', paneWidths: [0.5, 0.5] })
+    const harness = makeController()
+    const started = startedFor(harness)
+
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+
+    expect([...started].sort()).toEqual(['a', 'b'])
+    expect(harness.manager.get('c')).toBeUndefined()
+  })
+
+  // Rewritten on purpose (stage 3, cross-check F13): a record of autonomy is a
+  // third reason to start a tab's process at restore, seen or not.
+  test('restore: третья вкладка без записи автономности — процесса нет, с working, remote или limitUntil — есть', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} },
+      { id: 'c', cwd: projectB, title: 'C', overrides: {} },
+      { id: 'd', cwd: projectB, title: 'D', overrides: {}, autonomy: { working: true } },
+      { id: 'e', cwd: projectB, title: 'E', overrides: {}, autonomy: { remote: true } },
+      { id: 'f', cwd: projectB, title: 'F', overrides: {}, autonomy: { limitUntil: Date.now() + 60_000 } }
+    ])
+    writeStoredLayout({ panes: ['a', 'b'], active: 'a', paneWidths: [0.5, 0.5] })
+    const harness = makeController()
+    const started = startedFor(harness)
+
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+
+    expect([...started].sort()).toEqual(['a', 'b', 'd', 'e', 'f'])
+    expect(harness.manager.get('c')).toBeUndefined()
+  })
+
+  test('setAutonomyRecord пишет в tabs.json только при изменении, пустая запись стирается', async () => {
+    const harness = makeController()
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    const id = harness.controller.list()[0]!.id
+    const file = join(store, TABS_FILE)
+    const read = (): Array<Record<string, unknown>> => JSON.parse(readFileSync(file, 'utf8'))
+
+    harness.controller.setAutonomyRecord(id, { working: true })
+    expect(read()[0]!['autonomy']).toEqual({ working: true })
+    // The same record again: the file is not touched.
+    writeFileSync(file, 'sentinel', 'utf8')
+    harness.controller.setAutonomyRecord(id, { working: true })
+    expect(readFileSync(file, 'utf8')).toBe('sentinel')
+    harness.controller.setAutonomyRecord(id, {})
+    expect(read()[0]).not.toHaveProperty('autonomy')
+  })
+
+  test('notice пишет строку в ленту вкладки; revive открывает ту же переписку заново', async () => {
+    const harness = makeController()
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    const id = harness.controller.list()[0]!.id
+    await harness.speak(id)
+    const sessionId = harness.controller.sessionIdOf(id)
+
+    harness.controller.notice(id, 'сказано снаружи', 'error')
+    const said = harness.ribbon.some(
+      (e) => e.tabId === id && e.changes.some((c) => c.kind === 'append' && c.item.kind === 'notice' && c.item.text === 'сказано снаружи')
+    )
+    expect(said).toBe(true)
+
+    expect(await harness.controller.revive(id)).toBe(true)
+    await harness.controller.whenSettled()
+    expect(harness.resumedWith.at(-1)).toBe(sessionId)
+  })
+
+  test('хуки автономии: tabAdded при restore и create, sessionAdopted и sessionUp — по разу на сессию, tabClosed', async () => {
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, autonomy: { remote: true } }])
+    const calls: string[] = []
+    const harness = makeController({
+      autonomy: {
+        tabAdded: (id, record) => calls.push(`added ${id} ${JSON.stringify(record)}`),
+        tabClosed: (id) => calls.push(`closed ${id}`),
+        sessionAdopted: (id) => calls.push(`adopted ${id}`),
+        sessionUp: (id, _s, carried) => calls.push(`up ${id} ${carried}`)
+      }
+    })
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    expect(calls).toEqual(['added a {"remote":true}', 'adopted a', 'up a 0'])
+
+    calls.length = 0
+    await harness.controller.restart('a')
+    await harness.controller.whenSettled()
+    // One new session: one adoption, one «up» — not two from startSession and the swap.
+    expect(calls).toEqual(['adopted a', 'up a 0'])
+  })
+
+  test('хуки автономии: resume при замене умер, пока стартовал, — чистая сессия объявлена один раз и как чистая', async () => {
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 'пропавшая' }])
+    // start() comes back only once the resume has died: the controller recovers
+    // inside startSession, before replaceSession gets to announce anything.
+    const start = AgentSession.prototype.start
+    const spy = vi.spyOn(AgentSession.prototype, 'start').mockImplementation(async function (
+      this: AgentSession,
+      resumeId?: string
+    ) {
+      await start.call(this, resumeId)
+      if (resumeId) await vi.waitFor(() => expect(this.status).toBe('error'))
+    })
+    const ups: Array<{ session: AgentSession; carried: number; clean: boolean }> = []
+    const harness = makeController({
+      resumeFails: true,
+      autonomy: {
+        tabAdded: () => undefined,
+        tabClosed: () => undefined,
+        sessionAdopted: () => undefined,
+        sessionUp: (_id, session, carried, clean) => ups.push({ session, carried, clean: clean === true })
+      }
+    })
+    try {
+      await harness.controller.restore()
+      await harness.controller.whenSettled()
+      ups.length = 0
+
+      // The stored id is still the dead one: a crash restart resumes it again.
+      await harness.controller.revive('a')
+      await harness.controller.whenSettled()
+      expect(ups).toHaveLength(1)
+      expect(ups[0]!.session).toBe(harness.manager.get('a'))
+      // No «продолжай» into a conversation that is not the one it carried on (decision 12).
+      expect(ups[0]!.clean).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('хуки автономии: сообщение, задержанное на время замены сессии, — тоже действие человека', async () => {
+    writeStoredTabs([{ id: 'a', cwd: projectA, title: 'A', overrides: {} }])
+    const acted: string[] = []
+    const harness = makeController({
+      autonomy: {
+        tabAdded: () => undefined,
+        tabClosed: () => undefined,
+        sessionAdopted: () => undefined,
+        sessionUp: () => undefined,
+        personActed: (id) => acted.push(id)
+      }
+    })
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    const swapping = harness.controller.restart('a')
+    expect(harness.controller.send('a', { text: 'пока меняется', attachments: [] })).toBe(true)
+    expect(acted).toEqual(['a'])
+    await swapping
+    await harness.controller.whenSettled()
+  })
+
+  test('restore: папка активного чата в панели удалена — без сбоя, агента нет, панели и ширины целы', async () => {
+    const gone = join(store, 'удалённая')
+    mkdirSync(gone)
+    rmSync(gone, { recursive: true })
+    writeStoredTabs([
+      { id: 'a', cwd: gone, title: 'Удалённая', overrides: {}, lastSessionId: 's-gone' },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    writeStoredLayout({ panes: ['a', 'b'], active: 'a', paneWidths: [0.4, 0.6] })
+    const harness = makeController()
+    const started = startedFor(harness)
+
+    await expect(harness.controller.restore()).resolves.toHaveLength(2)
+    await harness.controller.whenSettled()
+
+    const ids = harness.controller.list().map((t) => t.id)
+    expect(ids).toContain(harness.controller.activeTabId)
+    expect(harness.controller.list().find((t) => t.id === 'a')).toMatchObject({
+      missingCwd: true,
+      status: 'stopped'
+    })
+    // No agent for a folder that is gone; the other pane gets its own.
+    expect(started).toEqual(['b'])
+    expect(harness.manager.get('a')).toBeUndefined()
+    expect(harness.transcriptReads).toEqual([])
+    const l = harness.layout.get()
+    expect(l.panes.every((id) => ids.includes(id))).toBe(true)
+    expect(l.paneWidths).toHaveLength(l.panes.length)
+    expect(l.paneWidths.reduce((x, y) => x + y, 0)).toBeCloseTo(1, 10)
+    expect(l.active).toBe(harness.controller.activeTabId)
+  })
+
+  test('restore: папки восстановленных чатов становятся проектами', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} },
+      { id: 'c', cwd: projectB, title: 'C', overrides: {} }
+    ])
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    expect(layout.get().projects.map((p) => p.cwd)).toEqual([projectA, projectB])
+  })
+
+  test('без сохранённых вкладок: новая вкладка — активная, её папка — проект', async () => {
+    writeStoredLayout({ panes: ['gone'], active: 'gone' })
+    const { controller, layout } = makeController()
+    await controller.restore()
+    const id = controller.list()[0]!.id
+    expect(layout.get()).toMatchObject({ panes: [], active: id })
+    expect(layout.get().projects.map((p) => p.cwd)).toEqual([projectA])
+    await controller.whenSettled()
+  })
+
+  test('setPanes запоминает живые панели и запускает их сессии', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} },
+      { id: 'c', cwd: projectB, title: 'C', overrides: {} }
+    ])
+    const harness = makeController()
+    await harness.controller.restore()
+    await harness.controller.whenSettled()
+    const started = startedFor(harness)
+
+    await harness.controller.setPanes(['b', 'нет-такой', 'c'])
+
+    expect(harness.layout.get().panes).toEqual(['b', 'c'])
+    expect(harness.layout.get().paneWidths).toEqual([0.5, 0.5])
+    expect([...started].sort()).toEqual(['b', 'c'])
+    expect(harness.manager.get('b')).toBeDefined()
+    expect(harness.manager.get('c')).toBeDefined()
+    await harness.controller.whenSettled()
+  })
+
+  test('чат, ушедший из панелей, процесс не останавливает (F13)', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    const harness = makeController()
+    await harness.controller.restore()
+    await harness.controller.setPanes(['a', 'b'])
+    await harness.controller.whenSettled()
+    const session = harness.manager.get('b')
+    expect(session).toBeDefined()
+    const close = vi.spyOn(harness.manager, 'close')
+
+    await harness.controller.setPanes(['a'])
+    await harness.controller.whenSettled()
+
+    expect(close).not.toHaveBeenCalled()
+    expect(harness.manager.get('b')).toBe(session)
+  })
+
+  test('activate пишет активный чат в раскладку', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.activate('b')
+    await controller.whenSettled()
+    expect(layout.get().active).toBe('b')
+  })
+
+  test('закрыт последний чат — новый в той же папке', async () => {
+    writeStoredTabs([{ id: 'a', cwd: projectB, title: 'B', overrides: {} }])
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+
+    await controller.close('a')
+    await controller.whenSettled()
+
+    const tabs = controller.list()
+    expect(tabs).toHaveLength(1)
+    expect(tabs[0]!.id).not.toBe('a')
+    expect(tabs[0]!.cwd).toBe(projectB)
+    expect(layout.get().active).toBe(tabs[0]!.id)
+  })
+
+  test('закрытие чата убирает его из панелей и выравнивает ширины', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {} },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {} }
+    ])
+    writeStoredLayout({ panes: ['a', 'b'], active: 'b', paneWidths: [0.3, 0.7] })
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+
+    await controller.close('b')
+
+    expect(layout.get()).toMatchObject({ panes: ['a'], active: 'a', paneWidths: [1] })
+  })
+
+  test('openSession уже открытой сессии активирует её', async () => {
+    writeStoredTabs([
+      { id: 'a', cwd: projectA, title: 'A', overrides: {}, lastSessionId: 's0' },
+      { id: 'b', cwd: projectB, title: 'B', overrides: {}, lastSessionId: 's1' }
+    ])
+    const { controller, layout } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+    expect(controller.activeTabId).toBe('a')
+
+    const tab = controller.openSession(projectB, 's1', 'Вчера')
+    await controller.whenSettled()
+
+    expect(tab.id).toBe('b')
+    expect(controller.list().map((t) => t.id)).toEqual(['a', 'b'])
+    expect(controller.activeTabId).toBe('b')
+    expect(layout.get().active).toBe('b')
+  })
+
+  test('openSession новой сессии открывает её в новом чате; openHistory делает то же', async () => {
+    const { controller, created } = makeController()
+    await controller.restore()
+    await controller.whenSettled()
+
+    const first = controller.openSession(projectB, 's2', 'Позавчера')
+    await controller.whenSettled()
+    expect(first.cwd).toBe(projectB)
+    expect(first.lastSessionId).toBe('s2')
+    expect(created.at(-1)!.resume).toBe('s2')
+
+    // The history screen's own path ends up in the same place.
+    expect(controller.openHistory(projectB, 's2').id).toBe(first.id)
+    expect(controller.list()).toHaveLength(2)
+    await controller.whenSettled()
+  })
+
+  test('проект остаётся после закрытия всех его чатов', async () => {
+    const { controller, layout } = makeController()
+    await controller.restore()
+    const inB = controller.create(projectB).id
+    await controller.whenSettled()
+
+    await controller.close(inB)
+
+    expect(controller.list().some((t) => t.cwd === projectB)).toBe(false)
+    expect(layout.get().projects.map((p) => p.cwd)).toEqual([projectA, projectB])
+  })
+})
+
+// ------------------------------------------------------------- stage 6: server chats
+
+describe('TabController: серверные чаты', () => {
+  const running: Array<{ daemon: RelayDaemon; client: RelayClient; controller: TabController }> = []
+  afterEach(async () => {
+    for (const r of running.splice(0)) {
+      await r.controller.disposeAll().catch(() => undefined)
+      r.client.close()
+      await r.daemon.stop()
+    }
+    cleanTemps()
+  })
+
+  const fastTimer = (fn: () => void, ms: number): unknown => {
+    const t = setTimeout(fn, ms < CALL_TIMEOUT_MS ? ms / 50 : ms)
+    t.unref?.()
+    return t
+  }
+
+  async function serverHarness(root = tempDir('qclod-tc-relay-')) {
+    const paths = relayPaths(root, process.platform, join(root, '.qclod'))
+    const fake = fakeFactory({ nextTurn: [{ kind: 'text', text: 'ответ сервера' }] })
+    const daemon = new RelayDaemon({
+      paths,
+      version: '1.0.0-test',
+      createDriver: fake.factory,
+      claudePath: () => '/home/u/.local/bin/claude',
+      exit: () => undefined,
+      home: root
+    })
+    await daemon.start()
+    const client = new RelayClient({
+      hostId: 'h1',
+      appVersion: '1.0.0',
+      clientName: 'vitest',
+      transport: socketTransport(paths.socket),
+      setTimer: fastTimer
+    })
+    await client.connect(true)
+    const manager = new AgentSessionManager({
+      getAgentPath: () => 'C:/nowhere/claude.exe',
+      createDriver: createDriverFactory({
+        relay: (o) =>
+          createRelayDriver(o, {
+            client,
+            ...(o.server?.relaySessionId ? { relaySessionId: o.server.relaySessionId } : {}),
+            onSessionId: () => undefined
+          })
+      }),
+      askPermission: async () => ({ behavior: 'deny' })
+    })
+    const controller = new TabController({
+      manager,
+      storeDir: store,
+      layout: new LayoutStore(store, () => undefined),
+      defaultCwd: projectA,
+      getDefaults: () => ({}),
+      history: { list: async () => [], transcript: async () => [] },
+      onChanged: () => undefined,
+      onRibbon: () => undefined,
+      onPanel: () => undefined,
+      onStatus: () => undefined,
+      onCommands: () => undefined
+    })
+    const h = { daemon, client, controller, manager, fake, paths, root }
+    running.push(h)
+    return h
+  }
+
+  const storedTabs = (): Array<Record<string, unknown>> => JSON.parse(readFileSync(join(store, TABS_FILE), 'utf8'))
+
+  test('relaySessionId пишется в tabs.json', async () => {
+    const h = await serverHarness()
+    const tab = h.controller.create(projectB, {}, undefined, undefined, { hostId: 'h1' })
+    expect(tab).toMatchObject({ missingCwd: false, server: { hostId: 'h1' } })
+    await h.controller.whenSettled()
+    const s = h.manager.get(tab.id)!.relaySessionId
+    expect(s).toMatch(/.+/)
+    expect(storedTabs()[0]).toMatchObject({ cwd: projectB, server: { hostId: 'h1', relaySessionId: s } })
+    expect(h.controller.list()[0]!.server).toEqual({ hostId: 'h1', relaySessionId: s })
+  })
+
+  test('restore не помечает серверную вкладку missingCwd и подключается к той же сессии', async () => {
+    const h = await serverHarness()
+    const first = h.controller.create(projectB, {}, undefined, undefined, { hostId: 'h1' })
+    await h.controller.whenSettled()
+    const s = h.manager.get(first.id)!.relaySessionId!
+    await h.controller.disposeAll()
+    // Qclod again: the stored tab comes back on the server.
+    const again = new TabController({
+      manager: h.manager,
+      storeDir: store,
+      layout: new LayoutStore(store, () => undefined),
+      defaultCwd: projectA,
+      getDefaults: () => ({}),
+      history: { list: async () => [], transcript: async () => [] },
+      onChanged: () => undefined,
+      onRibbon: () => undefined,
+      onPanel: () => undefined,
+      onStatus: () => undefined,
+      onCommands: () => undefined
+    })
+    running.push({ daemon: h.daemon, client: h.client, controller: again })
+    const tabs = await again.restore()
+    expect(tabs[0]).toMatchObject({ cwd: projectB, missingCwd: false, server: { hostId: 'h1', relaySessionId: s } })
+    await again.whenSettled()
+    expect(h.manager.get(tabs[0]!.id)!.relaySessionId).toBe(s)
+    expect(h.manager.get(tabs[0]!.id)!.status).not.toBe('error')
+  })
+
+  test('restore: папки серверной вкладки здесь нет — это не missingCwd', async () => {
+    writeStoredTabs([{ id: 'srv1', cwd: '/home/u/nowhere-here', title: 'app', overrides: {}, server: { hostId: 'h1', relaySessionId: 'S-old' } }])
+    const h = await serverHarness()
+    const tabs = await h.controller.restore()
+    expect(tabs[0]).toMatchObject({ id: 'srv1', missingCwd: false, server: { hostId: 'h1', relaySessionId: 'S-old' } })
+  })
+
+  test('закрыт последний серверный чат — новый в той же папке на том же сервере', async () => {
+    const h = await serverHarness()
+    const tab = h.controller.create(projectB, {}, undefined, undefined, { hostId: 'h1' })
+    await h.controller.whenSettled()
+    const s = h.manager.get(tab.id)!.relaySessionId!
+    await h.controller.close(tab.id)
+    const [next] = h.controller.list()
+    expect(next).toMatchObject({ cwd: projectB, server: { hostId: 'h1' } })
+    expect(next!.id).not.toBe(tab.id)
+    // «Закрыть чат» stops the agent there.
+    const list = await h.client.call<RelaySnapshot[]>('session.list', {})
+    expect(list.map((x) => x.s)).not.toContain(s)
+  })
+
+  test('прошлая сессия серверного проекта открывается через session.open с resume', async () => {
+    const h = await serverHarness()
+    const tab = h.controller.openSession(projectB, 'sdk-old-1', 'Старый разговор', 'h1')
+    expect(tab).toMatchObject({ title: 'Старый разговор', lastSessionId: 'sdk-old-1', server: { hostId: 'h1' } })
+    await h.controller.whenSettled()
+    await until(() => h.fake.options.length > 0, 5000, 'драйвер на сервере')
+    expect(h.fake.options.at(-1)!.resume).toBe('sdk-old-1')
+    // The same one again is that chat, not a second agent on it.
+    expect(h.controller.openSession(projectB, 'sdk-old-1', 'Старый разговор', 'h1').id).toBe(tab.id)
+  })
+
+  test('gap пересобирает вкладку: строка о начале и записи после разрыва', async () => {
+    const h = await serverHarness()
+    const tab = h.controller.create(projectB, {}, undefined, undefined, { hostId: 'h1' })
+    await h.controller.whenSettled()
+    const session = h.manager.get(tab.id)!
+    const s = session.relaySessionId!
+    await h.daemon.stop()
+    await until(() => h.client.state !== 'online', 5000, 'обрыв')
+    const journal = Journal.open(join(h.paths.sessions, s), { maxBytes: 4096 })
+    for (let i = 0; i < 80; i++) journal.append('notice', { kind: 'text', text: `запись ${i} `.repeat(4), tone: 'info' })
+    journal.close()
+    const daemon = new RelayDaemon({
+      paths: h.paths,
+      version: '1.0.0-test',
+      createDriver: h.fake.factory,
+      claudePath: () => '/home/u/.local/bin/claude',
+      exit: () => undefined,
+      home: h.root
+    })
+    running[running.length - 1]!.daemon = daemon
+    expect(await daemon.start()).toBe(true)
+    const isNotice = (i: RibbonItem): i is Extract<RibbonItem, { kind: 'notice' }> => i.kind === 'notice'
+    try {
+      await until(
+        () => session.items.filter(isNotice).some((i) => i.text.startsWith('Начало разговора старше журнала сервера — показано с')),
+        15000,
+        'строка о разрыве'
+      )
+    } catch (err) {
+      // What the chat had instead, so a failure on another system says where it stopped.
+      const seen = session.items.map((i) => (isNotice(i) ? `notice:${i.text.slice(0, 40)}` : i.kind)).slice(-8)
+      throw new Error(`${(err as Error).message}; клиент ${h.client.state}; лента: ${seen.join(' | ')}`)
+    }
+
+    await until(() => session.items.filter(isNotice).some((i) => i.text.startsWith('запись 79')), 5000, 'записи после разрыва')
+    expect(h.manager.get(tab.id)).toBe(session)
   })
 })

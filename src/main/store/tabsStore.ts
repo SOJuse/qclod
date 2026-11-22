@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { PersistedTab } from '../../shared/types'
-import { sanitizeOverrides } from '../tabs/sanitize'
+import type { PersistedTab, TabAutonomyRecord, TabServer } from '../../shared/types'
+import { sanitizeAutonomyRecord, sanitizeOverrides } from '../tabs/sanitize'
 
 export const TABS_FILE = 'tabs.json'
 
@@ -20,7 +20,8 @@ export function isDirectory(path: string): boolean {
 
 /**
  * Only what the spec says survives a restart: working directory, title, launch
- * overrides and the id of the conversation the tab was last in.
+ * overrides, the id of the conversation the tab was last in, and its autonomy
+ * record (stage 3: was it working, is Remote Control wanted, a limit waited out).
  *
  * The id is a pointer, not content: the messages themselves live where the CLI
  * already keeps them, and Qclod never writes a word of the conversation to
@@ -33,7 +34,9 @@ export function saveTabs(dir: string, tabs: PersistedTab[]): void {
     cwd: tab.cwd,
     title: tab.title,
     overrides: sanitizeOverrides(tab.overrides),
-    ...(typeof tab.lastSessionId === 'string' ? { lastSessionId: tab.lastSessionId } : {})
+    ...(typeof tab.lastSessionId === 'string' ? { lastSessionId: tab.lastSessionId } : {}),
+    ...autonomyField(tab.autonomy),
+    ...serverField(tab.server)
   }))
   writeFileSync(join(dir, TABS_FILE), JSON.stringify(minimal, null, 2), 'utf8')
 }
@@ -60,8 +63,26 @@ export function loadTabs(dir: string): LoadedTab[] {
       ...(typeof record['lastSessionId'] === 'string'
         ? { lastSessionId: record['lastSessionId'] }
         : {}),
-      missingCwd: !isDirectory(record['cwd'])
+      ...autonomyField(record['autonomy']),
+      ...serverField(record['server']),
+      // A server's folder is there, not here (stage 6).
+      missingCwd: serverField(record['server']).server ? false : !isDirectory(record['cwd'])
     })
   }
   return tabs
+}
+
+/** Stage 6: which server a chat runs on, and its relay's session; nothing for a local chat. */
+function serverField(value: unknown): { server?: TabServer } {
+  if (typeof value !== 'object' || value === null) return {}
+  const { hostId, relaySessionId } = value as Record<string, unknown>
+  if (typeof hostId !== 'string' || hostId === '' || hostId.length > 200) return {}
+  const relay = typeof relaySessionId === 'string' && relaySessionId !== '' && relaySessionId.length <= 200 ? relaySessionId : undefined
+  return { server: { hostId, ...(relay ? { relaySessionId: relay } : {}) } }
+}
+
+/** The autonomy record as a spread: nothing at all when there is none to keep. */
+function autonomyField(value: unknown): { autonomy?: TabAutonomyRecord } {
+  const autonomy = sanitizeAutonomyRecord(value)
+  return autonomy === undefined ? {} : { autonomy }
 }

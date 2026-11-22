@@ -1,18 +1,40 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { saveImageBuffer } from '@main/files/imagePaste'
-import type { AppSettings } from '@shared/types'
+import { DEFAULT_LAYOUT, type AppSettings } from '@shared/types'
+import { CHANNELS } from '@shared/channels'
+import { registerAgentIpc, type AgentIpcDeps } from '@main/agentIpc'
+import { LayoutStore } from '@main/store/layoutStore'
 import {
   mergeDefaults,
   sanitizeAnswer,
   sanitizeDefaults,
   sanitizeInput,
+  sanitizeLayoutPatch,
   sanitizeOverrides,
+  sanitizePcm,
+  sanitizeVoiceSettings,
+  sanitizePlanDecision,
   sanitizeQuestionAnswers,
+  sanitizeQuestionNotes,
+  sanitizeSettingsFields,
   sanitizeTabPatch
 } from '@main/tabs/sanitize'
+
+type Handler = (e: unknown, ...args: unknown[]) => unknown
+const handlers = vi.hoisted(() => new Map<string, Handler>())
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, fn: Handler) => handlers.set(channel, fn),
+    on: (channel: string, fn: Handler) => handlers.set(channel, fn)
+  },
+  dialog: {},
+  BrowserWindow: class {},
+  shell: { openPath: vi.fn(), showItemInFolder: vi.fn() },
+  nativeImage: { createFromBuffer: vi.fn() }
+}))
 
 describe('sanitizeTabPatch', () => {
   test('tabs:update не даёт окну подменить remote', () => {
@@ -116,6 +138,51 @@ describe('agentIpc: проверка полезной нагрузки', () => {
     expect(sanitizeAnswer({ behavior: 'allow', remember: 'да' })).toEqual({ behavior: 'allow' })
   })
 
+  test('«до конца сессии» и причина отказа проходят, только в своём виде', () => {
+    expect(sanitizeAnswer({ behavior: 'allow', forSession: true })).toEqual({
+      behavior: 'allow',
+      forSession: true
+    })
+    // Anything but a literal true is not a request; a deny is never «for the session».
+    expect(sanitizeAnswer({ behavior: 'allow', forSession: 'да' })).toEqual({ behavior: 'allow' })
+    expect(sanitizeAnswer({ behavior: 'deny', forSession: true })).toEqual({ behavior: 'deny' })
+
+    expect(sanitizeAnswer({ behavior: 'deny', message: 'не трогай main' })).toEqual({
+      behavior: 'deny',
+      message: 'не трогай main'
+    })
+    expect(sanitizeAnswer({ behavior: 'deny', message: 'п'.repeat(2000) })).toEqual({
+      behavior: 'deny',
+      message: 'п'.repeat(2000)
+    })
+    // Trimmed; then too long, empty, not a string, or on an allow: no message at all.
+    expect(sanitizeAnswer({ behavior: 'deny', message: '  не трогай main \n' })).toEqual({
+      behavior: 'deny',
+      message: 'не трогай main'
+    })
+    expect(sanitizeAnswer({ behavior: 'deny', message: ` ${'п'.repeat(2000)} ` })).toEqual({
+      behavior: 'deny',
+      message: 'п'.repeat(2000)
+    })
+    expect(sanitizeAnswer({ behavior: 'deny', message: 'п'.repeat(2001) })).toEqual({ behavior: 'deny' })
+    expect(sanitizeAnswer({ behavior: 'deny', message: '' })).toEqual({ behavior: 'deny' })
+    expect(sanitizeAnswer({ behavior: 'deny', message: '   \n ' })).toEqual({ behavior: 'deny' })
+    expect(sanitizeAnswer({ behavior: 'deny', message: 42 })).toEqual({ behavior: 'deny' })
+    expect(sanitizeAnswer({ behavior: 'allow', message: 'ок' })).toEqual({ behavior: 'allow' })
+  })
+
+  test('«до конца сессии» сильнее «всегда»: узкий ответ не становится правилом навсегда', () => {
+    expect(sanitizeAnswer({ behavior: 'allow', remember: true, forSession: true })).toEqual({
+      behavior: 'allow',
+      forSession: true
+    })
+    // A deny is never «for the session», so remember stays as it always did.
+    expect(sanitizeAnswer({ behavior: 'deny', remember: true, forSession: true })).toEqual({
+      behavior: 'deny',
+      remember: true
+    })
+  })
+
   test('окно не может подменить ввод инструмента через updatedInput', () => {
     expect(
       sanitizeAnswer({ behavior: 'allow', updatedInput: { command: 'rm -rf /' } })
@@ -189,6 +256,208 @@ describe('sanitizeQuestionAnswers', () => {
   })
 })
 
+describe('sanitizeQuestionNotes', () => {
+  test('комментарии к ответам — только строки до 2000 знаков, не больше 64', () => {
+    expect(sanitizeQuestionNotes({ 'Где?': 'ближе к краю' })).toEqual({ 'Где?': 'ближе к краю' })
+    for (const garbage of [null, undefined, 'строка', ['A'], 5]) {
+      expect(sanitizeQuestionNotes(garbage)).toEqual({})
+    }
+    expect(sanitizeQuestionNotes({ A: 'да', B: 2, C: { x: 1 }, D: '', E: '  \n ' })).toEqual({ A: 'да' })
+    expect(sanitizeQuestionNotes({ A: '  у окна \n' })).toEqual({ A: 'у окна' })
+    expect(sanitizeQuestionNotes({ A: ` ${'я'.repeat(2000)} ` })).toEqual({ A: 'я'.repeat(2000) })
+    expect(sanitizeQuestionNotes({ A: 'я'.repeat(2001), B: 'я'.repeat(2000) })).toEqual({
+      B: 'я'.repeat(2000)
+    })
+    expect(sanitizeQuestionNotes({ ['в'.repeat(2001)]: 'да', ['в'.repeat(2000)]: 'нет' })).toEqual({
+      ['в'.repeat(2000)]: 'нет'
+    })
+    const lots = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`q${i}`, 'да']))
+    expect(Object.keys(sanitizeQuestionNotes(lots))).toHaveLength(64)
+  })
+})
+
+describe('sanitizePlanDecision', () => {
+  test('одобрение — только буквальное true; не объект — не ответ', () => {
+    expect(sanitizePlanDecision({ approve: true })).toEqual({ approve: true })
+    expect(sanitizePlanDecision({ approve: false })).toEqual({ approve: false })
+    expect(sanitizePlanDecision({ approve: 'да' })).toEqual({ approve: false })
+    expect(sanitizePlanDecision({ approve: 'true' })).toEqual({ approve: false })
+    for (const garbage of [null, undefined, true, 'approve', [true]]) {
+      expect(sanitizePlanDecision(garbage)).toBeNull()
+    }
+  })
+
+  test('комментарий обрезается по краям, до 4000 знаков; пустой или длиннее — его нет', () => {
+    expect(sanitizePlanDecision({ approve: false, comment: '  без миграций \n', extra: 1 })).toEqual({
+      approve: false,
+      comment: 'без миграций'
+    })
+    expect(sanitizePlanDecision({ approve: true, comment: ` ${'к'.repeat(4000)} ` })?.comment).toHaveLength(4000)
+    expect(sanitizePlanDecision({ approve: true, comment: 'к'.repeat(4001) })).toEqual({ approve: true })
+    expect(sanitizePlanDecision({ approve: true, comment: '   ' })).toEqual({ approve: true })
+    expect(sanitizePlanDecision({ approve: true, comment: 3 })).toEqual({ approve: true })
+  })
+
+  test('правленый план — только при одобрении; негодный план делает всё решение негодным', () => {
+    expect(sanitizePlanDecision({ approve: true, plan: '1. шаг' })).toEqual({ approve: true, plan: '1. шаг' })
+    expect(sanitizePlanDecision({ approve: true, plan: 'п'.repeat(100_000) })?.plan).toHaveLength(100_000)
+    // A rejection carries no plan to carry out.
+    expect(sanitizePlanDecision({ approve: false, plan: '1. шаг' })).toEqual({ approve: false })
+    // Never cut, never dropped quietly: the agent must not run the plan the user had changed.
+    for (const plan of ['п'.repeat(100_001), 'п'.repeat(200_000), '', '  \n ', 42, { text: 'x' }, null]) {
+      expect(sanitizePlanDecision({ approve: true, plan })).toBeNull()
+    }
+    expect(sanitizePlanDecision({ approve: false, plan: 'п'.repeat(100_001) })).toBeNull()
+  })
+})
+
+describe('sanitizeLayoutPatch', () => {
+  test('панели — строки до 200 знаков, без повторов, не больше 4', () => {
+    expect(sanitizeLayoutPatch({ panes: ['a', 'a', 1, 'b', 'c', 'd', 'e'] })).toEqual({
+      panes: ['a', 'b', 'c', 'd']
+    })
+    expect(sanitizeLayoutPatch({ panes: ['', 'x'.repeat(201), 'x'.repeat(200)] })).toEqual({
+      panes: ['x'.repeat(200)]
+    })
+    expect(sanitizeLayoutPatch({ panes: [] })).toEqual({ panes: [] })
+    expect(sanitizeLayoutPatch({ panes: 'a' })).toEqual({})
+  })
+
+  test('ширины — конечные числа больше нуля, не больше 4', () => {
+    expect(sanitizeLayoutPatch({ paneWidths: [NaN, -1, 0.5] })).toEqual({ paneWidths: [0.5] })
+    expect(sanitizeLayoutPatch({ paneWidths: [Infinity, 0, '1', 1, 2, 3, 4, 5] })).toEqual({
+      paneWidths: [1, 2, 3, 4]
+    })
+    expect(sanitizeLayoutPatch({ paneWidths: 0.5 })).toEqual({})
+  })
+
+  test('projectCollapsed без строки cwd отброшен', () => {
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: 1, collapsed: true } })).toEqual({})
+    expect(sanitizeLayoutPatch({ projectCollapsed: { collapsed: true } })).toEqual({})
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: '', collapsed: true } })).toEqual({})
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: 'C:\\p', collapsed: 'да' } })).toEqual({})
+    expect(sanitizeLayoutPatch({ projectCollapsed: 'C:\\p' })).toEqual({})
+    // Stage 6 (task 22): a server's project folds by its hostId (≤ 200); anything else is dropped.
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: 'C:\\p', collapsed: true, hostId: 'x' } })).toEqual({
+      projectCollapsed: { cwd: 'C:\\p', collapsed: true, hostId: 'x' }
+    })
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: '/p', collapsed: true, hostId: 'x'.repeat(201) } })).toEqual({
+      projectCollapsed: { cwd: '/p', collapsed: true }
+    })
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: '/p', collapsed: true, hostId: 7 } })).toEqual({
+      projectCollapsed: { cwd: '/p', collapsed: true }
+    })
+  })
+
+  test('боковая панель — только boolean; чужие ключи и мусор отброшены', () => {
+    expect(sanitizeLayoutPatch({ sidebarCollapsed: true, active: 'a', projects: [] })).toEqual({
+      sidebarCollapsed: true
+    })
+    expect(sanitizeLayoutPatch({ sidebarCollapsed: 'yes' })).toEqual({})
+    for (const garbage of [null, undefined, 5, 'x', [1]]) expect(sanitizeLayoutPatch(garbage)).toEqual({})
+  })
+})
+
+describe('этап 2: обработчики-заглушки в main', () => {
+  const plans: Array<[string, unknown]> = []
+  const questions: Array<[string, Record<string, string>, Record<string, string> | undefined]> = []
+
+  const layoutDirs: string[] = []
+  afterEach(() => {
+    for (const dir of layoutDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
+  function register(): void {
+    handlers.clear()
+    const layoutDir = mkdtempSync(join(tmpdir(), 'qclod-ipc-layout-'))
+    layoutDirs.push(layoutDir)
+    plans.length = 0
+    questions.length = 0
+    const session = {
+      answerPlan: async (requestId: string, decision: unknown) => {
+        plans.push([requestId, decision])
+      },
+      answerQuestion: (
+        toolUseId: string,
+        answers: Record<string, string>,
+        notes?: Record<string, string>
+      ) => {
+        questions.push([toolUseId, answers, notes])
+      }
+    }
+    registerAgentIpc({
+      getWindow: () => null,
+      controller: { list: () => [], setPanes: async () => undefined },
+      manager: { get: (id: string) => (id === 't1' ? session : undefined) },
+      broker: { cancelTab: () => undefined },
+      layout: new LayoutStore(layoutDir, () => undefined),
+      history: { list: async () => [] },
+      rememberDefault: () => undefined,
+      resolver: { forget: () => undefined },
+      getEditorCommand: () => '',
+      userData: tmpdir()
+    } as unknown as AgentIpcDeps)
+  }
+
+  const call = (channel: string, ...args: unknown[]): unknown => handlers.get(channel)!({}, ...args)
+
+  test('plan:answer передаёт сессии проверенное решение целиком', async () => {
+    register()
+    await call(CHANNELS.planAnswer, 't1', 'p1', { approve: true, comment: ' ок ', plan: '1. шаг', extra: 1 })
+    await call(CHANNELS.planAnswer, 't1', 'p2', { approve: false, comment: 'сначала тесты', plan: '1. шаг' })
+    await call(CHANNELS.planAnswer, 't1', 'p3', { approve: 'да' })
+    await call(CHANNELS.planAnswer, 't1', 5, { approve: true })
+    expect(plans).toEqual([
+      ['p1', { approve: true, comment: 'ок', plan: '1. шаг' }],
+      ['p2', { approve: false, comment: 'сначала тесты' }],
+      ['p3', { approve: false }]
+    ])
+  })
+
+  test('plan:answer с негодным решением ничего не отвечает — карточка остаётся открытой', async () => {
+    register()
+    await call(CHANNELS.planAnswer, 't1', 'p1', { approve: true, plan: 'п'.repeat(100_001) })
+    await call(CHANNELS.planAnswer, 't1', 'p2', { approve: true, plan: '   ' })
+    await call(CHANNELS.planAnswer, 't1', 'p3', true)
+    expect(plans).toEqual([])
+  })
+
+  test('question:answer передаёт сессии проверенные комментарии четвёртым аргументом', async () => {
+    register()
+    await call(CHANNELS.questionAnswer, 't1', 'q1', { 'Где?': 'Справа' }, { 'Где?': '  у окна ', B: 2 })
+    await call(CHANNELS.questionAnswer, 't1', 'q2', { 'Где?': 'Слева' })
+    await call(CHANNELS.questionAnswer, 't1', 'q3', { 'Где?': 'Слева' }, 'мусор')
+    expect(questions).toEqual([
+      ['q1', { 'Где?': 'Справа' }, { 'Где?': 'у окна' }],
+      ['q2', { 'Где?': 'Слева' }, {}],
+      ['q3', { 'Где?': 'Слева' }, {}]
+    ])
+  })
+
+  test('раскладка и проекты: пустая раскладка и неизвестные папки — значения по умолчанию', async () => {
+    register()
+    expect(await call(CHANNELS.layoutGet)).toEqual(DEFAULT_LAYOUT)
+    expect(await call(CHANNELS.projectForget, 'C:\\p')).toEqual(DEFAULT_LAYOUT)
+    expect(await call(CHANNELS.projectHistory, 'C:\\p')).toEqual([])
+    expect(await call(CHANNELS.projectOpenSession, 'C:\\p', 's1')).toBeNull()
+    // этап 6: a folder on another machine comes with its hostId, last.
+    expect(await call(CHANNELS.projectHistory, '/home/u/p', 'srv1')).toEqual([])
+    expect(await call(CHANNELS.projectOpenSession, '/home/u/p', 's1', undefined, 'srv1')).toBeNull()
+    expect(await call(CHANNELS.projectForget, '/home/u/p', 'srv1')).toEqual(DEFAULT_LAYOUT)
+    expect(await call(CHANNELS.layoutSet, { sidebarCollapsed: true })).toEqual({
+      ...DEFAULT_LAYOUT,
+      sidebarCollapsed: true
+    })
+    expect(DEFAULT_LAYOUT).toEqual({
+      panes: [],
+      active: null,
+      paneWidths: [],
+      sidebarCollapsed: false,
+      projects: []
+    })
+  })
+})
+
 describe('sanitizeDefaults', () => {
   test('bypass в умолчаниях становится default', () => {
     expect(sanitizeDefaults({ permissionMode: 'bypassPermissions', effort: 'high' })).toEqual({
@@ -215,6 +484,9 @@ describe('mergeDefaults', () => {
     closeToTray: true,
     panelOpen: true,
     editorCommand: '',
+    autoAnswerMinutes: 5,
+    openAtLogin: true,
+    voice: { model: 'gigaam-v3', replacements: null },
     defaults: { permissionMode: 'acceptEdits' }
   }
 
@@ -249,6 +521,45 @@ describe('mergeDefaults', () => {
   test('патч без defaults оставляет умолчания как были', () => {
     expect(mergeDefaults(base, { soundEnabled: false }).defaults).toEqual(base.defaults)
   })
+
+  test('settingsSet: неизвестные ключи и чужие типы не сохраняются', () => {
+    const next = mergeDefaults(base, {
+      agentPath: 42,
+      globalHotkey: { a: 1 },
+      closeToTray: 'да',
+      panelOpen: 1,
+      notificationsEnabled: false,
+      evil: 'x'
+    } as never)
+    expect(next).toEqual({ ...base, notificationsEnabled: false })
+    expect('evil' in next).toBe(false)
+  })
+
+  test('settingsSet: путь к агенту — строка разумной длины без нулевого байта', () => {
+    expect(mergeDefaults(base, { agentPath: 'C:\\tools\\claude.exe' }).agentPath).toBe('C:\\tools\\claude.exe')
+    expect(mergeDefaults(base, { agentPath: 'a'.repeat(5000) }).agentPath).toBe(base.agentPath)
+    expect(mergeDefaults(base, { agentPath: 'claude\0.exe' }).agentPath).toBe(base.agentPath)
+  })
+
+  test('settingsSet: мусор вместо объекта ничего не меняет', () => {
+    expect(mergeDefaults(base, null as never)).toEqual(base)
+    expect(mergeDefaults(base, 'строка' as never)).toEqual(base)
+  })
+})
+
+describe('sanitizeSettingsFields', () => {
+  test('оставляет только известные поля своего типа', () => {
+    expect(
+      sanitizeSettingsFields({
+        agentPath: 'claude',
+        globalHotkey: 'Control+Shift+Space',
+        soundEnabled: true,
+        defaults: { model: 'x' },
+        editorCommand: 'code -g {path}',
+        junk: true
+      })
+    ).toEqual({ agentPath: 'claude', globalHotkey: 'Control+Shift+Space', soundEnabled: true })
+  })
 })
 
 describe('sanitizeInput: вставленные картинки', () => {
@@ -282,5 +593,79 @@ describe('sanitizeInput: вставленные картинки', () => {
     } finally {
       rmSync(userData, { recursive: true, force: true })
     }
+  })
+})
+
+describe('sanitizeErrorReport', () => {
+  test('garbage gives null', async () => {
+    const { sanitizeErrorReport } = await import('@main/tabs/sanitize')
+    for (const v of [null, undefined, 5, 'x', [], {}, { scope: 'nope', message: 'm' }, { scope: 'app' }, { scope: 'app', message: 3 }]) {
+      expect(sanitizeErrorReport(v)).toBeNull()
+    }
+  })
+
+  test('a good report passes and long strings are cut to 20 000', async () => {
+    const { sanitizeErrorReport } = await import('@main/tabs/sanitize')
+    const long = 'a'.repeat(30000)
+    const cut = 'a'.repeat(20000)
+    const r = sanitizeErrorReport({ scope: 'pane', message: long, stack: long, componentStack: long, extra: 1 })
+    expect(r).toEqual({ scope: 'pane', message: cut, stack: cut, componentStack: cut })
+    expect(sanitizeErrorReport({ scope: 'window', message: 'm', stack: 4 })).toEqual({ scope: 'window', message: 'm' })
+  })
+})
+
+describe('голос: проверки в main', () => {
+  test('sanitizePcm: длина, тип, NaN, зажим, копия', () => {
+    expect(sanitizePcm(new Float32Array(4801))).toBeNull()
+    expect(sanitizePcm(new Float32Array(0))).toBeNull()
+    expect(sanitizePcm([0.1])).toBeNull()
+    expect(sanitizePcm(new Float64Array(10))).toBeNull()
+    const src = new Float32Array([NaN, 2, -3, Infinity, -Infinity, 0.5])
+    const out = sanitizePcm(src)!
+    expect(Array.from(out)).toEqual([0, 1, -1, 0, 0, 0.5])
+    expect(out).not.toBe(src)
+    expect(out.buffer).not.toBe(src.buffer)
+    expect(sanitizePcm(new Float32Array(4800))).not.toBeNull()
+  })
+
+  test('sanitizeVoiceSettings: лимит, пустой from, null, дубли, управляющие', () => {
+    const many = Array.from({ length: 301 }, (_, i) => ({ from: 'a' + i, to: 'b' }))
+    expect(sanitizeVoiceSettings({ replacements: many })).toEqual({})
+    expect(sanitizeVoiceSettings({ replacements: many.slice(0, 300) }).replacements).toHaveLength(300)
+    expect(
+      sanitizeVoiceSettings({ replacements: [{ from: '  ', to: 'x' }, { from: 'клод', to: 'Claude' }] })
+    ).toEqual({ replacements: [{ from: 'клод', to: 'Claude' }] })
+    expect(sanitizeVoiceSettings({ replacements: null })).toEqual({ replacements: null })
+    expect(
+      sanitizeVoiceSettings({ replacements: [{ from: 'ёж', to: '1' }, { from: 'ЕЖ', to: '2' }] }).replacements
+    ).toEqual([{ from: 'ёж', to: '1' }])
+    expect(
+      sanitizeVoiceSettings({
+        replacements: [{ from: 'a\u0000b', to: 'x' }, { from: 'q', to: 'x'.repeat(61) }, { from: 'q', to: 5 }]
+      }).replacements
+    ).toEqual([])
+    expect(sanitizeVoiceSettings({ model: 'whisper-turbo-cuda' })).toEqual({ model: 'whisper-turbo-cuda' })
+    expect(sanitizeVoiceSettings('x')).toEqual({})
+  })
+
+  test('mergeDefaults с патчем {voice: {model: "x"}} модель не меняет', () => {
+    const base = {
+      agentPath: 'claude',
+      globalHotkey: 'x',
+      notificationsEnabled: true,
+      soundEnabled: true,
+      closeToTray: true,
+      panelOpen: true,
+      editorCommand: '',
+      autoAnswerMinutes: 5,
+      openAtLogin: true,
+      voice: { model: 'gigaam-v3', replacements: null },
+      defaults: {}
+    } as AppSettings
+    expect(mergeDefaults(base, { voice: { model: 'x' } } as never).voice.model).toBe('gigaam-v3')
+    expect(mergeDefaults(base, { voice: { model: 'parakeet-v3' } } as never).voice).toEqual({
+      model: 'parakeet-v3',
+      replacements: null
+    })
   })
 })

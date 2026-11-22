@@ -232,6 +232,7 @@ describe('transcript: что из него читается', () => {
       {
         type: 'user',
         uuid: 'a',
+        timestamp: 'x',
         parent_tool_use_id: null,
         message: { role: 'user', content: [{ type: 'text', text: 'посмотри картинку' }, image] }
       },
@@ -240,6 +241,7 @@ describe('transcript: что из него читается', () => {
       {
         type: 'user',
         uuid: 'b',
+        timestamp: 'x',
         parent_tool_use_id: null,
         message: { role: 'user', content: [{ type: 'text', text: notice }] }
       },
@@ -375,5 +377,130 @@ describe('transcript: что из него читается', () => {
     mkdirSync(join(configDir, 'projects', encodeProjectDir(cwd), `${sessionId}.jsonl`), { recursive: true })
     await expect(loadTranscript(sessionId, cwd, { CLAUDE_CONFIG_DIR: configDir }, configDir)).resolves.toEqual([])
     await expect(readTranscript(join(configDir, 'нет.jsonl'))).rejects.toThrow()
+  })
+})
+
+describe('transcript: время и вложенные агенты (этап 4)', () => {
+  const T = (n: number): string => new Date(Date.parse('2026-11-09T10:00:00.000Z') + n * 1000).toISOString()
+  const base = { isSidechain: false, userType: 'external', cwd, sessionId }
+  const call = (uuid: string, parent: string | null, id: string, n: number): Message => ({
+    ...base,
+    type: 'assistant',
+    uuid,
+    parentUuid: parent,
+    timestamp: T(n),
+    message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Agent', input: { description: id } }] }
+  })
+  const reply = (uuid: string, parent: string, id: string, agentId: string, n: number): Message => ({
+    ...base,
+    type: 'user',
+    uuid,
+    parentUuid: parent,
+    timestamp: T(n),
+    toolUseResult: { status: 'completed', agentId },
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] }
+  })
+  const say = (uuid: string, parent: string | null, content: string, n: number, role = 'assistant'): Message => ({
+    ...base,
+    type: role,
+    uuid,
+    parentUuid: parent,
+    timestamp: T(n),
+    message: { role, content: [{ type: 'text', text: content }] }
+  })
+
+  function nested(loop = false): string {
+    const configDir = tempDir()
+    const main = [
+      say('m1', null, 'начали', 1, 'user'),
+      call('m2', 'm1', 'toolu_outer', 2),
+      reply('m3', 'm2', 'toolu_outer', 'aaa', 3),
+      say('m4', 'm3', 'готово', 4)
+    ]
+    const outer = [
+      say('o1', null, 'внешний: промпт', 5, 'user'),
+      call('o2', 'o1', 'toolu_inner', 6),
+      reply('o3', 'o2', 'toolu_inner', 'bbb', 7),
+      say('o4', 'o3', 'внешний: итог', 8)
+    ]
+    const inner = [
+      say('i1', null, 'внутренний: промпт', 9, 'user'),
+      ...(loop ? [call('i2', 'i1', 'toolu_loop', 10), reply('i3', 'i2', 'toolu_loop', 'aaa', 11)] : []),
+      say('i4', loop ? 'i3' : 'i1', 'внутренний: итог', 12)
+    ]
+    const meta = (toolUseId: string): Message => ({ agentType: 'general-purpose', toolUseId })
+    return writeTranscript(configDir, cwd, sessionId, main, {
+      aaa: { meta: meta('toolu_outer'), lines: outer.map((l) => ({ ...l, isSidechain: true, agentId: 'aaa' })) },
+      bbb: { meta: meta('toolu_inner'), lines: inner.map((l) => ({ ...l, isSidechain: true, agentId: 'bbb' })) }
+    })
+  }
+
+  test('сообщения несут timestamp строки', async () => {
+    const messages = (await readTranscript(nested())) as Message[]
+    expect(messages[0]!['timestamp']).toBe(T(1))
+    expect(messages.map((m) => m['timestamp']).filter(Boolean)).toHaveLength(messages.length)
+    // Subagent steps keep their own times.
+    expect(messages.find((m) => text(m) === 'внешний: итог')!['timestamp']).toBe(T(8))
+  })
+
+  test('timestamp у queued_command берётся из строки', async () => {
+    const configDir = tempDir()
+    const path = writeTranscript(configDir, cwd, sessionId, [
+      say('m1', null, 'привет', 1, 'user'),
+      {
+        ...base,
+        type: 'attachment',
+        uuid: 'q1',
+        parentUuid: 'm1',
+        timestamp: T(5),
+        attachment: { type: 'queued_command', prompt: 'ещё', commandMode: 'prompt' }
+      },
+      say('m3', 'q1', 'ага', 6)
+    ])
+    const messages = (await readTranscript(path)) as Message[]
+    expect(messages.find((m) => text(m) === 'ещё')!['timestamp']).toBe(T(5))
+  })
+
+  test('вложенный агент второго уровня раскрыт под своим вызовом с его parent_tool_use_id', async () => {
+    const messages = (await readTranscript(nested())) as Message[]
+    expect(messages.map((m) => [m['parent_tool_use_id'], text(m)])).toEqual([
+      [null, 'начали'],
+      [null, ''],
+      ['toolu_outer', 'внешний: промпт'],
+      ['toolu_outer', ''],
+      ['toolu_inner', 'внутренний: промпт'],
+      ['toolu_inner', 'внутренний: итог'],
+      ['toolu_outer', 'ok'],
+      ['toolu_outer', 'внешний: итог'],
+      [null, 'ok'],
+      [null, 'готово']
+    ])
+  })
+
+  test('agentId с косой (прямой или обратной) не выводит чтение из папки subagents', async () => {
+    const configDir = tempDir()
+    const main = [
+      say('m1', null, 'начали', 1, 'user'),
+      call('m2', 'm1', 'toolu_back', 2),
+      reply('m3', 'm2', 'toolu_back', 'x\\..\\..\\evil', 3),
+      call('m4', 'm3', 'toolu_fwd', 4),
+      reply('m5', 'm4', 'toolu_fwd', 'x/../../evil', 5)
+    ]
+    // A real agent makes the subagents folder exist.
+    const path = writeTranscript(configDir, cwd, sessionId, main, {
+      aaa: { meta: { agentType: 'Explore', toolUseId: 'toolu_other' }, lines: [] }
+    })
+    const evil = join(configDir, 'projects', encodeProjectDir(cwd), sessionId, 'evil.jsonl')
+    writeFileSync(evil, JSON.stringify(say('e1', null, 'чужой файл', 9, 'user')) + '\n')
+    const messages = (await readTranscript(path)) as Message[]
+    expect(messages.some((m) => text(m) === 'чужой файл')).toBe(false)
+  })
+
+  test('цикл agentId не зацикливает чтение', async () => {
+    const messages = (await readTranscript(nested(true))) as Message[]
+    // The inner agent «calls» the outer one again: that call is kept as a
+    // line, but the outer agent is not opened a second time.
+    expect(messages.filter((m) => text(m) === 'внешний: промпт')).toHaveLength(1)
+    expect(messages.filter((m) => text(m) === 'внутренний: итог')).toHaveLength(1)
   })
 })

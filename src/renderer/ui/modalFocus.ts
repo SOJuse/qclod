@@ -80,7 +80,10 @@ export function useModalFocus(
   sheet: RefObject<HTMLElement>,
   onFocusLost?: () => void
 ): (ev: React.KeyboardEvent) => void {
-  const [restore] = useState(() => rememberFocus(document))
+  // Drawn to markup (no document, as in the markup tests) there is nothing to give back.
+  const [restore] = useState(() =>
+    typeof document === 'undefined' ? (_fallback?: () => void) => undefined : rememberFocus(document)
+  )
   const lost = useRef(onFocusLost)
   lost.current = onFocusLost
   useEffect(() => () => restore(lost.current), [restore])
@@ -89,5 +92,44 @@ export function useModalFocus(
       if (sheet.current) trapTab(sheet.current, ev, document.activeElement)
     },
     [sheet]
+  )
+}
+
+/**
+ * Where a modal sheet puts focus when it opens or changes step: the control
+ * marked `data-autofocus`, else the first one of its body, else the sheet
+ * itself (it carries tabIndex -1). Focus inside is what keeps Enter and Esc
+ * from the input line behind it, where they would send or stop the agent.
+ */
+export function focusInto(sheet: HTMLElement | null): void {
+  if (!sheet) return
+  const marked = sheet.querySelector<HTMLElement>('[data-autofocus]:not([disabled])')
+  const body = sheet.querySelector<HTMLElement>('.sheet-body') ?? sheet
+  const first = [...body.querySelectorAll<HTMLElement>(FOCUSABLE)].find((el) => !el.hasAttribute('disabled'))
+  ;(marked ?? first ?? sheet).focus()
+}
+
+/**
+ * A modal sheet's keys (stage 6, R2): Esc closes or cancels it and goes no
+ * further — not to the input line, not to the window — and Tab stays inside
+ * (useModalFocus). For the sheet's onKeyDown.
+ */
+export function useModalSheet(
+  sheet: RefObject<HTMLElement>,
+  onEscape: () => void,
+  onFocusLost?: () => void
+): (ev: React.KeyboardEvent) => void {
+  const trap = useModalFocus(sheet, onFocusLost)
+  const escape = useRef(onEscape)
+  escape.current = onEscape
+  return useCallback(
+    (ev: React.KeyboardEvent) => {
+      if (ev.key !== 'Escape') return trap(ev)
+      if (ev.nativeEvent.isComposing) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      escape.current()
+    },
+    [trap]
   )
 }

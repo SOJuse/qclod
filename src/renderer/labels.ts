@@ -1,3 +1,5 @@
+import type { SessionStatus } from '../shared/types'
+
 /** Names a person reads for the effort levels and permission modes; the panel and the settings share them. */
 export const EFFORT_LABEL: Record<string, string> = {
   low: 'низкое — быстро',
@@ -24,4 +26,14 @@ export const EFFORT_SHORT: Record<string, string> = {
   high: 'высокое',
   xhigh: 'очень высокое',
   max: 'максимум'
+}
+
+/** A chat's state in one word: the sidebar's row hint and the pane's header. */
+export const STATUS_LABEL: Record<SessionStatus, string> = {
+  starting: 'запускается',
+  busy: 'работает',
+  waiting: 'ждёт ответа',
+  idle: 'простаивает',
+  stopped: 'не запущена',
+  error: 'ошибка'
 }

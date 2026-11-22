@@ -321,7 +321,7 @@ describe('консоль и голос', () => {
     openAgentTerminal('C:/Program Files/claude & co/claude.exe', 'D:/проект', (file, args, opts) => {
       calls.push({ file, args, opts: opts as Record<string, unknown> })
       return { on: () => undefined, unref: () => undefined }
-    })
+    }, 'win32')
     expect(calls).toHaveLength(1)
     expect(calls[0]!.file).toBe('cmd.exe')
     expect(calls[0]!.opts['cwd']).toBe('D:/проект')

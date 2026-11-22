@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { CHANNELS } from '../shared/channels'
+import type { VoiceErrorCode, VoiceEvent, VoiceModelId, VoiceModelsSnapshot } from '../shared/voice'
 import type {
   EnvironmentReport,
   LoginProgress,
@@ -7,13 +8,19 @@ import type {
   CommandInfo,
   HotkeyRegistration,
   LaunchOverrides,
+  LayoutPatch,
+  LayoutState,
   PanelEvent,
   PanelSnapshot,
   PermissionAnswer,
   PersistedTab,
+  PlanDecision,
   PreparedImage,
+  RendererErrorReport,
   ResolvedPath,
   RibbonEvent,
+  SubagentSendResult,
+  SubagentStopResult,
   RibbonSnapshot,
   SessionSummary,
   StatusEvent,
@@ -21,8 +28,26 @@ import type {
   TabState,
   TaskOutput,
   UpdateState,
-  UserInput
+  UserInput,
+  // stage 6
+  ConnectStep,
+  FileSource,
+  ServerEntry,
+  ServerView,
+  SshPrompt,
+  SshPromptAnswer,
+  ViewerContent,
+  // этап 7
+  CommitResult,
+  GitFileDiff,
+  GitStatus,
+  HarvestOutcome,
+  HarvestPreview,
+  HistoryHit,
+  PromptTemplate,
+  TemplateDraft
 } from '../shared/types'
+import type { FsEntry } from '../shared/relayProtocol'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: unknown, payload: T): void => cb(payload)
@@ -35,6 +60,18 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
  * bridge, so the renderer can only reach what is listed here.
  */
 const api = {
+  /** `process.platform` for the window: key labels, the Mac title bar. */
+  platform: process.platform as 'win32' | 'darwin' | 'linux',
+
+  /**
+   * e2e only (QCLOD_E2E_THROW_IN_PANE): false in a release build. Chromium on
+   * Windows lowercases switch names, so the renderer sees
+   * `--qclod_e2e_throw_in_pane`; the match ignores case.
+   */
+  throwInPane: __QCLOD_TEST_SEAMS__
+    ? process.argv.some((arg) => arg.toUpperCase() === '--QCLOD_E2E_THROW_IN_PANE')
+    : false,
+
   appVersion: (): Promise<string> => ipcRenderer.invoke(CHANNELS.appVersion),
 
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke(CHANNELS.settingsGet),
@@ -57,8 +94,11 @@ const api = {
     ipcRenderer.invoke(CHANNELS.agentSend, id, input),
   /** Stops the turn; resolves with the messages that were waiting to be sent. */
   interrupt: (id: TabId): Promise<UserInput[]> => ipcRenderer.invoke(CHANNELS.agentInterrupt, id),
-  cancelQueued: (tabId: TabId, id: string): Promise<boolean> =>
+  /** The cancelled message, or null when it has already reached the agent or is gone. */
+  cancelQueued: (tabId: TabId, id: string): Promise<UserInput | null> =>
     ipcRenderer.invoke(CHANNELS.agentQueueCancel, tabId, id),
+  sendQueuedNow: (tabId: TabId, id: string): Promise<boolean> =>
+    ipcRenderer.invoke(CHANNELS.agentQueueSendNow, tabId, id),
   setPermissionMode: (id: TabId, mode: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.agentPermissionMode, id, mode),
   setModel: (id: TabId, model: string): Promise<void> =>
@@ -92,11 +132,16 @@ const api = {
     ipcRenderer.invoke(CHANNELS.permissionRules),
   deletePermissionRule: (ruleId: string): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.permissionRuleDelete, ruleId),
-  answerPlan: (id: TabId, requestId: string, approve: boolean): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.planAnswer, id, requestId, approve),
+  answerPlan: (id: TabId, requestId: string, decision: PlanDecision): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.planAnswer, id, requestId, decision),
 
-  answerQuestion: (id: TabId, toolUseId: string, answers: Record<string, string>): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.questionAnswer, id, toolUseId, answers),
+  /** `notes`: question text -> the user's comment on the chosen option. */
+  answerQuestion: (
+    id: TabId,
+    toolUseId: string,
+    answers: Record<string, string>,
+    notes?: Record<string, string>
+  ): Promise<void> => ipcRenderer.invoke(CHANNELS.questionAnswer, id, toolUseId, answers, notes),
 
   listHistory: (tabId: TabId): Promise<SessionSummary[]> =>
     ipcRenderer.invoke(CHANNELS.historyList, tabId),
@@ -131,7 +176,10 @@ const api = {
   // learn where a dropped or pasted file lives on disk.
   pathForFile: (file: File): string | null => {
     try {
-      return webUtils.getPathForFile(file) || null
+      const path = webUtils.getPathForFile(file) || null
+      // Stage 6: main uploads to a server only files it knows were chosen (filesUploadRemote).
+      if (path) ipcRenderer.send(CHANNELS.filesSeen, path)
+      return path
     } catch {
       return null
     }
@@ -142,6 +190,8 @@ const api = {
   closeWindow: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowClose),
   zoom: (step: 'in' | 'out' | 'reset'): Promise<void> => ipcRenderer.invoke(CHANNELS.windowZoom, step),
   reloadWindow: (): Promise<void> => ipcRenderer.invoke(CHANNELS.windowReload),
+  /** Fire-and-forget: an error the window caught in itself, for the log. */
+  reportError: (report: RendererErrorReport): void => ipcRenderer.send(CHANNELS.rendererError, report),
 
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke(CHANNELS.openExternal, url),
 
@@ -166,8 +216,160 @@ const api = {
   onActivateTab: (cb: (id: TabId) => void) => on(CHANNELS.activateTab, cb),
   onSettingsChanged: (cb: (s: AppSettings) => void) => on(CHANNELS.settingsChanged, cb),
   onCommandsChanged: (cb: (e: { tabId: TabId; commands: CommandInfo[] }) => void) =>
-    on(CHANNELS.commandsChanged, cb)
+    on(CHANNELS.commandsChanged, cb),
+
+  // — этап 2: проекты, раскладка, окно-заглушка. `hostId` is for этап 6 (a
+  // folder on another machine); absent, the folder is local.
+  getLayout: (): Promise<LayoutState> => ipcRenderer.invoke(CHANNELS.layoutGet),
+  setLayout: (patch: LayoutPatch): Promise<LayoutState> => ipcRenderer.invoke(CHANNELS.layoutSet, patch),
+  onLayoutChanged: (cb: (l: LayoutState) => void) => on(CHANNELS.layoutChanged, cb),
+  /** A project's past conversations. */
+  projectHistory: (cwd: string, hostId?: string): Promise<SessionSummary[]> =>
+    ipcRenderer.invoke(CHANNELS.projectHistory, cwd, hostId),
+  /** Opens a past conversation of a project in a chat of its own; null when it could not. */
+  openProjectSession: (
+    cwd: string,
+    sessionId: string,
+    title?: string,
+    hostId?: string
+  ): Promise<TabState | null> =>
+    ipcRenderer.invoke(CHANNELS.projectOpenSession, cwd, sessionId, title, hostId),
+  /** «Убрать из списка»: the project leaves the sidebar. */
+  forgetProject: (cwd: string, hostId?: string): Promise<LayoutState> =>
+    ipcRenderer.invoke(CHANNELS.projectForget, cwd, hostId),
+  /** The window that would not start: try it again. */
+  retryRenderer: (): Promise<void> => ipcRenderer.invoke(CHANNELS.rendererRetry),
+  openLogs: (): Promise<void> => ipcRenderer.invoke(CHANNELS.logsOpen),
+
+  // — stage 6
+  /** The Mac application menu (Настройки…): the window does what the key would. */
+  onAppAction: (cb: (id: 'settings' | 'newTab') => void) => on(CHANNELS.appAction, cb),
+
+  // — stage 3: autonomy
+  /** «Остановить таймер», or the person started answering: no auto-answer for this card. */
+  autonomyHold: (tabId: string, cardId: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.autonomyHold, tabId, cardId),
+  /** «Ответить сейчас»: what the running timer would do, done at once. */
+  autonomyAnswerNow: (tabId: string, cardId: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.autonomyAnswerNow, tabId, cardId),
+
+  // — Stage 5: voice
+  voice: {
+    models: (): Promise<VoiceModelsSnapshot> => ipcRenderer.invoke(CHANNELS.voiceModels),
+    download: (id: VoiceModelId): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceDownload, id),
+    cancelDownload: (id: VoiceModelId): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.voiceCancelDownload, id),
+    remove: (id: VoiceModelId): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceDelete, id),
+    begin: (tabId: TabId): Promise<{ session: string } | { error: VoiceErrorCode }> =>
+      ipcRenderer.invoke(CHANNELS.voiceBegin, tabId),
+    end: (session: string): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceEnd, session),
+    audio: (session: string, pcm: Float32Array): void =>
+      ipcRenderer.send(CHANNELS.voiceAudio, session, pcm),
+    openMicSettings: (): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceOpenMicSettings),
+    /** Microsoft's VC++ Redistributable download, for Whisper (I4). */
+    openVcRedist: (): Promise<void> => ipcRenderer.invoke(CHANNELS.voiceOpenVcRedist),
+    onEvent: (cb: (e: VoiceEvent) => void) => on(CHANNELS.voiceEvent, cb),
+    onModelsChanged: (cb: (s: VoiceModelsSnapshot) => void) => on(CHANNELS.voiceModelsChanged, cb)
+  },
+  // — этап 4: сабагенты. Из окна — только id карточки ленты и текст.
+  /** Пишет сабагенту этой карточки через главного агента. */
+  sendToSubagent: (tabId: TabId, cardId: string, text: string): Promise<SubagentSendResult> =>
+    ipcRenderer.invoke(CHANNELS.agentSubagentSend, tabId, cardId, text),
+  /** Останавливает сабагента этой карточки. */
+  stopSubagent: (tabId: TabId, cardId: string): Promise<SubagentStopResult> =>
+    ipcRenderer.invoke(CHANNELS.agentSubagentStop, tabId, cardId),
+
+  // — stage 6: servers over SSH. Handlers come with tasks 15–26; main checks
+  // every argument (sanitize.ts) before it reaches ssh or the relay.
+  listServers: (): Promise<ServerView[]> => ipcRenderer.invoke(CHANNELS.serversList),
+  /** A new or changed server; `password` only with auth 'password' and «Запомнить». */
+  saveServer: (entry: ServerEntry, password?: string): Promise<ServerView[]> =>
+    ipcRenderer.invoke(CHANNELS.serversSave, entry, password),
+  removeServer: (hostId: string): Promise<ServerView[]> => ipcRenderer.invoke(CHANNELS.serversRemove, hostId),
+  /** Runs the connection checklist; true when the server is online. */
+  connectServer: (hostId: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.serversConnect, hostId),
+  forgetServerPassword: (hostId: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.serversForgetPassword, hostId),
+  /** The person's answer to a question ssh asked (host key, password…). */
+  answerSshPrompt: (answer: SshPromptAnswer): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.serversPromptAnswer, answer),
+  listServerDir: (
+    hostId: string,
+    path: string
+  ): Promise<{ path: string; entries: FsEntry[]; truncated: boolean }> =>
+    ipcRenderer.invoke(CHANNELS.serversListDir, hostId, path),
+  /** «Открыть здесь»: a chat in that folder of the server; null when it could not. */
+  openServerFolder: (hostId: string, path: string): Promise<TabState | null> =>
+    ipcRenderer.invoke(CHANNELS.serversOpenFolder, hostId, path),
+  /** `claude auth login` on the server; progress comes as onServerLoginProgress. */
+  serverLogin: (hostId: string): Promise<void> => ipcRenderer.invoke(CHANNELS.serversLogin, hostId),
+  serverLoginCode: (hostId: string, code: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.serversLoginCode, hostId, code),
+  /** «Обновить посредник»; `force` — even with agents at work (they restart with the same conversation). */
+  updateRelay: (hostId: string, force: boolean): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.serversUpdateRelay, hostId, force),
+  /** A file for the viewer, here or on the tab's server. */
+  readForViewer: (source: FileSource, tabId: TabId, path: string): Promise<ViewerContent> =>
+    ipcRenderer.invoke(CHANNELS.viewerRead, source, tabId, path),
+  /** A server's file, downloaded and opened with the default program. */
+  downloadAndOpen: (tabId: TabId, path: string): Promise<'opened' | 'revealed' | null> =>
+    ipcRenderer.invoke(CHANNELS.viewerDownloadOpen, tabId, path),
+  /** A local file, uploaded to the tab's server; its path there, or why not. */
+  uploadRemoteFile: (tabId: TabId, localPath: string): Promise<{ remotePath: string } | { error: string }> =>
+    ipcRenderer.invoke(CHANNELS.filesUploadRemote, tabId, localPath),
+  /** A terminal on the tab's server; resolves with its id. */
+  terminalOpen: (tabId: TabId, cols: number, rows: number): Promise<string> =>
+    ipcRenderer.invoke(CHANNELS.terminalOpen, tabId, cols, rows),
+  terminalResize: (termId: string, cols: number, rows: number): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.terminalResize, termId, cols, rows),
+  terminalClose: (termId: string): Promise<void> => ipcRenderer.invoke(CHANNELS.terminalClose, termId),
+  /** The tab's terminal again, after its drawer was unmounted: what it printed meanwhile; null — it is gone. */
+  terminalAttach: (tabId: TabId, termId: string): Promise<string | null> =>
+    ipcRenderer.invoke(CHANNELS.terminalAttach, tabId, termId),
+  /** Fire-and-forget: keystrokes for the terminal. */
+  terminalInput: (termId: string, data: string): void => ipcRenderer.send(CHANNELS.terminalInput, termId, data),
+  onServersChanged: (cb: (servers: ServerView[]) => void) => on(CHANNELS.serversChanged, cb),
+  onSshPrompt: (cb: (prompt: SshPrompt) => void) => on(CHANNELS.serversPrompt, cb),
+  /** An ssh question gone without an answer from here (timeout, ssh exited): drop its dialog. */
+  onSshPromptClosed: (cb: (e: { promptId: string }) => void) => on(CHANNELS.serversPromptClosed, cb),
+  onConnectProgress: (cb: (e: { hostId: string; steps: ConnectStep[] }) => void) =>
+    on(CHANNELS.serversConnectProgress, cb),
+  onServerLoginProgress: (
+    cb: (e: {
+      hostId: string
+      url?: string
+      state: 'starting' | 'waitingCode' | 'checking' | 'done' | 'failed'
+      email?: string
+      error?: string
+    }) => void
+  ) => on(CHANNELS.serversLoginProgress, cb),
+  onTerminalData: (cb: (e: { termId: string; data: string }) => void) => on(CHANNELS.terminalData, cb),
+  onTerminalExit: (cb: (e: { termId: string; exitCode: number }) => void) => on(CHANNELS.terminalExit, cb),
+  // — этап 7: шаблоны, Git, поиск по истории
+  templatesList: (): Promise<PromptTemplate[]> => ipcRenderer.invoke(CHANNELS.templatesList),
+  /** The saved template; null when main refused the draft. */
+  templatesSave: (d: TemplateDraft): Promise<PromptTemplate | null> =>
+    ipcRenderer.invoke(CHANNELS.templatesSave, d),
+  /** How many were saved. */
+  templatesSaveMany: (ds: TemplateDraft[]): Promise<number> => ipcRenderer.invoke(CHANNELS.templatesSaveMany, ds),
+  templatesDelete: (id: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.templatesDelete, id),
+  onTemplatesChanged: (cb: (list: PromptTemplate[]) => void) => on(CHANNELS.templatesChanged, cb),
+  /** «Собрать мои шаблоны»: exactly what would be sent, nothing sent yet. */
+  harvestPreview: (excludedProjects: string[]): Promise<HarvestPreview> =>
+    ipcRenderer.invoke(CHANNELS.harvestPreview, excludedProjects),
+  harvestRun: (excludedProjects: string[]): Promise<HarvestOutcome> =>
+    ipcRenderer.invoke(CHANNELS.harvestRun, excludedProjects),
+  harvestCancel: (): Promise<void> => ipcRenderer.invoke(CHANNELS.harvestCancel),
+  /** The window names the tab, never a folder: main knows the tab's folder. */
+  gitStatus: (tabId: string): Promise<GitStatus> => ipcRenderer.invoke(CHANNELS.gitStatus, tabId),
+  gitDiff: (tabId: string, path: string): Promise<GitFileDiff> =>
+    ipcRenderer.invoke(CHANNELS.gitDiff, tabId, path),
+  gitCommit: (tabId: string, paths: string[], message: string): Promise<CommitResult> =>
+    ipcRenderer.invoke(CHANNELS.gitCommit, tabId, paths, message),
+  /** Full-text search over past conversations (Ctrl+K «В разговорах»). */
+  historySearch: (query: string): Promise<HistoryHit[]> => ipcRenderer.invoke(CHANNELS.historySearch, query)
 }
+
 
 export type QclodApi = typeof api
 

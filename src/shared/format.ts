@@ -48,6 +48,13 @@ export function bytes(n: number): string {
   return `${decimal(n / (1024 * 1024))} МБ`
 }
 
+/** A model's size as the voice speaks of it: «232 МБ», «1,3 ГБ» — decimal, as the models' store counts (modelStore.formatSize). */
+export function formatSizeRu(n: number): string {
+  const mb = n / 1e6
+  if (mb < 1000) return `${Math.max(1, Math.round(mb))} МБ`
+  return `${(mb / 1000).toFixed(1).replace('.', ',')} ГБ`
+}
+
 /** The first line of a text, cut to `max` characters with an ellipsis. */
 export function clip(text: string, max = 80): string {
   const line = text.split('\n')[0] ?? ''
@@ -77,6 +84,22 @@ export function clockTime(ms: number, nowMs = Date.now(), withSeconds = true): s
   return `${day}, ${time}`
 }
 
+/**
+ * When a past conversation was last touched, as short as a list row allows:
+ * «14:05» today, «вчера», «12 нояб.» this year, «12.11.2025» before it.
+ */
+export function shortWhen(ms: number, nowMs = Date.now()): string {
+  const at = new Date(ms)
+  const now = new Date(nowMs)
+  const sameDay = (a: Date, b: Date): boolean =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  if (sameDay(at, now)) return at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  if (sameDay(at, yesterday)) return 'вчера'
+  if (at.getFullYear() === now.getFullYear()) return at.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
+  return at.toLocaleDateString('ru-RU')
+}
+
 /** «через 2 ч 15 мин», from a unix timestamp in seconds: when a plan limit resets. */
 export function untilReset(resetsAt: number, nowMs = Date.now()): string {
   const minutes = Math.max(0, Math.round((resetsAt * 1000 - nowMs) / 60000))
@@ -84,4 +107,9 @@ export function untilReset(resetsAt: number, nowMs = Date.now()): string {
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `через ${hours} ч ${minutes % 60} мин`
   return `через ${Math.round(hours / 24)} дн`
+}
+
+/** «$0.0421», «$1.50»: money to the cent from a dollar on, finer below it. */
+export function usd(value: number): string {
+  return `$${value.toFixed(value < 1 ? 4 : 2)}`
 }

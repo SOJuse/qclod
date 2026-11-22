@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pinPlatform } from './platform'
 
 const shell = vi.hoisted(() => ({
   openPath: vi.fn(async (_p: string) => ''),
@@ -19,7 +20,9 @@ vi.mock('node:child_process', async (importOriginal) => ({
 }))
 
 import {
+  buildEditorArgv,
   buildEditorCommand,
+  editorSpawnPosix,
   editorShellArgs,
   isRunnable,
   openInEditor,
@@ -77,7 +80,11 @@ describe('isRunnable', () => {
   })
 })
 
-describe('openPath / revealPath', () => {
+// fileActions is Windows-only by construction: drive-letter long names, explorer.exe, cmd.exe.
+// The real-disk and real-cmd.exe groups below run only there; the pure string tests run anywhere.
+const onWindows = process.platform === 'win32'
+
+describe.skipIf(!onWindows)('openPath / revealPath', () => {
   test('openPath для .exe показывает в проводнике, не запускает', async () => {
     const p = file('setup.exe')
     expect(await openPath(p)).toBe('revealed')
@@ -144,6 +151,7 @@ describe('openPath / revealPath', () => {
   // An 8.3 name (PAYLOA~1.TXT) hides the real extension (.txtzz): the check
   // must look at the long name Windows will actually open.
   const shortName = (() => {
+    if (!onWindows) return null
     const long = file('payload-longname.txtzz')
     const out = spawnSync('cmd.exe', ['/d', '/s', '/c', `"for %I in ("${long}") do @echo %~sI"`], {
       windowsVerbatimArguments: true,
@@ -243,7 +251,7 @@ describe('buildEditorCommand', () => {
  * The editor here is node printing its argv, started through the very cmd.exe
  * line openInEditor would run. What it prints is what an editor would get.
  */
-describe('строка редактора через настоящий cmd.exe', () => {
+describe.skipIf(!onWindows)('строка редактора через настоящий cmd.exe', () => {
   const script = join(DIR, 'argv.js')
   writeFileSync(script, 'console.log(JSON.stringify(process.argv.slice(2)))\n')
   const editor = `"${process.execPath}" "${script}"`
@@ -307,6 +315,8 @@ describe('строка редактора через настоящий cmd.exe'
 })
 
 describe('openInEditor', () => {
+  pinPlatform('win32', { beforeEach, afterEach })
+
   test('запускает cmd.exe с готовой строкой, отвязанно и без окна', () => {
     expect(openInEditor('code -g {path}:{line}', { path: 'C:\\a b\\x.ts', line: 3 })).toBeNull()
     expect(spawn).toHaveBeenCalledTimes(1)
@@ -325,5 +335,120 @@ describe('openInEditor', () => {
   test('пустой шаблон — ничего не запускается', () => {
     expect(openInEditor('   ', { path: 'C:\\a\\x.ts' })).toBeNull()
     expect(spawn).not.toHaveBeenCalled()
+  })
+})
+
+// macOS: the same promises as the Windows groups above, through shell.openPath / open / direct spawn.
+describe('macOS: buildEditorArgv / editorSpawnPosix', () => {
+  const target = { path: '/Users/me/my proj/a b.ts', line: 3, column: 5 }
+
+  test('слова, кавычки и подстановка без оболочки', () => {
+    expect(buildEditorArgv('code -g "{path}":{line}:{column}', target)).toEqual([
+      'code', '-g', '/Users/me/my proj/a b.ts:3:5'
+    ])
+    expect(buildEditorArgv("zed '{path}:{line}'", target)).toEqual(['zed', '/Users/me/my proj/a b.ts:3'])
+  })
+
+  test('символы оболочки в пути остаются обычным текстом', () => {
+    const evil = { path: '/tmp/a&echo INJECTED;$(x)`y`|z.ts' }
+    expect(buildEditorArgv('ed {path}', evil)).toEqual(['ed', evil.path])
+  })
+
+  test('непарная кавычка — сообщение пользователю', () => {
+    expect(() => buildEditorArgv('code "{path}', target)).toThrow(/кавычк/)
+  })
+
+  test('.app идёт через open -a, остальное — напрямую', () => {
+    expect(editorSpawnPosix(['Visual Studio Code.app', '/x.ts'])).toEqual({
+      cmd: 'open',
+      args: ['-a', 'Visual Studio Code.app', '/x.ts']
+    })
+    expect(editorSpawnPosix(['code', '-g', '/x.ts:1'])).toEqual({ cmd: 'code', args: ['-g', '/x.ts:1'] })
+    expect(editorSpawnPosix([])).toBeNull()
+  })
+})
+
+describe('macOS: openInEditor', () => {
+  pinPlatform('darwin', { beforeEach, afterEach })
+
+  test('запускает редактор напрямую, без cmd.exe, отвязанно', () => {
+    expect(openInEditor('code -g {path}:{line}', { path: '/Users/me/a b.ts', line: 3 })).toBeNull()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    const [cmd, args, opts] = spawn.mock.calls[0]!
+    expect(cmd).toBe('code')
+    expect(args).toEqual(['-g', '/Users/me/a b.ts:3'])
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+    expect((opts as { env: Record<string, string> }).env['PATH']).toContain('/opt/homebrew/bin')
+  })
+
+  test('приложение .app — через open -a', () => {
+    openInEditor('"Sublime Text.app" {path}', { path: '/Users/me/a.ts' })
+    const [cmd, args] = spawn.mock.calls[0]!
+    expect(cmd).toBe('open')
+    expect(args).toEqual(['-a', 'Sublime Text.app', '/Users/me/a.ts'])
+  })
+
+  test('пустой шаблон и непарная кавычка ничего не запускают', () => {
+    expect(openInEditor('  ', { path: '/a.ts' })).toBeNull()
+    expect(openInEditor('code "{path}', { path: '/a.ts' })).toMatch(/кавычк/)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  test('revealPath показывает в Finder', () => {
+    revealPath('/Users/me/a.md')
+    expect(shell.showItemInFolder).toHaveBeenCalledWith('/Users/me/a.md')
+  })
+})
+
+describe.skipIf(onWindows)('macOS: openPath на настоящем диске', () => {
+  pinPlatform('darwin', { beforeEach, afterEach })
+
+  test.each(['setup.exe', 'run.sh', 'x.command', 'a.py', 'page.html', 'w.docx', 'noext'])(
+    '%s — только показывается в Finder',
+    async (n) => {
+      const p = file(n)
+      expect(await openPath(p)).toBe('revealed')
+      expect(shell.openPath).not.toHaveBeenCalled()
+      expect(shell.showItemInFolder).toHaveBeenCalledWith(p)
+    }
+  )
+
+  test.each(['a.ts', 'notes.md', 'pic.png', 'doc.pdf'])('%s — открывается программой по умолчанию', async (n) => {
+    const p = file(n)
+    expect(await openPath(p)).toBe('opened')
+    expect(shell.openPath).toHaveBeenCalledWith(p)
+  })
+
+  test('ссылка notes.md на скрипт судится по цели', async () => {
+    const target = file('real.sh')
+    const link = join(DIR, 'notes-link.md')
+    symlinkSync(target, link)
+    expect(await openPath(link)).toBe('revealed')
+    expect(shell.openPath).not.toHaveBeenCalled()
+  })
+
+  test('папка открывается, а папка Thing.app — только показывается', async () => {
+    const d = join(DIR, 'plain dir')
+    mkdirSync(d, { recursive: true })
+    expect(await openPath(d)).toBe('opened')
+    expect(shell.openPath).toHaveBeenCalledWith(d)
+    shell.openPath.mockClear()
+    const app = join(DIR, 'Thing.app')
+    mkdirSync(app, { recursive: true })
+    expect(await openPath(app)).toBe('revealed')
+    expect(shell.openPath).not.toHaveBeenCalled()
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(app)
+  })
+
+  test('файла нет — показывается', async () => {
+    expect(await openPath(join(DIR, 'нет.md'))).toBe('revealed')
+    expect(shell.openPath).not.toHaveBeenCalled()
+  })
+
+  test('нет программы для файла — показывается в Finder', async () => {
+    const p = file('b.txt')
+    shell.openPath.mockImplementation(async () => 'no app')
+    expect(await openPath(p)).toBe('revealed')
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(p)
   })
 })

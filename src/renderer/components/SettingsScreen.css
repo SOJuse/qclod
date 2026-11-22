@@ -75,6 +75,33 @@
   accent-color: var(--accent);
 }
 
+.settings-toggle input:disabled,
+.settings-toggle input:disabled + span {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* What a setting does, under it, in the column's quiet voice. */
+.settings-hint {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+  color: var(--text-faint);
+}
+
+/* Minutes and their unit: a short number, not a path-wide field. */
+.settings-minutes {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.settings-field .settings-minutes .field {
+  width: 72px;
+}
+
 /* A section that could not be read: the notice sits in the column, not centred. */
 .settings-group .state-view {
   margin: 0;
@@ -146,4 +173,71 @@
 /* Forgetting a rule: the cross turns red, nothing else does. */
 .settings-rules .btn:hover svg {
   color: var(--status-critical);
+}
+
+/* Sections: a column of names on the left, the open section on the right. */
+.sheet.settings {
+  width: min(760px, 100%);
+  height: min(560px, 100%);
+}
+
+.settings-layout {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.settings-nav {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 180px;
+  padding: var(--space-3);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.settings-nav-item {
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.settings-nav-item:hover {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.settings-nav-item[aria-current='page'] {
+  background: var(--accent-fill);
+  color: var(--text);
+}
+
+.settings-section {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-section .settings-group:first-child {
+  padding-top: var(--space-2);
+}
+
+.settings-group > .settings-about-button {
+  margin-top: var(--space-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav-item {
+    transition: none;
+  }
 }

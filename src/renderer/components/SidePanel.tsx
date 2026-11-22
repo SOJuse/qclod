@@ -1,24 +1,54 @@
-import type { LimitWindow, McpServerInfo, PanelData, RemoteInfo, SubagentState } from '../../shared/types'
-import { plural, untilReset } from '../../shared/format'
+import { useEffect, useRef, useState } from 'react'
+import type { ServerView } from '../../shared/types'
+import { ServerAccount } from './servers/ServerLoginDialog'
+import { ChevronDown, ChevronRight } from 'lucide-react'
+import type { LimitWindow, McpServerInfo, PanelData, RemoteInfo } from '../../shared/types'
+import { plural, untilReset, usd } from '../../shared/format'
 import { contextLevel } from '../chat/contextLevel'
-import { PanelRightClose } from 'lucide-react'
 import { LevelIcon, levelLabel } from '../ui/icons'
-import { hint } from '../app/shortcuts'
 import { ContextBreakdown } from './ContextBreakdown'
-import { AGENT_STATE_LABEL } from './agentState'
 import { RemoteSection } from './RemoteSection'
 import '../ui/meter.css'
 import './SidePanel.css'
 
+/** Marks the pane's panel button: a press on it is not a click «past» the drawer. */
+export const PANEL_TOGGLE_ATTR = 'data-panel-toggle'
+
 interface Props {
   data: PanelData
   started: boolean
-  onClose: () => void
-  /** Subagents this session has run, newest last. */
-  agents: AgentRun[]
   /** Remote Control of the tab the panel shows. */
   remote: RemoteInfo
   onRemote: (enabled: boolean) => void
+  /** Beside the conversation, or slid out over it in a narrow pane. */
+  mode: 'docked' | 'drawer'
+  /** The pane is the active one: a window-wide Esc is its alone. */
+  active: boolean
+  /** The drawer asks to close: Esc, or a press outside it. */
+  onClose: () => void
+  /** Stage 6: a server chat — the server and its Claude account lead the panel. */
+  server?: ServerView | undefined
+  onServerLogin?: () => void
+}
+
+/**
+ * Whether an Esc closes this drawer (S2-R23 а). Only the active pane's — the
+ * other halves keep theirs — or the drawer the key was pressed inside. A key
+ * someone already took is left alone: an open list closes first, and Esc in
+ * the input line interrupts the agent (keyPrecedence: `interrupt` takes it).
+ */
+export function drawerTakesEsc({
+  key,
+  defaultPrevented,
+  active,
+  inside
+}: {
+  key: string
+  defaultPrevented: boolean
+  active: boolean
+  inside: boolean
+}): boolean {
+  return key === 'Escape' && !defaultPrevented && (active || inside)
 }
 
 const MCP_LABEL: Record<McpServerInfo['status'], string> = {
@@ -30,61 +60,63 @@ const MCP_LABEL: Record<McpServerInfo['status'], string> = {
   disabled: 'выключен'
 }
 
-export interface AgentRun {
-  id: string
-  name: string
-  task: string
-  state: SubagentState
-  tokens?: number
-  durationMs?: number
-  toolCalls?: number
-  lastTool?: string
-  summary?: string
-}
-
-
-function shortDuration(ms: number): string {
-  const total = Math.round(ms / 1000)
-  if (total < 60) return `${total} с`
-  const minutes = Math.floor(total / 60)
-  return total % 60 === 0 ? `${minutes} мин` : `${minutes} мин ${total % 60} с`
-}
-
-function shortNumber(value: number): string {
-  if (value < 1000) return String(value)
-  if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`
-  return `${(value / 1_000_000).toFixed(1)}M`
-}
-
-function money(value: number): string {
-  return `$${value.toFixed(value < 1 ? 4 : 2)}`
+/** What needs the person comes first; the connected ones fold into one line. */
+const MCP_ORDER: Record<McpServerInfo['status'], number> = {
+  failed: 0,
+  'needs-auth': 1,
+  connecting: 2,
+  pending: 3,
+  disabled: 4,
+  connected: 5
 }
 
 /**
- * The right-hand panel: what this session costs, how much room is left, and
- * what is plugged into it.
+ * A pane's right-hand panel (spec E5: each half of a split has its own):
+ * how much room is left, what the plan allows, what is plugged in, and the
+ * session it all belongs to.
  *
  * Every number here has a named source (spec 6.5). Where there is no number
  * yet the panel says so rather than showing a confident zero — the difference
  * between «nothing has happened» and «it is zero» matters to someone deciding
- * whether to keep going.
+ * whether to keep going. Subagents are not here: the pane's «Агенты» layer
+ * shows them (этап 4).
  */
-export function SidePanel({ data, started, agents, remote, onRemote, onClose }: Props): JSX.Element {
-  // Model, effort and mode are switched in the status line under the input;
-  // the panel names the model and leaves the switching there.
+export function SidePanel({ data, started, remote, onRemote, mode, active, onClose, server, onServerLogin }: Props): JSX.Element {
+  const self = useRef<HTMLElement | null>(null)
+
+  // A drawer is out of the way at once: Esc, or a press anywhere outside it.
+  useEffect(() => {
+    if (mode !== 'drawer') return
+    const onKey = (ev: KeyboardEvent): void => {
+      const inside = ev.target instanceof Node && self.current?.contains(ev.target) === true
+      if (drawerTakesEsc({ key: ev.key, defaultPrevented: ev.defaultPrevented, active, inside })) onClose()
+    }
+    const onPress = (ev: PointerEvent): void => {
+      const target = ev.target as Element | null
+      if (!target || self.current?.contains(target)) return
+      // The pane's own panel button closes it by itself.
+      if (target.closest?.(`[${PANEL_TOGGLE_ATTR}]`)) return
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onPress)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onPress)
+    }
+  }, [mode, active, onClose])
+
   const chosen = data.models.find((m) => m.value === data.model)
-  // A bridge that is on, or trying to be, leads the panel; off, it waits at the end.
+  // A bridge that is on, or trying to be, leads the panel: its link and QR are what is wanted then.
   const remoteSection = <RemoteSection remote={remote} onToggle={onRemote} />
   const remoteFirst = remote.state !== 'off'
   return (
-    <aside className="panel" data-testid="side-panel">
-      <header className="panel-head">
-        <span>Сессия</span>
-        <button type="button" data-testid="panel-close" aria-label="Скрыть панель" title={hint('Скрыть панель', 'togglePanel')} onClick={onClose}>
-          <PanelRightClose size={16} aria-hidden="true" />
-        </button>
-      </header>
-
+    <aside className="panel" data-testid="side-panel" data-mode={mode} ref={self} aria-label="Панель сессии">
+      {server && (
+        <Section title="Сервер">
+          <ServerAccount server={server} onLogin={onServerLogin ?? (() => undefined)} />
+        </Section>
+      )}
       {remoteFirst && remoteSection}
 
       <Section title="Контекст">
@@ -112,106 +144,47 @@ export function SidePanel({ data, started, agents, remote, onRemote, onClose }: 
         )}
       </Section>
 
-      <Section title="Расход">
-        {data.cost ? (
-          <div className="panel-line" data-testid="panel-cost">
-            {/* A resumed conversation is counted by the CLI from when it was opened. */}
-            <span>{data.cost.sinceOpen ? 'с момента открытия' : 'за сессию'}</span>
-            <span>{money(data.cost.session)}</span>
-          </div>
-        ) : (
-          <Empty started={started} />
-        )}
-      </Section>
-
-      <Section title="Лимиты подписки">
+      <Section title="Лимиты">
         {data.limits.fiveHour || data.limits.sevenDay ? (
           <div data-testid="panel-limits">
             <Limit label="5 часов" window={data.limits.fiveHour} />
-            <Limit label="7 дней" window={data.limits.sevenDay} />
+            <Limit label="Неделя" window={data.limits.sevenDay} />
           </div>
         ) : (
           <Empty started={started} />
         )}
       </Section>
 
-      <Section title="Модель">
-        {data.model ? (
-          <div className="panel-line" data-testid="panel-model">
-            <span>{chosen?.displayName ?? data.model}</span>
-          </div>
-        ) : started ? (
-          // Asked for at start; the answer is a moment away, not a turn away.
-          <div className="panel-line" data-testid="panel-model">
-            <span>…</span>
-          </div>
-        ) : (
-          <Empty started={started} />
-        )}
+      <Section title="MCP">
+        {data.mcp.length > 0 ? <McpList servers={data.mcp} /> : <Empty started={started} text="Серверов нет" />}
       </Section>
 
-      <Section title="Агенты">
-        {agents.length === 0 ? (
-          <Empty started={started} text="Агентов нет" />
-        ) : (
-          <ul className="panel-agents" data-testid="panel-agents">
-            {agents.map((agent) => (
-              <li key={agent.id} className={`is-${agent.state}`}>
-                <div className="panel-line">
-                  <span className="panel-agent-kind">{agent.name}</span>
-                  <span className="panel-dim">
-                    {AGENT_STATE_LABEL[agent.state]}
-                  </span>
-                </div>
-                <div className="panel-agent-task">{agent.task}</div>
-                {agent.state === 'running' ? (
-                  (agent.lastTool || agent.toolCalls) && (
-                    <div className="panel-line panel-dim panel-agent-stats">
-                      <span>{agent.lastTool ?? ''}</span>
-                      <span>{agent.toolCalls ? `${agent.toolCalls} ${plural(agent.toolCalls, 'вызов', 'вызова', 'вызовов')}` : ''}</span>
-                    </div>
-                  )
-                ) : agent.state === 'failed' ? (
-                  agent.summary && <div className="panel-dim panel-agent-stats">{agent.summary}</div>
-                ) : (
-                  (agent.durationMs || agent.tokens) && (
-                    <div className="panel-line panel-dim panel-agent-stats">
-                      <span>{agent.durationMs ? shortDuration(agent.durationMs) : ''}</span>
-                      <span>{agent.tokens ? `${shortNumber(agent.tokens)} токенов` : ''}</span>
-                    </div>
-                  )
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
+      {!remoteFirst && remoteSection}
 
-      <Section title="MCP и плагины">
-        {data.mcp.length > 0 ? (
-          <ul className="panel-mcp" data-testid="panel-mcp">
-            {data.mcp.map((server) => (
-              <li key={server.name} className={`is-${server.status}`}>
-                <span className="panel-mcp-dot" aria-hidden />
-                <span className="panel-mcp-name">{server.name}</span>
-                <span className="panel-dim">{MCP_LABEL[server.status] ?? server.status}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <Empty started={started} text="Серверов нет" />
-        )}
-      </Section>
-
-      {data.projectSettings && (
-        <Section title="Настройки этой папки">
-          <div className="panel-project" data-testid="panel-project-settings">
-            {data.projectSettings.hooks > 0 && (
-              <div className="panel-line">
-                <span>хуков</span>
-                <span>{data.projectSettings.hooks}</span>
-              </div>
+      {/* One row, not a section: what the session runs on and what it has cost. */}
+      <div className="panel-session" data-testid="panel-session">
+        <div className="panel-session-title">Сессия</div>
+        {data.model || started ? (
+          <div className="panel-line">
+            {/* Asked for at start; the answer is a moment away, not a turn away. */}
+            <span data-testid="panel-model">{data.model ? (chosen?.displayName ?? data.model) : '…'}</span>
+            {data.cost && (
+              // A resumed conversation is counted by the CLI from when it was opened.
+              <span data-testid="panel-cost" className="panel-dim" title={data.cost.sinceOpen ? 'С момента открытия' : 'За сессию'}>
+                {usd(data.cost.session)}
+              </span>
             )}
+          </div>
+        ) : (
+          <Empty started={started} />
+        )}
+        {data.projectSettings && (
+          <div className="panel-project" data-testid="panel-project-settings">
+            <div className="panel-line">
+              <span>
+                {`Настройки проекта: ${data.projectSettings.hooks} ${plural(data.projectSettings.hooks, 'хук', 'хука', 'хуков')}`}
+              </span>
+            </div>
             {data.projectSettings.mcpServers.length > 0 && (
               <div className="panel-line">
                 <span>свои MCP</span>
@@ -220,11 +193,52 @@ export function SidePanel({ data, started, agents, remote, onRemote, onClose }: 
             )}
             <p className="panel-note">Загружаются вместе с проектом и работают от вашего имени.</p>
           </div>
-        </Section>
-      )}
-
-      {!remoteFirst && remoteSection}
+        )}
+      </div>
     </aside>
+  )
+}
+
+/** Failed, waiting for a sign-in, connecting — each by name; the connected ones as «N подключено». */
+function McpList({ servers }: { servers: McpServerInfo[] }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const attention = servers
+    .filter((s) => s.status !== 'connected')
+    .sort((a, b) => MCP_ORDER[a.status] - MCP_ORDER[b.status])
+  const connected = servers.filter((s) => s.status === 'connected')
+  return (
+    <div data-testid="panel-mcp">
+      {attention.length > 0 && <McpRows servers={attention} />}
+      {connected.length > 0 && (
+        <>
+          <button
+            type="button"
+            className="panel-mcp-ok"
+            data-testid="panel-mcp-ok"
+            aria-expanded={open}
+            onClick={() => setOpen((was) => !was)}
+          >
+            {open ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
+            <span>{`${connected.length} подключено`}</span>
+          </button>
+          {open && <McpRows servers={connected} />}
+        </>
+      )}
+    </div>
+  )
+}
+
+function McpRows({ servers }: { servers: McpServerInfo[] }): JSX.Element {
+  return (
+    <ul className="panel-mcp">
+      {servers.map((server) => (
+        <li key={server.name} className={`is-${server.status}`}>
+          <span className="panel-mcp-dot" aria-hidden />
+          <span className="panel-mcp-name">{server.name}</span>
+          <span className="panel-dim">{MCP_LABEL[server.status] ?? server.status}</span>
+        </li>
+      ))}
+    </ul>
   )
 }
 

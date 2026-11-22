@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { APP_ACTIONS, hint, resolveAppShortcut, tabAtTarget } from '@renderer/app/shortcuts'
+import { APP_ACTIONS, actionKeys, formatKeys, hint, resolveAppShortcut, tabAtTarget } from '@renderer/app/shortcuts'
 import type { KeyLike } from '@renderer/input/keyPrecedence'
 
 function key(partial: Partial<KeyLike>): KeyLike {
@@ -80,6 +80,11 @@ describe('resolveAppShortcut', () => {
     ).toEqual({ id: 'toggleSplit' })
   })
 
+  test('Ctrl+B на русской раскладке (и) — показать или скрыть боковую панель', () => {
+    expect(resolveAppShortcut(key({ key: 'и', code: 'KeyB', ctrlKey: true }))).toEqual({ id: 'toggleSidebar' })
+    expect(resolveAppShortcut(key({ key: 'B', code: 'KeyB', ctrlKey: true, shiftKey: true }))).toBeNull()
+  })
+
   test('буква без Ctrl — ничего', () =>
     expect(resolveAppShortcut(key({ key: 't', code: 'KeyT' }))).toBeNull())
 
@@ -97,7 +102,7 @@ describe('resolveAppShortcut', () => {
 
 describe('hint', () => {
   test('подпись и сочетание', () => {
-    expect(hint('Новая вкладка', 'newTab')).toBe('Новая вкладка (Ctrl+T)')
+    expect(hint('Новый чат', 'newTab')).toBe('Новый чат (Ctrl+T)')
     expect(hint('Настройки', 'settings')).toBe('Настройки (Ctrl+,)')
   })
   test('без id или у действия без сочетания — просто подпись', () => {
@@ -112,13 +117,29 @@ describe('APP_ACTIONS', () => {
     expect(new Set(ids).size).toBe(ids.length)
     expect(APP_ACTIONS.find((a) => a.id === 'closeTab')).toEqual({
       id: 'closeTab',
-      label: 'Закрыть вкладку',
-      keys: 'Ctrl+W'
+      label: 'Закрыть чат',
+      keys: 'Mod+W'
     })
     expect(APP_ACTIONS.find((a) => a.id === 'cycleMode')?.keys).toBe('Shift+Tab')
     for (const id of ['zoomIn', 'zoomOut', 'zoomReset'] as const) {
       expect(APP_ACTIONS.some((a) => a.id === id)).toBe(true)
     }
+  })
+})
+
+describe('APP_ACTIONS: чаты, история, боковая панель и сплит', () => {
+  test('подписи и клавиши — строками плана', () => {
+    const row = (id: string) => {
+      const found = APP_ACTIONS.find((a) => a.id === id)
+      return found && { label: found.label, keys: found.keys }
+    }
+    expect(row('newTab')).toEqual({ label: 'Новый чат', keys: 'Mod+T' })
+    expect(row('closeTab')).toEqual({ label: 'Закрыть чат', keys: 'Mod+W' })
+    expect(row('nextTab')).toEqual({ label: 'Следующий чат', keys: 'Ctrl+Tab' })
+    expect(row('prevTab')).toEqual({ label: 'Предыдущий чат', keys: 'Ctrl+Shift+Tab' })
+    expect(row('history')).toEqual({ label: 'Прошлые разговоры', keys: 'Mod+H' })
+    expect(row('toggleSidebar')).toEqual({ label: 'Показать или скрыть боковую панель', keys: 'Mod+B' })
+    expect(row('toggleSplit')).toEqual({ label: 'Сплит: открыть рядом или закрыть', keys: 'Mod+Shift+Enter' })
   })
 })
 
@@ -130,4 +151,47 @@ describe('tabAtTarget', () => {
     expect(tabAtTarget(ids, 4)).toBeNull()
   })
   test('нет вкладок — ничего', () => expect(tabAtTarget([], 8)).toBeNull())
+})
+
+describe('formatKeys', () => {
+  test('Mac: глифы без плюсов; Windows: как раньше', () => {
+    expect(formatKeys('Mod+T', 'darwin')).toBe('⌘T')
+    expect(formatKeys('Mod+T', 'win32')).toBe('Ctrl+T')
+    expect(formatKeys('Mod+Shift+Enter', 'darwin')).toBe('⌘⇧↩')
+    expect(formatKeys('Mod+Shift+Enter', 'win32')).toBe('Ctrl+Shift+Enter')
+    expect(formatKeys('Ctrl+Tab', 'darwin')).toBe('⌃Tab')
+    expect(formatKeys('Ctrl+Tab', 'win32')).toBe('Ctrl+Tab')
+    expect(formatKeys('Shift+Tab', 'darwin')).toBe('⇧Tab')
+    expect(formatKeys('Mod+=', 'darwin')).toBe('⌘=')
+  })
+  test('подсказки и история на Mac', () => {
+    expect(hint('Новый чат', 'newTab', 'darwin')).toBe('Новый чат (⌘T)')
+    expect(actionKeys('history', 'darwin')).toBe('⌘Y')
+    expect(actionKeys('history', 'win32')).toBe('Ctrl+H')
+  })
+})
+
+describe('resolveAppShortcut на Mac', () => {
+  test('⌘T — новая вкладка, на Windows тот же ввод — ничего', () => {
+    const ev = key({ key: 't', code: 'KeyT', metaKey: true })
+    expect(resolveAppShortcut(ev, 'darwin')).toEqual({ id: 'newTab' })
+    expect(resolveAppShortcut(ev, 'win32')).toBeNull()
+  })
+  test('⌃T на Mac не наше', () =>
+    expect(resolveAppShortcut(key({ key: 't', code: 'KeyT', ctrlKey: true }), 'darwin')).toBeNull())
+  test('⌘H скрывает приложение, ⌘Y — история', () => {
+    expect(resolveAppShortcut(key({ key: 'h', code: 'KeyH', metaKey: true }), 'darwin')).toBeNull()
+    expect(resolveAppShortcut(key({ key: 'y', code: 'KeyY', metaKey: true }), 'darwin')).toEqual({ id: 'history' })
+    expect(resolveAppShortcut(key({ key: 'y', code: 'KeyY', ctrlKey: true }), 'win32')).toBeNull()
+  })
+  test('⌃Tab — следующий чат, ⌘Tab — нет', () => {
+    expect(resolveAppShortcut(key({ key: 'Tab', code: 'Tab', ctrlKey: true }), 'darwin')).toEqual({ id: 'nextTab' })
+    expect(resolveAppShortcut(key({ key: 'Tab', code: 'Tab', metaKey: true }), 'darwin')).toBeNull()
+  })
+  test('русская раскладка: ⌘Л — палитра', () =>
+    expect(resolveAppShortcut(key({ key: 'л', code: 'KeyK', metaKey: true }), 'darwin')).toEqual({ id: 'actions' }))
+  test('⌘⇧↩ — сплит, ⌘9 — последняя вкладка', () => {
+    expect(resolveAppShortcut(key({ key: 'Enter', code: 'Enter', metaKey: true, shiftKey: true }), 'darwin')).toEqual({ id: 'toggleSplit' })
+    expect(resolveAppShortcut(key({ key: '9', code: 'Digit9', metaKey: true }), 'darwin')).toEqual({ id: 'tabAt', index: 8 })
+  })
 })

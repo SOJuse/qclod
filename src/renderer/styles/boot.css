@@ -1,0 +1,32 @@
+/* The loading screen: the first thing in #root, replaced by React's first render.
+   No background of its own: the window's backgroundColor (WINDOW_BG) is under it. */
+.boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  height: 100%;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+}
+
+.boot img {
+  animation: boot-breathe 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes boot-breathe {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot img {
+    animation: none;
+  }
+}

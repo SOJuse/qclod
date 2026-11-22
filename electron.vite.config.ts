@@ -12,22 +12,43 @@ export default defineConfig(({ mode }) => {
       plugins: [externalizeDepsPlugin()],
       define,
       build: {
-        rollupOptions: { input: { index: resolve(__dirname, 'src/main/index.ts') } }
+        // voiceWorker.js is the voice process (utilityProcess.fork in index.ts);
+        // askpass.js: what the Mac's askpass.sh runs (src/main/ssh/askpassEntry.ts).
+        rollupOptions: {
+          input: {
+            index: resolve(__dirname, 'src/main/index.ts'),
+            voiceWorker: resolve(__dirname, 'src/main/voice/worker.ts'),
+            askpass: resolve(__dirname, 'src/main/ssh/askpassEntry.ts')
+
+          }
+        }
       }
     },
     preload: {
       plugins: [externalizeDepsPlugin()],
       define,
       build: {
+        // Minified in a release, so its comments — which name the seams it
+        // reads in the e2e build — do not ship (npm run check:seams).
+        minify: mode === 'production',
         rollupOptions: { input: { index: resolve(__dirname, 'src/preload/index.ts') } }
       }
     },
     renderer: {
       root: resolve(__dirname, 'src/renderer'),
       plugins: [react()],
+      define,
       build: {
-        rollupOptions: { input: { index: resolve(__dirname, 'src/renderer/index.html') } }
+        // fallback.html is the page of a window that will not start: a second,
+        // separate entry, so it does not depend on the bundle that failed.
+        rollupOptions: {
+          input: {
+            index: resolve(__dirname, 'src/renderer/index.html'),
+            fallback: resolve(__dirname, 'src/renderer/fallback.html')
+          }
+        }
       }
     }
   }
 })
+

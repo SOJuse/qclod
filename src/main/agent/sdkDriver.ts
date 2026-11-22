@@ -1,4 +1,5 @@
 import type {
+  CanUseTool,
   query as queryFn,
   SDKControlGetUsageResponse
 } from '@anthropic-ai/claude-agent-sdk'
@@ -15,7 +16,14 @@ import {
   type UserInput
 } from '../../shared/types'
 import { availabilityFrom, safeRemoteUrl, type RemoteAvailability } from '../../shared/remote'
-import type { AgentDriver, ContextUsage, DriverOptions, RemoteLink } from './driver'
+import type {
+  AgentDriver,
+  ContextUsage,
+  DriverOptions,
+  InterruptReceipt,
+  RemoteLink,
+  SendOptions
+} from './driver'
 import { toPermissionContext } from './permissionContext'
 
 type RemoteCapable = {
@@ -49,7 +57,7 @@ function toLimitWindow(window: UsageWindow): LimitWindow | null {
  * accepts them directly, and v1's write-to-temp-file-then-@-mention dance was
  * both slower and one more thing to clean up (spec 6.3).
  */
-function toSdkMessage(input: UserInput): Record<string, unknown> {
+export function toSdkMessage(input: UserInput, opts?: SendOptions): Record<string, unknown> {
   const images = input.attachments.filter((a) => a.kind === 'image')
 
   const content: Array<Record<string, unknown>> = []
@@ -66,7 +74,70 @@ function toSdkMessage(input: UserInput): Record<string, unknown> {
     type: 'user',
     message: { role: 'user', content: content.length > 0 ? content : '' },
     parent_tool_use_id: null,
-    session_id: ''
+    session_id: '',
+    // Typed by the person, not injected by a tool or a hook.
+    origin: { kind: 'human' },
+    timestamp: new Date().toISOString(),
+    ...(opts?.uuid ? { uuid: opts.uuid } : {}),
+    ...(opts?.priority ? { priority: opts.priority } : {})
+  }
+}
+
+/**
+ * The `options` of `query()`: one place, so the server-side broker (stage 6)
+ * starts the SDK with exactly the same subagent fields.
+ */
+export function sdkQueryOptions(
+  options: DriverOptions,
+  canUseTool: CanUseTool
+): Record<string, unknown> {
+  return {
+    cwd: options.cwd,
+    pathToClaudeCodeExecutable: options.executablePath,
+    // The user's own CLI, not the one pinned inside the SDK package: it is
+    // the build they are logged into and the one their settings fit.
+    includePartialMessages: true,
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.permissionMode
+      ? { permissionMode: sdkPermissionMode(options.permissionMode) as 'default' }
+      : {}),
+    // Without it the CLI refuses bypassPermissions — at start and on every
+    // later switch — and the refusal used to be swallowed, so «без проверок»
+    // went on asking about everything. It only makes the mode reachable:
+    // Qclod's own confirmation (AgentSession.allowMode) is the gate.
+    allowDangerouslySkipPermissions: true,
+    ...(options.resume ? { resume: options.resume } : {}),
+    // The relay's environment with the login shell's PATH (stage 6); locally
+    // absent, and the SDK passes on the app's own.
+    ...(options.env ? { env: options.env } : {}),
+    ...(options.extraArgs && Object.keys(options.extraArgs).length > 0
+      ? { extraArgs: options.extraArgs }
+      : {}),
+    // Project settings load with no trust gate — the user's explicit choice,
+    // recorded in spec §5 with its consequence.
+    settingSources: ['user', 'project', 'local'],
+    canUseTool,
+    // Subagents: their text and steps come through the stream, the CLI writes
+    // a one-line progress summary per agent, and the stop button is drawn per
+    // task, so «Стоп» ends the turn and leaves background agents running
+    // (sdk.d.ts). A CLI that does not know a field ignores it.
+    forwardSubagentText: true,
+    agentProgressSummaries: true,
+    perTaskStopAffordance: true
+  }
+}
+
+/** DriverOptions.canUseTool in the SDK's shape. */
+function sdkCanUseTool(options: DriverOptions): CanUseTool {
+  return async (toolName, input, opts) => {
+    const answer = await options.canUseTool(toolName, input, toPermissionContext(opts))
+    // updatedInput is how an AskUserQuestion answer travels
+    // (AskUserQuestionInput.answers in sdk-tools.d.ts). A refusal's
+    // message is what the agent reads: the user's reason, put in words
+    // by the session.
+    return answer.behavior === 'allow'
+      ? { behavior: 'allow', updatedInput: answer.updatedInput ?? input }
+      : { behavior: 'deny', message: answer.message || 'Отклонено в Qclod' }
   }
 }
 
@@ -80,8 +151,14 @@ function toSdkMessage(input: UserInput): Record<string, unknown> {
  * Never exercised by the test suite: every automated run talks to the fixture
  * instead, by project constraint. Keep it thin enough to read.
  */
-export async function createSdkDriver(options: DriverOptions): Promise<AgentDriver> {
-  const { query } = await importEsm<{ query: typeof queryFn }>('@anthropic-ai/claude-agent-sdk')
+export async function createSdkDriver(
+  options: DriverOptions,
+  deps: { query?: typeof queryFn } = {}
+): Promise<AgentDriver> {
+  // The relay (stage 6) hands its statically bundled query(): inside a
+  // single-executable binary there is no package to import at run time.
+  const query =
+    deps.query ?? (await importEsm<{ query: typeof queryFn }>('@anthropic-ai/claude-agent-sdk')).query
 
   const inbox: Array<Record<string, unknown>> = []
   let wake: (() => void) | null = null
@@ -102,37 +179,7 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
 
   const session = query({
     prompt: prompt(),
-    options: {
-      cwd: options.cwd,
-      pathToClaudeCodeExecutable: options.executablePath,
-      // The user's own CLI, not the one pinned inside the SDK package: it is
-      // the build they are logged into and the one their settings fit.
-      includePartialMessages: true,
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.permissionMode
-        ? { permissionMode: sdkPermissionMode(options.permissionMode) as 'default' }
-        : {}),
-      // Without it the CLI refuses bypassPermissions — at start and on every
-      // later switch — and the refusal used to be swallowed, so «без проверок»
-      // went on asking about everything. It only makes the mode reachable:
-      // Qclod's own confirmation (AgentSession.allowMode) is the gate.
-      allowDangerouslySkipPermissions: true,
-      ...(options.resume ? { resume: options.resume } : {}),
-      ...(options.extraArgs && Object.keys(options.extraArgs).length > 0
-        ? { extraArgs: options.extraArgs }
-        : {}),
-      // Project settings load with no trust gate — the user's explicit choice,
-      // recorded in spec §5 with its consequence.
-      settingSources: ['user', 'project', 'local'],
-      canUseTool: async (toolName, input, opts) => {
-        const answer = await options.canUseTool(toolName, input, toPermissionContext(opts))
-        // updatedInput is how an AskUserQuestion answer travels
-        // (AskUserQuestionInput.answers in sdk-tools.d.ts).
-        return answer.behavior === 'allow'
-          ? { behavior: 'allow', updatedInput: answer.updatedInput ?? input }
-          : { behavior: 'deny', message: 'Отклонено в Qclod' }
-      }
-    }
+    options: sdkQueryOptions(options, sdkCanUseTool(options)) as never
   })
 
   // enableRemoteControl is in sdk.mjs but not in sdk.d.ts, so it is looked for.
@@ -150,12 +197,35 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
   return {
     messages: session as AsyncIterable<unknown>,
 
-    send(input: UserInput): void {
-      push(toSdkMessage(input))
+    send(input: UserInput, opts?: SendOptions): void {
+      push(toSdkMessage(input, opts))
     },
 
-    async interrupt(): Promise<void> {
-      await session.interrupt()
+    // cancelAsyncMessage is in sdk.mjs but not on the Query type; an SDK
+    // without it answers null («не умею»), distinct from false («не нашлось»).
+    async cancelQueued(uuid: string): Promise<boolean | null> {
+      const cancel = (
+        session as unknown as { cancelAsyncMessage?: (u: string) => Promise<boolean> }
+      ).cancelAsyncMessage
+      if (typeof cancel !== 'function') return null
+      return await cancel.call(session, uuid)
+    },
+
+    // At runtime interrupt() takes { cancelQueued } and answers
+    // { still_queued, cancelled? }; sdk.d.ts types neither. Old CLIs answer nothing;
+    // one without interrupt_cancel_queued_v1 answers without `cancelled`.
+    async interrupt(opts?: { cancelQueued?: boolean }): Promise<InterruptReceipt | undefined> {
+      const raw = await (
+        session as unknown as {
+          interrupt: (
+            o?: { cancelQueued?: boolean }
+          ) => Promise<{ still_queued?: string[]; cancelled?: string[] } | undefined>
+        }
+      ).interrupt(opts?.cancelQueued ? { cancelQueued: true } : undefined)
+      if (!raw || !Array.isArray(raw.still_queued)) return undefined
+      return Array.isArray(raw.cancelled)
+        ? { stillQueued: raw.still_queued, cancelled: raw.cancelled }
+        : { stillQueued: raw.still_queued }
     },
 
     async setPermissionMode(mode: string): Promise<void> {
@@ -262,6 +332,20 @@ export async function createSdkDriver(options: DriverOptions): Promise<AgentDriv
 
     async stopTask(taskId: string): Promise<void> {
       await session.stopTask(taskId)
+    },
+
+    // backgroundTasks(toolUseId) moves one foreground task to the background;
+    // true when it did. An SDK without it, or one that throws, answers null
+    // («не вышло»), distinct from false («нечего уводить»).
+    async backgroundTask(toolUseId: string): Promise<boolean | null> {
+      const move = (session as unknown as { backgroundTasks?: (id: string) => Promise<boolean> })
+        .backgroundTasks
+      if (typeof move !== 'function') return null
+      try {
+        return (await move.call(session, toolUseId)) === true
+      } catch {
+        return null
+      }
     },
 
     async remoteAvailability(): Promise<RemoteAvailability> {

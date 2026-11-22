@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AgentNotFoundError, resolveExecutable, unwrapShim } from '@main/agent/resolveExecutable'
 import { npmFixture } from './npmFixture'
+import { withPlatform } from './platform'
 
 describe('resolveExecutable', () => {
   test('абсолютный путь к существующему файлу возвращается как есть', () => {
@@ -18,7 +19,9 @@ describe('resolveExecutable', () => {
   test('голое имя находится по PATH', () => {
     const dir = mkdtempSync(join(tmpdir(), 'qclod-bin-'))
     writeFileSync(join(dir, 'myagent.exe'), '', 'utf8')
-    const resolved = resolveExecutable('myagent', { PATH: dir, PATHEXT: '.EXE;.CMD' })
+    const resolved = withPlatform('win32', () =>
+      resolveExecutable('myagent', { PATH: dir, PATHEXT: '.EXE;.CMD' })
+    )
     expect(resolved).toBe(join(dir, 'myagent.exe'))
   })
 
@@ -28,7 +31,7 @@ describe('resolveExecutable', () => {
     const dir = mkdtempSync(join(tmpdir(), 'qclod-bin-'))
     writeFileSync(join(dir, 'dual.cmd'), '', 'utf8')
     writeFileSync(join(dir, 'dual.exe'), '', 'utf8')
-    expect(resolveExecutable('dual', { PATH: dir, PATHEXT: '.CMD;.EXE' })).toBe(
+    expect(withPlatform('win32', () => resolveExecutable('dual', { PATH: dir, PATHEXT: '.CMD;.EXE' }))).toBe(
       join(dir, 'dual.exe')
     )
   })
@@ -36,7 +39,7 @@ describe('resolveExecutable', () => {
   test('имя с уже указанным расширением находится без подбора', () => {
     const dir = mkdtempSync(join(tmpdir(), 'qclod-bin-'))
     writeFileSync(join(dir, 'exact.exe'), '', 'utf8')
-    expect(resolveExecutable('exact.exe', { PATH: dir, PATHEXT: '.EXE' })).toBe(
+    expect(withPlatform('win32', () => resolveExecutable('exact.exe', { PATH: dir, PATHEXT: '.EXE' }))).toBe(
       join(dir, 'exact.exe')
     )
   })
@@ -57,7 +60,9 @@ describe('resolveExecutable', () => {
   })
 })
 
-describe('npm-установка Claude Code', () => {
+// npm's .cmd wrapper, PATHEXT, `;` in PATH and backslash targets: all Windows. The wrapper is
+// really read, unwrapped and the exe really started, so this needs the Windows file system.
+describe.skipIf(process.platform !== 'win32')('npm-установка Claude Code', () => {
   const PATHEXT = '.COM;.EXE;.BAT;.CMD'
   const exePath = (root: string): string =>
     join(root, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe')
@@ -132,6 +137,29 @@ describe('npm-установка Claude Code', () => {
     npmFixture(good, 'exe')
     expect(resolveExecutable('claude', { PATH: `${broken};${good}`, PATHEXT })).toBe(
       exePath(good)
+    )
+  })
+})
+
+describe('Mac: обычный исполняемый файл', () => {
+  const onMac = <T>(fn: () => T): T => withPlatform('darwin', fn)
+
+  test('голое имя без расширения находится по PATH', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qclod-macbin-'))
+    writeFileSync(join(dir, 'myagent'), '#!/bin/sh\n', { mode: 0o755 })
+    expect(onMac(() => resolveExecutable('myagent', { PATH: dir }))).toBe(join(dir, 'myagent'))
+  })
+
+  test('рядом .cmd и файл без расширения: берётся файл, .cmd не разворачивается', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qclod-macbin-'))
+    writeFileSync(join(dir, 'claude.cmd'), '@echo off\r\n', 'utf8')
+    writeFileSync(join(dir, 'claude'), '#!/bin/sh\n', { mode: 0o755 })
+    expect(onMac(() => resolveExecutable('claude', { PATH: dir }))).toBe(join(dir, 'claude'))
+  })
+
+  test('ничего нет — AgentNotFoundError', () => {
+    expect(() => onMac(() => resolveExecutable('definitely-not-installed', { PATH: '' }))).toThrow(
+      AgentNotFoundError
     )
   })
 })

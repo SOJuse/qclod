@@ -1,0 +1,68 @@
+/* A server chat's terminal: under the chat, its height a share of the pane (40% at first). */
+.terminal-drawer {
+  --terminal-share: 0.4;
+  flex: 0 0 calc(var(--terminal-share) * 100%);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* Hidden, not closed: the session goes on behind it. */
+.terminal-drawer.is-hidden {
+  display: none;
+}
+
+.terminal-handle {
+  flex: 0 0 auto;
+  height: var(--space-1);
+  cursor: row-resize;
+}
+
+.terminal-handle:hover {
+  background: var(--hover-fill);
+}
+
+.terminal-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.terminal-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-hide {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.terminal-hide:hover {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.terminal-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 var(--space-2) var(--space-2);
+}

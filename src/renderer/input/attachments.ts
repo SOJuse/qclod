@@ -13,8 +13,54 @@ export interface PendingImage {
   error?: string
 }
 
+/**
+ * A file before it is sent. In a server chat (stage 6) it is uploaded at once:
+ * `uploading` while it goes, then `remotePath` — its path on the server, which
+ * the message carries — or `error`, and it does not go.
+ */
+export interface PendingFile {
+  kind: 'file'
+  path: string
+  uploading?: true
+  remotePath?: string
+  error?: string
+}
+
 /** An attachment before it is sent: a path on disk, or an image. */
-export type PendingAttachment = { kind: 'file'; path: string } | PendingImage
+export type PendingAttachment = PendingFile | PendingImage
+
+/** What the chip says while a file goes to the server. */
+export const UPLOADING_TEXT = 'загружаю на сервер…'
+
+/** main's answer for a file of a server chat: its path there, or why not. */
+export type UploadRemote = (path: string) => Promise<{ remotePath: string } | { error: string }>
+
+/**
+ * A server chat's file, uploaded: the chip keeps its local path (what the
+ * person sees) and gets the server's path, or the error — and an errored one
+ * is never sent (materialize).
+ */
+export async function prepareRemoteFile(
+  item: { kind: 'file'; path: string },
+  upload: UploadRemote
+): Promise<PendingAttachment> {
+  try {
+    const out = await upload(item.path)
+    if ('error' in out) return { kind: 'file', path: item.path, error: out.error }
+    return { kind: 'file', path: item.path, remotePath: out.remotePath }
+  } catch (e) {
+    return {
+      kind: 'file',
+      path: item.path,
+      error: `Не удалось загрузить на сервер: ${e instanceof Error ? e.message : String(e)}`
+    }
+  }
+}
+
+/** A server chat's file chip that has not started its upload. */
+export function needsUpload(item: PendingAttachment): item is PendingFile {
+  return item.kind === 'file' && !item.uploading && item.remotePath === undefined && item.error === undefined
+}
 
 /** main's answer for an image: the bounded copy, or why there is none. */
 export type PrepareImage = (dataBase64: string, mediaType: string) => Promise<PreparedImage | { error: string }>
@@ -85,7 +131,9 @@ export function attachmentsFromDrop(
 
 /** An image main has not answered for yet: the message waits for it. */
 export function isPreparing(item: PendingAttachment): boolean {
-  return item.kind === 'image' && item.prepared === undefined && item.error === undefined
+  // A file still going to the server (stage 6) is waited for the same way.
+  if (item.kind === 'file') return item.uploading === true
+  return item.prepared === undefined && item.error === undefined
 }
 
 /**
@@ -117,7 +165,9 @@ export function materialize(pending: PendingAttachment[]): Attachment[] {
   const out: Attachment[] = []
   for (const item of pending) {
     if (item.kind === 'file') {
-      out.push({ kind: 'file', path: item.path })
+      // A server chat's file goes as its path there; one that failed or is still going, not at all.
+      if (item.error !== undefined || item.uploading) continue
+      out.push({ kind: 'file', path: item.remotePath ?? item.path })
       continue
     }
     const prepared = item.prepared
@@ -150,8 +200,9 @@ export function queuedSendStep(
   if (!queued) return 'none'
   if (dead) return 'cancel'
   if (attachments.some(isPreparing)) return 'wait'
-  const images = attachments.filter((a): a is PendingImage => a.kind === 'image')
-  if (images.length === 0 || images.some((a) => a.error !== undefined)) return 'cancel'
+  // What a send can have waited for: an image, or a file uploaded to the server.
+  const waited = attachments.filter((a) => a.kind === 'image' || a.remotePath !== undefined || a.error !== undefined)
+  if (waited.length === 0 || waited.some((a) => a.error !== undefined)) return 'cancel'
   return 'send'
 }
 
@@ -223,5 +274,8 @@ export function attachmentLabel(item: PendingAttachment): string {
     if (p) return p.width > 0 && p.height > 0 ? `Снимок ${p.width}×${p.height}` : 'Снимок'
     return item.error ?? 'Готовлю снимок…'
   }
-  return item.path.split(/[\\/]/).pop() ?? item.path
+  const name = item.path.split(/[\\/]/).pop() ?? item.path
+  if (item.error !== undefined) return item.error
+  if (item.uploading) return `${name} — ${UPLOADING_TEXT}`
+  return name
 }

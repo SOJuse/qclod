@@ -13,10 +13,16 @@ vi.mock('react', async (importOriginal) => {
   return {
     ...actual,
     useState: (init: unknown) => {
+      // Outside a render React says «Invalid hook call» before it throws;
+      // that call is expected here, so its warning is not printed.
+      const warn = console.error
+      console.error = () => undefined
       try {
         return actual.useState(init)
       } catch {
         return [slot.value ?? init, slot.set]
+      } finally {
+        console.error = warn
       }
     }
   }

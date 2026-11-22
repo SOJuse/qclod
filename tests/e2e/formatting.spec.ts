@@ -135,8 +135,7 @@ test('вставленное системой не показывается ка
   try {
     const win = await app.firstWindow()
     await win.locator('[data-testid="composer-input"]').waitFor({ timeout: 15000 })
-    await win.keyboard.press('Control+H')
-    await win.locator('[data-testid="history-item"]').first().click()
+    await win.locator('[data-testid="sidebar-session"]').first().click()
 
     const ribbon = win.locator('[data-testid="ribbon"]')
     await expect(ribbon).toContainText('почини вставку', { timeout: 15000 })
@@ -170,8 +169,7 @@ test('открытая из истории переписка на месте, �
     const input = win.locator('[data-testid="composer-input"]')
     await input.waitFor({ timeout: 15000 })
 
-    await win.keyboard.press('Control+H')
-    await win.locator('[data-testid="history-item"]').first().click()
+    await win.locator('[data-testid="sidebar-session"]').first().click()
 
     const ribbon = win.locator('[data-testid="ribbon"]')
     await expect(ribbon).toContainText('вот что было', { timeout: 15000 })
@@ -238,7 +236,8 @@ test('два разговора рядом: пишешь в один — вто�
 
     await win.locator('[data-testid="toggle-split"]').click()
     await expect(win.locator('[data-testid="chat-pane"]')).toHaveCount(2)
-    await expect(win.locator('[data-testid="pane-title"]')).toHaveCount(2)
+    // Each pane names its chat in its own header.
+    await expect(win.locator('[data-testid="chat-header"] [data-testid="pane-title"]')).toHaveCount(2)
 
     // Typing goes to the focused pane and nowhere else.
     const left = win.locator('[data-testid="chat-pane"]').first()
@@ -255,7 +254,7 @@ test('два разговора рядом: пишешь в один — вто�
   }
 })
 
-test('панель показывает агентов сессии', async () => {
+test('агенты сессии — карточкой в ленте, не в панели', async () => {
   const { app, profile } = await launch({
     steps: [
       {
@@ -269,13 +268,16 @@ test('панель показывает агентов сессии', async () =
   })
   try {
     const win = await app.firstWindow()
-    const agents = win.locator('[data-testid="panel-agents"]')
+    // The panel no longer lists subagents (решение 10; its «Агенты» layer is этап 4): the card does.
+    const agents = win.locator('[data-testid="subagent-head"]')
 
     await expect(agents).toBeVisible({ timeout: 15000 })
     await expect(agents).toContainText('Explore')
     await expect(agents).toContainText('перебрать зависимости')
     await expect(agents).toContainText('12 с')
-    await expect(agents).toContainText('5.0k токенов')
+    await expect(agents).toContainText('5k токенов')
+    await expect(win.locator('[data-testid="side-panel"]')).toBeVisible()
+    await expect(win.locator('[data-testid="panel-agents"]')).toHaveCount(0)
   } finally {
     await close(app, profile)
   }

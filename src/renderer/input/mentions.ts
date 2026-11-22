@@ -7,9 +7,10 @@ export interface MentionQuery {
 /**
  * Finds the `@`-mention the caret is currently inside, if any. An "@" that
  * follows a word character is part of an email address, not a mention.
+ * A caret past the end (the field was just cleared) counts from the end.
  */
 export function findMentionQuery(text: string, caret: number): MentionQuery | null {
-  for (let i = caret - 1; i >= 0; i--) {
+  for (let i = Math.min(caret, text.length) - 1; i >= 0; i--) {
     const ch = text[i]
     if (ch === '@') {
       const before = i > 0 ? text[i - 1] : ' '

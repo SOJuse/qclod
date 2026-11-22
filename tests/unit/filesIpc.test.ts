@@ -6,7 +6,10 @@ import { join } from 'node:path'
 type Handler = (e: unknown, ...args: unknown[]) => unknown
 const handlers = vi.hoisted(() => new Map<string, Handler>())
 vi.mock('electron', () => ({
-  ipcMain: { handle: (channel: string, fn: Handler) => handlers.set(channel, fn) },
+  ipcMain: {
+    handle: (channel: string, fn: Handler) => handlers.set(channel, fn),
+    on: (channel: string, fn: Handler) => handlers.set(channel, fn)
+  },
   dialog: {},
   BrowserWindow: class {},
   shell: { openPath: vi.fn(), showItemInFolder: vi.fn() }
@@ -63,8 +66,12 @@ afterEach(() => {
   delete g.__qclodShellLog
 })
 
+// Files on disk are only understood as Windows drive paths here (PathResolver, fileActions);
+// a real temp dir on macOS never resolves, so these cases need the real Windows file system.
+const winDisk = test.skipIf(process.platform !== 'win32')
+
 describe('files:* каналы', () => {
-  test('resolve: найденное — от папки вкладки, мусор — null на своём месте', async () => {
+  winDisk('resolve: найденное — от папки вкладки, мусор — null на своём месте', async () => {
     const out = await call(CHANNELS.filesResolve, 't1', ['src/a.ts:3', 42, 'нет.ts', 'x'.repeat(2000)])
     expect(out).toEqual([{ raw: 'src/a.ts:3', absPath: A, isDir: false, line: 3 }, null, null, null])
   })
@@ -82,7 +89,7 @@ describe('files:* каналы', () => {
     expect(g.__qclodShellLog).toEqual([])
   })
 
-  test('после resolve действия работают; строка проверяется', async () => {
+  winDisk('после resolve действия работают; строка проверяется', async () => {
     await call(CHANNELS.filesResolve, 't1', ['src/a.ts'])
     expect(await call(CHANNELS.filesOpen, 't1', A)).toBe('opened')
     await call(CHANNELS.filesReveal, 't1', A)
@@ -98,7 +105,7 @@ describe('files:* каналы', () => {
     ])
   })
 
-  test('негодный шаблон редактора возвращает объяснение', async () => {
+  winDisk('негодный шаблон редактора возвращает объяснение', async () => {
     await call(CHANNELS.filesResolve, 't1', ['src/a.ts'])
     editorCommand = 'ed "{path}'
     expect(await call(CHANNELS.filesOpenInEditor, 't1', A)).toMatch(/кавычк/)
@@ -124,7 +131,7 @@ describe('files:* каналы', () => {
     expect(await call(CHANNELS.filesOpen, 't1', A)).toBeNull()
   })
 
-  test('вставленную картинку из pastes можно открыть и показать без resolve, а редактор — нет', async () => {
+  winDisk('вставленную картинку из pastes можно открыть и показать без resolve, а редактор — нет', async () => {
     const pasted = saveImageBuffer(USER_DATA, Buffer.from([1])) as string
     expect(await call(CHANNELS.filesOpen, 't1', pasted)).toBe('opened')
     await call(CHANNELS.filesReveal, 't1', pasted)
@@ -194,7 +201,7 @@ describe('agent:send и files:prepareImage', () => {
 })
 
 describe('pastes: настоящий путь и типы', () => {
-  test('files:open открывает настоящий путь копии, а не написанный окном', async () => {
+  winDisk('files:open открывает настоящий путь копии, а не написанный окном', async () => {
     const pasted = saveImageBuffer(USER_DATA, Buffer.from([1])) as string
     const shouted = pasted.toUpperCase().replace(/\.PNG$/, '.png')
     expect(await call(CHANNELS.filesOpen, 't1', shouted)).toBe('opened')

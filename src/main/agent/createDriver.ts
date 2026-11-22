@@ -31,7 +31,17 @@ export function driverChoice(
  * or a token spent. A release build does not contain it at all
  * (buildFlags.d.ts), so a user cannot land in it by accident.
  */
-export function createDriverFactory(): DriverFactory {
+export function createDriverFactory(opts: { relay?: DriverFactory } = {}): DriverFactory {
+  const local = localDriverFactory()
+  // Stage 6: a server chat's agent runs in its relay; nothing local is started for it.
+  return (options) => {
+    if (!options.server) return local(options)
+    if (!opts.relay) return Promise.reject(new Error('Серверные чаты недоступны в этом запуске'))
+    return opts.relay(options)
+  }
+}
+
+function localDriverFactory(): DriverFactory {
   const choice = driverChoice(__QCLOD_TEST_SEAMS__, process.env)
   const fakePath = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_FAKE_SDK'] : undefined
 

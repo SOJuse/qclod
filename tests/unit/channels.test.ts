@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { CHANNELS, INVOKE_CHANNELS, EVENT_CHANNELS } from '@shared/channels'
+import { CHANNELS, INVOKE_CHANNELS, EVENT_CHANNELS, SEND_CHANNELS } from '@shared/channels'
 
 describe('ipc channel contract', () => {
   test('все имена каналов уникальны', () => {
@@ -12,7 +12,7 @@ describe('ipc channel contract', () => {
   })
 
   test('каждый канал отнесён либо к invoke, либо к event', () => {
-    const classified = new Set<string>([...INVOKE_CHANNELS, ...EVENT_CHANNELS])
+    const classified = new Set<string>([...INVOKE_CHANNELS, ...EVENT_CHANNELS, ...SEND_CHANNELS])
     for (const name of Object.values(CHANNELS)) expect(classified.has(name)).toBe(true)
     expect(classified.size).toBe(Object.values(CHANNELS).length)
   })
@@ -20,6 +20,11 @@ describe('ipc channel contract', () => {
   test('invoke и event каналы не пересекаются', () => {
     const events = new Set<string>(EVENT_CHANNELS)
     for (const name of INVOKE_CHANNELS) expect(events.has(name)).toBe(false)
+  })
+
+  test('«отправить сейчас» из очереди — invoke-канал agent:queueSendNow', () => {
+    expect(CHANNELS.agentQueueSendNow).toBe('agent:queueSendNow')
+    expect(INVOKE_CHANNELS).toContain('agent:queueSendNow')
   })
 
   test('Remote Control — invoke-канал agent:remote', () => {
@@ -58,6 +63,158 @@ describe('ipc channel contract', () => {
     expect(INVOKE_CHANNELS).toContain('update:get')
     expect(INVOKE_CHANNELS).toContain('update:restart')
     expect(EVENT_CHANNELS).toContain('update:changed')
+  })
+
+  test('отчёт об ошибке окна — send-канал renderer:error, не invoke', () => {
+    expect(CHANNELS.rendererError).toBe('renderer:error')
+    expect(SEND_CHANNELS).toContain('renderer:error')
+    expect(INVOKE_CHANNELS).not.toContain('renderer:error')
+  })
+
+  test('этап 2: каналы проектов, раскладки и окна-заглушки', () => {
+    const invoke = {
+      layoutGet: 'layout:get',
+      layoutSet: 'layout:set',
+      projectHistory: 'projects:history',
+      projectOpenSession: 'projects:openSession',
+      projectForget: 'projects:forget',
+      rendererRetry: 'window:rendererRetry',
+      logsOpen: 'logs:open'
+    } as const
+    for (const [key, value] of Object.entries(invoke)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(INVOKE_CHANNELS).toContain(value)
+    }
+    expect(CHANNELS.layoutChanged).toBe('layout:changed')
+    expect(EVENT_CHANNELS).toContain('layout:changed')
+    expect(INVOKE_CHANNELS).not.toContain('layout:changed')
+  })
+
+  test('этап 3: autonomy:hold и autonomy:answerNow — invoke-каналы', () => {
+    expect(CHANNELS.autonomyHold).toBe('autonomy:hold')
+    expect(CHANNELS.autonomyAnswerNow).toBe('autonomy:answerNow')
+    expect(INVOKE_CHANNELS).toContain('autonomy:hold')
+    expect(INVOKE_CHANNELS).toContain('autonomy:answerNow')
+  })
+
+  test('этап 5: каналы голоса — invoke, send и события, значения не пересекаются', () => {
+    const invoke = {
+      voiceModels: 'voice:models',
+      voiceDownload: 'voice:download',
+      voiceCancelDownload: 'voice:cancelDownload',
+      voiceDelete: 'voice:delete',
+      voiceBegin: 'voice:begin',
+      voiceEnd: 'voice:end',
+      voiceOpenMicSettings: 'voice:openMicSettings',
+      voiceOpenVcRedist: 'voice:openVcRedist'
+    } as const
+    for (const [key, value] of Object.entries(invoke)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(INVOKE_CHANNELS).toContain(value)
+    }
+    expect(CHANNELS.voiceAudio).toBe('voice:audio')
+    expect(SEND_CHANNELS).toContain('voice:audio')
+    expect(INVOKE_CHANNELS).not.toContain('voice:audio')
+    const events = { voiceEvent: 'voice:event', voiceModelsChanged: 'voice:modelsChanged' } as const
+    for (const [key, value] of Object.entries(events)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(EVENT_CHANNELS).toContain(value)
+      expect(INVOKE_CHANNELS).not.toContain(value)
+    }
+    expect(CHANNELS.voiceStart).toBe('voice:start')
+  })
+
+  test('этап 4: agent:subagentSend и agent:subagentStop — invoke-каналы', () => {
+    expect(CHANNELS.agentSubagentSend).toBe('agent:subagentSend')
+    expect(CHANNELS.agentSubagentStop).toBe('agent:subagentStop')
+    expect(INVOKE_CHANNELS).toContain('agent:subagentSend')
+    expect(INVOKE_CHANNELS).toContain('agent:subagentStop')
+  })
+
+  test('этап 6: каналы серверов, просмотрщика, загрузки и терминала', () => {
+    const invoke = {
+      serversList: 'servers:list',
+      serversSave: 'servers:save',
+      serversRemove: 'servers:remove',
+      serversConnect: 'servers:connect',
+      serversForgetPassword: 'servers:forgetPassword',
+      serversPromptAnswer: 'servers:promptAnswer',
+      serversListDir: 'servers:listDir',
+      serversOpenFolder: 'servers:openFolder',
+      serversLogin: 'servers:login',
+      serversLoginCode: 'servers:loginCode',
+      serversUpdateRelay: 'servers:updateRelay',
+      viewerRead: 'viewer:read',
+      viewerDownloadOpen: 'viewer:downloadOpen',
+      filesUploadRemote: 'files:uploadRemote',
+      terminalOpen: 'terminal:open',
+      terminalResize: 'terminal:resize',
+      terminalClose: 'terminal:close'
+    } as const
+    const events = {
+      serversChanged: 'servers:changed',
+      serversPrompt: 'servers:prompt',
+      serversConnectProgress: 'servers:connectProgress',
+      serversLoginProgress: 'servers:loginProgress',
+      serversPromptClosed: 'servers:promptClosed',
+      terminalData: 'terminal:data',
+      terminalExit: 'terminal:exit'
+    } as const
+    for (const [key, value] of Object.entries(invoke)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(INVOKE_CHANNELS).toContain(value)
+      expect(EVENT_CHANNELS).not.toContain(value)
+      expect(SEND_CHANNELS).not.toContain(value)
+    }
+    for (const [key, value] of Object.entries(events)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(EVENT_CHANNELS).toContain(value)
+      expect(INVOKE_CHANNELS).not.toContain(value)
+    }
+    expect(CHANNELS.terminalInput).toBe('terminal:input')
+    expect(SEND_CHANNELS).toContain('terminal:input')
+    expect(CHANNELS.filesSeen).toBe('files:seen')
+    expect(SEND_CHANNELS).toContain('files:seen')
+    expect(INVOKE_CHANNELS).not.toContain('terminal:input')
+    expect(EVENT_CHANNELS).not.toContain('terminal:input')
+  })
+
+  test('send и event каналы не пересекаются с invoke', () => {
+    const invoke = new Set<string>(INVOKE_CHANNELS)
+    for (const name of [...SEND_CHANNELS, ...EVENT_CHANNELS]) expect(invoke.has(name)).toBe(false)
+    const events = new Set<string>(EVENT_CHANNELS)
+    for (const name of SEND_CHANNELS) expect(events.has(name)).toBe(false)
+  })
+
+  test('этап 7: каналы шаблонов, сбора, Git и поиска по истории', () => {
+    const invoke = {
+      templatesList: 'templates:list',
+      templatesSave: 'templates:save',
+      templatesSaveMany: 'templates:saveMany',
+      templatesDelete: 'templates:delete',
+      harvestPreview: 'templates:harvestPreview',
+      harvestRun: 'templates:harvestRun',
+      harvestCancel: 'templates:harvestCancel',
+      gitStatus: 'git:status',
+      gitDiff: 'git:diff',
+      gitCommit: 'git:commit',
+      historySearch: 'history:search'
+    } as const
+    const stage7Keys = new Set<string>([...Object.keys(invoke), 'templatesChanged'])
+    const before = Object.entries(CHANNELS)
+      .filter(([key]) => !stage7Keys.has(key))
+      .map(([, value]) => value as string)
+    expect(Object.keys(invoke)).toHaveLength(11)
+    for (const [key, value] of Object.entries(invoke)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(INVOKE_CHANNELS).toContain(value)
+      expect(EVENT_CHANNELS).not.toContain(value)
+      expect(before).not.toContain(value)
+    }
+    expect(CHANNELS.templatesChanged).toBe('templates:changed')
+    expect(EVENT_CHANNELS).toContain('templates:changed')
+    expect(INVOKE_CHANNELS).not.toContain('templates:changed')
+    expect(before).not.toContain('templates:changed')
   })
 
   test('терминальных каналов v1 больше нет', () => {

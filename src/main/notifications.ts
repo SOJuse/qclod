@@ -68,6 +68,32 @@ export function notifyIfNeeded(input: {
   notification.show()
 }
 
+/** What Qclod itself has to say about a tab (autonomy gave up on something), or nothing when notifications are off. */
+export function alertPlan(settings: AppSettings, title: string, body: string): NotificationPlan | null {
+  if (!settings.notificationsEnabled) return null
+  return { title, body, silent: !settings.soundEnabled }
+}
+
+/**
+ * A notification that does not depend on the window being unfocused: the
+ * autonomy host gave up on something and the person should know. Clicking it
+ * brings the tab to the front.
+ */
+export function alertNotification(input: {
+  settings: AppSettings
+  title: string
+  body: string
+  onActivate: () => void
+}): void {
+  const plan = alertPlan(input.settings, input.title, input.body)
+  if (!plan) return
+  const { Notification } = require('electron') as typeof import('electron')
+  if (!Notification.isSupported()) return
+  const notification = new Notification(plan)
+  notification.on('click', input.onActivate)
+  notification.show()
+}
+
 /**
  * A permission request raises the window only when it is for the tab being
  * looked at. For a background tab the status badge and the notification say

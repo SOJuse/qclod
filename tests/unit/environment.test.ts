@@ -3,11 +3,16 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { npmFixture } from './npmFixture'
+import { withPlatform } from './platform'
 import { checkEnvironment } from '@main/setup/environment'
 import { findAgent, locateAgent } from '@main/setup/findAgent'
 import { detectInstallMethod, WINGET_ID, NPM_PACKAGE } from '@main/setup/install'
 
-describe('checkEnvironment', () => {
+// Windows-only below: these look for the agent the way Windows installs it (claude.exe in known
+// folders, npm's claude.cmd, winget) on the machine the test runs on.
+const onWindows = process.platform === 'win32'
+
+describe.skipIf(!onWindows)('checkEnvironment', () => {
   test('находит установленный агент и его версию', async () => {
     const report = await checkEnvironment('claude', { authStatus: async () => 'in' })
 
@@ -71,14 +76,14 @@ describe('checkEnvironment', () => {
 })
 
 describe('findAgent', () => {
-  test('находит агент, даже если его нет в PATH', () => {
+  test.skipIf(!onWindows)('находит агент, даже если его нет в PATH', () => {
     // A process inherits PATH at start, so an agent installed a moment ago is
     // invisible to it; the known install locations are checked directly.
     const withoutPath = { ...process.env, PATH: '', Path: '' }
     expect(findAgent('claude', withoutPath)).toBeTruthy()
   })
 
-  test('findAgent без PATH находит npm-установку в APPDATA и отдаёт exe', () => {
+  test.skipIf(!onWindows)('findAgent без PATH находит npm-установку в APPDATA и отдаёт exe', () => {
     const appData = mkdtempSync(join(tmpdir(), 'qclod-appdata-'))
     const npm = join(appData, 'npm')
     mkdirSync(npm)
@@ -105,10 +110,14 @@ describe('findAgent', () => {
 })
 
 describe('detectInstallMethod', () => {
-  test('на Windows выбирает winget — он уже стоит у всех', async () => {
+  test.skipIf(!onWindows)('на Windows выбирает winget — он уже стоит у всех', async () => {
     // Detected by running it: winget is a Store app alias whose file cannot
     // even be stat-ed from here, though spawning it works.
     await expect(detectInstallMethod()).resolves.toBe('winget')
+  })
+
+  test.skipIf(onWindows)('вне Windows winget не предлагается', async () => {
+    await expect(detectInstallMethod()).resolves.not.toBe('winget')
   })
 
   test('имена пакетов — настоящие, сверены с источниками', () => {
@@ -131,11 +140,12 @@ function brokenShimEnv(): NodeJS.ProcessEnv {
 }
 
 describe('причина «агент не найден»', () => {
-  test('locateAgent отдаёт текст про .cmd-обёртку', () => {
+  // A broken npm .cmd wrapper is a Windows thing; a Mac never unwraps one.
+  test.skipIf(!onWindows)('locateAgent отдаёт текст про .cmd-обёртку', () => {
     expect(() => locateAgent('claude', brokenShimEnv())).toThrow(/\.cmd-обёртка/)
   })
 
-  test('checkEnvironment показывает причину', async () => {
+  test.skipIf(!onWindows)('checkEnvironment показывает причину', async () => {
     const report = await checkEnvironment('claude', {
       env: brokenShimEnv(),
       detect: async () => 'winget'
@@ -157,6 +167,30 @@ describe('причина «агент не найден»', () => {
       env: { PATH: '' },
       detect: async () => null
     })
+    expect(report.agent.found).toBe(false)
+    expect(report.agent.problem).toBeUndefined()
+  })
+})
+
+describe('Mac: агент — обычный исполняемый файл на PATH', () => {
+  test('checkEnvironment находит claude без расширения и не просит вход, пока тот неизвестен', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qclod-macbin-'))
+    const agent = join(dir, 'claude')
+    writeFileSync(agent, '#!/bin/sh\necho "2.1.268 (Claude Code)"\n', { mode: 0o755 })
+    const authStatus = vi.fn(async (_agent: string) => 'in' as const)
+    const report = await withPlatform('darwin', () =>
+      checkEnvironment('claude', { env: { PATH: dir }, detect: async () => 'npm', authStatus })
+    )
+    expect(report.agent.found).toBe(true)
+    expect(report.agent.path).toBe(agent)
+    expect(authStatus).toHaveBeenCalledWith(agent)
+    expect(report.ready).toBe(true)
+  })
+
+  test('пустой PATH — агент не найден, причины нет', async () => {
+    const report = await withPlatform('darwin', () =>
+      checkEnvironment('claude', { env: { PATH: '' }, detect: async () => 'npm' })
+    )
     expect(report.agent.found).toBe(false)
     expect(report.agent.problem).toBeUndefined()
   })

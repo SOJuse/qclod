@@ -68,6 +68,14 @@ const STEPS = [
   }
 ]
 
+/** Two or more calls of one kind in a row are folded; open the run so its cards can be read. */
+async function openGroup(win: Page, category: string): Promise<void> {
+  await win
+    .locator(`[data-testid="tool-group"][data-category="${category}"] [data-testid="tool-group-toggle"]`)
+    .first()
+    .click({ timeout: 15000 })
+}
+
 function card(win: Page, category: string) {
   return win.locator(`.tool-card[data-category="${category}"]`).first()
 }
@@ -182,6 +190,7 @@ test('ошибка раскрыта сразу, текст ошибки свер
   })
   try {
     const win = await app.firstWindow()
+    await openGroup(win, 'command')
     const c = win.locator('.tool-card.is-error[data-category="command"]').first()
     await expect(c).toBeVisible({ timeout: 15000 })
     await expect(c.locator('[data-testid="tool-error"]')).toContainText('тесты упали: 3 из 40')
@@ -317,6 +326,7 @@ test('большой дифф показывает 400 строк и «ещё N 
   })
   try {
     const win = await app.firstWindow()
+    await openGroup(win, 'edit')
     const big = win.locator('.tool-card[data-category="edit"]').first()
     await expect(big).toBeVisible({ timeout: 15000 })
     await big.locator('[data-testid="tool-head"]').click()

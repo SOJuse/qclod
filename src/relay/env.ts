@@ -1,71 +1,17 @@
-import { execFile } from 'node:child_process'
 import { accessSync, constants, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { loginShellPath as coreLoginShellPath } from '../core/shellEnv'
 
 /**
  * claude's environment on the server: the relay's own plus the login shell's
- * PATH, worked out once when the daemon starts.
- *
- * Решение исполнителя (H1): the same contract as stage 6a's `src/core/shellEnv.ts`
- * (task 4: loginShellPath, mergePath), written here because 6a is not in this
- * branch yet. When the lanes are merged this file re-exports that one.
+ * PATH, worked out once when the daemon starts. The contract is stage 6a's
+ * (src/core/shellEnv.ts); a server without $SHELL falls back to /bin/sh, not
+ * the Mac's /bin/zsh.
  */
-export const PATH_MARK = '__QCLOD_PATH__'
+export { PATH_MARK, mergePath, type RunShell } from '../core/shellEnv'
 
-export type RunShell = (
-  shell: string,
-  args: string[],
-  opts: { timeoutMs: number; env: NodeJS.ProcessEnv }
-) => Promise<{ stdout: string; code: number | null }>
-
-const runShell: RunShell = (shell, args, { timeoutMs, env }) =>
-  new Promise((resolve, reject) => {
-    execFile(shell, args, { timeout: timeoutMs, env, maxBuffer: 1024 * 1024, windowsHide: true }, (error, stdout) => {
-      if (error && typeof error.code !== 'number') {
-        reject(error)
-        return
-      }
-      resolve({ stdout: String(stdout), code: error ? (error.code as number) : 0 })
-    })
-  })
-
-/** $SHELL -ilc 'printf …' between marks; null on a failure, a timeout or no marks. */
-export async function loginShellPath(opts: {
-  shell?: string
-  home: string
-  run?: RunShell
-  timeoutMs?: number
-}): Promise<string | null> {
-  const shell = opts.shell ?? (process.env['SHELL'] || '/bin/sh')
-  const run = opts.run ?? runShell
-  try {
-    const { stdout } = await run(shell, ['-ilc', `printf "${PATH_MARK}%s${PATH_MARK}" "$PATH"`], {
-      timeoutMs: opts.timeoutMs ?? 3000,
-      env: { ...process.env, HOME: opts.home }
-    })
-    const start = stdout.indexOf(PATH_MARK)
-    if (start < 0) return null
-    const from = start + PATH_MARK.length
-    const end = stdout.indexOf(PATH_MARK, from)
-    if (end < 0) return null
-    const path = stdout.slice(from, end)
-    return path === '' ? null : path
-  } catch {
-    return null
-  }
-}
-
-/** The shell's PATH first, then the current one, then where Claude Code installs itself; no entry twice. */
-export function mergePath(current: string, fromShell: string | null, home: string): string {
-  const fallbacks = [`${home}/.local/bin`, `${home}/.claude/local`, '/opt/homebrew/bin', '/usr/local/bin']
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const part of [...(fromShell ?? '').split(':'), ...current.split(':'), ...fallbacks]) {
-    if (part === '' || seen.has(part)) continue
-    seen.add(part)
-    out.push(part)
-  }
-  return out.join(':')
+export function loginShellPath(opts: Parameters<typeof coreLoginShellPath>[0]): Promise<string | null> {
+  return coreLoginShellPath({ ...opts, shell: opts.shell ?? (process.env['SHELL'] || '/bin/sh') })
 }
 
 function executable(path: string): boolean {

@@ -18,6 +18,12 @@ if (process.platform !== 'darwin') process.env['QCLOD_E2E_INVISIBLE'] = '1'
 // when the run ends (Ruling M2).
 process.env['QCLOD_E2E_PROFILE'] ??= mkdtempSync(join(tmpdir(), 'qclod-e2e-'))
 process.env['QCLOD_USER_DATA'] = process.env['QCLOD_E2E_PROFILE']
+// Claude Code's own folder (transcripts, commands, settings) is a throwaway one
+// too: no spec reads or writes the owner's real ~/.claude. A spec that needs
+// transcripts passes its own CLAUDE_CONFIG_DIR per launch.
+process.env['QCLOD_E2E_CLAUDE_CONFIG'] ??= mkdtempSync(join(tmpdir(), 'qclod-e2e-claude-'))
+process.env['CLAUDE_CONFIG_DIR'] = process.env['QCLOD_E2E_CLAUDE_CONFIG']
+
 
 // The real `claude auth status` is never asked in e2e: by default the agent
 // counts as logged in. A spec overrides it per launch through `env`.

@@ -85,6 +85,11 @@ publish:
   repo: qclod
   releaseType: release
 
+# What the release page says (build/release-notes.md; tests/unit/releaseDocs.test.ts).
+releaseInfo:
+  releaseNotesFile: build/release-notes.md
+
+
 
 mac:
   target:

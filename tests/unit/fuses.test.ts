@@ -42,6 +42,9 @@ describe('фьюзы Electron (I8)', () => {
     expect(hook).toContain("require('../scripts/fuses.cjs')")
     expect(hook.indexOf('fuses.afterPack(context)')).toBeGreaterThan(-1)
     expect(hook.indexOf('fuses.afterPack(context)')).toBeLessThan(hook.indexOf('codesign'))
+    // Only the e2e package (driven through the inspector, never shipped) keeps them as they are.
+    expect(hook).toContain("basename(context.outDir) === 'dist-e2e'")
+
 
     expect(typeof (require(join(root, 'scripts', 'fuses.cjs')) as { afterPack: unknown }).afterPack).toBe('function')
   })

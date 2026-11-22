@@ -186,7 +186,7 @@ export class LayoutStore {
     if (p.sidebarCollapsed !== undefined) next.sidebarCollapsed = p.sidebarCollapsed
     if (p.projectCollapsed) {
       // Only a folder that is a project already: collapsing makes none.
-      const key = projectKey(p.projectCollapsed.cwd)
+      const key = projectKey(p.projectCollapsed.cwd, p.projectCollapsed.hostId)
       const project = next.projects.find((e) => projectKey(e.cwd, e.hostId) === key)
       if (project) project.collapsed = p.projectCollapsed.collapsed
     }

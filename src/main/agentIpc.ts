@@ -1,5 +1,6 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFileSync } from 'node:fs'
+import { isAbsolute, resolve as resolvePath } from 'node:path'
 import { CHANNELS } from '../shared/channels'
 import { EFFORT_LEVELS, PERMISSION_MODES } from '../shared/types'
 import { projectKey } from '../shared/projects'
@@ -16,11 +17,14 @@ import type {
   TabState,
   UserInput
 } from '../shared/types'
-import { buildFileIndex } from './files/fileIndex'
+import { FILE_INDEX_LIMIT, buildFileIndex } from './files/fileIndex'
+import { RemoteIndexCache, UPLOAD_TOO_LARGE_TEXT, uploadFailedText, uploadFile } from './ssh/uploads'
 import { MAX_PER_CALL, type PathResolver } from './files/pathResolver'
 import { openInEditor, openPath, revealPath } from './files/fileActions'
 import { pasteMediaType, pasteRealPath } from './files/imagePaste'
 import { prepareImage } from './files/prepareImage'
+import { viewerAccess } from './files/viewerIpc'
+import type { RelayReader } from './ssh/remoteFiles'
 import type { TabController, TabHistory } from './tabs/TabController'
 import type { LayoutStore } from './store/layoutStore'
 import type { AutonomyHost } from './autonomy/autonomyHost'
@@ -28,6 +32,7 @@ import { EMPTY_PANEL } from './agent/panelData'
 import { withFault } from './testSeams/ipcFaults'
 import type { AgentSessionManager } from './agent/AgentSessionManager'
 import type { PermissionBroker } from './agent/permissions'
+import type { HistorySearch } from './history/historySearch'
 import {
   sanitizeAnswer,
   sanitizeQuestionAnswers,
@@ -62,6 +67,16 @@ export interface AgentIpcDeps {
   history: Pick<TabHistory, 'list'>
   /** The per-tab autonomy cores (stage 3). */
   autonomy?: Pick<AutonomyHost, 'hold' | 'answerNow' | 'remoteWanted'>
+  /** Stage 6: a server project's past conversations, from its relay. */
+  serverHistory?: (cwd: string, hostId: string) => Promise<SessionSummary[]>
+  /** Stage 6: whether this id is a server Qclod knows. */
+  knownServer?: (hostId: string) => boolean
+  /** Stage 6: a server's relay, raised if need be — a server chat's files are read through it. */
+  serverClient?: (hostId: string) => Promise<RelayReader>
+  /** Stage 6: «Закрыть чат» closes what belongs to it, its server terminal too. */
+  onTabClosed?: (id: TabId) => void
+  /** этап 7: the full-text search over past conversations (Ctrl+K «В разговорах»). */
+  historySearch?: Pick<HistorySearch, 'search' | 'knowsFolder'>
 }
 
 function isString(value: unknown): value is string {
@@ -115,8 +130,24 @@ function lineNumber(value: unknown): number | undefined {
  * the renderer is the least privileged part of the app and a bug there must
  * not be able to point a session at another folder or fake a status.
  */
+/** How many chosen local files main keeps in mind for uploads to a server. */
+const MAX_SEEN_FILES = 1000
+
 export function registerAgentIpc(deps: AgentIpcDeps): void {
   const { controller, manager, broker } = deps
+  // Stage 6: the read-only viewer and a server chat's paths (task 24).
+  const viewer = viewerAccess({
+    tab: (id) => controller.list().find((t) => t.id === id),
+    knowsLocal: (absPath, id) => deps.resolver.knows(absPath, id),
+    client: (hostId) =>
+      deps.serverClient ? deps.serverClient(hostId) : Promise.reject(new Error('серверы недоступны')),
+    userData: deps.userData,
+    openPath
+  })
+  // Stage 6 (task 25): a server chat's @-list, kept a minute per tab.
+  const remoteIndex = new RemoteIndexCache()
+  const serverClient = (hostId: string): Promise<RelayReader> =>
+    deps.serverClient ? deps.serverClient(hostId) : Promise.reject(new Error('серверы недоступны'))
 
   ipcMain.handle(CHANNELS.tabsList, () => withFault(CHANNELS.tabsList, () => controller.list()))
 
@@ -129,6 +160,9 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!isString(id)) return
     broker.cancelTab(id)
     deps.resolver.forget(id)
+    viewer.forget(id)
+    remoteIndex.forget(id)
+    deps.onTabClosed?.(id)
     await controller.close(id)
   })
 
@@ -356,11 +390,24 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
    */
   const knownFolder = (cwd: unknown, hostId: unknown): string | null => {
     if (!isString(cwd) || cwd === '') return null
-    if (hostId !== undefined && hostId !== '') return null
+    if (hostId !== undefined && hostId !== '') {
+      // Stage 6: a folder on a server — a project of that server, or one of its open chats.
+      if (!isString(hostId) || hostId.length > 200 || !deps.knownServer?.(hostId)) return null
+      const remoteKey = projectKey(cwd, hostId)
+      const remote = layout.get().projects.find((p) => p.hostId === hostId && projectKey(p.cwd, hostId) === remoteKey)
+      if (remote) return remote.cwd
+      return (
+        controller.list().find((tab) => tab.server?.hostId === hostId && projectKey(tab.cwd, hostId) === remoteKey)?.cwd ??
+        null
+      )
+    }
     const key = projectKey(cwd)
     const project = layout.get().projects.find((p) => !p.hostId && projectKey(p.cwd) === key)
     if (project) return project.cwd
-    return controller.list().find((tab) => projectKey(tab.cwd) === key)?.cwd ?? null
+    const open = controller.list().find((tab) => projectKey(tab.cwd) === key)?.cwd
+    if (open) return open
+    // этап 7: a folder the search over the owner's own history found a session in.
+    return deps.historySearch?.knowsFolder(cwd) ? cwd : null
   }
 
   ipcMain.handle(CHANNELS.layoutGet, (): LayoutState => layout.get())
@@ -382,7 +429,7 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
   // A project with open chats stays: nothing changes.
   ipcMain.handle(CHANNELS.projectForget, (_e, cwd: unknown, hostId: unknown): LayoutState => {
     if (!isString(cwd) || cwd === '' || (hostId !== undefined && !isString(hostId))) return layout.get()
-    const open = controller.list().map((tab) => projectKey(tab.cwd))
+    const open = controller.list().map((tab) => projectKey(tab.cwd, tab.server?.hostId))
     layout.forgetProject(cwd, open, hostId === '' ? undefined : hostId)
     return layout.get()
   })
@@ -393,7 +440,10 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
       // e2e sees the sidebar's «Загружаю…» and «Не удалось прочитать историю» through this.
       withFault(CHANNELS.projectHistory, async () => {
         const folder = knownFolder(cwd, hostId)
-        return folder === null ? [] : deps.history.list(folder)
+        if (folder === null) return []
+        // A server project's history is its relay's (сверка F21).
+        if (isString(hostId) && hostId !== '') return deps.serverHistory ? deps.serverHistory(folder, hostId) : []
+        return deps.history.list(folder)
       })
   )
 
@@ -403,7 +453,8 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
       if (!isString(sessionId) || sessionId === '') return null
       const folder = knownFolder(cwd, hostId)
       if (folder === null) return null
-      return controller.openSession(folder, sessionId, isString(title) ? title : undefined)
+      const host = isString(hostId) && hostId !== '' ? hostId : undefined
+      return controller.openSession(folder, sessionId, isString(title) ? title : undefined, host)
     }
   )
 
@@ -415,11 +466,18 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!controller.list().some((tab) => tab.id === id)) return
     run(id, cardId)
   }
+  // Stage 6 (сверка F5): a server chat's core is its relay's — the card's action goes there.
+  const serverAct = (id: TabId, cardId: string, action: 'hold' | 'answerNow'): boolean => {
+    const session = manager.get(id)
+    if (!session?.hostsAutonomy) return false
+    session.autonomyAct(cardId, action).catch(() => undefined)
+    return true
+  }
   ipcMain.handle(CHANNELS.autonomyHold, (_e, id: unknown, cardId: unknown): void =>
-    autonomyCall(id, cardId, (t, c) => deps.autonomy?.hold(t, c))
+    autonomyCall(id, cardId, (t, c) => (serverAct(t, c, 'hold') ? undefined : deps.autonomy?.hold(t, c)))
   )
   ipcMain.handle(CHANNELS.autonomyAnswerNow, (_e, id: unknown, cardId: unknown): void =>
-    autonomyCall(id, cardId, (t, c) => deps.autonomy?.answerNow(t, c))
+    autonomyCall(id, cardId, (t, c) => (serverAct(t, c, 'answerNow') ? undefined : deps.autonomy?.answerNow(t, c)))
   )
 
   ipcMain.handle(CHANNELS.permissionRules, () => withFault(CHANNELS.permissionRules, () => broker.rules()))
@@ -435,6 +493,13 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     })
   )
 
+  // этап 7: a query of at most 200 characters; anything else finds nothing.
+  ipcMain.handle(CHANNELS.historySearch, (_e, query: unknown) =>
+    withFault(CHANNELS.historySearch, () =>
+      isString(query) && query.length <= 200 && deps.historySearch ? deps.historySearch.search(query) : []
+    )
+  )
+
   ipcMain.handle(CHANNELS.historyOpen, (_e, id: unknown, sessionId: unknown, title: unknown) => {
     if (!isString(id) || !isString(sessionId)) return null
     const tab = controller.list().find((t) => t.id === id)
@@ -446,7 +511,48 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     if (!isString(id)) return []
     const tab = controller.list().find((t) => t.id === id)
     if (!tab || tab.missingCwd) return []
+    // A server chat's files are the server's: fs.index of its folder (stage 6).
+    if (tab.server) {
+      const { hostId } = tab.server
+      return remoteIndex.files(() => serverClient(hostId), id, tab.cwd, FILE_INDEX_LIMIT).catch(() => [])
+    }
     return buildFileIndex(tab.cwd)
+  })
+
+  // Stage 6: a file goes to a server only when main saw the person choose it —
+  // picked in the dialog here, or dropped/pasted (the preload tells, from
+  // webUtils, which knows only real files). A window that names any path
+  // cannot send ~/.ssh/id_ed25519 to a server.
+  const seenFiles = new Set<string>()
+  const seeFile = (path: string): void => {
+    if (!isString(path) || path === '' || path.length > 4096 || path.includes('\0') || !isAbsolute(path)) return
+    const key = resolvePath(path)
+    seenFiles.delete(key)
+    seenFiles.add(key)
+    if (seenFiles.size > MAX_SEEN_FILES) seenFiles.delete(seenFiles.values().next().value!)
+  }
+  ipcMain.on(CHANNELS.filesSeen, (_e, path: unknown) => seeFile(path as string))
+
+  // Stage 6: a file attached in a server chat goes to the server at once; the
+  // message carries its path there. Images still go as base64 (decision 8).
+  ipcMain.handle(CHANNELS.filesUploadRemote, async (_e, id: unknown, localPath: unknown) => {
+    if (!isString(id) || !isString(localPath) || localPath === '' || localPath.length > 4096) {
+      return { error: uploadFailedText('неверный запрос') }
+    }
+    const tab = controller.list().find((t) => t.id === id)
+    if (!tab?.server) return { error: uploadFailedText('это не чат на сервере') }
+    const s = tab.server.relaySessionId
+    if (!s) return { error: uploadFailedText('чат на сервере ещё не открыт') }
+    if (!isAbsolute(localPath) || !seenFiles.has(resolvePath(localPath))) {
+      return { error: uploadFailedText('файл не был выбран в Qclod') }
+    }
+    try {
+      const remotePath = await uploadFile(await serverClient(tab.server.hostId), s, localPath)
+      return { remotePath }
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e)
+      return { error: why === UPLOAD_TOO_LARGE_TEXT ? why : uploadFailedText(why) }
+    }
   })
 
   // Which of the paths in a tab's text exist, relative to the tab's folder.
@@ -458,11 +564,11 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     const tab = controller.list().find((t) => t.id === id)
     if (!tab) return raws.map(() => null)
     const valid = raws.map((r) => isString(r) && r !== '' && r.length <= MAX_RAW_LENGTH)
-    const answers = await deps.resolver.resolve(
-      tab.cwd,
-      raws.filter((_r, i) => valid[i]) as string[],
-      id
-    )
+    const asked = raws.filter((_r, i) => valid[i]) as string[]
+    // A server chat's paths are the server's: one fs.stat through its relay (stage 6).
+    const answers = tab.server
+      ? await viewer.resolveRemote(id, tab.cwd, tab.server.hostId, asked)
+      : await deps.resolver.resolve(tab.cwd, asked, id)
     let next = 0
     return valid.map((ok) => (ok ? (answers[next++] ?? null) : null))
   })
@@ -518,6 +624,10 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
     }
   })
 
+  // Stage 6: the read-only viewer, here or on the tab's server.
+  ipcMain.handle(CHANNELS.viewerRead, (_e, source: unknown, id: unknown, path: unknown) => viewer.read(source, id, path))
+  ipcMain.handle(CHANNELS.viewerDownloadOpen, (_e, id: unknown, path: unknown) => viewer.downloadOpen(id, path))
+
   ipcMain.handle(
     CHANNELS.filesOpenInEditor,
     (_e, id: unknown, absPath: unknown, line: unknown, column: unknown) => {
@@ -549,12 +659,18 @@ export function registerAgentIpc(deps: AgentIpcDeps): void {
 
   ipcMain.handle(CHANNELS.dialogPickFiles, async () => {
     const stubbed = __QCLOD_TEST_SEAMS__ ? process.env['QCLOD_PICK_FILES'] : undefined
-    if (stubbed) return stubbed.split(';').filter(Boolean)
+    if (stubbed) {
+      const paths = stubbed.split(';').filter(Boolean)
+      for (const p of paths) seeFile(p)
+      return paths
+    }
 
     const win = deps.getWindow()
     if (!win) return []
     const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] })
-    return result.canceled ? [] : result.filePaths
+    if (result.canceled) return []
+    for (const p of result.filePaths) seeFile(p)
+    return result.filePaths
   })
 }
 

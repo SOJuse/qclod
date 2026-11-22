@@ -1,0 +1,10 @@
+/* A diff of a whole file in a layer: it scrolls with the layer, not in a box of its own. */
+.diff-viewer .diff {
+  max-height: none;
+}
+
+.diff-viewer-note {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--text-dim);
+}

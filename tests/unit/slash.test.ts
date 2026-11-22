@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   acceptCommand,
+  acceptTemplate,
   commandItems,
   completeCommand,
   effortItems,
@@ -8,6 +9,7 @@ import {
   bareRemoteToggle,
   findSlashQuery,
   modelItems,
+  slashItems,
   stepItems
 } from '@renderer/input/slash'
 import { markRemote, withLocalCommands } from '../../src/shared/commandFilter'
@@ -162,5 +164,19 @@ describe('bareRemoteToggle', () => {
     expect(bareRemoteToggle('/rcx')).toBe(false)
     expect(bareRemoteToggle('/remote-controlx')).toBe(false)
     expect(bareRemoteToggle('привет /rc')).toBe(false)
+  })
+})
+
+describe('шаблоны в списке /', () => {
+  const template = { id: 'x', title: 'x', body: 'Проверь {{что}}', origin: 'manual' as const, createdAt: 1, updatedAt: 1 }
+
+  test('выбор пункта tpl:x даёт { kind: "template", body }, и команда с тем же именем не теряется', () => {
+    const commands = [cmd('x', { description: 'команда x' })]
+    const items = slashItems(commands, [template], 'x', [])
+    expect(items.map((i) => i.id)).toEqual(['x', 'tpl:x'])
+    expect(acceptTemplate([template], 'tpl:x')).toEqual({ kind: 'template', body: 'Проверь {{что}}' })
+    expect(acceptTemplate([template], 'x')).toEqual({ kind: 'none' })
+    expect(acceptTemplate([], 'tpl:x')).toEqual({ kind: 'none' })
+    expect(acceptCommand(commands[0]!)).toEqual({ kind: 'send', text: '/x' })
   })
 })

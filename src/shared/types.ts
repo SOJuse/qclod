@@ -1,5 +1,9 @@
 import type { VoiceSettings } from './voice'
 
+import type { HostInfo, ServerAuth } from './relayProtocol'
+
+import type { DiffHunk } from './toolView'
+
 export type TabId = string
 
 /** What a tab's agent is doing right now. */
@@ -471,6 +475,8 @@ export interface PersistedTab {
   lastSessionId?: string
   /** Whether it was working, Remote Control wanted, a limit waited out (stage 3). */
   autonomy?: TabAutonomyRecord
+  /** stage 6: the chat runs on a server, through its relay. Kept in tabs.json. */
+  server?: TabServer
 }
 
 export interface TabState extends PersistedTab {
@@ -574,7 +580,8 @@ export interface LayoutState {
 }
 
 export type LayoutPatch = Partial<Pick<LayoutState, 'panes' | 'paneWidths' | 'sidebarCollapsed'>> & {
-  projectCollapsed?: { cwd: string; collapsed: boolean }
+  /** `hostId` (stage 6): a project on that server. */
+  projectCollapsed?: { cwd: string; collapsed: boolean; hostId?: string }
 }
 
 /** Frozen through and through: copy it, never change it in place. */
@@ -622,7 +629,14 @@ export type AuthStatus = 'in' | 'out' | 'unknown'
 export type LoginProgress = 'waiting' | 'in' | 'timeout'
 
 /** The app's own update: nothing to say yet, or a new version downloaded and waiting for a restart. */
-export type UpdateState = { kind: 'idle' } | { kind: 'ready'; version: string }
+/**
+ * `ready`: downloaded, installs on restart (Windows). `available`: a newer release exists and the
+ * person downloads it by hand (Mac, no auto-update); `url` is its release page.
+ */
+export type UpdateState =
+  | { kind: 'idle' }
+  | { kind: 'ready'; version: string }
+  | { kind: 'available'; version: string; url: string }
 
 /** What the machine has, for the setup screen. */
 export interface EnvironmentReport {
@@ -691,10 +705,185 @@ export interface ResolvedPath {
   column?: number
 }
 
+// stage 6: servers over SSH
+
+export type ServerColour = 'blue' | 'violet' | 'green' | 'amber' | 'rose' | 'cyan'
+
+export interface ServerEntry {
+  id: string
+  label: string
+  /** user@host or a Host of ~/.ssh/config. */
+  target: string
+  port?: number
+  identityFile?: string
+  auth: 'key' | 'password'
+  colour: ServerColour
+  /** Folders opened there, newest first. */
+  recent: string[]
+  /** Came from ~/.ssh/config rather than the form. */
+  fromConfig: boolean
+}
+
+export type ServerConnState =
+  | 'idle'
+  | 'connecting'
+  | 'online'
+  | 'reconnecting'
+  | 'offline'
+  | 'needsAuth'
+  | 'hostKeyChanged'
+  | 'error'
+
+export interface ServerView extends ServerEntry {
+  state: ServerConnState
+  problem?: string
+  hasPassword: boolean
+  info?: HostInfo & { claudeVersion: string | null }
+  account?: ServerAuth
+  relayUpdate?: 'pending' | 'required'
+  /** Stage 6 (task 20): whether a password can be kept (safeStorage works on this machine). */
+  canStorePassword?: boolean
+}
+
+/** Which server a tab's chat runs on; relaySessionId once the relay has opened it. */
+export interface TabServer {
+  hostId: string
+  relaySessionId?: string
+}
+
+/** A question ssh asks through askpass, for the window to put to the person. */
+export type SshPrompt =
+  | { promptId: string; hostId: string; kind: 'hostKey'; host: string; keyType: string; fingerprint: string }
+  | {
+      promptId: string
+      hostId: string
+      kind: 'password' | 'passphrase' | 'other'
+      text: string
+      canRemember: boolean
+      retry: boolean
+    }
+
+export type SshPromptAnswer =
+  | { promptId: string; ok: false }
+  | { promptId: string; ok: true; value: string; remember?: boolean }
+
+/** One line of the connection checklist. */
+export interface ConnectStep {
+  id: 'ssh' | 'auth' | 'claude' | 'relay' | 'login'
+  state: 'pending' | 'running' | 'ok' | 'warn' | 'fail'
+  text: string
+  hint?: string
+}
+
+export type FileSource = { kind: 'local' } | { kind: 'remote'; hostId: string }
+
+export type ViewerContent =
+  | { kind: 'text'; text: string; language: string; size: number; truncated: boolean }
+  | { kind: 'image'; dataUrl: string; size: number }
+  | { kind: 'binary'; size: number }
+  | { kind: 'error'; message: string }
+
 /** An error the window caught in itself, sent to the main process for the log. */
 export interface RendererErrorReport {
   scope: 'app' | 'pane' | 'window'
   message: string
   stack?: string
   componentStack?: string
+}
+
+// ------------------------------------------- этап 7: шаблоны, Git, поиск по истории
+
+/** Limits of the owner's prompt templates (userData/templates.json). */
+export const TEMPLATE_LIMITS = { maxCount: 500, title: 80, body: 20_000, saveMany: 50 } as const
+
+/** A prompt template: inserted at the caret; `{{что подставить}}` marks a place to fill. */
+export interface PromptTemplate {
+  id: string
+  title: string
+  body: string
+  origin: 'manual' | 'harvest'
+  createdAt: number
+  updatedAt: number
+}
+
+/** What the window sends to save: no id — a new template. */
+export interface TemplateDraft {
+  id?: string
+  title: string
+  body: string
+  origin?: 'manual' | 'harvest'
+}
+
+/** One project in «Собрать мои шаблоны»: how much of it would be read. */
+export interface HarvestProject {
+  key: string
+  label: string
+  sessions: number
+  prompts: number
+  chars: number
+}
+
+/** Exactly what would go to Claude: the person's messages only, within the limits. */
+export interface HarvestPreview {
+  projects: HarvestProject[]
+  items: { projectKey: string; text: string }[]
+  prompts: number
+  sessions: number
+  chars: number
+  sinceDays: number
+  truncated: boolean
+  model: string
+}
+
+/** A template Claude proposes; `duplicate` — one like it is already saved. */
+export interface TemplateProposal {
+  title: string
+  body: string
+  why: string
+  duplicate: boolean
+}
+
+export type HarvestErrorReason = 'noAgent' | 'notLoggedIn' | 'limit' | 'timeout' | 'cancelled' | 'badAnswer' | 'failed'
+
+export type HarvestOutcome =
+  | { kind: 'ok'; proposals: TemplateProposal[]; costUsd: number | null }
+  | { kind: 'empty' }
+  | { kind: 'error'; reason: HarvestErrorReason; detail?: string }
+
+export type GitChangeKind = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict' | 'typechange'
+
+export interface GitChange {
+  path: string
+  oldPath?: string
+  kind: GitChangeKind
+}
+
+export type GitStatus =
+  | { kind: 'ok'; branch: string | null; detachedAt: string | null; initial: boolean; changes: GitChange[]; truncated: boolean }
+  | { kind: 'notRepo' }
+  | { kind: 'noGit' }
+  | { kind: 'unavailable'; reason: string }
+  | { kind: 'error'; message: string }
+
+export type GitFileDiff =
+  | { kind: 'text'; hunks: DiffHunk[]; added: number; removed: number; truncatedLines: number }
+  | { kind: 'binary' }
+  | { kind: 'tooLarge'; bytes: number }
+  | { kind: 'error'; message: string }
+
+export type CommitResult =
+  | { ok: true; hash: string; summary: string }
+  | { ok: false; reason: 'identity' | 'nothing' | 'locked' | 'conflict' | 'stale' | 'busy' | 'failed'; message: string }
+
+/** One match of the full-text search over past conversations. */
+export interface HistoryHit {
+  sessionId: string
+  cwd: string
+  projectLabel: string
+  title: string
+  snippet: string
+  matchStart: number
+  matchLength: number
+  role: 'user' | 'assistant'
+  updatedAt: number
 }

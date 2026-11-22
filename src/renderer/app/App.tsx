@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { EnvironmentReport, HotkeyRegistration, SessionSummary } from '../../shared/types'
+import type { EnvironmentReport, HistoryHit, HotkeyRegistration, SessionSummary } from '../../shared/types'
 import { useAppStore } from '../state/useAppStore'
 import { startLayoutSync } from '../state/layoutSync'
 import { MAX_PANES, buildSidebar, chatOrder, nextPanes } from '../chat/sidebarModel'
@@ -7,6 +7,7 @@ import { SplitView } from './SplitView'
 import { dropOnPane, type DropPayload, type DropWhere } from './paneOps'
 import { openAndPlace } from './dropSession'
 import { restartChat } from './restartChat'
+import { fileIndexAsk, fileIndexKept } from './fileIndexPolicy'
 import { SetupTitleBar, TitleBar } from '../components/TitleBar'
 import { Sidebar } from '../components/sidebar/Sidebar'
 import { ChatPane, type PanelRequest } from '../components/ChatPane'
@@ -16,15 +17,23 @@ import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { CommandPalette } from '../components/CommandPalette'
+import { TemplateManager } from '../components/templates/TemplateManager'
+import { HarvestSheet, templatesCount } from '../components/templates/HarvestSheet'
+import { useTemplates } from '../state/useTemplates'
 import { historyToLoad } from '../palette/history'
 import { withMention } from '../palette/files'
 import { withCommand } from '../palette/commands'
+import { HISTORY_TEXT_MIN } from '../palette/historyText'
+import { fold } from '../palette/rank'
 import type { PaletteContext, PaletteRunner, PaletteSection } from '../palette/types'
 import { withLocalCommands } from '../../shared/commandFilter'
 import { UpdateBanner } from '../components/UpdateBanner'
+import { ServersSheet, type ServersSheetMode } from '../components/servers/ServersSheet'
+import { SshPromptDialog } from '../components/servers/SshPromptDialog'
+import { useSshPrompts } from '../components/servers/sshPromptQueue'
 import { compactNow } from '../input/slash'
 import { reasonOf } from '../ui/StateView'
-import { resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
+import { actionKeys, paletteActionKeepsFocus, resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
 import './App.css'
 
 /** A failed first read of the tabs is asked once more after this long. */
@@ -58,11 +67,25 @@ export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   /** The section the settings open on, when something asked for one («Настройки голоса»). */
   const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
+  /** этап 7: the templates sheet; initialBody — «Сохранить черновик как шаблон». */
+  const [templatesSheet, setTemplatesSheet] = useState<{ initialBody?: string; notice?: string } | null>(null)
+  /** этап 7: «Собрать мои шаблоны». */
+  const [harvestOpen, setHarvestOpen] = useState(false)
+  /**
+   * A templates sheet that closes into the other one («Собрать» from the
+   * manager, the manager after saving) has no opener left: the next sheet
+   * focuses itself, and the input must not take the focus from under it.
+   */
+  const sheetOpen = useRef(false)
+  sheetOpen.current = templatesSheet !== null || harvestOpen
   const [version, setVersion] = useState('')
   const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
   const [focusToken, setFocusToken] = useState(0)
   /** Where focus goes when a closed sheet's opener is gone: the active tab's input. */
   const focusComposer = useCallback(() => setFocusToken((n) => n + 1), [])
+  const focusAfterSheet = useCallback(() => {
+    if (!sheetOpen.current) focusComposer()
+  }, [focusComposer])
   const [environment, setEnvironment] = useState<EnvironmentReport | null>(null)
   const [setupDismissed, setSetupDismissed] = useState(false)
   /**
@@ -72,6 +95,38 @@ export function App(): JSX.Element {
   const [setupNeeded, setSetupNeeded] = useState(false)
   /** Ctrl+K, open: kept to one section or not; `n` tells one opening from the next. */
   const [palette, setPalette] = useState<{ scope?: PaletteSection; n: number } | null>(null)
+  /** Stage 6: the servers' sheet — a new chat on a server — and the questions ssh asks, in order. */
+  const [serversSheet, setServersSheet] = useState<ServersSheetMode | null>(null)
+  const [sshPrompt, answerSshPrompt] = useSshPrompts()
+  const servers = useAppStore((s) => s.servers)
+  const connectSteps = useAppStore((s) => s.connectSteps)
+  /** этап 7: Ctrl+K «В разговорах» — the latest answer of the search over past conversations. */
+  const [historyText, setHistoryText] = useState<{ query: string; hits: HistoryHit[]; pending: boolean } | null>(null)
+  const historyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** What is typed in Ctrl+K: the search starts after 300 ms of quiet, from 3 characters. */
+  const onPaletteQuery = useCallback((raw: string): void => {
+    if (historyTimer.current) clearTimeout(historyTimer.current)
+    historyTimer.current = null
+    const text = raw.trim()
+    const needle = fold(text)
+    if (needle.length < HISTORY_TEXT_MIN || /^[>@]/.test(text)) {
+      setHistoryText(null)
+      return
+    }
+    setHistoryText((prev) => (prev && prev.query === needle && !prev.pending ? prev : { query: needle, hits: [], pending: true }))
+    historyTimer.current = setTimeout(() => {
+      const done = (hits: HistoryHit[]): void =>
+        setHistoryText((cur) => (cur && cur.query === needle ? { query: needle, hits, pending: false } : cur))
+      window.qclod.historySearch(text).then(done, () => done([]))
+    }, 300)
+  }, [])
+  // A closed palette forgets its search.
+  useEffect(() => {
+    if (palette) return
+    if (historyTimer.current) clearTimeout(historyTimer.current)
+    historyTimer.current = null
+    setHistoryText(null)
+  }, [palette])
   /** Ctrl+W was pressed once on a working tab; a second press within 3 s closes it. */
   const [closeGuardTab, setCloseGuardTab] = useState<string | null>(null)
   const closeGuardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -148,7 +203,7 @@ export function App(): JSX.Element {
       applyPanes([state.activeTabId])
       return
     }
-    const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject))
+    const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject, state.servers))
     const at = order.indexOf(state.activeTabId)
     const other = [...order.slice(at + 1), ...order.slice(0, Math.max(0, at))].find(
       (id) => id !== state.activeTabId && !state.paneTabIds.includes(id)
@@ -205,19 +260,23 @@ export function App(): JSX.Element {
   const activeTabId = useAppStore((s) => s.activeTabId)
   const fileIndexByTab = useAppStore((s) => s.fileIndexByTab)
   const commandsByTab = useAppStore((s) => s.commandsByTab)
+  const hasDraft = useAppStore((s) => (s.draftByTab[s.activeTabId] ?? '').trim() !== '')
+  const templates = useTemplates()
   const panelByTab = useAppStore((s) => s.panelByTab)
   const layout = useAppStore((s) => s.layout)
   const historyByProject = useAppStore((s) => s.historyByProject)
   const loadProjectHistory = useAppStore((s) => s.loadProjectHistory)
   const sidebar = useMemo(
-    () => buildSidebar(tabs, layout.projects, historyByProject),
-    [tabs, layout.projects, historyByProject]
+    () => buildSidebar(tabs, layout.projects, historyByProject, servers),
+    [tabs, layout.projects, historyByProject, servers]
   )
   const sidebarOpen = !layout.sidebarCollapsed
 
   // A project's past conversations are asked for the first time it is shown open.
   useEffect(() => {
-    for (const project of sidebar) if (!project.collapsed && project.past === null) loadProjectHistory(project.cwd)
+    for (const project of sidebar) {
+      if (!project.collapsed && project.past === null) loadProjectHistory(project.cwd, false, project.remote?.hostId)
+    }
   }, [sidebar, loadProjectHistory])
 
   const setSettings = useAppStore((s) => s.setSettings)
@@ -257,8 +316,15 @@ export function App(): JSX.Element {
       // The list is live: a plugin installed mid-session changes it.
       window.qclod.onCommandsChanged((event) =>
         useAppStore.getState().setCommands(event.tabId, event.commands)
-      )
+      ),
+      // Stage 6: the servers, their checklists, ssh's questions.
+      window.qclod.onServersChanged((list) => useAppStore.getState().setServers(list)),
+      window.qclod.onConnectProgress((e) => useAppStore.getState().setConnectSteps(e.hostId, e.steps))
     ]
+    window.qclod.listServers().then(
+      (list) => useAppStore.getState().setServers(list),
+      () => undefined
+    )
     return () => {
       clearTimeout(tabsRetry)
       for (const off of unsubscribers) off()
@@ -291,9 +357,9 @@ export function App(): JSX.Element {
   }, [])
 
   const toggleProject = useCallback(
-    (cwd: string, collapsed: boolean): void => {
-      void window.qclod.setLayout({ projectCollapsed: { cwd, collapsed } })
-      if (!collapsed) loadProjectHistory(cwd)
+    (cwd: string, collapsed: boolean, hostId?: string): void => {
+      void window.qclod.setLayout({ projectCollapsed: { cwd, collapsed, ...(hostId ? { hostId } : {}) } })
+      if (!collapsed) loadProjectHistory(cwd, false, hostId)
     },
     [loadProjectHistory]
   )
@@ -311,8 +377,8 @@ export function App(): JSX.Element {
       return setPalette(null)
     }
     const state = useAppStore.getState()
-    const sidebarNow = buildSidebar(state.tabs, state.layout.projects, state.historyByProject)
-    for (const cwd of historyToLoad(sidebarNow)) state.loadProjectHistory(cwd)
+    const sidebarNow = buildSidebar(state.tabs, state.layout.projects, state.historyByProject, state.servers)
+    for (const p of historyToLoad(sidebarNow)) state.loadProjectHistory(p.cwd, false, p.hostId)
     setPalette({ ...(scope === undefined ? {} : { scope }), n: (was?.n ?? 0) + 1 })
   }, [])
 
@@ -346,7 +412,21 @@ export function App(): JSX.Element {
 
   /** A new chat in this folder; without one, the folder is asked for first. */
   const newChat = useCallback(
-    (cwd?: string): void => {
+    (cwd?: string, hostId?: string): void => {
+      // A folder on a server: a chat there at once (stage 6).
+      if (cwd && hostId) {
+        // Not opened — the server is not on line, or the call failed: its checklist
+        // connects and opens the folder after, and says why when it cannot.
+        const viaChecklist = (): void => setServersSheet({ kind: 'connect', hostId, path: cwd })
+        window.qclod.openServerFolder(hostId, cwd).then(
+          (tab) => (tab ? activate(tab.id) : viaChecklist()),
+          (err: unknown) => {
+            console.warn('[servers] чат на сервере не открылся:', reasonOf(err))
+            viaChecklist()
+          }
+        )
+        return
+      }
       const create = (folder: string): void => {
         void window.qclod.createTab(folder).then((tab) => {
           if (tab) activate(tab.id)
@@ -362,8 +442,8 @@ export function App(): JSX.Element {
 
   /** A past conversation from the sidebar: its own chat, or the open one that already holds it. */
   const openPast = useCallback(
-    (cwd: string, session: SessionSummary): void => {
-      window.qclod.openProjectSession(cwd, session.id, session.title).then(
+    (cwd: string, session: SessionSummary, hostId?: string): void => {
+      window.qclod.openProjectSession(cwd, session.id, session.title, hostId).then(
         (tab) => {
           if (tab) activate(tab.id)
         },
@@ -424,7 +504,7 @@ export function App(): JSX.Element {
     (id: AppActionId, at?: number | string): void => {
       const state = useAppStore.getState()
       // The sidebar's order, top to bottom: what the person sees.
-      const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject))
+      const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject, state.servers))
       const here = order.indexOf(state.activeTabId)
       const step = (delta: number): void => {
         if (order.length < 2 || here < 0) return
@@ -475,6 +555,34 @@ export function App(): JSX.Element {
           // A short press on the active pane: start, or stop (этап 5).
           if (state.activeTabId) toggleVoice(state.activeTabId)
           return
+        case 'openServerFolder': {
+          // A new chat on that server: its folder picker, connecting first when it is not on line.
+          if (typeof at !== 'string') return setServersSheet({ kind: 'picker' })
+          const server = state.servers.find((s) => s.id === at)
+          if (!server) return
+          return setServersSheet(server.state === 'online' ? { kind: 'folder', hostId: at } : { kind: 'connect', hostId: at })
+        }
+        case 'openServerTerminal': {
+          // The server's terminal (task 26) opens under a chat on that server: the active one, else
+          // the first; with no chat there yet, a folder is picked first.
+          if (typeof at !== 'string') return
+          const onServer = state.tabs.filter((t) => t.server?.hostId === at)
+          const tab = onServer.find((t) => t.id === state.activeTabId) ?? onServer[0]
+          if (!tab) return setServersSheet({ kind: 'connect', hostId: at })
+          if (tab.id !== state.activeTabId) activate(tab.id)
+          state.setTerminalShown(tab.id, true)
+          return
+        }
+        case 'templates':
+          return setTemplatesSheet({})
+        case 'saveDraftAsTemplate': {
+          const draft = state.draftByTab[state.activeTabId] ?? ''
+          if (draft.trim() === '') return
+          return setTemplatesSheet({ initialBody: draft })
+        }
+        case 'harvestTemplates':
+          setTemplatesSheet(null)
+          return setHarvestOpen(true)
       }
     },
     [activate, newChat, closeActiveTab, togglePalette, togglePanel, toggleSidebar, toggleSplit, restartSession, cycleMode]
@@ -494,16 +602,24 @@ export function App(): JSX.Element {
       }
     return {
       activateChat: focused(activate),
-      openProject: focused((cwd: string) => newChat(cwd)),
+      openProject: focused((cwd: string, hostId?: string) => newChat(cwd, hostId)),
       openSession: focused(openPast),
       insertMention: focused((path: string) => intoDraft((draft) => withMention(draft, path))),
       insertCommand: focused((name: string) => intoDraft((draft) => withCommand(draft, name))),
-      runAction: focused((id: AppActionId, arg?: string) => runAction(id, arg)),
+      insertTemplate: focused((body: string) => {
+        const state = useAppStore.getState()
+        if (state.activeTabId) state.requestComposerInsert(state.activeTabId, body)
+      }),
+      // A server's folder picker or terminal takes focus itself (R2): the input line must not.
+      runAction: (id: AppActionId, arg?: string) => {
+        if (!paletteActionKeepsFocus(id)) focusComposer()
+        runAction(id, arg)
+      },
       openLayer: (layer) => {
         const state = useAppStore.getState()
         if (state.activeTabId) state.setPaneLayer(state.activeTabId, layer)
       },
-      loadHistory: (cwd) => loadProjectHistory(cwd)
+      loadHistory: (cwd, hostId) => loadProjectHistory(cwd, false, hostId)
     }
   }, [activate, newChat, openPast, runAction, focusComposer, loadProjectHistory])
 
@@ -516,9 +632,14 @@ export function App(): JSX.Element {
         files: fileIndexByTab[activeTabId] ?? [],
         filesPending: fileIndexByTab[activeTabId] === undefined,
         commands: withLocalCommands(commandsByTab[activeTabId] ?? []),
+        servers,
+        templates,
+        hasDraft,
+        historyText,
+        onQuery: onPaletteQuery,
         run: paletteRun
       },
-    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, paletteRun]
+    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, servers, templates, hasDraft, historyText, onPaletteQuery, paletteRun]
   )
 
   // Window-level shortcuts, by physical key. The handler is registered once and
@@ -529,7 +650,7 @@ export function App(): JSX.Element {
   paletteRef.current = palette
   useEffect(() => {
     const onKey = (ev: KeyboardEvent): void => {
-      const hit = resolveAppShortcut(ev)
+      const hit = resolveAppShortcut(ev, window.qclod.platform)
       if (!hit) return
       // Always ours, so no default (Close Window, Reload…) sees the key.
       ev.preventDefault()
@@ -551,13 +672,32 @@ export function App(): JSX.Element {
     },
     focusField: focusComposer
   })
+  // The Mac menu's «Настройки…» does what the key does.
+  useEffect(() => window.qclod.onAppAction((id) => runRef.current(id)), [])
 
   // The file index backs @-mentions; it is per folder, so it is fetched once
   // per tab rather than on every keystroke.
+  // A server tab's waits for the server and is asked again when it comes back on line (fileIndexPolicy).
+  const activeServerState = useAppStore((s) => {
+    const hostId = s.tabs.find((t) => t.id === s.activeTabId)?.server?.hostId
+    return hostId ? (s.servers.find((x) => x.id === hostId)?.state ?? 'idle') : null
+  })
+  const lastServerState = useRef<{ tabId: string; state: string | null } | null>(null)
   useEffect(() => {
-    if (!activeTabId || fileIndexByTab[activeTabId]) return
-    void window.qclod.fileIndex(activeTabId).then((paths) => setFileIndex(activeTabId, paths))
-  }, [activeTabId, fileIndexByTab, setFileIndex])
+    const before = lastServerState.current
+    lastServerState.current = { tabId: activeTabId, state: activeServerState }
+    if (!activeTabId) return
+    const cameOnline =
+      activeServerState === 'online' && before?.tabId === activeTabId && before.state !== null && before.state !== 'online'
+    if (!fileIndexAsk({ cached: fileIndexByTab[activeTabId] !== undefined, serverState: activeServerState, cameOnline })) return
+    const tabId = activeTabId
+    window.qclod.fileIndex(tabId).then(
+      (paths) => {
+        if (fileIndexKept(activeServerState, paths)) setFileIndex(tabId, paths)
+      },
+      () => undefined
+    )
+  }, [activeTabId, fileIndexByTab, setFileIndex, activeServerState])
 
   // The first tab the main process reports is the one to show.
   useEffect(() => {
@@ -625,6 +765,10 @@ export function App(): JSX.Element {
           onRecheck={recheck}
           onDone={() => setSetupDismissed(true)}
           onOpenSettings={() => setSettingsOpen(true)}
+          onServersOnly={() => {
+            setSetupDismissed(true)
+            setServersSheet({ kind: 'picker' })
+          }}
         />
         {settingsOpen && (
           <SettingsScreen
@@ -673,10 +817,11 @@ export function App(): JSX.Element {
               closeChat(id)
             }}
             onNewChat={newChat}
+            onNewServerChat={() => setServersSheet({ kind: 'picker' })}
             onOpenPast={openPast}
             onToggleProject={toggleProject}
-            onForget={(cwd) => void window.qclod.forgetProject(cwd)}
-            onRetryPast={(cwd) => loadProjectHistory(cwd)}
+            onForget={(cwd, hostId) => void window.qclod.forgetProject(cwd, hostId)}
+            onRetryPast={(cwd, hostId) => loadProjectHistory(cwd, false, hostId)}
           />
         )}
         <SplitView
@@ -697,13 +842,15 @@ export function App(): JSX.Element {
                 onFocus={() => focusPane(id)}
                 onCycleMode={cycleMode}
                 onOpenHistory={() => togglePalette('history')}
+                onOpenPalette={() => togglePalette()}
+                onOpenServerChecklist={(hostId) => setServersSheet({ kind: 'status', hostId })}
                 onOpenSession={openSession}
                 panelRequest={panelRequest}
                 ribbonError={ribbonErrors[id] ?? null}
                 onRetryRibbon={() => retryRibbon(id)}
                 notice={
                   id === activeTabId && closeGuardTab === activeTabId
-                    ? { testId: 'close-guard', text: 'Агент работает — Ctrl+W ещё раз закроет чат' }
+                    ? { testId: 'close-guard', text: `Агент работает — ${actionKeys('closeTab')} ещё раз закроет чат` }
                     : null
                 }
               />
@@ -721,6 +868,40 @@ export function App(): JSX.Element {
           {...(palette.scope === undefined ? {} : { initialScope: palette.scope })}
           onClose={() => setPalette(null)}
           onFocusLost={focusComposer}
+        />
+      )}
+      {serversSheet && (
+        <ServersSheet
+          servers={servers}
+          steps={connectSteps}
+          initial={serversSheet}
+          onClose={() => {
+            setServersSheet(null)
+            focusComposer()
+          }}
+          onOpened={(tab) => activate(tab.id)}
+        />
+      )}
+      {templatesSheet && (
+        <TemplateManager
+          {...(templatesSheet.initialBody === undefined ? {} : { initialBody: templatesSheet.initialBody })}
+          {...(templatesSheet.notice === undefined ? {} : { notice: templatesSheet.notice })}
+          onClose={() => setTemplatesSheet(null)}
+          onHarvest={() => {
+            setTemplatesSheet(null)
+            setHarvestOpen(true)
+          }}
+          onFocusLost={focusAfterSheet}
+        />
+      )}
+      {harvestOpen && (
+        <HarvestSheet
+          onClose={() => setHarvestOpen(false)}
+          onSaved={(count) => {
+            setHarvestOpen(false)
+            setTemplatesSheet({ notice: `Сохранено: ${templatesCount(count)}.` })
+          }}
+          onFocusLost={focusAfterSheet}
         />
       )}
       {settingsOpen && (
@@ -743,6 +924,8 @@ export function App(): JSX.Element {
           onFocusLost={focusComposer}
         />
       )}
+      {/* Last and highest (R3): ssh may ask while the settings or Ctrl+K are open. */}
+      {sshPrompt && <SshPromptDialog key={sshPrompt.promptId} prompt={sshPrompt} onAnswer={answerSshPrompt} />}
     </div>
   )
 }

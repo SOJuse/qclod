@@ -79,7 +79,13 @@ test('правый клик — меню; «Скопировать относи�
   await expect(menu).toBeVisible()
   await expect(menu).toHaveAttribute('role', 'menu')
   const items = menu.locator('[data-testid="path-menu-item"]')
-  await expect(items).toHaveText(['Открыть', 'Показать в проводнике', 'Скопировать путь', 'Скопировать относительный путь'])
+  await expect(items).toHaveText([
+    'Открыть',
+    'Показать в проводнике',
+    'Скопировать путь',
+    'Скопировать относительный путь',
+    'Посмотреть'
+  ])
 
   await items.filter({ hasText: 'Скопировать относительный путь' }).click()
   await expect(menu).toBeHidden()
@@ -127,7 +133,7 @@ test('«Открыть в редакторе» есть только с зада
   await expect(link).toBeVisible({ timeout: 15000 })
   await link.click({ button: 'right' })
   const items = win.locator('[data-testid="path-menu-item"]')
-  await expect(items).toHaveCount(4)
+  await expect(items).toHaveCount(5)
   await expect(items.filter({ hasText: 'Открыть в редакторе' })).toHaveCount(0)
   await win.keyboard.press('Escape')
 
@@ -142,8 +148,10 @@ test('«Открыть в редакторе» есть только с зада
   await win.locator('[data-testid="close-settings"]').click()
 
   await link.click({ button: 'right' })
-  await expect(items).toHaveCount(5)
+  // The five above and «Открыть в редакторе».
+  await expect(items).toHaveCount(6)
   await items.filter({ hasText: 'Открыть в редакторе' }).click()
+
   await expect.poll(shellLog).toEqual([{ action: 'editor', path: aTs(), line: 3 }])
 })
 
@@ -291,3 +299,22 @@ test('файл в строке «сейчас» — ссылка, которая
   await link.click()
   await expect.poll(shellLog).toContainEqual({ action: 'open', path: aTs() })
 })
+
+test('«Посмотреть» открывает файл поверх ленты на строке из текста, только для чтения', async () => {
+  const win = await launch(SAY('Правил src/a.ts:3'))
+  const link = win.locator('[data-testid="path-link"]').first()
+  await expect(link).toBeVisible({ timeout: 15000 })
+  await link.click({ button: 'right' })
+  await win.locator('[data-testid="path-menu-item"]', { hasText: 'Посмотреть' }).click()
+
+  const viewer = win.locator('[data-testid="file-viewer"]')
+  await expect(viewer).toBeVisible()
+  await expect(viewer).toContainText('export const a = 1')
+  await expect(viewer.locator('.tok-keyword').first()).toBeVisible()
+  await expect(viewer.locator('[data-line-mark]')).toHaveAttribute('data-line', '3')
+  await expect(viewer.locator('input, textarea, [contenteditable]')).toHaveCount(0)
+  // Esc closes the layer.
+  await win.keyboard.press('Escape')
+  await expect(viewer).toBeHidden()
+})
+

@@ -122,3 +122,15 @@
   margin: 0;
   padding: var(--space-3) var(--space-4);
 }
+
+/* этап 7: a search match in a row's text, and a row that only says something («Ищу в разговорах…»). */
+.palette-mark {
+  border-radius: var(--radius-sm);
+  background: var(--accent-fill-strong);
+  color: inherit;
+}
+
+.action-palette-item.is-disabled {
+  color: var(--text-faint);
+  cursor: default;
+}

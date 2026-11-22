@@ -5,6 +5,7 @@ import type { CardAnswers } from '../../chat/cardAnswers'
 import { chorded } from '../../chat/keyChords'
 import { createKeyGuard, heldKeys } from '../../chat/permissionKeyGuard'
 import { resolveComposerKey } from '../../input/keyPrecedence'
+import { currentPlatform, formatKeys, hintKeys } from '../../app/shortcuts'
 import { Markdown } from '../../markdown/Markdown'
 import { PLAN_COMMENT_MAX, PLAN_TEXT_MAX, TextCount } from './TextLimit'
 import type { PlanItem } from './types'
@@ -259,7 +260,7 @@ export function PlanCard({ item, answers, focused = true, tabId }: Props): JSX.E
               type="button"
               className="btn btn-primary"
               data-testid="plan-approve-edited"
-              title="Одобрить план с правками (Ctrl+Enter)"
+              title={hintKeys('Одобрить план с правками', formatKeys('Mod+Enter', currentPlatform()))}
               disabled={!editable}
               onClick={approveEdited}
             >

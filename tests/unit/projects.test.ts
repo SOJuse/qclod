@@ -45,3 +45,27 @@ describe('projectName', () => {
     expect(projectName('\\\\host\\share')).toBe('share')
   })
 })
+
+describe('этап 6: проекты серверов', () => {
+  test('одна папка на двух серверах и локально — три разных ключа', () => {
+    const keys = new Set([projectKey('/home/u/app'), projectKey('/home/u/app', 'srv1'), projectKey('/home/u/app', 'srv2')])
+    expect(keys.size).toBe(3)
+  })
+
+  test('buildSidebar с локальной и серверной вкладкой одной папки — два проекта, у серверного remote', async () => {
+    const { buildSidebar } = await import('../../src/renderer/chat/sidebarModel')
+    const tab = (id: string, server?: { hostId: string }) =>
+      ({ id, cwd: '/home/u/app', title: 'app', overrides: {}, status: 'idle', badge: false, missingCwd: false, ...(server ? { server } : {}) }) as never
+    const servers = [
+      { id: 'srv1', label: 'Дом', target: 'me@home', auth: 'key', colour: 'violet', recent: [], fromConfig: false, state: 'online', hasPassword: false }
+    ] as never
+    const sidebar = buildSidebar([tab('a'), tab('b', { hostId: 'srv1' })], [], {}, servers)
+    expect(sidebar).toHaveLength(2)
+    const local = sidebar.find((p) => !p.remote)!
+    const remote = sidebar.find((p) => p.remote)!
+    expect(local.chats.map((c) => c.id)).toEqual(['a'])
+    expect(remote.chats.map((c) => c.id)).toEqual(['b'])
+    expect(remote.remote).toEqual({ hostId: 'srv1', label: 'Дом', color: 'violet' })
+    expect(remote.key).toBe('srv1:/home/u/app')
+  })
+})

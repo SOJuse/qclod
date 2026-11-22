@@ -1,5 +1,6 @@
 import type { DiffHunk } from '../../../shared/toolView'
 import { lines as linesWord } from '../../../shared/format'
+import type { Token } from '../../markdown/highlight'
 
 /** A diff longer than this is cut, with a count of what is left: the window stays quick. */
 const MAX_DIFF_LINES = 400
@@ -53,18 +54,21 @@ export function DiffView({ hunks }: { hunks: DiffHunk[] }): JSX.Element {
   )
 }
 
-function DiffLine({
+/** One row of a diff; `tokens` (syntax colour) replace the plain text when given. */
+export function DiffLine({
   kind,
   oldNo,
   newNo,
   sign,
-  text
+  text,
+  tokens
 }: {
   kind: 'add' | 'del' | 'ctx'
   oldNo: string
   newNo: string
   sign: string
   text: string
+  tokens?: Token[]
 }): JSX.Element {
   return (
     <div className={`diff-line is-${kind}`}>
@@ -73,7 +77,15 @@ function DiffLine({
       <span className="diff-sign" aria-hidden="true">
         {sign}
       </span>
-      <span className="diff-text">{text}</span>
+      <span className="diff-text">
+        {tokens
+          ? tokens.map((t, i) => (
+              <span key={i} className={`tok-${t.kind}`}>
+                {t.text}
+              </span>
+            ))
+          : text}
+      </span>
     </div>
   )
 }

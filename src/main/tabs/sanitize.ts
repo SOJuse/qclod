@@ -12,7 +12,9 @@ import {
   type RendererErrorReport,
   type TabAutonomyRecord,
   type TabState,
-  type UserInput
+  type UserInput,
+  TEMPLATE_LIMITS,
+  type TemplateDraft
 } from '../../shared/types'
 import {
   VOICE_MODEL_IDS,
@@ -20,7 +22,9 @@ import {
   type VoiceReplacement,
   type VoiceSettings
 } from '../../shared/voice'
+import { clip } from '../../shared/format'
 import { isInsidePasteDir } from '../files/imagePaste'
+import { isSafeSshTarget } from '../ssh/sshArgs'
 
 const MAX_TITLE = 200
 const OVERRIDE_KEYS = ['model', 'permissionMode', 'extraFlags', 'effort'] as const
@@ -469,9 +473,11 @@ export function sanitizeLayoutPatch(value: unknown): LayoutPatch {
 
   const folding = value['projectCollapsed']
   if (isPlainObject(folding)) {
-    const { cwd, collapsed } = folding
+    const { cwd, collapsed, hostId } = folding
     if (isString(cwd) && cwd !== '' && cwd.length <= MAX_LAYOUT_CWD && typeof collapsed === 'boolean') {
-      patch.projectCollapsed = { cwd, collapsed }
+      // Stage 6: a server's project, by that server's id.
+      const host = isString(hostId) && hostId !== '' && hostId.length <= 200 ? hostId : undefined
+      patch.projectCollapsed = { cwd, collapsed, ...(host ? { hostId: host } : {}) }
     }
   }
   return patch
@@ -492,4 +498,137 @@ export function sanitizeErrorReport(value: unknown): RendererErrorReport | null 
   if (isString(stack)) report.stack = stack.slice(0, MAX_ERROR_TEXT)
   if (isString(componentStack)) report.componentStack = componentStack.slice(0, MAX_ERROR_TEXT)
   return report
+}
+
+// ---------------------------------------------------------------- stage 6: servers
+
+const MAX_SERVER_VALUE = 4096
+const MAX_HOST_ID = 64
+const MAX_TARGET = 255
+
+/** A server's id as main made it: short, no spaces. */
+export function sanitizeHostId(value: unknown): string | null {
+  if (!isString(value) || value === '' || value.length > MAX_HOST_ID || !/^[\w.-]+$/.test(value)) return null
+  return value
+}
+
+/**
+ * A server from the form. The target goes to ssh as an argument: whitespace,
+ * a control character or a leading `-` (ssh would take it for an option) and
+ * it is no target. A port outside 1–65535 is refused.
+ */
+export function sanitizeServerEntry(value: unknown): {
+  id?: string
+  label: string
+  target: string
+  port?: number
+  identityFile?: string
+  auth: 'key' | 'password'
+  colour?: import('../../shared/types').ServerColour
+  fromConfig: boolean
+} | null {
+  if (!isPlainObject(value)) return null
+  const { id, label, target, port, identityFile, auth, colour, fromConfig } = value
+  if (!isString(target) || target === '' || target.length > MAX_TARGET) return null
+  // Letters, digits and ._@[]:%+- only, never a leading `-` (I10, CVE-2023-51385).
+  if (!isSafeSshTarget(target)) return null
+  if (label !== undefined && (!isString(label) || label.length > MAX_TITLE || /[\r\n\0]/.test(label))) return null
+  let cleanPort: number | undefined
+  if (port !== undefined && port !== null) {
+    if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) return null
+    cleanPort = port
+  }
+  let key: string | undefined
+  if (identityFile !== undefined && identityFile !== '') {
+    if (!isString(identityFile) || identityFile.length > MAX_SERVER_VALUE || /[\r\n\0]/.test(identityFile) || identityFile.startsWith('-')) {
+      return null
+    }
+    key = identityFile
+  }
+  const knownColours = ['blue', 'violet', 'green', 'amber', 'rose', 'cyan']
+  return {
+    ...(id !== undefined && sanitizeHostId(id) ? { id: id as string } : {}),
+    label: isString(label) ? label.trim() : '',
+    target,
+    ...(cleanPort !== undefined ? { port: cleanPort } : {}),
+    ...(key ? { identityFile: key } : {}),
+    auth: auth === 'password' ? 'password' : 'key',
+    ...(isString(colour) && knownColours.includes(colour) ? { colour: colour as import('../../shared/types').ServerColour } : {}),
+    fromConfig: fromConfig === true
+  }
+}
+
+/** A password to keep: a string of at most 4096, one line (askpass prints it as one). */
+export function sanitizeServerPassword(value: unknown): string | null {
+  if (!isString(value) || value === '' || value.length > MAX_SERVER_VALUE || /[\r\n\0]/.test(value)) return null
+  return value
+}
+
+/** The person's answer to ssh's question: a known shape, a value of at most 4096 on one line. */
+export function sanitizePromptAnswer(value: unknown): import('../../shared/types').SshPromptAnswer | null {
+  if (!isPlainObject(value)) return null
+  const { promptId, ok, value: given, remember } = value
+  if (!isString(promptId) || promptId === '' || promptId.length > MAX_HOST_ID) return null
+  if (ok !== true) return { promptId, ok: false }
+  if (!isString(given) || given.length > MAX_SERVER_VALUE || /[\r\n\0]/.test(given)) return null
+  return { promptId, ok: true, value: given, ...(remember === true ? { remember: true } : {}) }
+}
+
+/** A path on a server: at most 4096 characters, no NUL; `~` is the home there. */
+export function sanitizeRemotePath(value: unknown): string | null {
+  if (!isString(value) || value.length > MAX_SERVER_VALUE || value.includes('\0')) return null
+  return value
+}
+
+/** Stage 6: a server terminal's id — what TerminalHub handed out (a uuid). */
+export function sanitizeTerminalId(value: unknown): string | null {
+  return isString(value) && /^[0-9a-f-]{36}$/i.test(value) ? value : null
+}
+
+/** Stage 6: keystrokes for a server terminal, at most 64 KiB at a time. */
+export function sanitizeTerminalInput(value: unknown): string | null {
+  return isString(value) && value.length > 0 && value.length <= 64 * 1024 ? value : null
+}
+
+// — этап 7: шаблоны
+const TEMPLATE_ID = /^[A-Za-z0-9_-]{1,64}$/
+/** An empty title is the body's first line, this long at most. */
+const TEMPLATE_AUTO_TITLE = 60
+
+/**
+ * A template from the window: a body that is not blank and within the limit,
+ * a title within the limit (blank — the body's first line), a plain id if
+ * any, a known origin. Anything else — null, and nothing is saved.
+ */
+export function sanitizeTemplateDraft(value: unknown): TemplateDraft | null {
+  if (!isPlainObject(value)) return null
+  const { id, title, body, origin } = value
+  if (!isString(body)) return null
+  const text = body.trim()
+  if (text === '' || text.length > TEMPLATE_LIMITS.body) return null
+  if (title !== undefined && !isString(title)) return null
+  let name = (title ?? '').trim()
+  if (name.length > TEMPLATE_LIMITS.title) return null
+  if (name === '') {
+    const firstLine = text.split('\n').find((line) => line.trim() !== '') ?? text
+    name = clip(firstLine.trim(), TEMPLATE_AUTO_TITLE)
+  }
+  if (id !== undefined && (!isString(id) || !TEMPLATE_ID.test(id))) return null
+  const draft: TemplateDraft = { title: name, body: text, origin: origin === 'harvest' ? 'harvest' : 'manual' }
+  return id !== undefined ? { id: id as string, ...draft } : draft
+}
+
+/** At most this many projects left out of «Собрать мои шаблоны». */
+const MAX_EXCLUDED = 200
+
+/** The projects left out of «Собрать»: an array of at most 200 strings, else none. */
+export function sanitizeExcludedProjects(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > MAX_EXCLUDED) return []
+  if (!value.every((v) => isString(v) && v.length > 0 && v.length <= 1000)) return []
+  return value as string[]
+}
+
+/** A stored template id: what the window may name in «удалить». */
+export function isTemplateId(value: unknown): value is string {
+  return isString(value) && TEMPLATE_ID.test(value)
 }

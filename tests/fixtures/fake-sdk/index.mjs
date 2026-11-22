@@ -1838,3 +1838,132 @@ export function createFakeSdk(script = {}) {
     }
   }
 }
+
+// ---- A one-off query («Собрать мои шаблоны», этап 7) --------------------
+// The frames of a live one-shot on CLI 2.1.317 (.superpowers/research/07-oneshot-probe.md):
+// system/init with no tools, one assistant text, result/success with result
+// and total_cost_usd. Not logged in: an assistant «Not logged in · Please run
+// /login» with error authentication_failed, an errored result, then the
+// iterator throws.
+
+const DEFAULT_ONESHOT_ANSWER = JSON.stringify([
+  { title: 'Ревью ветки', body: 'Сделай ревью ветки {{ветка}} и перечисли проблемы', why: 'просьбы о ревью' },
+  { title: 'Тесты для модуля', body: 'Напиши тесты для {{модуль}}, покрой граничные случаи', why: 'просьбы о тестах' }
+])
+
+/** Waits ms, or rejects as the SDK does when the abort controller fires. */
+function abortableDelay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error('Claude Code process aborted by user'))
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        reject(new Error('Claude Code process aborted by user'))
+      },
+      { once: true }
+    )
+  })
+}
+
+/**
+ * A stand-in for the SDK's `query()` in one-shot form: `({ prompt, options })`
+ * gives the frames of one answer. `calls` keeps every prompt and options it
+ * was given, for tests to read what would have gone out.
+ */
+export function fakeOneShot(script = {}) {
+  const calls = []
+  const query = ({ prompt, options }) => {
+    calls.push({ prompt, options })
+    const signal = options?.abortController?.signal
+    const sessionId = randomUUID()
+    return (async function* () {
+      yield {
+        type: 'system',
+        subtype: 'init',
+        uuid: randomUUID(),
+        session_id: sessionId,
+        cwd: options?.cwd ?? '',
+        model: 'claude-sonnet-5',
+        tools: [],
+        mcp_servers: [],
+        apiKeySource: 'none',
+        claude_code_version: '2.1.317'
+      }
+      if (script.delayMs) await abortableDelay(script.delayMs, signal)
+      if (signal?.aborted) throw new Error('Claude Code process aborted by user')
+      if (script.fail === 'crash') throw new Error('fake one-shot: the agent crashed')
+      if (script.fail === 'notLoggedIn') {
+        yield {
+          type: 'assistant',
+          uuid: randomUUID(),
+          session_id: sessionId,
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Not logged in · Please run /login' }] },
+          error: 'authentication_failed'
+        }
+        yield {
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          terminal_reason: 'api_error',
+          uuid: randomUUID(),
+          session_id: sessionId,
+          num_turns: 1,
+          total_cost_usd: 0,
+          result: 'Not logged in · Please run /login'
+        }
+        throw new Error('Claude Code returned an error result: Not logged in · Please run /login')
+      }
+      if (script.fail === 'limit') {
+        const resetsAt = Date.now() + 3_600_000
+        const text = `You've hit your session limit · resets ${new Date(resetsAt).toISOString()}`
+        yield {
+          type: 'rate_limit_event',
+          uuid: randomUUID(),
+          session_id: sessionId,
+          rate_limit_info: { status: 'rejected', resetsAt: Math.floor(resetsAt / 1000), rateLimitType: 'five_hour' }
+        }
+        yield {
+          type: 'assistant',
+          uuid: randomUUID(),
+          session_id: sessionId,
+          message: { role: 'assistant', content: [{ type: 'text', text }] },
+          error: 'rate_limit'
+        }
+        yield {
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          uuid: randomUUID(),
+          session_id: sessionId,
+          num_turns: 1,
+          total_cost_usd: 0,
+          result: text
+        }
+        return
+      }
+      const text = script.text ?? DEFAULT_ONESHOT_ANSWER
+      yield {
+        type: 'assistant',
+        uuid: randomUUID(),
+        session_id: sessionId,
+        message: { role: 'assistant', content: [{ type: 'text', text }], stop_reason: 'end_turn' }
+      }
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        terminal_reason: 'completed',
+        uuid: randomUUID(),
+        session_id: sessionId,
+        num_turns: 1,
+        duration_ms: 8884,
+        total_cost_usd: script.costUsd ?? 0.0006181,
+        result: text
+      }
+    })()
+  }
+  query.calls = calls
+  return query
+}

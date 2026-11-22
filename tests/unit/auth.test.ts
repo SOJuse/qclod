@@ -67,7 +67,7 @@ describe('openLoginWindow', () => {
     ]
   ])('%s → окно cmd с одной строкой входа', (agent, line) => {
     const { spawnFn, child } = fakeSpawn()
-    openLoginWindow(agent, spawnFn)
+    openLoginWindow(agent, spawnFn, 'win32')
     expect(spawnFn).toHaveBeenCalledTimes(1)
     const [file, args, opts] = spawnFn.mock.calls[0]
     expect(file).toBe('cmd.exe')
@@ -84,7 +84,7 @@ describe('openLoginWindow', () => {
   test('ошибка запуска — тихая строка в консоли, не исключение', () => {
     const { spawnFn, listeners } = fakeSpawn()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    openLoginWindow('C:\\a\\claude.exe', spawnFn)
+    openLoginWindow('C:\\a\\claude.exe', spawnFn, 'win32')
     expect(listeners['error']).toBeTypeOf('function')
     listeners['error'](new Error('spawn cmd.exe ENOENT'))
     expect(warn).toHaveBeenCalledWith('[login]', 'spawn cmd.exe ENOENT')
@@ -289,5 +289,22 @@ describe('LoginWatch', () => {
     await flush()
     expect(clock.pending()).toBe(0)
     expect(progress).toEqual(['waiting'])
+  })
+})
+
+describe('openLoginWindow на Mac', () => {
+  test('идёт через Terminal и .command-файл, cmd.exe не зовётся', async () => {
+    const { readFileSync, rmSync } = await import('node:fs')
+    const unref = vi.fn()
+    const spawnFn = vi.fn(() => ({ on: vi.fn(), unref }))
+    openLoginWindow("/Users/a b/.local/bin/cl'aude", spawnFn as unknown as SpawnLike, 'darwin')
+    expect(spawnFn).toHaveBeenCalledTimes(1)
+    const [file, args] = spawnFn.mock.calls[0] as unknown as [string, string[]]
+    expect(file).toBe('open')
+    expect(args.slice(0, 2)).toEqual(['-a', 'Terminal'])
+    const script = readFileSync(args[2]!, 'utf8')
+    expect(script).toContain(String.raw`exec '/Users/a b/.local/bin/cl'\''aude' auth login`)
+    expect(unref).toHaveBeenCalledTimes(1)
+    rmSync(args[2]!, { force: true })
   })
 })

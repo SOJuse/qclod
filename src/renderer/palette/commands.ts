@@ -1,4 +1,4 @@
-import { APP_ACTIONS } from '../app/shortcuts'
+import { APP_ACTIONS, actionKeys } from '../app/shortcuts'
 import { SECTION_CAP, type PaletteItem, type PaletteProvider } from './types'
 import { bestOf, points, ranked } from './rank'
 
@@ -21,13 +21,16 @@ export const commandsProvider: PaletteProvider = {
   title: 'Команды',
   prefix: '>',
   items(query, ctx) {
-    const actions = APP_ACTIONS.filter((a) => a.id !== 'actions').map(
+    // «Сохранить черновик как шаблон» has nothing to save without a draft.
+    const actions = APP_ACTIONS.filter(
+      (a) => a.id !== 'actions' && (a.id !== 'saveDraftAsTemplate' || ctx.hasDraft === true)
+    ).map(
       (action): { row: PaletteItem; name?: string } => ({
         row: {
           key: `action:${action.id}`,
           section: 'commands',
           title: action.label,
-          ...(action.keys ? { keys: action.keys } : {}),
+          ...(action.keys ? { keys: actionKeys(action.id) } : {}),
           run: () => ctx.run.runAction(action.id)
         }
       })

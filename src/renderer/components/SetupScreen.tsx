@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, CircleAlert } from 'lucide-react'
 import type { EnvironmentReport, LoginProgress } from '../../shared/types'
+import { MAC_INSTALL_COMMAND } from '../../shared/macInstall'
 import { ERROR_ICON } from '../ui/icons'
 import './SetupScreen.css'
 
@@ -13,6 +14,8 @@ interface Props {
   onRecheck: () => void
   onDone: () => void
   onOpenSettings: () => void
+  /** Stage 6: server chats need no local claude — straight to the servers. */
+  onServersOnly?: () => void
 }
 
 type StepState = 'done' | 'active' | 'todo' | 'blocked'
@@ -28,6 +31,8 @@ interface StepView {
   state: StepState
   text: string
   textTestId?: string
+  /** A command to show under the text, with a copy button (a Mac installs in Terminal). */
+  code?: string
   /** The button that moves this step on; shown as the screen's primary while the step is active. */
   main?: Action
   extra?: Action
@@ -48,6 +53,7 @@ export function SetupScreen({
   checkError = null,
   onRecheck,
   onDone,
+  onServersOnly,
   onOpenSettings
 }: Props): JSX.Element {
   const [log, setLog] = useState<string[]>([])
@@ -127,6 +133,27 @@ export function SetupScreen({
     const { found, version, problem } = report.agent
     if (found) {
       return { state: 'done', text: version ? `Установлен, версия ${version}` : 'Установлен' }
+    }
+    // A Mac installs with the official one-liner in Terminal: no winget, no npm from here.
+    if (window.qclod.platform === 'darwin') {
+      return {
+        state: 'active',
+        text: 'Claude Code не найден. Установите его в Терминале:',
+        textTestId: 'setup-mac-install',
+        code: MAC_INSTALL_COMMAND,
+        main: {
+          testId: 'setup-copy-install',
+          label: 'Скопировать',
+          title: 'Скопировать команду установки',
+          run: () => void navigator.clipboard.writeText(MAC_INSTALL_COMMAND)
+        },
+        extra: {
+          testId: 'setup-recheck-inline',
+          label: 'Проверить снова',
+          title: 'Проверить, что Claude Code на месте и вход выполнен',
+          run: onRecheck
+        }
+      }
     }
     if (installing) {
       return {
@@ -256,6 +283,11 @@ export function SetupScreen({
                   >
                     {view.text}
                   </p>
+                  {view.code && (
+                    <pre className="setup-log" data-testid="setup-mac-command">
+                      {view.code}
+                    </pre>
+                  )}
                   {id === 'agent' && showLog && (
                     <pre
                       className={`setup-log${installing ? ' is-live' : ''}`}
@@ -287,6 +319,16 @@ export function SetupScreen({
             }}
             disabled={checking}
           />
+          {onServersOnly && (
+            <SetupButton
+              action={{
+                testId: 'setup-servers-only',
+                label: 'Работать только с серверами',
+                title: 'Чаты на своих серверах: Claude Code здесь не нужен',
+                run: onServersOnly
+              }}
+            />
+          )}
           <SetupButton
             action={{ testId: 'setup-done', label: 'Начать работу', title: 'Перейти к работе', run: onDone }}
             primary={allDone}

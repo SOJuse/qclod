@@ -118,7 +118,59 @@ export const CHANNELS = Object.freeze({
   // этап 4: сабагенты
   // renderer -> main (invoke)
   agentSubagentSend: 'agent:subagentSend',
-  agentSubagentStop: 'agent:subagentStop'
+  agentSubagentStop: 'agent:subagentStop',
+  // stage 6
+  // main -> renderer (event): a menu item that does what a key does
+  appAction: 'app:action',
+
+  // stage 6: servers over SSH
+  // renderer -> main (invoke)
+  serversList: 'servers:list',
+  serversSave: 'servers:save',
+  serversRemove: 'servers:remove',
+  serversConnect: 'servers:connect',
+  serversForgetPassword: 'servers:forgetPassword',
+  serversPromptAnswer: 'servers:promptAnswer',
+  serversListDir: 'servers:listDir',
+  serversOpenFolder: 'servers:openFolder',
+  serversLogin: 'servers:login',
+  serversLoginCode: 'servers:loginCode',
+  serversUpdateRelay: 'servers:updateRelay',
+  viewerRead: 'viewer:read',
+  viewerDownloadOpen: 'viewer:downloadOpen',
+  filesUploadRemote: 'files:uploadRemote',
+  terminalOpen: 'terminal:open',
+  terminalResize: 'terminal:resize',
+  terminalClose: 'terminal:close',
+  terminalAttach: 'terminal:attach',
+  // renderer -> main (send)
+  terminalInput: 'terminal:input',
+  /** A local file the person dropped or pasted (the preload, from webUtils): it may go to a server. */
+  filesSeen: 'files:seen',
+  // main -> renderer (events)
+  serversChanged: 'servers:changed',
+  serversPrompt: 'servers:prompt',
+  serversConnectProgress: 'servers:connectProgress',
+  serversLoginProgress: 'servers:loginProgress',
+  /** An ssh question is gone without the window's answer (timeout, ssh exited, cancelled): its dialog closes. */
+  serversPromptClosed: 'servers:promptClosed',
+  terminalData: 'terminal:data',
+  terminalExit: 'terminal:exit',
+  // этап 7: шаблоны, Git, поиск по истории
+  // renderer -> main (invoke)
+  templatesList: 'templates:list',
+  templatesSave: 'templates:save',
+  templatesSaveMany: 'templates:saveMany',
+  templatesDelete: 'templates:delete',
+  harvestPreview: 'templates:harvestPreview',
+  harvestRun: 'templates:harvestRun',
+  harvestCancel: 'templates:harvestCancel',
+  gitStatus: 'git:status',
+  gitDiff: 'git:diff',
+  gitCommit: 'git:commit',
+  historySearch: 'history:search',
+  // main -> renderer (event)
+  templatesChanged: 'templates:changed'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -199,8 +251,40 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.voiceOpenVcRedist,
   // этап 4: сабагенты
   CHANNELS.agentSubagentSend,
-  CHANNELS.agentSubagentStop
+  CHANNELS.agentSubagentStop,
+  // stage 6: servers over SSH
+  CHANNELS.serversList,
+  CHANNELS.serversSave,
+  CHANNELS.serversRemove,
+  CHANNELS.serversConnect,
+  CHANNELS.serversForgetPassword,
+  CHANNELS.serversPromptAnswer,
+  CHANNELS.serversListDir,
+  CHANNELS.serversOpenFolder,
+  CHANNELS.serversLogin,
+  CHANNELS.serversLoginCode,
+  CHANNELS.serversUpdateRelay,
+  CHANNELS.viewerRead,
+  CHANNELS.viewerDownloadOpen,
+  CHANNELS.filesUploadRemote,
+  CHANNELS.terminalOpen,
+  CHANNELS.terminalResize,
+  CHANNELS.terminalClose,
+  CHANNELS.terminalAttach,
+  // этап 7: шаблоны, Git, поиск по истории
+  CHANNELS.templatesList,
+  CHANNELS.templatesSave,
+  CHANNELS.templatesSaveMany,
+  CHANNELS.templatesDelete,
+  CHANNELS.harvestPreview,
+  CHANNELS.harvestRun,
+  CHANNELS.harvestCancel,
+  CHANNELS.gitStatus,
+  CHANNELS.gitDiff,
+  CHANNELS.gitCommit,
+  CHANNELS.historySearch
 ])
+
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.ribbonChanged,
@@ -217,12 +301,27 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.layoutChanged,
   // Stage 5: voice
   CHANNELS.voiceEvent,
-  CHANNELS.voiceModelsChanged
+  CHANNELS.voiceModelsChanged,
+  // stage 6
+  CHANNELS.appAction,
+  // stage 6: servers over SSH
+  CHANNELS.serversChanged,
+  CHANNELS.serversPrompt,
+  CHANNELS.serversConnectProgress,
+  CHANNELS.serversLoginProgress,
+  CHANNELS.serversPromptClosed,
+  CHANNELS.terminalData,
+  CHANNELS.terminalExit,
+  // этап 7: шаблоны, Git, поиск по истории
+  CHANNELS.templatesChanged
 ])
 
 /** Fire-and-forget: the renderer sends, nothing comes back. */
 export const SEND_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.rendererError,
   // Stage 5: voice
-  CHANNELS.voiceAudio
+  CHANNELS.voiceAudio,
+  // stage 6: keystrokes for a server's terminal; a dropped/pasted file main may upload
+  CHANNELS.terminalInput,
+  CHANNELS.filesSeen
 ])

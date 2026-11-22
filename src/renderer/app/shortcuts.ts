@@ -22,6 +22,13 @@ export type AppActionId =
   | 'zoomReset'
   | 'reload'
   | 'voice'
+  // Stage 6 (сверка F16): actions on a server, its id as runAction's arg; no row of their own here.
+  | 'openServerFolder'
+  | 'openServerTerminal'
+  // этап 7: шаблоны
+  | 'templates'
+  | 'saveDraftAsTemplate'
+  | 'harvestTemplates'
 
 export interface AppActionInfo {
   id: AppActionId
@@ -29,26 +36,30 @@ export interface AppActionInfo {
   keys?: string
 }
 
-/** The Ctrl+K list, in the order it is shown. `tabAt` has no row: it is Ctrl+1…9. */
+/** The Ctrl+K (⌘K on a Mac) list, in the order it is shown. `tabAt` has no row: it is Ctrl+1…9. */
 export const APP_ACTIONS: AppActionInfo[] = [
-  { id: 'newTab', label: 'Новый чат', keys: 'Ctrl+T' },
-  { id: 'closeTab', label: 'Закрыть чат', keys: 'Ctrl+W' },
+  { id: 'newTab', label: 'Новый чат', keys: 'Mod+T' },
+  { id: 'closeTab', label: 'Закрыть чат', keys: 'Mod+W' },
   { id: 'nextTab', label: 'Следующий чат', keys: 'Ctrl+Tab' },
   { id: 'prevTab', label: 'Предыдущий чат', keys: 'Ctrl+Shift+Tab' },
-  { id: 'actions', label: 'Палитра действий', keys: 'Ctrl+K' },
-  { id: 'settings', label: 'Настройки', keys: 'Ctrl+,' },
-  { id: 'history', label: 'Прошлые разговоры', keys: 'Ctrl+H' },
-  { id: 'togglePanel', label: 'Показать или скрыть панель', keys: 'Ctrl+\\' },
-  { id: 'toggleSidebar', label: 'Показать или скрыть боковую панель', keys: 'Ctrl+B' },
-  { id: 'toggleSplit', label: 'Сплит: открыть рядом или закрыть', keys: 'Ctrl+Shift+Enter' },
+  { id: 'actions', label: 'Палитра действий', keys: 'Mod+K' },
+  { id: 'settings', label: 'Настройки', keys: 'Mod+,' },
+  { id: 'history', label: 'Прошлые разговоры', keys: 'Mod+H' },
+  { id: 'togglePanel', label: 'Показать или скрыть панель', keys: 'Mod+\\' },
+  { id: 'toggleSidebar', label: 'Показать или скрыть боковую панель', keys: 'Mod+B' },
+  { id: 'toggleSplit', label: 'Сплит: открыть рядом или закрыть', keys: 'Mod+Shift+Enter' },
   { id: 'restart', label: 'Перезапустить сессию' },
   { id: 'compact', label: 'Сжать контекст' },
   { id: 'cycleMode', label: 'Сменить режим', keys: 'Shift+Tab' },
   { id: 'voice', label: 'Голосовой ввод', keys: 'Ctrl+Пробел' },
-  { id: 'zoomIn', label: 'Крупнее', keys: 'Ctrl+=' },
-  { id: 'zoomOut', label: 'Мельче', keys: 'Ctrl+-' },
-  { id: 'zoomReset', label: 'Обычный масштаб', keys: 'Ctrl+0' },
-  { id: 'reload', label: 'Перезагрузить окно', keys: 'Ctrl+R' }
+  { id: 'zoomIn', label: 'Крупнее', keys: 'Mod+=' },
+  { id: 'zoomOut', label: 'Мельче', keys: 'Mod+-' },
+  { id: 'zoomReset', label: 'Обычный масштаб', keys: 'Mod+0' },
+  { id: 'reload', label: 'Перезагрузить окно', keys: 'Mod+R' },
+  // этап 7: шаблоны
+  { id: 'templates', label: 'Шаблоны' },
+  { id: 'saveDraftAsTemplate', label: 'Сохранить черновик как шаблон' },
+  { id: 'harvestTemplates', label: 'Собрать мои шаблоны' }
 ]
 
 /** A tooltip with keys that are not a window action, such as Enter in the input. */
@@ -56,9 +67,45 @@ export function hintKeys(label: string, keys: string): string {
   return `${label} (${keys})`
 }
 
-/** A button's tooltip: «Новый чат (Ctrl+T)». */
-export function hint(label: string, id?: AppActionId): string {
-  const keys = id ? APP_ACTIONS.find((a) => a.id === id)?.keys : undefined
+export type Platform = 'win32' | 'darwin' | 'linux'
+
+/** The platform the window runs on; the preload reads it from `process.platform`. */
+export function currentPlatform(): Platform {
+  const p = typeof window === 'undefined' ? undefined : window.qclod?.platform
+  return p ?? 'win32'
+}
+
+const MAC_GLYPHS: Record<string, string> = {
+  Mod: '⌘',
+  Ctrl: '⌃',
+  Alt: '⌥',
+  Shift: '⇧',
+  Enter: '↩'
+}
+
+/**
+ * Keys as written in APP_ACTIONS («Mod+Shift+Enter») for the person: «Ctrl+Shift+Enter»
+ * on Windows and Linux, «⌘⇧↩» on a Mac. `Mod` is Cmd there and Ctrl elsewhere; a literal
+ * `Ctrl` stays Ctrl (⌃ on a Mac).
+ */
+export function formatKeys(keys: string, platform: Platform): string {
+  const parts = keys.split('+')
+  // A trailing «+» is the key itself («Mod++»): the split leaves an empty tail.
+  if (keys.endsWith('+')) parts.splice(parts.length - 2, 2, '+')
+  if (platform === 'darwin') return parts.map((p) => MAC_GLYPHS[p] ?? p).join('')
+  return parts.map((p) => (p === 'Mod' ? 'Ctrl' : p)).join('+')
+}
+
+/** The keys of an action as shown here; Cmd+H hides the app on a Mac, so history is Cmd+Y there. */
+export function actionKeys(id: AppActionId, platform: Platform = currentPlatform()): string | undefined {
+  const keys = APP_ACTIONS.find((a) => a.id === id)?.keys
+  if (!keys) return undefined
+  return formatKeys(id === 'history' && platform === 'darwin' ? 'Mod+Y' : keys, platform)
+}
+
+/** A button's tooltip: «Новый чат (Ctrl+T)», «Новый чат (⌘T)» on a Mac. */
+export function hint(label: string, id?: AppActionId, platform: Platform = currentPlatform()): string {
+  const keys = id ? actionKeys(id, platform) : undefined
   return keys ? hintKeys(label, keys) : label
 }
 
@@ -70,17 +117,24 @@ export const LAST_TAB_INDEX = 8
  * layout works. Shift+Tab alone is the composer's (it cycles the mode there).
  */
 export function resolveAppShortcut(
-  ev: KeyLike
+  ev: KeyLike,
+  platform: Platform = currentPlatform()
 ): { id: AppActionId; index?: number } | null {
   if (ev.isComposing || ev.keyCode === 229) return null
-  if (!ev.ctrlKey || ev.altKey || ev.metaKey) return null
+  if (ev.altKey) return null
 
   const code = ev.code ?? ''
-  if (code === 'Tab') return { id: ev.shiftKey ? 'prevTab' : 'nextTab' }
+  // Tab between chats is the physical Ctrl everywhere: Cmd+Tab is the system's.
+  if (code === 'Tab') {
+    if (!ev.ctrlKey || ev.metaKey) return null
+    return { id: ev.shiftKey ? 'prevTab' : 'nextTab' }
+  }
+  // Mod is Cmd on a Mac and Ctrl elsewhere, and the other one must be up (Ctrl+T on a Mac is not ours).
+  if (platform === 'darwin' ? !ev.metaKey || ev.ctrlKey : !ev.ctrlKey || ev.metaKey) return null
   if (code === 'Enter' || code === 'NumpadEnter') {
     return ev.shiftKey ? { id: 'toggleSplit' } : null
   }
-  // Zoom: Ctrl+= also arrives as Ctrl+Shift+= (the plus sign), so Shift is allowed here.
+  // Zoom: Mod+= also arrives as Mod+Shift+= (the plus sign), so Shift is allowed here.
   if (code === 'Equal' || code === 'NumpadAdd') return { id: 'zoomIn' }
   if (code === 'Minus' || code === 'NumpadSubtract') return { id: 'zoomOut' }
   if (code === 'Digit0' || code === 'Numpad0') return { id: 'zoomReset' }
@@ -99,7 +153,9 @@ export function resolveAppShortcut(
     case 'k':
       return { id: 'actions' }
     case 'h':
-      return { id: 'history' }
+      return platform === 'darwin' ? null : { id: 'history' }
+    case 'y':
+      return platform === 'darwin' ? { id: 'history' } : null
     case 'b':
       return { id: 'toggleSidebar' }
     case 'r':
@@ -114,4 +170,13 @@ export function tabAtTarget(tabIds: string[], index: number | undefined): string
   if (index === undefined) return null
   const at = index === LAST_TAB_INDEX ? tabIds.length - 1 : index
   return tabIds[at] ?? null
+}
+
+/**
+ * Ctrl+K rows that open a sheet or the terminal of their own (R2): focus goes
+ * there, not back to the input line — an Enter meant for the sheet would
+ * otherwise go to the agent.
+ */
+export function paletteActionKeepsFocus(id: AppActionId): boolean {
+  return id === 'openServerFolder' || id === 'openServerTerminal'
 }

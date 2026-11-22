@@ -26,7 +26,10 @@ import {
 type Handler = (e: unknown, ...args: unknown[]) => unknown
 const handlers = vi.hoisted(() => new Map<string, Handler>())
 vi.mock('electron', () => ({
-  ipcMain: { handle: (channel: string, fn: Handler) => handlers.set(channel, fn) },
+  ipcMain: {
+    handle: (channel: string, fn: Handler) => handlers.set(channel, fn),
+    on: (channel: string, fn: Handler) => handlers.set(channel, fn)
+  },
   dialog: {},
   BrowserWindow: class {},
   shell: { openPath: vi.fn(), showItemInFolder: vi.fn() },
@@ -334,8 +337,15 @@ describe('sanitizeLayoutPatch', () => {
     expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: '', collapsed: true } })).toEqual({})
     expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: 'C:\\p', collapsed: 'да' } })).toEqual({})
     expect(sanitizeLayoutPatch({ projectCollapsed: 'C:\\p' })).toEqual({})
+    // Stage 6 (task 22): a server's project folds by its hostId (≤ 200); anything else is dropped.
     expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: 'C:\\p', collapsed: true, hostId: 'x' } })).toEqual({
-      projectCollapsed: { cwd: 'C:\\p', collapsed: true }
+      projectCollapsed: { cwd: 'C:\\p', collapsed: true, hostId: 'x' }
+    })
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: '/p', collapsed: true, hostId: 'x'.repeat(201) } })).toEqual({
+      projectCollapsed: { cwd: '/p', collapsed: true }
+    })
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: '/p', collapsed: true, hostId: 7 } })).toEqual({
+      projectCollapsed: { cwd: '/p', collapsed: true }
     })
   })
 

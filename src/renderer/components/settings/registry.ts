@@ -5,6 +5,7 @@ import { AgentSection } from './AgentSection'
 import { AutonomySection } from './AutonomySection'
 import { NotificationsSection } from './NotificationsSection'
 import { PermissionsSection } from './PermissionsSection'
+import { ServersSection } from './ServersSection'
 import { WindowSection } from './WindowSection'
 import { VoiceSection } from './VoiceSection'
 import { isWindows } from '../../voice/platform'
@@ -20,8 +21,10 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'agent', title: 'Запуск агента', order: 30, Component: AgentSection },
   { id: 'autonomy', title: 'Автономность', order: 35, Component: AutonomySection },
   { id: 'permissions', title: 'Разрешения', order: 40, Component: PermissionsSection },
-  // Voice is Windows-only in 1.0 (G11); этап 6 (task 1) checks window.qclod.platform === 'win32' instead.
+  // Voice is Windows-only in 1.0 (G11): isWindows() is window.qclod.platform === 'win32'.
+
   ...(isWindows() ? [{ id: 'voice', title: 'Голос', order: 50, Component: () => createElement(VoiceSection) }] : []),
+  { id: 'servers', title: 'Серверы', order: 60, Component: ServersSection },
   { id: 'about', title: 'О программе', order: 90, Component: AboutSection }
 ]
 

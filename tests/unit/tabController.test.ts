@@ -17,6 +17,16 @@ import type { PanelEvent, PermissionRequest, RibbonEvent, StatusEvent, TabState 
 import { readTranscript } from '../../src/main/agent/transcript'
 import { resumedSession, writeTranscript } from '../fixtures/transcript.mjs'
 import { useAppStore } from '../../src/renderer/state/useAppStore'
+import type { RibbonItem } from '../../src/shared/types'
+import { RelayDaemon } from '../../src/relay/daemon'
+import { Journal } from '../../src/relay/journal'
+import { relayPaths } from '../../src/relay/paths'
+import { CALL_TIMEOUT_MS, RelayClient } from '../../src/main/ssh/relayClient'
+import { createRelayDriver } from '../../src/main/ssh/relayDriver'
+import { socketTransport } from '../../src/main/ssh/transport'
+import { createDriverFactory } from '../../src/main/agent/createDriver'
+import type { RelaySnapshot } from '../../src/shared/relayProtocol'
+import { cleanTemps, fakeFactory, tempDir, until } from './relayHarness'
 
 let store = ''
 let projectA = ''
@@ -2320,5 +2330,186 @@ describe('TabController: раскладка этапа 2 (layout.json)', () => {
 
     expect(controller.list().some((t) => t.cwd === projectB)).toBe(false)
     expect(layout.get().projects.map((p) => p.cwd)).toEqual([projectA, projectB])
+  })
+})
+
+// ------------------------------------------------------------- stage 6: server chats
+
+describe('TabController: серверные чаты', () => {
+  const running: Array<{ daemon: RelayDaemon; client: RelayClient; controller: TabController }> = []
+  afterEach(async () => {
+    for (const r of running.splice(0)) {
+      await r.controller.disposeAll().catch(() => undefined)
+      r.client.close()
+      await r.daemon.stop()
+    }
+    cleanTemps()
+  })
+
+  const fastTimer = (fn: () => void, ms: number): unknown => {
+    const t = setTimeout(fn, ms < CALL_TIMEOUT_MS ? ms / 50 : ms)
+    t.unref?.()
+    return t
+  }
+
+  async function serverHarness(root = tempDir('qclod-tc-relay-')) {
+    const paths = relayPaths(root, process.platform, join(root, '.qclod'))
+    const fake = fakeFactory({ nextTurn: [{ kind: 'text', text: 'ответ сервера' }] })
+    const daemon = new RelayDaemon({
+      paths,
+      version: '1.0.0-test',
+      createDriver: fake.factory,
+      claudePath: () => '/home/u/.local/bin/claude',
+      exit: () => undefined,
+      home: root
+    })
+    await daemon.start()
+    const client = new RelayClient({
+      hostId: 'h1',
+      appVersion: '1.0.0',
+      clientName: 'vitest',
+      transport: socketTransport(paths.socket),
+      setTimer: fastTimer
+    })
+    await client.connect(true)
+    const manager = new AgentSessionManager({
+      getAgentPath: () => 'C:/nowhere/claude.exe',
+      createDriver: createDriverFactory({
+        relay: (o) =>
+          createRelayDriver(o, {
+            client,
+            ...(o.server?.relaySessionId ? { relaySessionId: o.server.relaySessionId } : {}),
+            onSessionId: () => undefined
+          })
+      }),
+      askPermission: async () => ({ behavior: 'deny' })
+    })
+    const controller = new TabController({
+      manager,
+      storeDir: store,
+      layout: new LayoutStore(store, () => undefined),
+      defaultCwd: projectA,
+      getDefaults: () => ({}),
+      history: { list: async () => [], transcript: async () => [] },
+      onChanged: () => undefined,
+      onRibbon: () => undefined,
+      onPanel: () => undefined,
+      onStatus: () => undefined,
+      onCommands: () => undefined
+    })
+    const h = { daemon, client, controller, manager, fake, paths, root }
+    running.push(h)
+    return h
+  }
+
+  const storedTabs = (): Array<Record<string, unknown>> => JSON.parse(readFileSync(join(store, TABS_FILE), 'utf8'))
+
+  test('relaySessionId пишется в tabs.json', async () => {
+    const h = await serverHarness()
+    const tab = h.controller.create(projectB, {}, undefined, undefined, { hostId: 'h1' })
+    expect(tab).toMatchObject({ missingCwd: false, server: { hostId: 'h1' } })
+    await h.controller.whenSettled()
+    const s = h.manager.get(tab.id)!.relaySessionId
+    expect(s).toMatch(/.+/)
+    expect(storedTabs()[0]).toMatchObject({ cwd: projectB, server: { hostId: 'h1', relaySessionId: s } })
+    expect(h.controller.list()[0]!.server).toEqual({ hostId: 'h1', relaySessionId: s })
+  })
+
+  test('restore не помечает серверную вкладку missingCwd и подключается к той же сессии', async () => {
+    const h = await serverHarness()
+    const first = h.controller.create(projectB, {}, undefined, undefined, { hostId: 'h1' })
+    await h.controller.whenSettled()
+    const s = h.manager.get(first.id)!.relaySessionId!
+    await h.controller.disposeAll()
+    // Qclod again: the stored tab comes back on the server.
+    const again = new TabController({
+      manager: h.manager,
+      storeDir: store,
+      layout: new LayoutStore(store, () => undefined),
+      defaultCwd: projectA,
+      getDefaults: () => ({}),
+      history: { list: async () => [], transcript: async () => [] },
+      onChanged: () => undefined,
+      onRibbon: () => undefined,
+      onPanel: () => undefined,
+      onStatus: () => undefined,
+      onCommands: () => undefined
+    })
+    running.push({ daemon: h.daemon, client: h.client, controller: again })
+    const tabs = await again.restore()
+    expect(tabs[0]).toMatchObject({ cwd: projectB, missingCwd: false, server: { hostId: 'h1', relaySessionId: s } })
+    await again.whenSettled()
+    expect(h.manager.get(tabs[0]!.id)!.relaySessionId).toBe(s)
+    expect(h.manager.get(tabs[0]!.id)!.status).not.toBe('error')
+  })
+
+  test('restore: папки серверной вкладки здесь нет — это не missingCwd', async () => {
+    writeStoredTabs([{ id: 'srv1', cwd: '/home/u/nowhere-here', title: 'app', overrides: {}, server: { hostId: 'h1', relaySessionId: 'S-old' } }])
+    const h = await serverHarness()
+    const tabs = await h.controller.restore()
+    expect(tabs[0]).toMatchObject({ id: 'srv1', missingCwd: false, server: { hostId: 'h1', relaySessionId: 'S-old' } })
+  })
+
+  test('закрыт последний серверный чат — новый в той же папке на том же сервере', async () => {
+    const h = await serverHarness()
+    const tab = h.controller.create(projectB, {}, undefined, undefined, { hostId: 'h1' })
+    await h.controller.whenSettled()
+    const s = h.manager.get(tab.id)!.relaySessionId!
+    await h.controller.close(tab.id)
+    const [next] = h.controller.list()
+    expect(next).toMatchObject({ cwd: projectB, server: { hostId: 'h1' } })
+    expect(next!.id).not.toBe(tab.id)
+    // «Закрыть чат» stops the agent there.
+    const list = await h.client.call<RelaySnapshot[]>('session.list', {})
+    expect(list.map((x) => x.s)).not.toContain(s)
+  })
+
+  test('прошлая сессия серверного проекта открывается через session.open с resume', async () => {
+    const h = await serverHarness()
+    const tab = h.controller.openSession(projectB, 'sdk-old-1', 'Старый разговор', 'h1')
+    expect(tab).toMatchObject({ title: 'Старый разговор', lastSessionId: 'sdk-old-1', server: { hostId: 'h1' } })
+    await h.controller.whenSettled()
+    await until(() => h.fake.options.length > 0, 5000, 'драйвер на сервере')
+    expect(h.fake.options.at(-1)!.resume).toBe('sdk-old-1')
+    // The same one again is that chat, not a second agent on it.
+    expect(h.controller.openSession(projectB, 'sdk-old-1', 'Старый разговор', 'h1').id).toBe(tab.id)
+  })
+
+  test('gap пересобирает вкладку: строка о начале и записи после разрыва', async () => {
+    const h = await serverHarness()
+    const tab = h.controller.create(projectB, {}, undefined, undefined, { hostId: 'h1' })
+    await h.controller.whenSettled()
+    const session = h.manager.get(tab.id)!
+    const s = session.relaySessionId!
+    await h.daemon.stop()
+    await until(() => h.client.state !== 'online', 5000, 'обрыв')
+    const journal = Journal.open(join(h.paths.sessions, s), { maxBytes: 4096 })
+    for (let i = 0; i < 80; i++) journal.append('notice', { kind: 'text', text: `запись ${i} `.repeat(4), tone: 'info' })
+    journal.close()
+    const daemon = new RelayDaemon({
+      paths: h.paths,
+      version: '1.0.0-test',
+      createDriver: h.fake.factory,
+      claudePath: () => '/home/u/.local/bin/claude',
+      exit: () => undefined,
+      home: h.root
+    })
+    running[running.length - 1]!.daemon = daemon
+    expect(await daemon.start()).toBe(true)
+    const isNotice = (i: RibbonItem): i is Extract<RibbonItem, { kind: 'notice' }> => i.kind === 'notice'
+    try {
+      await until(
+        () => session.items.filter(isNotice).some((i) => i.text.startsWith('Начало разговора старше журнала сервера — показано с')),
+        15000,
+        'строка о разрыве'
+      )
+    } catch (err) {
+      // What the chat had instead, so a failure on another system says where it stopped.
+      const seen = session.items.map((i) => (isNotice(i) ? `notice:${i.text.slice(0, 40)}` : i.kind)).slice(-8)
+      throw new Error(`${(err as Error).message}; клиент ${h.client.state}; лента: ${seen.join(' | ')}`)
+    }
+
+    await until(() => session.items.filter(isNotice).some((i) => i.text.startsWith('запись 79')), 5000, 'записи после разрыва')
+    expect(h.manager.get(tab.id)).toBe(session)
   })
 })

@@ -310,3 +310,21 @@ export interface FakeDriver {
 }
 
 export declare function createFakeSdk(script?: FakeScript): FakeDriver
+
+/** A one-off query's script (этап 7, «Собрать мои шаблоны»). */
+export interface FakeOneShotScript {
+  /** The answer's text; by default a JSON array of two templates. */
+  text?: string
+  /** Waits this long before answering; the abort controller cuts it short. */
+  delayMs?: number
+  costUsd?: number
+  fail?: 'notLoggedIn' | 'limit' | 'crash'
+}
+
+export interface FakeOneShot {
+  (args: { prompt: string; options: Record<string, unknown> }): AsyncIterable<Record<string, unknown>>
+  /** Every prompt and options it was given. */
+  readonly calls: Array<{ prompt: string; options: Record<string, unknown> }>
+}
+
+export declare function fakeOneShot(script?: FakeOneShotScript): FakeOneShot

@@ -2,8 +2,11 @@ import { chatsProvider } from './chats'
 import { commandsProvider } from './commands'
 import { filesProvider } from './files'
 import { historyProvider } from './history'
+import { historyTextProvider } from './historyText'
 import { projectsProvider } from './projects'
+import { serversProvider } from './servers'
 import { fold } from './rank'
+import { templatesProvider } from './templates'
 import {
   SECTION_CAP,
   type PaletteContext,
@@ -23,7 +26,11 @@ export const PALETTE_PROVIDERS: PaletteProvider[] = [
   projectsProvider,
   historyProvider,
   filesProvider,
-  commandsProvider
+  serversProvider,
+  commandsProvider,
+
+  templatesProvider,
+  historyTextProvider
 ]
 
 /** A section's heading; the id itself for a section nobody provides. */

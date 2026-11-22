@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { createServer, type Server } from 'node:http'
 import { PassThrough } from 'node:stream'
+import { dirname } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import { encodeWav16 } from '@main/voice/wav'
 import {
@@ -102,7 +103,8 @@ describe('WhisperServerEngine', () => {
     const port = args[args.indexOf('--port') + 1]
     expect(Number(port)).toBeGreaterThan(0)
     expect(args).toEqual(['-m', GGML, '-l', 'ru', '-t', '4', '--host', '127.0.0.1', '--port', port, '-nt'])
-    expect(opts).toEqual({ cwd: 'C:\\Q\\models\\whisper\\Release', windowsHide: true })
+    // The exe's own folder, as this system's path module names it (Whisper runs on Windows only).
+    expect(opts).toEqual({ cwd: dirname(EXE), windowsHide: true })
     expect(pids).toEqual([4321])
     await e.dispose()
     expect(run.killed()).toBe(true)

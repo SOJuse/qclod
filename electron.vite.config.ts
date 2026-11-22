@@ -12,11 +12,14 @@ export default defineConfig(({ mode }) => {
       plugins: [externalizeDepsPlugin()],
       define,
       build: {
-        // voiceWorker.js is the voice process (utilityProcess.fork in index.ts).
+        // voiceWorker.js is the voice process (utilityProcess.fork in index.ts);
+        // askpass.js: what the Mac's askpass.sh runs (src/main/ssh/askpassEntry.ts).
         rollupOptions: {
           input: {
             index: resolve(__dirname, 'src/main/index.ts'),
-            voiceWorker: resolve(__dirname, 'src/main/voice/worker.ts')
+            voiceWorker: resolve(__dirname, 'src/main/voice/worker.ts'),
+            askpass: resolve(__dirname, 'src/main/ssh/askpassEntry.ts')
+
           }
         }
       }

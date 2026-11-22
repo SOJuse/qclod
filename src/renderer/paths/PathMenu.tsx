@@ -1,14 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ClipboardCopy, Copy, ExternalLink, FolderOpen, SquarePen, type LucideIcon } from 'lucide-react'
+import { ClipboardCopy, Copy, Download, ExternalLink, Eye, FolderOpen, SquarePen, type LucideIcon } from 'lucide-react'
 import type { ResolvedPath, TabId } from '../../shared/types'
 import { useAppStore } from '../state/useAppStore'
 import { relativePath } from './linkify'
+import { splitPathLine } from './pathLine'
+
 import { freshTarget } from './useResolvedPaths'
 import { ERROR_ICON } from '../ui/icons'
 
 interface Item {
   label: string
+  testId?: string
   Icon: LucideIcon
   /** Returns a message to show instead of closing, or nothing. */
   run: () => Promise<string | null | void>
@@ -38,6 +41,7 @@ export function PathMenu({
 }): JSX.Element {
   const editorCommand = useAppStore((s) => s.settings?.editorCommand ?? '')
   const cwd = useAppStore((s) => s.tabs.find((t) => t.id === tabId)?.cwd ?? '')
+  const remote = useAppStore((s) => s.tabs.find((t) => t.id === tabId)?.server !== undefined)
   const box = useRef<HTMLDivElement | null>(null)
   const rows = useRef<Array<HTMLButtonElement | null>>([])
   const [active, setActive] = useState(0)
@@ -51,17 +55,38 @@ export function PathMenu({
     if (fresh) await fn(fresh)
   }
 
-  const items: Item[] = [
-    { label: 'Открыть', Icon: ExternalLink, run: act((p) => window.qclod.openPath(tabId, p.absPath)) },
-    { label: 'Показать в проводнике', Icon: FolderOpen, run: act((p) => window.qclod.revealPath(tabId, p.absPath)) },
-    { label: 'Скопировать путь', Icon: Copy, run: () => navigator.clipboard.writeText(target.absPath) },
-    {
-      label: 'Скопировать относительный путь',
-      Icon: ClipboardCopy,
-      run: () => navigator.clipboard.writeText(relativePath(cwd, target.absPath))
-    }
-  ]
-  if (editorCommand.trim() !== '') {
+  // «Посмотреть»: the file as the pane's layer, at the line the text names (сверка F9):
+  // the resolver's line, else the one written after the path («src/a.ts:3»).
+  const view: Item = {
+    label: 'Посмотреть',
+    Icon: Eye,
+
+    run: act(async (p) => {
+      const line = p.line ?? splitPathLine(p.raw).line
+      useAppStore.getState().setPaneLayer(tabId, { kind: 'file', path: p.absPath, ...(line ? { line } : {}) })
+    })
+  }
+  // A server chat's path is the server's: nothing here can open or show it (stage 6).
+  const items: Item[] = remote
+    ? [
+        ...(target.isDir ? [] : [view]),
+        ...(target.isDir
+          ? []
+          : [{ label: 'Скачать и открыть', Icon: Download, run: act((p) => window.qclod.downloadAndOpen(tabId, p.absPath)) }]),
+        { label: 'Копировать путь', Icon: Copy, run: () => navigator.clipboard.writeText(target.absPath) }
+      ]
+    : [
+        { label: 'Открыть', Icon: ExternalLink, run: act((p) => window.qclod.openPath(tabId, p.absPath)) },
+        { label: 'Показать в проводнике', Icon: FolderOpen, run: act((p) => window.qclod.revealPath(tabId, p.absPath)) },
+        { label: 'Скопировать путь', Icon: Copy, run: () => navigator.clipboard.writeText(target.absPath) },
+        {
+          label: 'Скопировать относительный путь',
+          Icon: ClipboardCopy,
+          run: () => navigator.clipboard.writeText(relativePath(cwd, target.absPath))
+        },
+        ...(target.isDir ? [] : [view])
+      ]
+  if (!remote && editorCommand.trim() !== '') {
     items.push({
       label: 'Открыть в редакторе',
       Icon: SquarePen,
@@ -72,6 +97,7 @@ export function PathMenu({
       }
     })
   }
+
 
   // Measured once it is on screen: what does not fit right or below opens the other way.
   useLayoutEffect(() => {
@@ -152,7 +178,7 @@ export function PathMenu({
           role="menuitem"
           tabIndex={i === active ? 0 : -1}
           className={`path-menu-item ring-on-parent${i === active ? ' is-active' : ''}`}
-          data-testid="path-menu-item"
+          data-testid={item.testId ?? 'path-menu-item'}
           title={item.label}
           onMouseEnter={() => setActive(i)}
           onClick={(e) => {

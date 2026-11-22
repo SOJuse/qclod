@@ -88,3 +88,30 @@ describe('картинки установщика', () => {
     expect(deltaE(pixelAt(bmp, 4 + 18, 10 + 18), pixelAt(bmp, 1, 1))).toBeGreaterThan(15)
   })
 })
+
+describe('фон DMG', () => {
+  test('PNG 540x380, графитовый фон, акцентная стрелка между значками', async () => {
+    const { deflateSync, inflateSync } = await import('node:zlib')
+    // @ts-expect-error plain .mjs helper
+    const { drawDmgBackground } = await import('../../scripts/installerArt.mjs')
+    const png: Buffer = drawDmgBackground([255, 0, 0], renderMark(48), deflateSync)
+    expect([...png.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    expect(png.readUInt32BE(16)).toBe(540)
+    expect(png.readUInt32BE(20)).toBe(380)
+    const idat = png.subarray(png.indexOf('IDAT') + 4, png.indexOf('IEND') - 8)
+    const raw = inflateSync(idat)
+    expect(raw.length).toBe((540 * 3 + 1) * 380)
+    const at = (x: number, y: number): number[] => {
+      const i = y * (540 * 3 + 1) + 1 + x * 3
+      return [raw[i]!, raw[i + 1]!, raw[i + 2]!]
+    }
+    expect(at(500, 100)).toEqual([0x0f, 0x0f, 0x11])
+    expect(at(260, 190)).toEqual([255, 0, 0])
+  })
+
+  test('закоммиченный build/dmgBackground.png: 540x380', () => {
+    const png = readFileSync('build/dmgBackground.png')
+    expect(png.readUInt32BE(16)).toBe(540)
+    expect(png.readUInt32BE(20)).toBe(380)
+  })
+})

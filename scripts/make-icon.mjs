@@ -2,7 +2,8 @@
 // format the app needs, so there is one source of truth and no opaque binary
 // nobody can regenerate.
 // Output: build/icon.png (1024), build/icon.ico, build/icon.icns and
-// src/main/brand/trayGlyph.ts (alpha masks of the tray glyph, baked into main).
+// src/main/brand/trayGlyph.ts (alpha masks of the tray glyph, baked into main) and
+// build/tray/trayTemplate{,@2x}.png (the Mac menu-bar image).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,4 +49,10 @@ ${glyph.join(',\n')}
 }
 `
 )
-console.log('icon: build/icon.{png,ico,icns} and src/main/brand/trayGlyph.ts written')
+// The Mac's menu-bar template image: the same black glyph, 16 and 32 px (@2x).
+// tray.svg is black on transparent, which is exactly what a template image is.
+mkdirSync(resolve(out, 'tray'), { recursive: true })
+writeFileSync(resolve(out, 'tray/trayTemplate.png'), render(tray, 16).asPng())
+writeFileSync(resolve(out, 'tray/trayTemplate@2x.png'), render(tray, 32).asPng())
+
+console.log('icon: build/icon.{png,ico,icns}, build/tray/trayTemplate{,@2x}.png and src/main/brand/trayGlyph.ts written')

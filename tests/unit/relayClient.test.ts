@@ -165,7 +165,46 @@ describe('RelayClient', () => {
     expect(k.reattached[0]!.gap).toBe(true)
   })
 
+  test('ответ attach и записи за ним одним куском: onReattached (gap) приходит раньше записей', async () => {
+    // A real ssh channel may hand over the res and the replayed evs in one chunk.
+    const snapshot = (lastSeq: number) => ({ s: 'S1', lastSeq, firstSeq: 1 }) as unknown as RelaySnapshot
+    const links: Array<{ exit: (c: number | null, s: string) => void }> = []
+    const factory: TransportFactory = () => {
+      const stdin = new PassThrough()
+      const stdout = new PassThrough()
+      const decoder = new LineDecoder()
+      const rec = { exit: (_c: number | null, _s: string) => undefined as void }
+      links.push(rec)
+      stdin.on('data', (chunk: Buffer) => {
+        for (const f of decoder.push(chunk)) {
+          if (f.t === 'hello') stdout.write(encodeFrame({ t: 'welcome', proto: 1, relay: 'x', binary: 'x', startedAt: 0 }))
+          if (f.t !== 'req') continue
+          if (f.m === 'session.open') stdout.write(encodeFrame({ t: 'res', id: f.id, ok: true, r: { snapshot: snapshot(0), gap: false } }))
+          if (f.m === 'session.attach') {
+            const res = encodeFrame({ t: 'res', id: f.id, ok: true, r: { snapshot: snapshot(90), gap: true } })
+            const ev = encodeFrame({ t: 'ev', s: 'S1', q: 80, k: 'notice', at: 1, d: { kind: 'text', text: 'после разрыва', tone: 'info' } })
+            stdout.write(Buffer.concat([Buffer.from(res), Buffer.from(ev)]))
+          }
+        }
+      })
+      return { stdin, stdout, kill: () => undefined, onExit: (cb) => void (rec.exit = cb) }
+    }
+    const c = client(factory)
+    await c.connect(true)
+    const order: string[] = []
+    const s: SessionSink = {
+      onEvent: () => order.push('ev'),
+      onLive: () => undefined,
+      onReattached: (r) => order.push(r.gap ? 'reattached:gap' : 'reattached')
+    }
+    await c.open({ cwd: '/srv', mode: 'default' }, s)
+    links[0]!.exit(255, 'Connection reset')
+    await until(() => order.length >= 2, 5000, 'переподключение')
+    expect(order).toEqual(['reattached:gap', 'ev'])
+  })
+
   test('журнал посредника пропал — gap, и новые записи с его номерами доходят', async () => {
+
     const root = tempDir('qclod-rc-')
     const first = daemonAt(root, { nextTurn: [{ kind: 'text', text: 'привет' }] })
     await first.daemon.start()

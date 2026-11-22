@@ -235,15 +235,14 @@ export class RelayClient {
     this.pingLoop(gen, link)
     if (!again) return
     // Read on from where every session stopped.
+    // onReattached runs as the answer is read, before the records sent right
+    // behind it in the same chunk: the sink learns of a gap before them.
     for (const [s, sub] of this.subs) {
-      this.attach(s, sub.lastSeq, sub.sink).then(
-        (r) => {
-          if (this.subs.get(s)?.sink === sub.sink) sub.sink.onReattached(r)
-        },
-        () => {
-          // The next reconnect tries again.
-        }
-      )
+      this.attach(s, sub.lastSeq, sub.sink, (r) => {
+        if (this.subs.get(s)?.sink === sub.sink) sub.sink.onReattached(r)
+      }).catch(() => {
+        // The next reconnect tries again.
+      })
     }
   }
 
@@ -409,7 +408,7 @@ export class RelayClient {
   }
 
   /** Follows a session from after `after`; the records after it come next, then live events. */
-  attach(s: string, after: number, sink: SessionSink): Promise<AttachResult> {
+  attach(s: string, after: number, sink: SessionSink, onAttached?: (r: AttachResult) => void): Promise<AttachResult> {
     return this.request<AttachResult>('session.attach', { s, after }, undefined, (r) => {
       const known = this.subs.get(s)
       let lastSeq = known && known.sink === sink ? Math.max(known.lastSeq, after) : after
@@ -418,7 +417,9 @@ export class RelayClient {
       const theirs = res?.snapshot?.lastSeq
       if (res?.gap && typeof theirs === 'number' && theirs < lastSeq) lastSeq = theirs
       this.subs.set(s, { lastSeq, sink })
+      if (res) onAttached?.(res)
     })
+
   }
 
   /** Stops following a session; it keeps running on the server. */

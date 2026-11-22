@@ -142,13 +142,18 @@ export const CHANNELS = Object.freeze({
   terminalOpen: 'terminal:open',
   terminalResize: 'terminal:resize',
   terminalClose: 'terminal:close',
+  terminalAttach: 'terminal:attach',
   // renderer -> main (send)
   terminalInput: 'terminal:input',
+  /** A local file the person dropped or pasted (the preload, from webUtils): it may go to a server. */
+  filesSeen: 'files:seen',
   // main -> renderer (events)
   serversChanged: 'servers:changed',
   serversPrompt: 'servers:prompt',
   serversConnectProgress: 'servers:connectProgress',
   serversLoginProgress: 'servers:loginProgress',
+  /** An ssh question is gone without the window's answer (timeout, ssh exited, cancelled): its dialog closes. */
+  serversPromptClosed: 'servers:promptClosed',
   terminalData: 'terminal:data',
   terminalExit: 'terminal:exit'
 } as const)
@@ -249,7 +254,8 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.filesUploadRemote,
   CHANNELS.terminalOpen,
   CHANNELS.terminalResize,
-  CHANNELS.terminalClose
+  CHANNELS.terminalClose,
+  CHANNELS.terminalAttach
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
@@ -275,6 +281,7 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.serversPrompt,
   CHANNELS.serversConnectProgress,
   CHANNELS.serversLoginProgress,
+  CHANNELS.serversPromptClosed,
   CHANNELS.terminalData,
   CHANNELS.terminalExit
 ])
@@ -284,6 +291,7 @@ export const SEND_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.rendererError,
   // Stage 5: voice
   CHANNELS.voiceAudio,
-  // stage 6: keystrokes for a server's terminal
-  CHANNELS.terminalInput
+  // stage 6: keystrokes for a server's terminal; a dropped/pasted file main may upload
+  CHANNELS.terminalInput,
+  CHANNELS.filesSeen
 ])

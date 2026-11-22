@@ -24,7 +24,8 @@ beforeEach(() => {
     hub: {
       input: (...a: unknown[]) => (calls.push(['input', ...a]), true),
       resize: (...a: unknown[]) => (calls.push(['resize', ...a]), true),
-      close: (...a: unknown[]) => void calls.push(['close', ...a])
+      close: (...a: unknown[]) => void calls.push(['close', ...a]),
+      attach: (...a: unknown[]) => (calls.push(['attach', ...a]), a[0] === 't1' ? 'вывод' : null)
     } as never,
     open: async (tabId, size) => {
       calls.push(['open', tabId, size])
@@ -63,5 +64,15 @@ describe('каналы терминала', () => {
       ['resize', ID, 100, 30],
       ['close', ID]
     ])
+  })
+})
+
+describe('terminalAttach (R1)', () => {
+  test('вкладка — строка, termId — uuid; иначе null без обращения к хабу', async () => {
+    const attach = handlers.get(CHANNELS.terminalAttach)!
+    expect(await attach({}, 't1', ID)).toBe('вывод')
+    expect(await attach({}, 't1', 'не-uuid')).toBeNull()
+    expect(await attach({}, 5, ID)).toBeNull()
+    expect(calls).toEqual([['attach', 't1', ID]])
   })
 })

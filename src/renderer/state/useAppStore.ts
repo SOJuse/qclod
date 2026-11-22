@@ -35,7 +35,8 @@ const PER_TAB_KEYS = [
   'pathsByTab',
   'layerByTab',
   'panelChoiceByTab',
-  'terminalShownByTab'
+  'terminalShownByTab',
+  'terminalIdByTab'
 ] as const
 
 /** How the agents layer shows a chat's subagents (этап 4). */
@@ -253,6 +254,8 @@ interface AppState {
   agentDrafts: Record<string, string>
   /** Stage 6: the servers Qclod knows, as main sees them. */
   servers: ServerView[]
+  /** The list came from main at least once: a chat's server missing from it is gone, not unknown yet (R9). */
+  serversLoaded: boolean
   /** Stage 6: the last checklist of each server's connect, by server id. */
   connectSteps: Record<string, ConnectStep[]>
 
@@ -292,6 +295,13 @@ interface AppState {
   /** Stage 6: a server chat's terminal drawer is shown; hiding it keeps its session. */
   terminalShownByTab: Record<TabId, boolean>
   setTerminalShown: (tabId: TabId, shown: boolean) => void
+  /**
+   * Stage 6 (R1): the terminal each server chat's drawer opened, by tab. It
+   * outlives the drawer: a chat that leaves the panes and comes back takes up
+   * the same session. Only closing the chat closes it (main's closeTab).
+   */
+  terminalIdByTab: Record<TabId, string>
+  setTerminalId: (tabId: TabId, termId: string | null) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -378,10 +388,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   recentCommands: [],
   layerByTab: {},
   terminalShownByTab: {},
+  terminalIdByTab: {},
   panelChoiceByTab: {},
   agentsView: restored.agentsView ?? 'graph',
   agentDrafts: {},
   servers: [],
+  serversLoaded: false,
   connectSteps: {},
 
   setSettings: (settings) => set({ settings }),
@@ -575,7 +587,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   setPaneLayer: (tabId, layer) => set((state) => ({ layerByTab: { ...state.layerByTab, [tabId]: layer } })),
   setTerminalShown: (tabId, shown) =>
     set((state) => ({ terminalShownByTab: { ...state.terminalShownByTab, [tabId]: shown } })),
-  setServers: (servers) => set({ servers }),
+  setTerminalId: (tabId, termId) =>
+    set((state) => {
+      if (termId !== null) return { terminalIdByTab: { ...state.terminalIdByTab, [tabId]: termId } }
+      if (!(tabId in state.terminalIdByTab)) return {}
+      const { [tabId]: _gone, ...rest } = state.terminalIdByTab
+      return { terminalIdByTab: rest }
+    }),
+  setServers: (servers) => set({ servers, serversLoaded: true }),
   setConnectSteps: (hostId, steps) => set((state) => ({ connectSteps: { ...state.connectSteps, [hostId]: steps } })),
   setPanelChoice: (tabId, choice) =>
     set((state) =>

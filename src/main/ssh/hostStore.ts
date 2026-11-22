@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import type { ServerColour, ServerEntry } from '../../shared/types'
 import { SERVER_COLOUR_LIST, isServerColour } from '../../shared/serverColours'
 import type { SecretBox } from './secretBox'
+import { isSafeSshTarget } from './sshArgs'
 
 export const SERVERS_FILE = 'servers.json'
 export const MAX_RECENT_FOLDERS = 10
@@ -16,6 +17,8 @@ export const MAX_RECENT_FOLDERS = 10
 interface StoredEntry extends ServerEntry {
   /** base64 from safeStorage.encryptString; never the password itself. */
   sealed?: string
+  /** The user@host ssh named when the kept password was typed (I1): it goes only there. */
+  sealedFor?: string
 }
 
 interface StoredFile {
@@ -37,8 +40,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function readEntry(raw: unknown): StoredEntry | null {
   if (!isObject(raw)) return null
-  const { id, label, target, port, identityFile, auth, colour, recent, fromConfig, sealed } = raw
-  if (typeof id !== 'string' || id === '' || typeof target !== 'string' || target === '') return null
+  const { id, label, target, port, identityFile, auth, colour, recent, fromConfig, sealed, sealedFor } = raw
+  // A target ssh could take for an option or a shell would split (I10) is no server.
+  if (typeof id !== 'string' || id === '' || !isSafeSshTarget(target)) return null
   return {
     id,
     label: typeof label === 'string' ? label : target,
@@ -51,12 +55,13 @@ function readEntry(raw: unknown): StoredEntry | null {
       ? recent.filter((p): p is string => typeof p === 'string').slice(0, MAX_RECENT_FOLDERS)
       : [],
     fromConfig: fromConfig === true,
-    ...(typeof sealed === 'string' && sealed !== '' ? { sealed } : {})
+    ...(typeof sealed === 'string' && sealed !== '' ? { sealed } : {}),
+    ...(typeof sealed === 'string' && sealed !== '' && typeof sealedFor === 'string' && sealedFor !== '' ? { sealedFor } : {})
   }
 }
 
 function publicEntry(e: StoredEntry): ServerEntry {
-  const { sealed: _sealed, ...rest } = e
+  const { sealed: _sealed, sealedFor: _for, ...rest } = e
   return { ...rest, recent: [...rest.recent] }
 }
 
@@ -117,6 +122,14 @@ export class HostStore {
   save(e: SaveEntry): ServerEntry {
     const existing = e.id !== undefined ? this.find(e.id) : undefined
     const id = existing?.id ?? randomBytes(6).toString('hex')
+    // The kept password belongs to the host it was typed for (I1): another
+    // host, port or key and it is not carried over.
+    const sameHost =
+      existing !== undefined &&
+      existing.target === e.target &&
+      existing.port === e.port &&
+      (existing.identityFile ?? '') === (e.identityFile ?? '')
+    const keep = existing?.sealed && e.auth === 'password' && sameHost
     const next: StoredEntry = {
       id,
       label: e.label.trim() === '' ? e.target : e.label,
@@ -128,7 +141,8 @@ export class HostStore {
       recent: existing?.recent ?? [],
       fromConfig: existing ? existing.fromConfig && e.fromConfig : e.fromConfig,
       // A key server keeps no password.
-      ...(existing?.sealed && e.auth === 'password' ? { sealed: existing.sealed } : {})
+      ...(keep ? { sealed: existing.sealed! } : {}),
+      ...(keep && existing.sealedFor ? { sealedFor: existing.sealedFor } : {})
     }
     if (existing) this.data.servers[this.data.servers.indexOf(existing)] = next
     else this.data.servers.push(next)
@@ -144,19 +158,31 @@ export class HostStore {
     this.write()
   }
 
-  /** null forgets it. Without the OS's store nothing is written at all. */
-  setPassword(id: string, password: string | null): void {
+  /**
+   * null forgets it. Without the OS's store nothing is written at all.
+   * `forHost` — the user@host ssh named when it was typed (askpass).
+   */
+  setPassword(id: string, password: string | null, forHost?: string): void {
     const e = this.find(id)
     if (!e) return
     if (password === null) {
       if (e.sealed === undefined) return
       delete e.sealed
+      delete e.sealedFor
       this.write()
       return
     }
     if (!this.box.available()) return
     e.sealed = this.box.seal(password)
+    if (forHost) e.sealedFor = forHost
+    else delete e.sealedFor
     this.write()
+  }
+
+  /** The user@host the kept password was typed for, when that is known. */
+  passwordFor(id: string): string | null {
+    const e = this.find(id)
+    return e?.sealed !== undefined ? (e.sealedFor ?? null) : null
   }
 
   password(id: string): string | null {
@@ -190,7 +216,7 @@ export class HostStore {
    * no longer names goes, unless folders were opened there.
    */
   mergeConfigHosts(names: string[]): void {
-    const wanted = new Set(names)
+    const wanted = new Set(names.filter(isSafeSshTarget))
     let changed = false
     const kept = this.data.servers.filter((e) => {
       if (!e.fromConfig || wanted.has(e.target) || e.recent.length > 0 || e.sealed) return true

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
-import { ArrowUp, Folder } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ArrowUp, Folder, FolderSymlink } from 'lucide-react'
 import type { FsEntry } from '../../../shared/relayProtocol'
 import type { ServerView, TabState } from '../../../shared/types'
+import { reasonOf } from '../../ui/StateView'
 
 export interface DirListing {
   path: string
@@ -63,6 +64,9 @@ export function RemoteFolderView({
 }): JSX.Element {
   const folders = (listing?.entries ?? []).filter((e) => e.kind === 'dir' || e.kind === 'link')
   const here = listing?.path ?? typed
+  // «Открыть здесь» opens what is shown, and only once the field says the same:
+  // after a failed step, or with a path typed but not gone to, it waits.
+  const canOpen = listing !== null && !loading && error === null && listing.path === typed.trim()
   return (
     <div className="remote-picker" data-testid="remote-folder-picker">
       <h3 className="remote-picker-title">Папка на сервере {server.label}</h3>
@@ -91,6 +95,7 @@ export function RemoteFolderView({
         <input
           className="field"
           data-testid="remote-path"
+          data-autofocus=""
           placeholder="Путь, например ~/projects/app"
           spellCheck={false}
           maxLength={4096}
@@ -106,7 +111,8 @@ export function RemoteFolderView({
           onClick={() => onGo(parentPath(here))}
         >
           <ArrowUp size={14} aria-hidden="true" />
-          Вверх
+          {/* In a span: a bare text node beside the icon left the button the square of an icon-only one. */}
+          <span>Вверх</span>
         </button>
       </form>
       <nav className="remote-crumbs" aria-label="Путь">
@@ -134,13 +140,18 @@ export function RemoteFolderView({
                     type="button"
                     className="server-row"
                     data-testid="remote-dir"
-                    title="Двойной щелчок — войти"
+                    data-kind={entry.kind}
+                    title={entry.kind === 'link' ? 'Ссылка. Двойной щелчок — войти' : 'Двойной щелчок — войти'}
                     onDoubleClick={() => onGo(path)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') onGo(path)
                     }}
                   >
-                    <Folder size={14} aria-hidden="true" />
+                    {entry.kind === 'link' ? (
+                      <FolderSymlink size={14} aria-label="ссылка" />
+                    ) : (
+                      <Folder size={14} aria-hidden="true" />
+                    )}
                     <span className="server-row-label">{entry.name}</span>
                   </button>
                 </li>
@@ -158,7 +169,7 @@ export function RemoteFolderView({
           type="button"
           className="btn btn-primary btn-sm"
           data-testid="remote-open-here"
-          disabled={!listing || loading}
+          disabled={!canOpen}
           onClick={onOpenHere}
         >
           Открыть здесь
@@ -175,20 +186,25 @@ export function RemoteFolderPicker({ server, onOpened, onCancel }: Props): JSX.E
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [typed, setTyped] = useState(start)
+  /** Only the last step's answer counts: an earlier one landing late is dropped. */
+  const asked = useRef(0)
 
   const go = useCallback(
     (path: string): void => {
+      const n = ++asked.current
       setLoading(true)
       setError(null)
       setTyped(path)
       window.qclod.listServerDir(server.id, path).then(
         (result) => {
+          if (n !== asked.current) return
           setListing(result)
           setTyped(result.path)
           setLoading(false)
         },
         (err: unknown) => {
-          setError(err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(err))
+          if (n !== asked.current) return
+          setError(reasonOf(err))
           setLoading(false)
         }
       )
@@ -197,12 +213,21 @@ export function RemoteFolderPicker({ server, onOpened, onCancel }: Props): JSX.E
   )
   useEffect(() => go(start), [go, start])
 
+  const [opening, setOpening] = useState(false)
   const openHere = (): void => {
-    if (!listing) return
-    void window.qclod.openServerFolder(server.id, listing.path).then((tab) => {
-      if (tab) onOpened(tab)
-      else setError('чат не открылся')
-    })
+    if (!listing || opening) return
+    setOpening(true)
+    window.qclod.openServerFolder(server.id, listing.path).then(
+      (tab) => {
+        setOpening(false)
+        if (tab) onOpened(tab)
+        else setError('чат не открылся')
+      },
+      (err: unknown) => {
+        setOpening(false)
+        setError(`чат не открылся: ${reasonOf(err)}`)
+      }
+    )
   }
 
   return (
@@ -210,7 +235,7 @@ export function RemoteFolderPicker({ server, onOpened, onCancel }: Props): JSX.E
       server={server}
       listing={listing}
       error={error}
-      loading={loading}
+      loading={loading || opening}
       typed={typed}
       onType={setTyped}
       onGo={go}

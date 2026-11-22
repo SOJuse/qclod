@@ -28,6 +28,8 @@ export const PONG_DEADLINE_MS = 45000
 /** A message sent while the server is away waits this long for it to come back. */
 export const SEND_WAIT_MS = 60000
 const WELCOME_TIMEOUT_MS = 60000
+/** A channel up this long counts as held: the reconnect ladder starts over. */
+export const STABLE_LINK_MS = 30000
 
 type EvFrame = Extract<RelayFrame, { t: 'ev' }>
 type LiveFrame = Extract<RelayFrame, { t: 'live' }>
@@ -165,12 +167,17 @@ export class RelayClient {
         welcomed = true
         reject(err)
       }
-      this.setTimer(() => {
-        if (!welcomed && this.link === link) {
-          fail(new RelayCallError('timeout', 'Посредник не ответил'))
-          transport.kill()
+      // While ssh's question waits for the person, the time is theirs, not the relay's (R4).
+      const welcomeWatch = (): void => {
+        if (welcomed || this.link !== link) return
+        if (transport.asking?.()) {
+          this.setTimer(welcomeWatch, WELCOME_TIMEOUT_MS)
+          return
         }
-      }, WELCOME_TIMEOUT_MS)
+        fail(new RelayCallError('timeout', 'Посредник не ответил'))
+        transport.kill()
+      }
+      this.setTimer(welcomeWatch, WELCOME_TIMEOUT_MS)
 
       transport.stdout.on('data', (chunk: Buffer | string) => {
         if (!link.alive) return
@@ -192,7 +199,12 @@ export class RelayClient {
             }
             continue
           }
-          this.onFrame(link, frame)
+          // A sink that throws on one frame must not cost the frames after it in the chunk.
+          try {
+            this.onFrame(link, frame)
+          } catch (err) {
+            console.warn('[relay] кадр', err instanceof Error ? err.message : String(err))
+          }
         }
       })
       transport.stdout.on('error', () => undefined)
@@ -213,7 +225,11 @@ export class RelayClient {
     if (gen !== this.generation) return
     const again = this.everOnline
     this.everOnline = true
-    this.attempt = 0
+    // The ladder starts over only for a channel that held: one that drops at
+    // once after every hello keeps climbing to 60 s instead of hammering at 1 s.
+    this.setTimer(() => {
+      if (gen === this.generation && link.alive && this.link === link) this.attempt = 0
+    }, STABLE_LINK_MS)
     link.lastPong = this.now()
     this.setState('online')
     this.pingLoop(gen, link)

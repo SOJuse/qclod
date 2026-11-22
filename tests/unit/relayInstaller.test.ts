@@ -7,6 +7,7 @@ import {
   INSTALL_SCRIPT,
   RELAY_MISSING_TEXT,
   ensureLocalRelay,
+  compareVersions,
   needsUpdate,
   relayAssetUrl,
   type RelayManifest
@@ -113,6 +114,21 @@ describe('скрипт установки и версии', () => {
     expect(needsUpdate(null, '1.0.0')).toBe('install')
     expect(needsUpdate('1.0.0', '1.0.1')).toBe('update')
     expect(needsUpdate('1.0.1', '1.0.1')).toBe('none')
+  })
+
+  test('I7: ПК и Mac разных версий — новее не откатывается, старее обновляется (semver)', () => {
+    // The Mac has 1.0.2 and put its relay there; this PC is 1.0.1.
+    expect(needsUpdate('1.0.2', '1.0.1')).toBe('none')
+    expect(needsUpdate('1.0.1', '1.0.2')).toBe('update')
+    expect(needsUpdate('1.0.10', '1.0.9')).toBe('none')
+    expect(needsUpdate('1.0.0-rc.1', '1.0.0')).toBe('update')
+    expect(needsUpdate('1.0.0', '1.0.0-rc.2')).toBe('none')
+    expect(needsUpdate('1.0.0-rc.2', '1.0.0-rc.10')).toBe('update')
+    expect(needsUpdate('1.0.0-rc.10', '1.0.0-rc.2')).toBe('none')
+    expect(needsUpdate('1.0.0-alpha', '1.0.0-alpha.1')).toBe('update')
+    // Not a version at all: replaced unless it is ours.
+    expect(needsUpdate('dev', '1.0.0')).toBe('update')
+    expect(compareVersions('2.0.0', '10.0.0')).toBeLessThan(0)
   })
 
   test('relayAssetUrl', () => {

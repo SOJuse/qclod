@@ -57,7 +57,7 @@ beforeEach(() => {
 
 describe('serverIpc', () => {
   test('saveServer отвергает target с пробелом, переводом строки или началом -', () => {
-    for (const target of ['me@ho st', 'me@host\n-oProxyCommand=x', '-oProxyCommand=calc', '', 'a\tb']) {
+    for (const target of ['me@ho st', 'me@host\n-oProxyCommand=x', '-oProxyCommand=calc', '', 'a\tb', "me@h'$(id)'", 'a;b', 'x|y']) {
       expect(() => call(CHANNELS.serversSave, { label: 'x', target, auth: 'key' })).toThrow()
     }
     expect(saved).toEqual([])

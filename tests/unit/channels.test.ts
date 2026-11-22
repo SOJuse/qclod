@@ -156,6 +156,7 @@ describe('ipc channel contract', () => {
       serversPrompt: 'servers:prompt',
       serversConnectProgress: 'servers:connectProgress',
       serversLoginProgress: 'servers:loginProgress',
+      serversPromptClosed: 'servers:promptClosed',
       terminalData: 'terminal:data',
       terminalExit: 'terminal:exit'
     } as const
@@ -172,6 +173,8 @@ describe('ipc channel contract', () => {
     }
     expect(CHANNELS.terminalInput).toBe('terminal:input')
     expect(SEND_CHANNELS).toContain('terminal:input')
+    expect(CHANNELS.filesSeen).toBe('files:seen')
+    expect(SEND_CHANNELS).toContain('files:seen')
     expect(INVOKE_CHANNELS).not.toContain('terminal:input')
     expect(EVENT_CHANNELS).not.toContain('terminal:input')
   })

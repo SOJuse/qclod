@@ -327,6 +327,17 @@ export class RibbonBuilder {
   private readonly openBlocks = new Map<string, OpenBlock>()
   /** Message ids whose text already reached the ribbon as deltas. */
   private readonly streamed = new Set<string>()
+  /** The message each stream (by parent) is writing now: the one its last message_start named. */
+  private readonly streamOf = new Map<string, string>()
+  /** The text and thinking items each message's deltas made, in order. */
+  private readonly streamItems = new Map<string, Array<{ itemId: string; kind: 'agentText' | 'thinking' }>>()
+  /**
+   * Stage 6 (I4): messages whose stream was cut — their whole message, when
+   * it comes, puts its text over what the deltas managed to bring.
+   */
+  private readonly cutStreams = new Set<string>()
+  /** After a cut, a stream's deltas count only once its message_start is seen again. */
+  private needStart = false
   private todoList: TodoItem[] | null = null
   /**
    * Text already shown because the user just typed it. The CLI echoes every
@@ -605,6 +616,21 @@ export class RibbonBuilder {
     this.replaying = true
   }
 
+  /**
+   * Stage 6 (I4): the live stream was cut — the channel broke, or this
+   * client came in the middle of a message. Deltas lost on the way must not
+   * leave a hole, nor half a message appear twice: what is streaming stops,
+   * each message cut here gets its whole text from the full message later,
+   * and deltas of a message whose start was not seen are not shown at all.
+   */
+  resetStream(): RibbonChange[] {
+    const changes = this.closeOpenBlocks()
+    for (const id of this.streamOf.values()) this.cutStreams.add(id)
+    this.streamOf.clear()
+    this.needStart = true
+    return changes
+  }
+
   apply(message: unknown): RibbonChange[] {
     if (!isObject(message)) return []
     this.previousEventAt = this.lastEventAt
@@ -680,10 +706,18 @@ export class RibbonBuilder {
     if (event['type'] === 'message_start') {
       const inner = event['message']
       const id = isObject(inner) ? str(inner['id']) : ''
-      if (id) this.streamed.add(id)
+      if (id) {
+        this.streamed.add(id)
+        // The message before in this stream is over: its items need no keeping, unless it was cut.
+        const before = this.streamOf.get(scope)
+        if (before && before !== id && !this.cutStreams.has(before)) this.streamItems.delete(before)
+        this.streamOf.set(scope, id)
+      }
       this.blockBoundaryAt.set(scope, this.now())
       return []
     }
+    // After a cut, a stream whose message began unseen shows nothing of it: the whole message comes later.
+    if (this.needStart && !this.streamOf.has(scope)) return []
 
     const key = `${scope}:${Number(event['index'] ?? 0)}`
     if (event['type'] === 'content_block_stop') {
@@ -732,6 +766,12 @@ export class RibbonBuilder {
 
     const startedAt = kind === 'thinking' ? (this.blockBoundaryAt.get(parentId ?? '') ?? this.now()) : this.now()
     this.openBlocks.set(key, { itemId: id, kind, startedAt })
+    const msg = this.streamOf.get(parentId ?? '')
+    if (msg) {
+      const list = this.streamItems.get(msg) ?? []
+      list.push({ itemId: id, kind })
+      this.streamItems.set(msg, list)
+    }
     return [...closed, this.append(item)]
   }
 
@@ -785,16 +825,36 @@ export class RibbonBuilder {
     // The complete message always follows the stream that produced it; its
     // text is already on screen, so only the blocks the stream cannot carry
     // (tool calls) are new.
-    const alreadyStreamed = this.streamed.has(str(inner['id']))
+    const messageId = str(inner['id'])
+    const alreadyStreamed = this.streamed.has(messageId)
     // A subagent's whole text comes in one piece; a book of it is not kept.
     const nested = (text: string): string => (parentId ? clipText(text, NESTED_CLIP) : text)
+    // A cut stream (I4): the whole text goes over what the deltas brought, in order, kind by kind.
+    const cut = alreadyStreamed && this.cutStreams.has(messageId)
+    const takeStreamed = (kind: 'agentText' | 'thinking'): RibbonItem | undefined => {
+      const list = this.streamItems.get(messageId)
+      const at = list?.findIndex((x) => x.kind === kind) ?? -1
+      if (!list || at < 0) return undefined
+      const [taken] = list.splice(at, 1)
+      return this.find(taken!.itemId)
+    }
+    const fillCut = (kind: 'agentText' | 'thinking', text: string): boolean => {
+      const item = takeStreamed(kind)
+      if (!item || (item.kind !== 'agentText' && item.kind !== 'thinking')) return false
+      if (item.text !== text) {
+        item.text = text
+        changes.push(this.update(item.id, { text }))
+      }
+      return true
+    }
 
     for (const block of asArray(inner['content'])) {
       if (!isObject(block)) continue
       switch (block['type']) {
         case 'text': {
-          if (alreadyStreamed) break
+          if (alreadyStreamed && !cut) break
           if (!str(block['text']).trim()) break
+          if (cut && fillCut('agentText', nested(str(block['text'])))) break
           // «/chrome isn't available in this environment.» is the CLI talking,
           // not the model: it becomes a notice with a way out.
           const local = inner['model'] === '<synthetic>' ? this.commandNotice(str(block['text'])) : null
@@ -815,7 +875,8 @@ export class RibbonBuilder {
         }
 
         case 'thinking':
-          if (alreadyStreamed) break
+          if (alreadyStreamed && !cut) break
+          if (cut && fillCut('thinking', nested(str(block['thinking'])))) break
           changes.push(
             this.append({
               kind: 'thinking',

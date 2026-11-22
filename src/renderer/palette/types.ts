@@ -21,8 +21,8 @@ export interface PaletteItem {
 /** What a row can do in the window; App gives it, the palette closes before any of it runs. */
 export interface PaletteRunner {
   activateChat(id: TabId): void
-  /** A new chat in this folder. */
-  openProject(cwd: string): void
+  /** A new chat in this folder; hostId — on that server (R8). */
+  openProject(cwd: string, hostId?: string): void
   /** hostId — a server project's (stage 6). */
   openSession(cwd: string, s: SessionSummary, hostId?: string): void
   insertMention(path: string): void

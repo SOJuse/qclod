@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { TriangleAlert } from 'lucide-react'
+import { ShieldAlert, TriangleAlert } from 'lucide-react'
 import type { CostRates, FileSource, RibbonItem, SessionSummary, SubagentItem, TabId, UserInput } from '../../shared/types'
 import type { VoiceControls } from '../../shared/voice'
 import { useVoiceControls } from '../voice/voiceStore'
 import { isWindows } from '../voice/platform'
-import { OFFLINE_STRIP_TEXT } from '../../shared/serverTexts'
+import { KEY_CHANGED_STRIP_TEXT, OFFLINE_STRIP_TEXT, SERVER_REMOVED_TEXT } from '../../shared/serverTexts'
 import { ServerLoginDialog } from './servers/ServerLoginDialog'
 import { FileViewer } from './viewer/FileViewer'
 import { TerminalDrawer } from './terminal/TerminalDrawer'
@@ -105,6 +105,10 @@ interface Props {
   onRetryRibbon?: () => void
   /** Этап 5's voice input, the same for the chat's input and a subagent's (сверка F12). */
   voice?: VoiceControls
+  /** Ctrl+K's palette, for the server terminal's Ctrl+Shift+K (R10). */
+  onOpenPalette?: () => void
+  /** A server's checklist in the servers' sheet — for a changed host key (R5). */
+  onOpenServerChecklist?: (hostId: string) => void
 }
 
 /**
@@ -129,7 +133,9 @@ export function ChatPane({
   panelRequest = null,
   ribbonError = null,
   onRetryRibbon,
-  voice: voiceOverride
+  voice: voiceOverride,
+  onOpenPalette,
+  onOpenServerChecklist
 }: Props): JSX.Element {
   // One voice for the pane: the chat's input and a subagent's get the same (сверка F12).
   // Voice is Windows-only in 1.0 (G11): elsewhere the button stays as этап 2 left it.
@@ -156,6 +162,11 @@ export function ChatPane({
   const servers = useAppStore((s) => s.servers)
   const server = tab?.server ? servers.find((s) => s.id === tab.server!.hostId) : undefined
   const serverAway = server !== undefined && server.state !== 'online' && server.state !== 'connecting'
+  /** A changed host key is a danger of its own (R5): the strip says what main said, in red. */
+  const keyChanged = server?.state === 'hostKeyChanged'
+  /** The chat's server is no longer in the list (R9): only once the list has come at all. */
+  const serversLoaded = useAppStore((s) => s.serversLoaded)
+  const serverGone = tab?.server !== undefined && server === undefined && serversLoaded
   /** Stage 6: «Войти» of the server's Claude account. */
   const [loginOpen, setLoginOpen] = useState(false)
   const status = tab?.status ?? 'stopped'
@@ -404,7 +415,9 @@ export function ChatPane({
           onOpenAgents={() => useAppStore.getState().openAgents(tabId)}
           agentsCount={agentsCount}
           server={server}
-          {...(server ? { onReconnect: () => void window.qclod.connectServer(server.id) } : {})}
+          {...(server ? { onReconnect: () => void window.qclod.connectServer(server.id).catch(() => undefined) } : {})}
+          {...(server && onOpenServerChecklist ? { onShowChecklist: () => onOpenServerChecklist(server.id) } : {})}
+          serverGone={serverGone}
           {...(server
             ? {
                 onToggleTerminal: () => useAppStore.getState().setTerminalShown(tabId, terminalShown !== true),
@@ -452,10 +465,22 @@ export function ChatPane({
 
             <NowLine tabId={tabId} status={status} since={busySinceByTab[tabId]} items={ribbonByTab[tabId] ?? []} />
 
-            {serverAway && (
-              <div className="server-offline-strip" data-testid="server-offline" role="status">
-                {OFFLINE_STRIP_TEXT}
+            {serverGone ? (
+              <div className="server-offline-strip is-danger" data-testid="server-removed" role="alert">
+                <TriangleAlert size={14} aria-hidden="true" />
+                <span>{SERVER_REMOVED_TEXT}</span>
               </div>
+            ) : keyChanged ? (
+              <div className="server-offline-strip is-danger" data-testid="server-key-changed" role="alert">
+                <ShieldAlert size={14} aria-hidden="true" />
+                <span>{server?.problem || KEY_CHANGED_STRIP_TEXT}</span>
+              </div>
+            ) : (
+              serverAway && (
+                <div className="server-offline-strip" data-testid="server-offline" role="status">
+                  {OFFLINE_STRIP_TEXT}
+                </div>
+              )
             )}
 
             {notice && (
@@ -567,6 +592,7 @@ export function ChatPane({
               onImagePrepared={applyPrepared}
               heldDraft={heldDraft}
               onInsertHeldDraft={insertHeldDraft}
+              blockedText={serverGone ? 'Сервер удалён' : null}
               onPickFiles={() => {
                 void window.qclod.pickFiles().then((paths) => {
                   if (paths.length === 0) return
@@ -595,7 +621,12 @@ export function ChatPane({
             tabId={tabId}
             label={server.label || server.target}
             shown={terminalShown}
-            onHide={() => useAppStore.getState().setTerminalShown(tabId, false)}
+            onHide={() => {
+              useAppStore.getState().setTerminalShown(tabId, false)
+              // R10: hidden, the keys go back to the input line.
+              paneRef.current?.querySelector<HTMLTextAreaElement>('[data-composer-input]')?.focus()
+            }}
+            {...(onOpenPalette ? { onOpenPalette } : {})}
           />
         )}
       </div>

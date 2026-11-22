@@ -26,6 +26,8 @@ export type TerminalSpawn = (
 ) => IPtyLike
 
 export const TERM_INPUT_MAX = 64 * 1024
+/** The output a terminal keeps for a drawer that comes back (R1): its last 256 KiB. */
+export const TERM_BACKLOG_MAX = 256 * 1024
 export const TERM_COLS = { min: 2, max: 500 }
 export const TERM_ROWS = { min: 2, max: 200 }
 
@@ -54,8 +56,12 @@ export interface TerminalHubDeps {
 interface Term {
   tabId: TabId
   pty: IPtyLike
+  /** The last output, newest at the end, at most TERM_BACKLOG_MAX in all. */
+  backlog: string[]
+  backlogSize: number
   /** Releases what the terminal held (its askpass token). */
-  onEnd?: () => void
+  /** `exitCode` when ssh exited by itself; none when the drawer closed it. */
+  onEnd?: (exitCode?: number) => void
 }
 
 /** Every open server terminal, by id; a tab may have more than one. */
@@ -70,7 +76,7 @@ export class TerminalHub {
     cwd: string,
     askpassEnv: Record<string, string>,
     size: { cols: number; rows: number },
-    onEnd?: () => void
+    onEnd?: (exitCode?: number) => void
   ): string {
     const args = [
       ...sshBaseArgs(target, {
@@ -93,22 +99,35 @@ export class TerminalHub {
     args: string[],
     size: { cols: number; rows: number },
     env: NodeJS.ProcessEnv,
-    onEnd?: () => void
+    onEnd?: (exitCode?: number) => void
   ): string {
     const termId = randomUUID()
     const pty = this.deps.spawnPty(file, args, { cols: size.cols, rows: size.rows, env, name: 'xterm-256color' })
-    const term: Term = { tabId, pty, ...(onEnd ? { onEnd } : {}) }
+    const term: Term = { tabId, pty, backlog: [], backlogSize: 0, ...(onEnd ? { onEnd } : {}) }
     this.terms.set(termId, term)
     pty.onData((data) => {
-      if (this.terms.get(termId) === term) this.deps.send(CHANNELS.terminalData, { termId, data })
+      if (this.terms.get(termId) !== term) return
+      keep(term, data)
+      this.deps.send(CHANNELS.terminalData, { termId, data })
     })
     pty.onExit(({ exitCode }) => {
       if (this.terms.get(termId) !== term) return
       this.terms.delete(termId)
-      term.onEnd?.()
+      term.onEnd?.(exitCode)
       this.deps.send(CHANNELS.terminalExit, { termId, exitCode })
     })
     return termId
+  }
+
+  /**
+   * A drawer mounted again (its chat came back to a pane) takes up the same
+   * session: what the terminal printed meanwhile, its last 256 KiB. null — no
+   * such terminal on this tab (it exited, or never was).
+   */
+  attach(tabId: TabId, termId: string): string | null {
+    const term = this.terms.get(termId)
+    if (!term || term.tabId !== tabId) return null
+    return term.backlog.join('')
   }
 
   /** false — not ours, or more than 64 KiB at once. */
@@ -154,6 +173,23 @@ export class TerminalHub {
 
   has(termId: string): boolean {
     return this.terms.has(termId)
+  }
+}
+
+/** Adds output to a terminal's backlog, dropping its oldest part past TERM_BACKLOG_MAX. */
+function keep(term: Term, data: string): void {
+  term.backlog.push(data)
+  term.backlogSize += data.length
+  while (term.backlogSize > TERM_BACKLOG_MAX) {
+    const first = term.backlog[0]!
+    const over = term.backlogSize - TERM_BACKLOG_MAX
+    if (first.length <= over) {
+      term.backlog.shift()
+      term.backlogSize -= first.length
+    } else {
+      term.backlog[0] = first.slice(over)
+      term.backlogSize -= over
+    }
   }
 }
 

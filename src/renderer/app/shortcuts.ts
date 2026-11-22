@@ -164,3 +164,12 @@ export function tabAtTarget(tabIds: string[], index: number | undefined): string
   const at = index === LAST_TAB_INDEX ? tabIds.length - 1 : index
   return tabIds[at] ?? null
 }
+
+/**
+ * Ctrl+K rows that open a sheet or the terminal of their own (R2): focus goes
+ * there, not back to the input line — an Enter meant for the sheet would
+ * otherwise go to the agent.
+ */
+export function paletteActionKeepsFocus(id: AppActionId): boolean {
+  return id === 'openServerFolder' || id === 'openServerTerminal'
+}

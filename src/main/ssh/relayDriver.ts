@@ -8,6 +8,13 @@
  * when the session is closed. After every attach the open cards are made to
  * match the relay's: a card answered there meanwhile closes once, «авто» when
  * the relay's timer did it (Review Focus 1); a question still open opens.
+ *
+ * An answer given while the server is away waits for it (I3): the card stays
+ * open here until the answer is delivered, and goes after the next attach if
+ * the relay still waits on it. «Закрыть чат» while away is kept for the next
+ * connect (`closeLater`, I6). The stream is cut on every attach and at the
+ * end of the seed (`qclod_stream_reset`, I4): the ribbon then takes the
+ * whole message over the part of it the deltas brought.
  */
 import { randomUUID } from 'node:crypto'
 import {
@@ -104,7 +111,15 @@ class MessageQueue implements AsyncIterable<unknown> {
 interface OpenCard {
   pending: RelayPending
   controller: AbortController
+  /** The person's answer, still to be delivered (the server was away). */
+  answer?: PermissionAnswer
 }
+
+/** The line a card answered while the server is away gets (I3). */
+export const ANSWER_LATER_TEXT = 'Ответ отправится, когда сервер вернётся'
+
+/** What the session reads as «the stream was cut here» (I4). */
+export const STREAM_RESET = { type: 'qclod_stream_reset' } as const
 
 const SEED_WAIT_MS = 30_000
 
@@ -124,7 +139,14 @@ function openParams(options: DriverOptions): OpenParams {
 
 export async function createRelayDriver(
   options: DriverOptions,
-  deps: { client: RelayClient; relaySessionId?: string; onSessionId: (s: string) => void; now?: () => number }
+  deps: {
+    client: RelayClient
+    relaySessionId?: string
+    onSessionId: (s: string) => void
+    now?: () => number
+    /** «Закрыть чат» that did not reach the server: closed there on the next connect (I6). */
+    closeLater?: (s: string) => void
+  }
 ): Promise<RelayDriver> {
   const { client } = deps
   const now = deps.now ?? Date.now
@@ -164,6 +186,25 @@ export async function createRelayDriver(
     card.controller.abort()
   }
 
+  /** The answer goes now, or — the server away — waits on the card for the next attach (I3). */
+  const deliver = (card: OpenCard, answer: PermissionAnswer): void => {
+    const requestId = card.pending.requestId
+    const later = (): void => {
+      if (closed || card.answer !== undefined) return
+      card.answer = answer
+      cards.set(requestId, card)
+      queue.push({ type: 'qclod_relay_notice', notice: { kind: 'text', text: ANSWER_LATER_TEXT, tone: 'info' } })
+    }
+    if (client.state !== 'online') return later()
+    delete card.answer
+    cards.delete(requestId)
+    client.call('perm.answer', { s, requestId, answer }).catch((err: unknown) => {
+      // The channel broke on the way: the next attach says whether it still waits.
+      const code = (err as { code?: unknown } | null)?.code
+      if ((code === 'offline' || code === 'timeout') && !cards.has(requestId)) later()
+    })
+  }
+
   const openCard = (pending: RelayPending): void => {
     if (closed || cards.has(pending.requestId)) return
     const controller = new AbortController()
@@ -180,8 +221,7 @@ export async function createRelayDriver(
         (answer: PermissionAnswer) => {
           // Closed meanwhile — answered elsewhere, by the relay's timer, or the session gone: nothing goes.
           if (cards.get(pending.requestId) !== card || controller.signal.aborted) return
-          cards.delete(pending.requestId)
-          client.call('perm.answer', { s, requestId: pending.requestId, answer }).catch(() => undefined)
+          deliver(card, answer)
         },
         () => {
           if (cards.get(pending.requestId) === card) cards.delete(pending.requestId)
@@ -201,7 +241,11 @@ export async function createRelayDriver(
       resolveRemotely({ requestId, by })
     }
     emitView(snapshot.autonomy)
+    // An answer that waited for the server goes now that it is back and still asks;
+    // its card stays where it is meanwhile, so it is not opened a second time.
+    const waiting = [...cards.values()].filter((c) => c.answer !== undefined)
     for (const pending of snapshot.pending) openCard(pending)
+    for (const card of waiting) deliver(card, card.answer!)
   }
 
   const onRecord = (f: Ev): void => {
@@ -281,6 +325,8 @@ export async function createRelayDriver(
     onEvent: onRecord,
     onLive,
     onReattached: (r: AttachResult) => {
+      // The deltas of the break are gone: whole messages from the journal take over (I4).
+      queue.push(STREAM_RESET)
       if (r.gap) gapPending = true
       syncPending(r.snapshot)
     }
@@ -315,6 +361,8 @@ export async function createRelayDriver(
     })
   }
   seeding = false
+  // A message the agent is in the middle of: its deltas began before us (I4).
+  queue.push(STREAM_RESET)
   for (const f of early.splice(0).sort((a, b) => a.q - b.q)) onRecord(f)
   if (result.snapshot.firstSeq > 1 && seed.length > 0) {
     seed.unshift({ q: 0, at: seed[0]!.at, k: 'notice', d: { kind: 'text', text: gapText(seed[0]!.at), tone: 'info' } })
@@ -390,7 +438,14 @@ export async function createRelayDriver(
         return
       }
       client.detach(s)
-      await client.call('session.close', { s }).catch(() => undefined)
+      if (client.state !== 'online') {
+        deps.closeLater?.(s)
+        return
+      }
+      await client.call('session.close', { s }).catch((err: unknown) => {
+        const code = (err as { code?: unknown } | null)?.code
+        if (code === 'offline' || code === 'timeout') deps.closeLater?.(s)
+      })
     }
   }
   return driver

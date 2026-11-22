@@ -99,6 +99,45 @@ describe('RibbonBuilder', () => {
     expect(after[0]!.streaming).toBe(false)
   })
 
+  test('I4 А: поток оборвался посреди ответа — полное сообщение дописывает текст, дыры нет', () => {
+    const b = new RibbonBuilder()
+    b.apply(messageStart('msg_cut'))
+    b.apply(textDelta('msg_cut', 'Привет'))
+    // The channel broke: the deltas ', мир' never came.
+    b.resetStream()
+    expect(only(b.items, 'agentText')[0]!.streaming).toBe(false)
+    // Live deltas of the same message after the reattach: their start was not seen again.
+    b.apply(textDelta('msg_cut', '!'))
+    const full = [{ type: 'text', text: 'Привет, мир!' }]
+    b.apply(assistant(full, { message: { id: 'msg_cut', role: 'assistant', content: full } }))
+    const texts = only(b.items, 'agentText')
+    expect(texts).toHaveLength(1)
+    expect(texts[0]!.text).toBe('Привет, мир!')
+    // The next message streams as ever.
+    b.apply(messageStart('msg_next'))
+    b.apply(textDelta('msg_next', 'Дальше'))
+    expect(only(b.items, 'agentText').map((t) => t.text)).toEqual(['Привет, мир!', 'Дальше'])
+  })
+
+  test('I4 Б: подключились посреди потока — дельты без message_start не показаны, сообщение одно', () => {
+    const b = new RibbonBuilder()
+    // A server chat after its seed: the stream is cut by design.
+    b.resetStream()
+    b.apply(textDelta('msg_mid', 'вина ответа'))
+    expect(only(b.items, 'agentText')).toHaveLength(0)
+    const full = [{ type: 'text', text: 'Половина ответа' }]
+    b.apply(assistant(full, { message: { id: 'msg_mid', role: 'assistant', content: full } }))
+    const texts = only(b.items, 'agentText')
+    expect(texts).toHaveLength(1)
+    expect(texts[0]!.text).toBe('Половина ответа')
+  })
+
+  test('I4: в обычной сессии дельты без message_start по-прежнему показаны', () => {
+    const b = new RibbonBuilder()
+    b.apply(textDelta('msg_x', 'раз'))
+    expect(only(b.items, 'agentText').map((t) => t.text)).toEqual(['раз'])
+  })
+
   test('вызов инструмента и его результат — один элемент, а не два', () => {
     // A frozen clock: the call took no time, so the patch carries no duration.
     const b = new RibbonBuilder({ now: () => 1 })

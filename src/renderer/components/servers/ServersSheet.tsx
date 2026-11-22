@@ -5,6 +5,7 @@ import { AddServerForm, type NewServer } from './AddServerForm'
 import { ConnectChecklist } from './ConnectChecklist'
 import { RemoteFolderPicker } from './RemoteFolderPicker'
 import { ServerPicker } from './ServerPicker'
+import { focusInto, useModalSheet } from '../../ui/modalFocus'
 import './servers.css'
 
 export type ServersSheetMode =
@@ -12,6 +13,8 @@ export type ServersSheetMode =
   | { kind: 'add' }
   | { kind: 'connect'; hostId: string; path?: string }
   | { kind: 'folder'; hostId: string }
+  /** The checklist as it stands, without connecting again — a changed host key (R5). */
+  | { kind: 'status'; hostId: string }
 
 interface Props {
   servers: ServerView[]
@@ -40,6 +43,10 @@ export function ServersSheet({ servers, steps, initial = { kind: 'picker' }, onC
   const [mode, setMode] = useState<ServersSheetMode>(initial)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Why the chat did not open (a refused or failed openServerFolder). */
+  const [openError, setOpenError] = useState<string | null>(null)
+  const sheet = useRef<HTMLDivElement>(null)
+  const onKeyDown = useModalSheet(sheet, onClose)
   const alive = useRef(true)
   useEffect(
     () => () => {
@@ -54,10 +61,18 @@ export function ServersSheet({ servers, steps, initial = { kind: 'picker' }, onC
   }
 
   const openPath = (hostId: string, path: string): void => {
-    void window.qclod.openServerFolder(hostId, path).then((tab) => {
-      if (tab) opened(tab)
-      else if (alive.current) setMode({ kind: 'folder', hostId })
-    })
+    setOpenError(null)
+    window.qclod.openServerFolder(hostId, path).then(
+      (tab) => {
+        if (tab) opened(tab)
+        else if (alive.current) setMode({ kind: 'folder', hostId })
+      },
+      (err: unknown) => {
+        if (!alive.current) return
+        setOpenError(`Чат не открылся: ${reasonOf(err)}`)
+        setMode({ kind: 'folder', hostId })
+      }
+    )
   }
 
   const connect = (hostId: string, path?: string): void => {
@@ -115,13 +130,28 @@ export function ServersSheet({ servers, steps, initial = { kind: 'picker' }, onC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const server = mode.kind === 'connect' || mode.kind === 'folder' ? servers.find((s) => s.id === mode.hostId) : undefined
+  // Each step puts focus on its own first control (R2): the path field, the first server, the form.
+  useEffect(() => focusInto(sheet.current), [mode.kind])
+
+  const server = mode.kind === 'connect' || mode.kind === 'folder' || mode.kind === 'status' ? servers.find((s) => s.id === mode.hostId) : undefined
   const title =
-    mode.kind === 'add' ? 'Добавить сервер' : mode.kind === 'connect' ? `Подключение: ${server?.label ?? ''}` : 'Новый чат на сервере'
+    mode.kind === 'add'
+      ? 'Добавить сервер'
+      : mode.kind === 'connect' || mode.kind === 'status'
+        ? `Подключение: ${server?.label ?? ''}`
+        : 'Новый чат на сервере'
 
   return (
     <div className="sheet-backdrop" data-testid="servers-sheet">
-      <div className="sheet server-sheet" role="dialog" aria-modal="true" aria-labelledby="servers-sheet-title">
+      <div
+        ref={sheet}
+        className="sheet server-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="servers-sheet-title"
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+      >
         <div className="sheet-head">
           <h2 className="sheet-title" id="servers-sheet-title">
             {title}
@@ -131,6 +161,11 @@ export function ServersSheet({ servers, steps, initial = { kind: 'picker' }, onC
           </button>
         </div>
         <div className="sheet-body">
+          {openError && (
+            <p className="server-error" role="alert" data-testid="servers-open-error">
+              {openError}
+            </p>
+          )}
           {mode.kind === 'picker' && (
             <ServerPicker servers={servers} onPick={pick} onPickRecent={pickRecent} onAdd={() => setMode({ kind: 'add' })} />
           )}
@@ -143,12 +178,13 @@ export function ServersSheet({ servers, steps, initial = { kind: 'picker' }, onC
               onCancel={() => setMode({ kind: 'picker' })}
             />
           )}
-          {mode.kind === 'connect' && (
+          {(mode.kind === 'connect' || mode.kind === 'status') && (
             <ConnectChecklist
               steps={steps[mode.hostId]}
               problem={server && server.state !== 'online' && server.state !== 'connecting' ? server.problem : undefined}
+              problemState={server?.state}
               busy={busy}
-              onRetry={() => connect(mode.hostId, mode.path)}
+              onRetry={() => connect(mode.hostId, mode.kind === 'connect' ? mode.path : undefined)}
             />
           )}
           {mode.kind === 'folder' && server && (

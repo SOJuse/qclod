@@ -115,4 +115,8 @@ dmg:
       type: link
       path: /Applications
 
+# One afterPack (build/afterPack.cjs): Electron's fuses first (stage 6, I8 —
+# no Node inspector from the command line, no NODE_OPTIONS; scripts/fuses.cjs),
+# then the Mac's ad-hoc signature, so the signature covers the set fuses.
 afterPack: build/afterPack.cjs
+

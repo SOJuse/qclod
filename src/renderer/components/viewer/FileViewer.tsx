@@ -3,7 +3,7 @@ import { Download, ExternalLink, X } from 'lucide-react'
 import type { FileSource, TabId, ViewerContent } from '../../../shared/types'
 import { bytes } from '../../../shared/format'
 import { highlight } from '../../markdown/highlight'
-import { StateView } from '../../ui/StateView'
+import { StateView, reasonOf } from '../../ui/StateView'
 import '../../markdown/Markdown.css'
 import './FileViewer.css'
 
@@ -16,6 +16,9 @@ export const VIEWER_TEXTS = {
   binary: (size: number) => `Это не текст (${bytes(size)})`,
   error: (message: string) => `Не удалось прочитать файл: ${message}`,
   download: 'Скачать и открыть',
+  downloading: 'Скачиваю…',
+  openFailed: (reason: string) => `Не удалось скачать: ${reason}`,
+  openLocalFailed: (reason: string) => `Не удалось открыть: ${reason}`,
   openLocal: 'Открыть в программе',
   close: 'Закрыть',
   loading: 'Читаю файл…'
@@ -28,6 +31,10 @@ interface ViewProps {
   line?: number | undefined
   /** null while it is being read. */
   content: ViewerContent | null
+  /** «Скачать и открыть» / «Открыть в программе» under way: the button waits and says so. */
+  opening?: boolean
+  /** Why the last opening failed. */
+  openError?: string | null
   onOpen(): void
   onClose(): void
 }
@@ -63,7 +70,16 @@ function TextLines({ text, language, line }: { text: string; language: string; l
 }
 
 /** What the viewer draws for a content: pure, for the tests and the container below. */
-export function FileViewerView({ source, path, line, content, onOpen, onClose }: ViewProps): JSX.Element {
+export function FileViewerView({
+  source,
+  path,
+  line,
+  content,
+  opening = false,
+  openError = null,
+  onOpen,
+  onClose
+}: ViewProps): JSX.Element {
   const remote = source.kind === 'remote'
   return (
     <div className="file-viewer" data-testid="file-viewer" data-source={source.kind}>
@@ -74,15 +90,27 @@ export function FileViewerView({ source, path, line, content, onOpen, onClose }:
         <span className="viewer-badge" data-testid="viewer-readonly">
           {VIEWER_TEXTS.readOnly}
         </span>
-        <button type="button" className="viewer-button" data-testid="viewer-open" onClick={onOpen}>
+        <button
+          type="button"
+          className="viewer-button"
+          data-testid="viewer-open"
+          disabled={opening}
+          aria-busy={opening}
+          onClick={onOpen}
+        >
           {remote ? <Download size={14} aria-hidden="true" /> : <ExternalLink size={14} aria-hidden="true" />}
-          <span>{remote ? VIEWER_TEXTS.download : VIEWER_TEXTS.openLocal}</span>
+          <span>{opening && remote ? VIEWER_TEXTS.downloading : remote ? VIEWER_TEXTS.download : VIEWER_TEXTS.openLocal}</span>
         </button>
         <button type="button" className="viewer-button" data-testid="viewer-close" onClick={onClose}>
           <X size={14} aria-hidden="true" />
           <span>{VIEWER_TEXTS.close}</span>
         </button>
       </header>
+      {openError !== null && (
+        <p className="viewer-note viewer-error" role="alert" data-testid="viewer-open-error">
+          {remote ? VIEWER_TEXTS.openFailed(openError) : VIEWER_TEXTS.openLocalFailed(openError)}
+        </p>
+      )}
       <div className="viewer-body">
         {content === null ? (
           <StateView kind="loading" title={VIEWER_TEXTS.loading} />
@@ -135,7 +163,7 @@ export function FileViewer(props: {
     window.qclod
       .readForViewer(source, tabId, path)
       .then((c) => live && setContent(c))
-      .catch((e: unknown) => live && setContent({ kind: 'error', message: e instanceof Error ? e.message : String(e) }))
+      .catch((e: unknown) => live && setContent({ kind: 'error', message: reasonOf(e) }))
     return () => {
       live = false
     }
@@ -149,14 +177,40 @@ export function FileViewer(props: {
     self.current?.querySelector('[data-line-mark]')?.scrollIntoView({ block: 'center' })
   }, [content, line])
 
+  /** One opening at a time: a second click while a file is coming down does nothing. */
+  const [opening, setOpening] = useState(false)
+  const [openError, setOpenError] = useState<string | null>(null)
+  const busy = useRef(false)
   const onOpen = (): void => {
-    if (source.kind === 'remote') void window.qclod.downloadAndOpen(tabId, path)
-    else void window.qclod.openPath(tabId, path)
+    if (busy.current) return
+    busy.current = true
+    setOpening(true)
+    setOpenError(null)
+    const call: Promise<unknown> =
+      source.kind === 'remote' ? window.qclod.downloadAndOpen(tabId, path) : window.qclod.openPath(tabId, path)
+    call
+      .then(
+        (result) => setOpenError(result === null ? 'файл не открылся' : null),
+        (err: unknown) => setOpenError(reasonOf(err))
+      )
+      .finally(() => {
+        busy.current = false
+        setOpening(false)
+      })
   }
 
   return (
     <div ref={self} className="file-viewer-host">
-      <FileViewerView source={source} path={path} line={line} content={content} onOpen={onOpen} onClose={onClose} />
+      <FileViewerView
+        source={source}
+        path={path}
+        line={line}
+        content={content}
+        opening={opening}
+        openError={openError}
+        onOpen={onOpen}
+        onClose={onClose}
+      />
     </div>
   )
 }

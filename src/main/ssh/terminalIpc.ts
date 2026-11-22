@@ -5,7 +5,7 @@ import { sanitizeTerminalId, sanitizeTerminalInput } from '../tabs/sanitize'
 import { termSize, type TerminalHub } from './terminal'
 
 export interface TerminalIpcDeps {
-  hub: Pick<TerminalHub, 'input' | 'resize' | 'close'>
+  hub: Pick<TerminalHub, 'input' | 'resize' | 'close' | 'attach'>
   /** A terminal on the tab's server in the tab's folder; null when the tab has none. */
   open: (tabId: TabId, size: { cols: number; rows: number }) => Promise<string | null>
 }
@@ -20,6 +20,12 @@ export function registerTerminalIpc(deps: TerminalIpcDeps): void {
     const size = termSize(cols, rows)
     if (typeof tabId !== 'string' || tabId === '' || tabId.length > 200 || !size) return null
     return deps.open(tabId, size)
+  })
+  // R1: a drawer back on screen takes up its terminal again, with what it printed meanwhile.
+  ipcMain.handle(CHANNELS.terminalAttach, (_e, tabId: unknown, termId: unknown) => {
+    const id = sanitizeTerminalId(termId)
+    if (typeof tabId !== 'string' || tabId === '' || tabId.length > 200 || !id) return null
+    return deps.hub.attach(tabId, id)
   })
   ipcMain.handle(CHANNELS.terminalResize, (_e, termId: unknown, cols: unknown, rows: unknown) => {
     const id = sanitizeTerminalId(termId)

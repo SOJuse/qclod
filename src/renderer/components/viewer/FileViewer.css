@@ -54,6 +54,11 @@
   cursor: pointer;
 }
 
+.viewer-button:disabled {
+  color: var(--text-faint);
+  cursor: progress;
+}
+
 .viewer-button:hover {
   background: var(--hover-fill);
   color: var(--text);

@@ -10,6 +10,7 @@ import {
   PONG_DEADLINE_MS,
   RelayCallError,
   RelayClient,
+  STABLE_LINK_MS,
   localDeadline,
   type SessionSink
 } from '../../src/main/ssh/relayClient'
@@ -260,6 +261,103 @@ describe('RelayClient', () => {
       expect(Math.abs(localDeadline(remaining, here) - (here + 300_000))).toBeLessThan(1000)
       c.close()
     }
+  })
+
+  test('канал, что рвётся сразу после hello, не сбрасывает лестницу пауз; устойчивый 30 с — сбрасывает', async () => {
+    const clock = manualClock()
+    const made: Array<{ exit: (code: number | null, stderr: string) => void }> = []
+    const flaky: TransportFactory = () => {
+      const stdin = new PassThrough()
+      const stdout = new PassThrough()
+      const decoder = new LineDecoder()
+      const rec = { exit: (_c: number | null, _s: string) => undefined as void }
+      made.push(rec)
+      stdin.on('data', (chunk: Buffer) => {
+        for (const f of decoder.push(chunk)) {
+          if (f.t === 'hello') stdout.write(encodeFrame({ t: 'welcome', proto: 1, relay: 'x', binary: 'x', startedAt: 0 }))
+          if (f.t === 'ping') stdout.write(encodeFrame({ t: 'pong' }))
+        }
+      })
+      return { stdin, stdout, kill: () => undefined, onExit: (cb) => void (rec.exit = cb) }
+    }
+    const settle = () => new Promise((r) => setTimeout(r, 10))
+    const c = client(flaky, { now: clock.now, setTimer: clock.setTimeout })
+    await c.connect(true)
+    // Drops at once, every time.
+    made[0]!.exit(255, 'Connection reset')
+    clock.advance(1000)
+    await until(() => made.length === 2 && c.state === 'online', 2000, 'вторая связь')
+    made[1]!.exit(255, 'Connection reset')
+    clock.advance(1000)
+    await settle()
+    // Not 1 s again: the ladder went on to 2 s.
+    expect(made).toHaveLength(2)
+    clock.advance(1000)
+    await until(() => made.length === 3 && c.state === 'online', 2000, 'третья связь')
+    // This one holds: after 30 s the ladder starts over.
+    clock.advance(STABLE_LINK_MS)
+    await settle()
+    made[2]!.exit(255, 'Connection reset')
+    clock.advance(1000)
+    await until(() => made.length === 4, 2000, 'снова через 1 с')
+  })
+
+  test('исключение в обработчике кадра не теряет остальные кадры куска', async () => {
+    let out: PassThrough | null = null
+    const t: TransportFactory = () => {
+      const stdin = new PassThrough()
+      const stdout = new PassThrough()
+      out = stdout
+      const decoder = new LineDecoder()
+      stdin.on('data', (chunk: Buffer) => {
+        for (const f of decoder.push(chunk)) {
+          if (f.t === 'hello') stdout.write(encodeFrame({ t: 'welcome', proto: 1, relay: 'x', binary: 'x', startedAt: 0 }))
+          if (f.t === 'req' && f.m === 'session.attach') {
+            stdout.write(encodeFrame({ t: 'res', id: f.id, ok: true, r: { snapshot: { s: 'S1' }, gap: false } }))
+          }
+        }
+      })
+      return { stdin, stdout, kill: () => undefined, onExit: () => undefined }
+    }
+    const c = client(t)
+    await c.connect(true)
+    const seen: number[] = []
+    await c.attach('S1', 0, {
+      onEvent: (f) => {
+        seen.push(f.q)
+        if (f.q === 1) throw new Error('сломался обработчик')
+      },
+      onLive: () => undefined,
+      onReattached: () => undefined
+    })
+    const ev = (q: number) => encodeFrame({ t: 'ev', s: 'S1', q, k: 'notice', at: 1, d: { kind: 'text', text: 'x', tone: 'info' } })
+    out!.write(ev(1) + ev(2) + ev(3))
+    await until(() => seen.length === 3, 2000, 'все кадры')
+    expect(seen).toEqual([1, 2, 3])
+  })
+
+  test('R4: пока вопрос ssh у человека, ожидание hello не истекает', async () => {
+    const clock = manualClock()
+    let asking = true
+    let killed = false
+    let stdout: PassThrough | null = null
+    const t: TransportFactory = () => {
+      stdout = new PassThrough()
+      return { stdin: new PassThrough(), stdout, kill: () => void (killed = true), onExit: () => undefined, asking: () => asking }
+    }
+    const c = client(t, { now: clock.now, setTimer: clock.setTimeout })
+    const connecting = c.connect(true)
+    clock.advance(5 * 60_000)
+    expect(killed).toBe(false)
+    // The person answered; the relay greets.
+    asking = false
+    stdout!.write(encodeFrame({ t: 'welcome', proto: 1, relay: 'x', binary: 'x', startedAt: 0 }))
+    await connecting
+    expect(c.state).toBe('online')
+    // Without a question, the 60 s hold as ever.
+    const again = c.connect(true)
+    clock.advance(60_000)
+    await expect(again).rejects.toThrow('Посредник не ответил')
   })
 
   test('нет pong 45 с — переподключение', async () => {

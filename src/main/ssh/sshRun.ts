@@ -5,9 +5,9 @@
  * installed goes through `qclod-relay attach` (transport.ts).
  */
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import type { AskpassServer } from './askpass'
-import { controlDir, sshBaseArgs, type SshTarget } from './sshArgs'
+import { controlDir, ensurePrivateDir, sshBaseArgs, type PrivateDirFs, type SshTarget } from './sshArgs'
 
 export interface SshRunResult {
   code: number | null
@@ -35,6 +35,8 @@ export interface SshContext {
   uid?: number
   askpass: AskpassServer
   spawn?: SpawnFn
+  /** Tests: the checks of the ControlMaster folder. */
+  dirFs?: PrivateDirFs
 }
 
 let context: SshContext | null = null
@@ -60,14 +62,13 @@ export function findSsh(platform: NodeJS.Platform = process.platform): string {
   return 'ssh'
 }
 
-/** The ControlMaster folder must exist before ssh puts a socket there. */
+/**
+ * The ControlMaster folder must exist before ssh puts a socket there, and be
+ * this user's alone (ensurePrivateDir); throws otherwise. Windows has none.
+ */
 export function ensureControlDir(ctx: SshContext): void {
   if (ctx.platform === 'win32') return
-  try {
-    mkdirSync(controlDir(ctx.uid ?? 0), { recursive: true, mode: 0o700 })
-  } catch {
-    // ssh says so itself.
-  }
+  ensurePrivateDir(controlDir(ctx.uid ?? 0), ctx.uid ?? 0, ctx.dirFs)
 }
 
 /** ssh's own args, then `--` and the remote command. */
@@ -97,14 +98,75 @@ export function sshEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
 
 const MAX_OUTPUT = 4 * 1024 * 1024
 
+/**
+ * A timeout that stands still while ssh's question waits for the person (R4):
+ * the probe's 90 s are ssh's, not the time somebody takes to type.
+ */
+export class PausableTimeout {
+  private left: number
+  private startedAt = 0
+  private timer: ReturnType<typeof setTimeout> | null = null
+  private paused = 0
+  private stopped = false
+
+  constructor(
+    ms: number,
+    private readonly fire: () => void,
+    private readonly now: () => number = Date.now
+  ) {
+    this.left = ms
+    this.arm()
+  }
+
+  private arm(): void {
+    if (this.stopped || this.timer || this.paused > 0) return
+    this.startedAt = this.now()
+    this.timer = setTimeout(() => {
+      this.timer = null
+      if (this.stopped || this.paused > 0) return
+      this.stopped = true
+      this.fire()
+    }, Math.max(0, this.left))
+  }
+
+  pause(): void {
+    this.paused++
+    if (!this.timer) return
+    clearTimeout(this.timer)
+    this.timer = null
+    this.left -= this.now() - this.startedAt
+  }
+
+  resume(): void {
+    if (this.paused === 0) return
+    this.paused--
+    this.arm()
+  }
+
+  stop(): void {
+    this.stopped = true
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+  }
+}
+
 export function sshRun(
   t: SshTarget,
   remote: string,
   o: { stdin?: Buffer | string; interactive: boolean; hostId: string; timeoutMs?: number }
 ): Promise<SshRunResult> {
   const ctx = sshContext()
-  ensureControlDir(ctx)
-  const ask = ctx.askpass.forSpawn(o.hostId, { interactive: o.interactive })
+  try {
+    ensureControlDir(ctx)
+  } catch (err) {
+    return Promise.resolve({ code: null, stdout: '', stderr: err instanceof Error ? err.message : String(err) })
+  }
+  let timeout: PausableTimeout | null = null
+  const ask = ctx.askpass.forSpawn(o.hostId, {
+    interactive: o.interactive,
+    target: t.target,
+    onAsking: (open) => (open ? timeout?.pause() : timeout?.resume())
+  })
   const spawn = ctx.spawn ?? (nodeSpawn as SpawnFn)
   return new Promise((resolve) => {
     let stdout = ''
@@ -118,16 +180,19 @@ export function sshRun(
     const finish = (code: number | null): void => {
       if (done) return
       done = true
-      if (timer) clearTimeout(timer)
-      ask.done()
+      timeout?.stop()
+      // Anything on stdout comes from the remote command: the sign-in was taken.
+      if (code === 0 || stdout !== '') ask.authed()
+      ask.done(classifySshFailure(stderr, code) === 'authFailed' ? { authFailed: true } : undefined)
       resolve({ code, stdout, stderr })
     }
-    const timer = o.timeoutMs
-      ? setTimeout(() => {
-          child.kill()
-          finish(null)
-        }, o.timeoutMs)
-      : null
+    if (o.timeoutMs) {
+      timeout = new PausableTimeout(o.timeoutMs, () => {
+        child.kill()
+        finish(null)
+      })
+      if (ask.asking()) timeout.pause()
+    }
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
     child.stdout?.on('data', (s: string) => {

@@ -1,6 +1,7 @@
 import type { CommitResult, GitFileDiff, GitStatus } from '../../shared/types'
 import { EMPTY_TREE, parseUnifiedDiff } from './diff'
 import { GitMissingError, MIN_GIT, parseGitVersion, type GitRun, type GitRunner } from './gitRunner'
+import { GitUnavailableError } from './remoteGitRunner'
 import { MAX_CHANGES, STATUS_ARGS, parseStatusV2 } from './status'
 
 export interface GitTab {
@@ -73,9 +74,12 @@ export class GitService {
       out = await run(STATUS_ARGS, { readOnly: true })
     } catch (err) {
       if (err instanceof GitMissingError) return { kind: 'noGit' }
+      // A server project whose relay is off line or too old for git.run (task 15).
+      if (err instanceof GitUnavailableError) return { kind: 'unavailable', reason: err.message }
       return { kind: 'error', message: err instanceof Error ? err.message : String(err) }
     }
     if (out.code !== 0) {
+
       this.last.delete(tab.id)
       if (out.code === 128 && /not a git repository/i.test(out.stderr)) return { kind: 'notRepo' }
       return { kind: 'error', message: tail(out.stderr.trim() || `git вернул код ${out.code}`, 500) }

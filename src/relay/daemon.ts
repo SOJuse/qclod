@@ -31,7 +31,9 @@ import {
 import { PERMISSION_MODES, type PermissionAnswer, type PermissionMode } from '../shared/types'
 import { attachAutonomy, type RelayAutonomy, type RelayClock } from './autonomy'
 import { RelayError, badRequest } from './errors'
+import { runGit, type GitRunParams } from './git'
 import { Journal, privateMode } from './journal'
+
 import { SILENT_LOG, type RelayLog } from './log'
 import { BINARY_NAME, type RelayPaths } from './paths'
 import { RelaySession, type SessionFrame } from './session'
@@ -810,8 +812,9 @@ export class RelayDaemon {
         return { scheduled: true, busy }
       }
       case 'git.run':
-        // Сверка F11: stage 7 writes the handler.
-        throw new RelayError('unsupported', 'git.run появится в этапе 7')
+        // Stage 7 (task 15): git in a server project's folder, `~` as everywhere else.
+        return await runGit({ ...p, cwd: typeof p['cwd'] === 'string' ? this.expand(p['cwd']) : p['cwd'] } as unknown as GitRunParams)
+
       default: {
         const extra = this.opts.methods?.[m]
         if (!extra) throw new RelayError('unsupported', `метод ${m} не поддерживается этим посредником`)

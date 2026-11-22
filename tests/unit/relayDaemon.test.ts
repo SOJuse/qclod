@@ -259,12 +259,24 @@ describe('демон посредника', () => {
     expect(c.closed).toBe(false)
   })
 
-  test('git.run до этапа 7 — unsupported; чужая операция drv — bad_request; нет сессии — not_found', async () => {
+  test('git.run отвечает (этап 7); чужая операция drv — bad_request; нет сессии — not_found', async () => {
     const t = setup()
     await t.daemon.start()
     const c = await Client.open(t.paths)
-    const git = await c.request('git.run', { cwd: t.root, args: ['status'], timeoutMs: 1000, maxBytes: 10 })
-    expect(!git.ok && git.e.code).toBe('unsupported')
+    // A real git in the daemon's process: `git --version` answers; bad args and a missing folder do not run.
+    const version = await c.request('git.run', { cwd: '~', args: ['--version'], timeoutMs: 15000, maxBytes: 4096, readOnly: true })
+    if (version.ok) {
+      const r = version.r as { code: number; stdout: string; stderr: string }
+      if (r.code !== 127) expect(r.stdout).toMatch(/^git version /)
+      else expect(r.stderr).toBe('git not found')
+    } else throw new Error(`git.run: ${version.e.code}`)
+    const badArgs = await c.request('git.run', { cwd: t.root, args: 'status', timeoutMs: 1000, maxBytes: 10 })
+    expect(!badArgs.ok && badArgs.e.code).toBe('bad_request')
+    const tooMany = await c.request('git.run', { cwd: t.root, args: Array(1001).fill('x'), timeoutMs: 1000, maxBytes: 10 })
+    expect(!tooMany.ok && tooMany.e.code).toBe('bad_request')
+    const noFolder = await c.request('git.run', { cwd: join(t.root, 'нет-такой'), args: ['status'], timeoutMs: 1000, maxBytes: 10 })
+    expect(!noFolder.ok && noFolder.e.code).toBe('not_found')
+
     const { snapshot } = await c.ok<AttachResult>('session.open', { cwd: t.root, mode: 'default' })
     const bad = await c.request('drv', { s: snapshot.s, op: 'dispose', args: [] })
     expect(!bad.ok && bad.e.code).toBe('bad_request')

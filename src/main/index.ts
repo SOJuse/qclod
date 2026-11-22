@@ -78,9 +78,11 @@ import {
   USE_EXECUTION_STATE_HELPER
 } from './system/keepAwake'
 import { AutonomyHost } from './autonomy/autonomyHost'
-import { GitService } from './git/GitService'
+import { GitService, type GitTab } from './git/GitService'
 import { localGitRunner, type GitRunner } from './git/gitRunner'
 import { registerGitIpc } from './gitIpc'
+import { remoteGitRunner } from './git/remoteGitRunner'
+
 import { applyOpenAtLogin } from './system/loginItem'
 import { claimSingleInstance } from './system/singleInstance'
 import { installMediaPermissions, micAccessStatus, openMicSettings } from './voice/micAccess'
@@ -990,17 +992,25 @@ if (gotLock) void app.whenReady().then(async () => {
     library: templates
   })
   registerTemplatesIpc({ library: templates, getWindow: () => mainWindow, harvest })
-  // этап 7: Git panel. The folder is the chat's own (controller.list), never the window's.
+  // этап 7: Git panel. The folder is the chat's own (controller.list), never the window's;
+  // a server chat's git runs on its server through the relay's git.run (task 15).
   const gitRunners = new Map<string, GitRunner>()
+  const runnerFor = (tab: GitTab): GitRunner => {
+    const key = tab.hostId ? `${tab.hostId}\0${tab.cwd}` : tab.cwd
+    let run = gitRunners.get(key)
+    if (!run) {
+      const hostId = tab.hostId
+      run = hostId ? remoteGitRunner(() => serverHosts.client(hostId), tab.cwd) : localGitRunner(tab.cwd)
+      gitRunners.set(key, run)
+    }
+    return run
+  }
   registerGitIpc({
-    service: new GitService((tab) => {
-      if (tab.hostId) return { unavailable: 'Git для серверных проектов пока недоступен.' }
-      let run = gitRunners.get(tab.cwd)
-      if (!run) gitRunners.set(tab.cwd, (run = localGitRunner(tab.cwd)))
-      return run
-    }),
-    tabs: () => controller.list().map((t) => ({ id: t.id, cwd: t.cwd }))
+    service: new GitService(runnerFor),
+    tabs: () =>
+      controller.list().map((t) => ({ id: t.id, cwd: t.cwd, ...(t.server ? { hostId: t.server.hostId } : {}) }))
   })
+
   ipcMain.handle(CHANNELS.hotkeyStatus, () => withFault(CHANNELS.hotkeyStatus, () => hotkey.status))
 
   // Voice input is Windows' own (Win+H), pressed for the person: the input

@@ -386,7 +386,8 @@ export interface ServerAuth {
 //   host.info: {} → HostInfo
 //   relay.restart: {when: 'idle' | 'now'} → {scheduled: boolean; busy: number}
 //   git.run: {cwd, args, input?, timeoutMs, maxBytes, readOnly?} → {code, stdout, stderr, truncated}
-//     (сверка F11; stage 7 writes the handler, `unsupported` until then)
+//     (сверка F11; src/relay/git.ts since stage 7 — an older relay answers `unsupported`)
+
 
 export interface DrvParams {
   s: string

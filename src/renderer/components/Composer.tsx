@@ -5,6 +5,7 @@ import type {
   CommandInfo,
   EffortLevel,
   ModelOption,
+  PromptTemplate,
   SessionStatus
 } from '../../shared/types'
 import { markRemote, withLocalCommands } from '../../shared/commandFilter'
@@ -22,14 +23,16 @@ import {
 } from '../input/attachments'
 import { applyMention, findMentionQuery } from '../input/mentions'
 import { InputHistory } from '../input/history'
+import { applyTemplateFromSlash, insertTemplate } from '../input/templates'
 import { hint, hintKeys } from '../app/shortcuts'
 import {
   acceptCommand,
-  commandItems,
+  acceptTemplate,
   completeCommand,
   bareLocalStep,
   bareRemoteToggle,
   findSlashQuery,
+  slashItems,
   stepItems,
   type SlashOutcome,
   type SlashStep
@@ -53,6 +56,10 @@ interface Props {
   /** What the session offers after `/`, as it sent it. */
   commands: CommandInfo[]
   recentCommands: string[]
+  /** этап 7: the owner's templates, offered after the commands in the `/` list. */
+  templates?: PromptTemplate[]
+  /** этап 7: text to put in at the caret (a template from Ctrl+K); each nonce once. */
+  insertRequest?: { text: string; nonce: number } | null
   /** For the second step of /model and /effort. */
   models: ModelOption[]
   model: string | null
@@ -106,6 +113,7 @@ function chipClass(item: PendingAttachment): string {
 }
 
 const COMMANDS_STEP: SlashStep = { kind: 'commands' }
+const NO_TEMPLATES: PromptTemplate[] = []
 
 type Menu =
   | { kind: 'none' }
@@ -180,6 +188,8 @@ export function Composer({
   fileIndex,
   commands,
   recentCommands,
+  templates = NO_TEMPLATES,
+  insertRequest = null,
   models,
   model,
   effort,
@@ -219,8 +229,8 @@ export function Composer({
     voiceRef.current?.caretMoved(at)
   }, [])
   useVoiceCaret(voice, field, setCaretState)
-  /** Where the caret goes once a text we set ourselves is in the field. */
-  const pendingCaret = useRef<number | null>(null)
+  /** Where the caret (or a selection: a template's {{…}}) goes once a text we set ourselves is in the field. */
+  const pendingCaret = useRef<{ start: number; end: number } | null>(null)
   /** The row picked with the arrows, remembered for the list it was picked in. */
   const [selection, setSelection] = useState({ key: '', index: 0 })
   /** The second list of /model or /effort, once its command was chosen. */
@@ -275,7 +285,7 @@ export function Composer({
 
     const slash = findSlashQuery(draft, caret)
     if (!slash) return { kind: 'none' }
-    const items = commandItems(available, slash.query, recentCommands)
+    const items = slashItems(available, templates, slash.query, recentCommands)
     return { kind: 'slash', step: COMMANDS_STEP, key: `commands:${slash.query}`, items, initial: 0 }
   })()
   const menuItems = menu.kind === 'none' ? [] : menu.items
@@ -297,7 +307,7 @@ export function Composer({
     // Placed before the next keystroke can land: a frame later, fast typing
     // has already gone in at the old spot.
     if (pendingCaret.current !== null) {
-      el.setSelectionRange(pendingCaret.current, pendingCaret.current)
+      el.setSelectionRange(pendingCaret.current.start, pendingCaret.current.end)
       pendingCaret.current = null
     }
   }, [draft])
@@ -315,6 +325,22 @@ export function Composer({
   useEffect(() => {
     if (step.kind !== 'commands' && !draft.startsWith(`/${step.kind} `)) setStep(COMMANDS_STEP)
   }, [draft, step])
+
+  // этап 7: a template from Ctrl+K goes in where the caret (or the selection)
+  // was when the palette took the focus; its first {{…}} comes selected.
+  const doneInsert = useRef(insertRequest?.nonce ?? 0)
+  useEffect(() => {
+    if (!insertRequest || insertRequest.nonce === doneInsert.current) return
+    doneInsert.current = insertRequest.nonce
+    const el = field.current
+    const start = el ? el.selectionStart : draft.length
+    const end = el ? el.selectionEnd : draft.length
+    const result = insertTemplate(draft, start, end, insertRequest.text)
+    history.edit()
+    replaceDraft(result.text, result.selStart, result.selEnd)
+    el?.focus()
+    // Only a new request runs this; the draft and the field are read as they are now.
+  }, [insertRequest])
 
   // A list belongs to the tab it was opened in.
   useEffect(() => {
@@ -357,7 +383,7 @@ export function Composer({
       setDismissedFor(null)
       const text = `/${local.kind} `
       if (text === draft) return
-      pendingCaret.current = text.length
+      pendingCaret.current = { start: text.length, end: text.length }
       onDraftChange(text)
       setCaret(text.length)
       return
@@ -410,10 +436,10 @@ export function Composer({
   }
 
   /** Replaces the field's text and puts the caret where the next typing goes. */
-  function replaceDraft(text: string, at = text.length): void {
+  function replaceDraft(text: string, at = text.length, selEnd = at): void {
     // The same text re-renders nothing, so the caret is placed right here.
-    if (text === draft) field.current?.setSelectionRange(at, at)
-    else pendingCaret.current = at
+    if (text === draft) field.current?.setSelectionRange(at, selEnd)
+    else pendingCaret.current = { start: at, end: selEnd }
     onDraftChange(text)
     setCaret(at)
   }
@@ -441,6 +467,11 @@ export function Composer({
         setStep(outcome.step)
         replaceDraft(outcome.text)
         return
+      case 'template': {
+        const result = applyTemplateFromSlash(draft, caret, outcome.body)
+        replaceDraft(result.text, result.selStart, result.selEnd)
+        return
+      }
     }
   }
 
@@ -460,6 +491,11 @@ export function Composer({
       else onSetEffort(item.id as EffortLevel)
       setStep(COMMANDS_STEP)
       replaceDraft('')
+      return
+    }
+    const template = acceptTemplate(templates, item.id)
+    if (template.kind !== 'none') {
+      runOutcome(template)
       return
     }
     const command = available.find((c) => c.name === item.id)

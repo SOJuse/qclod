@@ -258,6 +258,8 @@ interface AppState {
   serversLoaded: boolean
   /** Stage 6: the last checklist of each server's connect, by server id. */
   connectSteps: Record<string, ConnectStep[]>
+  /** этап 7: text for a pane's input, put in at its caret (a template from Ctrl+K); nonce — each request once. */
+  composerInsert: { tabId: TabId; text: string; nonce: number } | null
 
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
@@ -302,6 +304,7 @@ interface AppState {
    */
   terminalIdByTab: Record<TabId, string>
   setTerminalId: (tabId: TabId, termId: string | null) => void
+  requestComposerInsert: (tabId: TabId, text: string) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -395,6 +398,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   servers: [],
   serversLoaded: false,
   connectSteps: {},
+  composerInsert: null,
 
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
@@ -614,7 +618,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (text === '') delete agentDrafts[key]
       else agentDrafts[key] = text
       return { agentDrafts }
-    })
+    }),
+  requestComposerInsert: (tabId, text) =>
+    set((state) => ({ composerInsert: { tabId, text, nonce: (state.composerInsert?.nonce ?? 0) + 1 } }))
 }))
 
 // Written on change, so a reload (Ctrl+R) at any moment finds the latest.

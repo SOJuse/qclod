@@ -1,0 +1,134 @@
+/* The templates sheet (ui/controls.css .sheet): a search with two buttons, the editor, the list. */
+
+.template-manager {
+  width: min(var(--palette-width), 100%);
+}
+
+.template-manager-bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.template-manager-search {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.template-manager-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.template-manager-note,
+.template-manager-empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: var(--leading);
+}
+
+.template-manager-note.is-done {
+  color: var(--text);
+}
+
+.template-manager-note.is-failed {
+  color: var(--status-critical);
+}
+
+.template-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.template-editor-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.template-editor-body {
+  min-height: 120px;
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+  font-family: var(--font-mono);
+  line-height: var(--leading);
+}
+
+.template-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.template-editor-question {
+  flex: 1 1 auto;
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-hair);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.template-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.template-row:hover,
+.template-row.is-selected {
+  background: var(--surface-hover);
+}
+
+.template-row-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.template-row-tag {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.template-row-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

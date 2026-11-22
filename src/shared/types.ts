@@ -2,6 +2,8 @@ import type { VoiceSettings } from './voice'
 
 import type { HostInfo, ServerAuth } from './relayProtocol'
 
+import type { DiffHunk } from './toolView'
+
 export type TabId = string
 
 /** What a tab's agent is doing right now. */
@@ -787,4 +789,101 @@ export interface RendererErrorReport {
   message: string
   stack?: string
   componentStack?: string
+}
+
+// ------------------------------------------- этап 7: шаблоны, Git, поиск по истории
+
+/** Limits of the owner's prompt templates (userData/templates.json). */
+export const TEMPLATE_LIMITS = { maxCount: 500, title: 80, body: 20_000, saveMany: 50 } as const
+
+/** A prompt template: inserted at the caret; `{{что подставить}}` marks a place to fill. */
+export interface PromptTemplate {
+  id: string
+  title: string
+  body: string
+  origin: 'manual' | 'harvest'
+  createdAt: number
+  updatedAt: number
+}
+
+/** What the window sends to save: no id — a new template. */
+export interface TemplateDraft {
+  id?: string
+  title: string
+  body: string
+  origin?: 'manual' | 'harvest'
+}
+
+/** One project in «Собрать мои шаблоны»: how much of it would be read. */
+export interface HarvestProject {
+  key: string
+  label: string
+  sessions: number
+  prompts: number
+  chars: number
+}
+
+/** Exactly what would go to Claude: the person's messages only, within the limits. */
+export interface HarvestPreview {
+  projects: HarvestProject[]
+  items: { projectKey: string; text: string }[]
+  prompts: number
+  sessions: number
+  chars: number
+  sinceDays: number
+  truncated: boolean
+  model: string
+}
+
+/** A template Claude proposes; `duplicate` — one like it is already saved. */
+export interface TemplateProposal {
+  title: string
+  body: string
+  why: string
+  duplicate: boolean
+}
+
+export type HarvestErrorReason = 'noAgent' | 'notLoggedIn' | 'limit' | 'timeout' | 'cancelled' | 'badAnswer' | 'failed'
+
+export type HarvestOutcome =
+  | { kind: 'ok'; proposals: TemplateProposal[]; costUsd: number | null }
+  | { kind: 'empty' }
+  | { kind: 'error'; reason: HarvestErrorReason; detail?: string }
+
+export type GitChangeKind = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict' | 'typechange'
+
+export interface GitChange {
+  path: string
+  oldPath?: string
+  kind: GitChangeKind
+}
+
+export type GitStatus =
+  | { kind: 'ok'; branch: string | null; detachedAt: string | null; initial: boolean; changes: GitChange[]; truncated: boolean }
+  | { kind: 'notRepo' }
+  | { kind: 'noGit' }
+  | { kind: 'unavailable'; reason: string }
+  | { kind: 'error'; message: string }
+
+export type GitFileDiff =
+  | { kind: 'text'; hunks: DiffHunk[]; added: number; removed: number; truncatedLines: number }
+  | { kind: 'binary' }
+  | { kind: 'tooLarge'; bytes: number }
+  | { kind: 'error'; message: string }
+
+export type CommitResult =
+  | { ok: true; hash: string; summary: string }
+  | { ok: false; reason: 'identity' | 'nothing' | 'locked' | 'conflict' | 'stale' | 'busy' | 'failed'; message: string }
+
+/** One match of the full-text search over past conversations. */
+export interface HistoryHit {
+  sessionId: string
+  cwd: string
+  projectLabel: string
+  title: string
+  snippet: string
+  matchStart: number
+  matchLength: number
+  role: 'user' | 'assistant'
+  updatedAt: number
 }

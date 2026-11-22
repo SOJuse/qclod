@@ -18,8 +18,10 @@ function ctx(tabs: TabState[], projects: Array<{ cwd: string; hostId?: string }>
     insertCommand: vi.fn(),
     runAction: vi.fn(),
     openLayer: vi.fn(),
-    loadHistory: vi.fn()
+    loadHistory: vi.fn(),
+    insertTemplate: vi.fn()
   }
+
   return {
     sidebar: buildSidebar(tabs, projects.map((p) => ({ ...p, collapsed: false })), {}, [server]),
     activeTabId: tabs[0]?.id ?? '',

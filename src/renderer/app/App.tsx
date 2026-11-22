@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { EnvironmentReport, HotkeyRegistration, SessionSummary } from '../../shared/types'
+import type { EnvironmentReport, HistoryHit, HotkeyRegistration, SessionSummary } from '../../shared/types'
 import { useAppStore } from '../state/useAppStore'
 import { startLayoutSync } from '../state/layoutSync'
 import { MAX_PANES, buildSidebar, chatOrder, nextPanes } from '../chat/sidebarModel'
@@ -17,9 +17,14 @@ import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { SetupScreen } from '../components/SetupScreen'
 import { SettingsScreen } from '../components/SettingsScreen'
 import { CommandPalette } from '../components/CommandPalette'
+import { TemplateManager } from '../components/templates/TemplateManager'
+import { HarvestSheet, templatesCount } from '../components/templates/HarvestSheet'
+import { useTemplates } from '../state/useTemplates'
 import { historyToLoad } from '../palette/history'
 import { withMention } from '../palette/files'
 import { withCommand } from '../palette/commands'
+import { HISTORY_TEXT_MIN } from '../palette/historyText'
+import { fold } from '../palette/rank'
 import type { PaletteContext, PaletteRunner, PaletteSection } from '../palette/types'
 import { withLocalCommands } from '../../shared/commandFilter'
 import { UpdateBanner } from '../components/UpdateBanner'
@@ -62,11 +67,25 @@ export function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   /** The section the settings open on, when something asked for one («Настройки голоса»). */
   const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
+  /** этап 7: the templates sheet; initialBody — «Сохранить черновик как шаблон». */
+  const [templatesSheet, setTemplatesSheet] = useState<{ initialBody?: string; notice?: string } | null>(null)
+  /** этап 7: «Собрать мои шаблоны». */
+  const [harvestOpen, setHarvestOpen] = useState(false)
+  /**
+   * A templates sheet that closes into the other one («Собрать» from the
+   * manager, the manager after saving) has no opener left: the next sheet
+   * focuses itself, and the input must not take the focus from under it.
+   */
+  const sheetOpen = useRef(false)
+  sheetOpen.current = templatesSheet !== null || harvestOpen
   const [version, setVersion] = useState('')
   const [hotkey, setHotkey] = useState<HotkeyRegistration | null>(null)
   const [focusToken, setFocusToken] = useState(0)
   /** Where focus goes when a closed sheet's opener is gone: the active tab's input. */
   const focusComposer = useCallback(() => setFocusToken((n) => n + 1), [])
+  const focusAfterSheet = useCallback(() => {
+    if (!sheetOpen.current) focusComposer()
+  }, [focusComposer])
   const [environment, setEnvironment] = useState<EnvironmentReport | null>(null)
   const [setupDismissed, setSetupDismissed] = useState(false)
   /**
@@ -81,6 +100,33 @@ export function App(): JSX.Element {
   const [sshPrompt, answerSshPrompt] = useSshPrompts()
   const servers = useAppStore((s) => s.servers)
   const connectSteps = useAppStore((s) => s.connectSteps)
+  /** этап 7: Ctrl+K «В разговорах» — the latest answer of the search over past conversations. */
+  const [historyText, setHistoryText] = useState<{ query: string; hits: HistoryHit[]; pending: boolean } | null>(null)
+  const historyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** What is typed in Ctrl+K: the search starts after 300 ms of quiet, from 3 characters. */
+  const onPaletteQuery = useCallback((raw: string): void => {
+    if (historyTimer.current) clearTimeout(historyTimer.current)
+    historyTimer.current = null
+    const text = raw.trim()
+    const needle = fold(text)
+    if (needle.length < HISTORY_TEXT_MIN || /^[>@]/.test(text)) {
+      setHistoryText(null)
+      return
+    }
+    setHistoryText((prev) => (prev && prev.query === needle && !prev.pending ? prev : { query: needle, hits: [], pending: true }))
+    historyTimer.current = setTimeout(() => {
+      const done = (hits: HistoryHit[]): void =>
+        setHistoryText((cur) => (cur && cur.query === needle ? { query: needle, hits, pending: false } : cur))
+      window.qclod.historySearch(text).then(done, () => done([]))
+    }, 300)
+  }, [])
+  // A closed palette forgets its search.
+  useEffect(() => {
+    if (palette) return
+    if (historyTimer.current) clearTimeout(historyTimer.current)
+    historyTimer.current = null
+    setHistoryText(null)
+  }, [palette])
   /** Ctrl+W was pressed once on a working tab; a second press within 3 s closes it. */
   const [closeGuardTab, setCloseGuardTab] = useState<string | null>(null)
   const closeGuardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -214,6 +260,8 @@ export function App(): JSX.Element {
   const activeTabId = useAppStore((s) => s.activeTabId)
   const fileIndexByTab = useAppStore((s) => s.fileIndexByTab)
   const commandsByTab = useAppStore((s) => s.commandsByTab)
+  const hasDraft = useAppStore((s) => (s.draftByTab[s.activeTabId] ?? '').trim() !== '')
+  const templates = useTemplates()
   const panelByTab = useAppStore((s) => s.panelByTab)
   const layout = useAppStore((s) => s.layout)
   const historyByProject = useAppStore((s) => s.historyByProject)
@@ -525,6 +573,16 @@ export function App(): JSX.Element {
           state.setTerminalShown(tab.id, true)
           return
         }
+        case 'templates':
+          return setTemplatesSheet({})
+        case 'saveDraftAsTemplate': {
+          const draft = state.draftByTab[state.activeTabId] ?? ''
+          if (draft.trim() === '') return
+          return setTemplatesSheet({ initialBody: draft })
+        }
+        case 'harvestTemplates':
+          setTemplatesSheet(null)
+          return setHarvestOpen(true)
       }
     },
     [activate, newChat, closeActiveTab, togglePalette, togglePanel, toggleSidebar, toggleSplit, restartSession, cycleMode]
@@ -548,6 +606,10 @@ export function App(): JSX.Element {
       openSession: focused(openPast),
       insertMention: focused((path: string) => intoDraft((draft) => withMention(draft, path))),
       insertCommand: focused((name: string) => intoDraft((draft) => withCommand(draft, name))),
+      insertTemplate: focused((body: string) => {
+        const state = useAppStore.getState()
+        if (state.activeTabId) state.requestComposerInsert(state.activeTabId, body)
+      }),
       // A server's folder picker or terminal takes focus itself (R2): the input line must not.
       runAction: (id: AppActionId, arg?: string) => {
         if (!paletteActionKeepsFocus(id)) focusComposer()
@@ -571,9 +633,13 @@ export function App(): JSX.Element {
         filesPending: fileIndexByTab[activeTabId] === undefined,
         commands: withLocalCommands(commandsByTab[activeTabId] ?? []),
         servers,
+        templates,
+        hasDraft,
+        historyText,
+        onQuery: onPaletteQuery,
         run: paletteRun
       },
-    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, servers, paletteRun]
+    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, servers, templates, hasDraft, historyText, onPaletteQuery, paletteRun]
   )
 
   // Window-level shortcuts, by physical key. The handler is registered once and
@@ -814,6 +880,28 @@ export function App(): JSX.Element {
             focusComposer()
           }}
           onOpened={(tab) => activate(tab.id)}
+        />
+      )}
+      {templatesSheet && (
+        <TemplateManager
+          {...(templatesSheet.initialBody === undefined ? {} : { initialBody: templatesSheet.initialBody })}
+          {...(templatesSheet.notice === undefined ? {} : { notice: templatesSheet.notice })}
+          onClose={() => setTemplatesSheet(null)}
+          onHarvest={() => {
+            setTemplatesSheet(null)
+            setHarvestOpen(true)
+          }}
+          onFocusLost={focusAfterSheet}
+        />
+      )}
+      {harvestOpen && (
+        <HarvestSheet
+          onClose={() => setHarvestOpen(false)}
+          onSaved={(count) => {
+            setHarvestOpen(false)
+            setTemplatesSheet({ notice: `Сохранено: ${templatesCount(count)}.` })
+          }}
+          onFocusLost={focusAfterSheet}
         />
       )}
       {settingsOpen && (

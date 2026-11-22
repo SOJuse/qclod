@@ -29,6 +29,7 @@ function runner(): PaletteRunner & { [K in keyof PaletteRunner]: ReturnType<type
     openSession: vi.fn(),
     insertMention: vi.fn(),
     insertCommand: vi.fn(),
+    insertTemplate: vi.fn(),
     runAction: vi.fn(),
     openLayer: vi.fn(),
     loadHistory: vi.fn()
@@ -205,7 +206,10 @@ describe('Ctrl+K: поиск по всему', () => {
       ['files', 'Файлы'],
       // этап 6: one line in PALETTE_PROVIDERS (сверка F16).
       ['servers', 'Серверы'],
-      ['commands', 'Команды']
+      ['commands', 'Команды'],
+
+      ['templates', 'Шаблоны'],
+      ['historyText', 'В разговорах']
     ])
     expect(sectionTitle('history')).toBe('Прошлые разговоры')
 

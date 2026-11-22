@@ -155,7 +155,22 @@ export const CHANNELS = Object.freeze({
   /** An ssh question is gone without the window's answer (timeout, ssh exited, cancelled): its dialog closes. */
   serversPromptClosed: 'servers:promptClosed',
   terminalData: 'terminal:data',
-  terminalExit: 'terminal:exit'
+  terminalExit: 'terminal:exit',
+  // этап 7: шаблоны, Git, поиск по истории
+  // renderer -> main (invoke)
+  templatesList: 'templates:list',
+  templatesSave: 'templates:save',
+  templatesSaveMany: 'templates:saveMany',
+  templatesDelete: 'templates:delete',
+  harvestPreview: 'templates:harvestPreview',
+  harvestRun: 'templates:harvestRun',
+  harvestCancel: 'templates:harvestCancel',
+  gitStatus: 'git:status',
+  gitDiff: 'git:diff',
+  gitCommit: 'git:commit',
+  historySearch: 'history:search',
+  // main -> renderer (event)
+  templatesChanged: 'templates:changed'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -255,7 +270,19 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.terminalOpen,
   CHANNELS.terminalResize,
   CHANNELS.terminalClose,
-  CHANNELS.terminalAttach
+  CHANNELS.terminalAttach,
+  // этап 7: шаблоны, Git, поиск по истории
+  CHANNELS.templatesList,
+  CHANNELS.templatesSave,
+  CHANNELS.templatesSaveMany,
+  CHANNELS.templatesDelete,
+  CHANNELS.harvestPreview,
+  CHANNELS.harvestRun,
+  CHANNELS.harvestCancel,
+  CHANNELS.gitStatus,
+  CHANNELS.gitDiff,
+  CHANNELS.gitCommit,
+  CHANNELS.historySearch
 ])
 
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
@@ -283,7 +310,9 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.serversLoginProgress,
   CHANNELS.serversPromptClosed,
   CHANNELS.terminalData,
-  CHANNELS.terminalExit
+  CHANNELS.terminalExit,
+  // этап 7: шаблоны, Git, поиск по истории
+  CHANNELS.templatesChanged
 ])
 
 /** Fire-and-forget: the renderer sends, nothing comes back. */

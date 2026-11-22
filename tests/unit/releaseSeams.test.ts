@@ -29,6 +29,9 @@ describe('проверка релизной сборки на тестовые �
       'QCLOD_E2E_SSH',
       'QCLOD_RELAY_BINARY_DIR',
       'QCLOD_E2E_TERMINAL',
+      // этап 7: the one-off query's fixture and its script.
+      'QCLOD_FAKE_ONESHOT',
+      'fakeOneShot',
       '__qclodShellLog',
       '__qclodLoginOpens',
       '__qclodRealAgentStarts',

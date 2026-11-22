@@ -25,6 +25,10 @@ export type AppActionId =
   // Stage 6 (сверка F16): actions on a server, its id as runAction's arg; no row of their own here.
   | 'openServerFolder'
   | 'openServerTerminal'
+  // этап 7: шаблоны
+  | 'templates'
+  | 'saveDraftAsTemplate'
+  | 'harvestTemplates'
 
 export interface AppActionInfo {
   id: AppActionId
@@ -48,11 +52,14 @@ export const APP_ACTIONS: AppActionInfo[] = [
   { id: 'compact', label: 'Сжать контекст' },
   { id: 'cycleMode', label: 'Сменить режим', keys: 'Shift+Tab' },
   { id: 'voice', label: 'Голосовой ввод', keys: 'Ctrl+Пробел' },
-  { id: 'zoomIn'
-, label: 'Крупнее', keys: 'Mod+=' },
+  { id: 'zoomIn', label: 'Крупнее', keys: 'Mod+=' },
   { id: 'zoomOut', label: 'Мельче', keys: 'Mod+-' },
   { id: 'zoomReset', label: 'Обычный масштаб', keys: 'Mod+0' },
-  { id: 'reload', label: 'Перезагрузить окно', keys: 'Mod+R' }
+  { id: 'reload', label: 'Перезагрузить окно', keys: 'Mod+R' },
+  // этап 7: шаблоны
+  { id: 'templates', label: 'Шаблоны' },
+  { id: 'saveDraftAsTemplate', label: 'Сохранить черновик как шаблон' },
+  { id: 'harvestTemplates', label: 'Собрать мои шаблоны' }
 ]
 
 /** A tooltip with keys that are not a window action, such as Enter in the input. */

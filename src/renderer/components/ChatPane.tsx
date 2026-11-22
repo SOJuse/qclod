@@ -41,6 +41,7 @@ import { ChatHeader } from './ChatHeader'
 import { PaneLayer } from './PaneLayer'
 import { AgentsLayer } from './agents/AgentsLayer'
 import { AgentComposer, SEND_REFUSAL, agentPlaceholder } from './agents/AgentComposer'
+import { useTemplates } from '../state/useTemplates'
 import { SidePanel } from './SidePanel'
 import './ChatPane.css'
 
@@ -151,6 +152,8 @@ export function ChatPane({
   const setAttachments = useAppStore((s) => s.setAttachments)
   const commands = useAppStore((s) => s.commandsByTab[tabId])
   const recentCommands = useAppStore((s) => s.recentCommands)
+  const templates = useTemplates()
+  const insertRequest = useAppStore((s) => (s.composerInsert?.tabId === tabId ? s.composerInsert : null))
   const panel = useAppStore((s) => s.panelByTab[tabId]) ?? EMPTY_PANEL
   const terminalShown = useAppStore((s) => s.terminalShownByTab[tabId])
 
@@ -555,6 +558,8 @@ export function ChatPane({
               started={status !== 'stopped'}
               commands={commands ?? []}
               recentCommands={recentCommands}
+              templates={templates}
+              insertRequest={insertRequest}
               models={panel.models}
               model={panel.model}
               effort={panel.effort}

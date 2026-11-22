@@ -11,3 +11,6 @@ dist-e2e/
 build/installerSidebar.bmp
 build/installerHeader.bmp
 .claude/
+dist-relay/
+dist-relay-e2e/
+build/relay-manifest.json

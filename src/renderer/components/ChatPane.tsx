@@ -1,17 +1,24 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
-import type { CostRates, RibbonItem, SessionSummary, SubagentItem, UserInput } from '../../shared/types'
+import type { CostRates, FileSource, RibbonItem, SessionSummary, SubagentItem, TabId, UserInput } from '../../shared/types'
 import type { VoiceControls } from '../../shared/voice'
 import { useVoiceControls } from '../voice/voiceStore'
 import { isWindows } from '../voice/platform'
+import { OFFLINE_STRIP_TEXT } from '../../shared/serverTexts'
+import { ServerLoginDialog } from './servers/ServerLoginDialog'
+import { FileViewer } from './viewer/FileViewer'
+import { TerminalDrawer } from './terminal/TerminalDrawer'
 import { EMPTY_PANEL, useAppStore, type PaneLayerState } from '../state/useAppStore'
 import { useHeldDrafts } from '../state/heldDrafts'
 import { compactNow, sendCommand } from '../input/slash'
 import { REMOTE_BLOCK_TEXT, REMOTE_OFF, isRemoteLive } from '../../shared/remote'
 import {
   draftWithReturned,
+  needsUpload,
   pendingFromSent,
   prepareAttachment,
+  prepareRemoteFile,
+  type PendingFile,
   type PendingImage
 } from '../input/attachments'
 import { Ribbon } from './Ribbon'
@@ -52,7 +59,8 @@ export interface PanelRequest {
  */
 function paneLayerView(
   layer: PaneLayerState,
-  pane: { tabId: string; items: RibbonItem[]; costRates: CostRates | null }
+  pane: { tabId: string; items: RibbonItem[]; costRates: CostRates | null },
+  ctx: { tabId: TabId; source: FileSource; close: () => void }
 ): { title: string; body: ReactNode } | null {
   switch (layer.kind) {
     case 'agents': // этап 4: the pane's subagents, layer.agentId opened
@@ -60,8 +68,14 @@ function paneLayerView(
         title: 'Агенты этого чата',
         body: <AgentsLayer {...pane} {...(layer.agentId !== undefined ? { agentId: layer.agentId } : {})} />
       }
-    case 'file': // этап 6: layer.path at layer.line
-      return null
+    case 'file': // этап 6: layer.path at layer.line, here or on the chat's server
+      if (!layer.path) return null
+      return {
+        title: layer.path.split(/[\\/]/).pop() || layer.path,
+        body: (
+          <FileViewer tabId={ctx.tabId} source={ctx.source} path={layer.path} line={layer.line} onClose={ctx.close} />
+        )
+      }
     case 'git': // этап 7: the folder's changes
       return null
   }
@@ -132,11 +146,18 @@ export function ChatPane({
   const commands = useAppStore((s) => s.commandsByTab[tabId])
   const recentCommands = useAppStore((s) => s.recentCommands)
   const panel = useAppStore((s) => s.panelByTab[tabId]) ?? EMPTY_PANEL
+  const terminalShown = useAppStore((s) => s.terminalShownByTab[tabId])
 
   const busySinceByTab = useAppStore((s) => s.busySinceByTab)
   // A tab with history is not empty just because its ribbon has not arrived yet.
   const ribbonLoaded = useAppStore((s) => s.ribbonRevByTab[tabId] !== undefined)
   const tab = tabs.find((t) => t.id === tabId)
+  // Stage 6: the server this chat runs on, as main last said.
+  const servers = useAppStore((s) => s.servers)
+  const server = tab?.server ? servers.find((s) => s.id === tab.server!.hostId) : undefined
+  const serverAway = server !== undefined && server.state !== 'online' && server.state !== 'connecting'
+  /** Stage 6: «Войти» of the server's Claude account. */
+  const [loginOpen, setLoginOpen] = useState(false)
   const status = tab?.status ?? 'stopped'
   const remote = tab?.remote ?? REMOTE_OFF
   const draft = draftByTab[tabId] ?? ''
@@ -261,7 +282,15 @@ export function ChatPane({
 
   const items = ribbonByTab[tabId]
   const layer = useAppStore((s) => s.layerByTab[tabId] ?? null)
-  const layerView = layer ? paneLayerView(layer, { tabId, items: items ?? NO_ITEMS, costRates: panel.costRates }) : null
+  const layerSource: FileSource = tab?.server ? { kind: 'remote', hostId: tab.server.hostId } : { kind: 'local' }
+  const layerView = layer
+    ? paneLayerView(
+        layer,
+        { tabId, items: items ?? NO_ITEMS, costRates: panel.costRates },
+        { tabId, source: layerSource, close: () => useAppStore.getState().setPaneLayer(tabId, null) }
+      )
+    : null
+
   /** A subagent's own ribbon open over this pane: its input stands where the chat's does (решение 1). */
   const agentCard = useMemo(() => {
     const id = layer?.kind === 'agents' ? layer.agentId : undefined
@@ -288,6 +317,31 @@ export function ChatPane({
     )
   }
 
+  // Stage 6: a server chat's file goes to the server the moment it is attached —
+  // dropped, pasted or picked. The chip says «загружаю на сервер…», a send waits
+  // for it (isPreparing), and the message carries the server's path.
+  const isServerChat = tab?.server !== undefined
+  const tabAttachments = attachmentsByTab[tabId]
+  useEffect(() => {
+    if (!isServerChat || !tabAttachments) return
+    const fresh = tabAttachments.filter(needsUpload)
+    if (fresh.length === 0) return
+    setAttachments(
+      tabId,
+      tabAttachments.map((item) => (fresh.includes(item as PendingFile) ? { ...item, uploading: true as const } : item))
+    )
+    for (const item of fresh) {
+      void prepareRemoteFile(item, (path) => window.qclod.uploadRemoteFile(tabId, path)).then((done) => {
+        setAttachments(
+          tabId,
+          (useAppStore.getState().attachmentsByTab[tabId] ?? []).map((chip) =>
+            chip.kind === 'file' && chip.path === item.path && chip.uploading ? done : chip
+          )
+        )
+      })
+    }
+  }, [isServerChat, tabAttachments, tabId, setAttachments])
+
   /**
    * «Стоп» handed the queue back: its texts go into the field before what is
    * already typed, its attachments back as chips — nothing the user wrote is
@@ -297,7 +351,12 @@ export function ChatPane({
     if (returned.length === 0) return
     const state = useAppStore.getState()
     setDraft(tabId, draftWithReturned(returned.map((r) => r.text), state.draftByTab[tabId] ?? ''))
-    const chips = returned.flatMap((r) => r.attachments.map(pendingFromSent))
+    // A server chat's file came back with its server path: it is there already, not uploaded again.
+    const chips = returned.flatMap((r) =>
+      r.attachments.map((a) =>
+        a.kind === 'file' && tab?.server ? { kind: 'file' as const, path: a.path, remotePath: a.path } : pendingFromSent(a)
+      )
+    )
     setAttachments(tabId, [...chips, ...(state.attachmentsByTab[tabId] ?? [])])
     // An image that came back without main's copy is prepared again.
     for (const chip of chips) {
@@ -344,6 +403,14 @@ export function ChatPane({
           {...(split && onUnsplit ? { onUnsplit } : {})}
           onOpenAgents={() => useAppStore.getState().openAgents(tabId)}
           agentsCount={agentsCount}
+          server={server}
+          {...(server ? { onReconnect: () => void window.qclod.connectServer(server.id) } : {})}
+          {...(server
+            ? {
+                onToggleTerminal: () => useAppStore.getState().setTerminalShown(tabId, terminalShown !== true),
+                terminalOpen: terminalShown === true
+              }
+            : {})}
         />
 
         <div className="chat-body" ref={bodyRef}>
@@ -384,6 +451,12 @@ export function ChatPane({
             <TodoStrip items={todoByTab[tabId] ?? []} status={status} />
 
             <NowLine tabId={tabId} status={status} since={busySinceByTab[tabId]} items={ribbonByTab[tabId] ?? []} />
+
+            {serverAway && (
+              <div className="server-offline-strip" data-testid="server-offline" role="status">
+                {OFFLINE_STRIP_TEXT}
+              </div>
+            )}
 
             {notice && (
               <div className="close-guard" data-testid={notice.testId} role="status">
@@ -515,6 +588,16 @@ export function ChatPane({
             />
           </div>
         </div>
+
+        {/* Stage 6: the server's terminal, once opened; hidden it keeps its session. */}
+        {server && terminalShown !== undefined && (
+          <TerminalDrawer
+            tabId={tabId}
+            label={server.label || server.target}
+            shown={terminalShown}
+            onHide={() => useAppStore.getState().setTerminalShown(tabId, false)}
+          />
+        )}
       </div>
 
       {mode !== 'hidden' && (
@@ -526,8 +609,11 @@ export function ChatPane({
           mode={mode}
           active={focused}
           onClose={closeDrawer}
+          server={server}
+          onServerLogin={() => setLoginOpen(true)}
         />
       )}
+      {loginOpen && server && <ServerLoginDialog server={server} onClose={() => setLoginOpen(false)} />}
     </section>
   )
 }

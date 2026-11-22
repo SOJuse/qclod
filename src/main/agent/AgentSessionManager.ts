@@ -1,4 +1,4 @@
-import type { LaunchOverrides, PermissionAnswer, PermissionRequest, TabId } from '../../shared/types'
+import type { LaunchOverrides, PermissionAnswer, PermissionRequest, TabId, TabServer } from '../../shared/types'
 import { AgentSession, type SessionSeed } from './AgentSession'
 import type { DriverFactory } from './driver'
 
@@ -19,6 +19,8 @@ export interface AgentSessionManagerOptions {
    * ends here.
    */
   onClosed?: (tabId: TabId) => void
+  /** Stage 6: a server chat's relay asks for a system notification. */
+  onAlert?: (tabId: TabId, text: string) => void
 }
 
 /**
@@ -34,7 +36,8 @@ export class AgentSessionManager {
   constructor(private readonly options: AgentSessionManagerOptions) {}
 
   /** `seed`: what the tab already shows, for the session to carry on from. */
-  create(tabId: TabId, cwd: string, overrides: LaunchOverrides, seed?: SessionSeed): AgentSession {
+  /** `server` (stage 6): the chat runs on that server, through its relay. */
+  create(tabId: TabId, cwd: string, overrides: LaunchOverrides, seed?: SessionSeed, server?: TabServer): AgentSession {
     const existing = this.sessions.get(tabId)
     if (existing) return existing
 
@@ -52,7 +55,9 @@ export class AgentSessionManager {
       ...(this.options.disposeTimeoutMs === undefined
         ? {}
         : { disposeTimeoutMs: this.options.disposeTimeoutMs }),
-      ...(seed ? { seed } : {})
+      ...(seed ? { seed } : {}),
+      ...(server ? { server: { ...server } } : {}),
+      ...(this.options.onAlert ? { onAlert: (text: string) => this.options.onAlert!(tabId, text) } : {})
     })
     this.sessions.set(tabId, session)
     return session
@@ -66,18 +71,23 @@ export class AgentSessionManager {
     return [...this.sessions.entries()]
   }
 
-  async close(tabId: TabId): Promise<void> {
+  /** `detachOnly` (stage 6): a server chat's agent is let go of, not stopped. */
+  async close(tabId: TabId, opts?: { detachOnly?: boolean }): Promise<void> {
     const session = this.sessions.get(tabId)
     if (!session) return
     this.sessions.delete(tabId)
     this.options.onClosed?.(tabId)
-    await session.dispose()
+    await (opts ? session.dispose(opts) : session.dispose())
   }
 
-  async disposeAll(): Promise<void> {
+  /**
+   * Quitting: `detachOnly` lets go of the server chats' agents, which go on
+   * there (Review Focus 3); local ones stop as always.
+   */
+  async disposeAll(opts?: { detachOnly?: boolean }): Promise<void> {
     const all = [...this.sessions.entries()]
     this.sessions.clear()
     for (const [tabId] of all) this.options.onClosed?.(tabId)
-    await Promise.all(all.map(([, session]) => session.dispose()))
+    await Promise.all(all.map(([, session]) => (opts ? session.dispose(opts) : session.dispose())))
   }
 }

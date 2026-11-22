@@ -1,0 +1,364 @@
+/* Stage 6: servers. A server's colour is a name in data-colour (data-color on the
+   sidebar's chip) and becomes --server-colour from the theme's tokens: no inline style. */
+
+[data-colour='blue'],
+.project-remote[data-color='blue'] {
+  --server-colour: var(--seg-1);
+  --server-color: var(--seg-1);
+}
+
+[data-colour='violet'],
+.project-remote[data-color='violet'] {
+  --server-colour: var(--seg-6);
+  --server-color: var(--seg-6);
+}
+
+[data-colour='green'],
+.project-remote[data-color='green'] {
+  --server-colour: var(--seg-3);
+  --server-color: var(--seg-3);
+}
+
+[data-colour='amber'],
+.project-remote[data-color='amber'] {
+  --server-colour: var(--seg-4);
+  --server-color: var(--seg-4);
+}
+
+[data-colour='rose'],
+.project-remote[data-color='rose'] {
+  --server-colour: var(--seg-5);
+  --server-color: var(--seg-5);
+}
+
+[data-colour='cyan'],
+.project-remote[data-color='cyan'] {
+  --server-colour: var(--cat-search);
+  --server-color: var(--cat-search);
+}
+
+.server-sheet {
+  width: min(560px, 100%);
+}
+
+.server-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--server-colour, var(--text-faint));
+}
+
+.server-group {
+  margin: 0 0 var(--space-3);
+}
+
+.server-group h3,
+.remote-picker-title {
+  margin: var(--space-2) 0 var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.server-group ul,
+.remote-list,
+.server-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.server-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.server-row:hover {
+  background: var(--surface-hover);
+}
+
+.server-row-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-row-hint {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-add {
+  margin-top: var(--space-2);
+}
+
+.server-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.server-port {
+  width: 96px;
+}
+
+.server-auth {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.server-auth .is-on {
+  border-color: var(--border-accent);
+  color: var(--text);
+}
+
+.server-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.server-error,
+.server-retry {
+  margin: var(--space-1) 0;
+  color: var(--status-critical);
+  font-size: var(--text-sm);
+}
+
+.server-problem {
+  margin: var(--space-2) 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: var(--leading);
+  overflow-wrap: anywhere;
+}
+
+.server-prompt-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.server-fingerprint {
+  display: block;
+  margin: var(--space-2) 0;
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.server-step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.server-step-icon {
+  flex: none;
+  margin-top: var(--gap-hair);
+  color: var(--text-faint);
+}
+
+.server-step[data-state='running'] .server-step-icon {
+  color: var(--accent);
+}
+
+.server-step[data-state='ok'] .server-step-icon {
+  color: var(--status-ok);
+}
+
+.server-step[data-state='warn'] .server-step-icon {
+  color: var(--status-warn);
+}
+
+.server-step[data-state='fail'] .server-step-icon {
+  color: var(--status-critical);
+}
+
+.server-step-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.server-step-text {
+  color: var(--text);
+  font-size: var(--text-md);
+}
+
+.server-step-hint {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: var(--leading);
+  overflow-wrap: anywhere;
+}
+
+.remote-path {
+  display: flex;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+
+.remote-path .field {
+  flex: 1 1 auto;
+}
+
+.remote-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.remote-crumb {
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.remote-crumb:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.remote-list {
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* The chat header's server: its label in its colour, and the channel's state. */
+.server-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--server-colour, var(--border-strong));
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.server-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: var(--text-xs);
+}
+
+.server-link[data-state='online'] {
+  color: var(--status-ok);
+}
+
+button.server-link {
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.server-offline-strip {
+  margin: 0 auto var(--strip-margin);
+  padding: var(--strip-pad);
+  border: 1px solid var(--border);
+  border-radius: var(--strip-radius);
+  background: var(--surface-raised);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.server-colours {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.server-colour {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: var(--server-colour);
+  cursor: pointer;
+}
+
+.server-colour[aria-checked='true'] {
+  border-color: var(--text);
+}
+
+.server-card {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.server-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.server-account {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+/* The sidebar's «Локально / Сервер» under «Новый чат». */
+.sidebar-where {
+  display: flex;
+  gap: var(--gap-hair);
+  margin-top: var(--space-1);
+}
+
+.sidebar-where-option {
+  flex: 1 1 0;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: var(--text-xs);
+}
+
+.sidebar-where-option.is-on {
+  background: var(--surface);
+  color: var(--text);
+}

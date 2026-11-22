@@ -131,6 +131,58 @@ describe('ipc channel contract', () => {
     expect(INVOKE_CHANNELS).toContain('agent:subagentStop')
   })
 
+  test('этап 6: каналы серверов, просмотрщика, загрузки и терминала', () => {
+    const invoke = {
+      serversList: 'servers:list',
+      serversSave: 'servers:save',
+      serversRemove: 'servers:remove',
+      serversConnect: 'servers:connect',
+      serversForgetPassword: 'servers:forgetPassword',
+      serversPromptAnswer: 'servers:promptAnswer',
+      serversListDir: 'servers:listDir',
+      serversOpenFolder: 'servers:openFolder',
+      serversLogin: 'servers:login',
+      serversLoginCode: 'servers:loginCode',
+      serversUpdateRelay: 'servers:updateRelay',
+      viewerRead: 'viewer:read',
+      viewerDownloadOpen: 'viewer:downloadOpen',
+      filesUploadRemote: 'files:uploadRemote',
+      terminalOpen: 'terminal:open',
+      terminalResize: 'terminal:resize',
+      terminalClose: 'terminal:close'
+    } as const
+    const events = {
+      serversChanged: 'servers:changed',
+      serversPrompt: 'servers:prompt',
+      serversConnectProgress: 'servers:connectProgress',
+      serversLoginProgress: 'servers:loginProgress',
+      terminalData: 'terminal:data',
+      terminalExit: 'terminal:exit'
+    } as const
+    for (const [key, value] of Object.entries(invoke)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(INVOKE_CHANNELS).toContain(value)
+      expect(EVENT_CHANNELS).not.toContain(value)
+      expect(SEND_CHANNELS).not.toContain(value)
+    }
+    for (const [key, value] of Object.entries(events)) {
+      expect(CHANNELS[key as keyof typeof CHANNELS]).toBe(value)
+      expect(EVENT_CHANNELS).toContain(value)
+      expect(INVOKE_CHANNELS).not.toContain(value)
+    }
+    expect(CHANNELS.terminalInput).toBe('terminal:input')
+    expect(SEND_CHANNELS).toContain('terminal:input')
+    expect(INVOKE_CHANNELS).not.toContain('terminal:input')
+    expect(EVENT_CHANNELS).not.toContain('terminal:input')
+  })
+
+  test('send и event каналы не пересекаются с invoke', () => {
+    const invoke = new Set<string>(INVOKE_CHANNELS)
+    for (const name of [...SEND_CHANNELS, ...EVENT_CHANNELS]) expect(invoke.has(name)).toBe(false)
+    const events = new Set<string>(EVENT_CHANNELS)
+    for (const name of SEND_CHANNELS) expect(events.has(name)).toBe(false)
+  })
+
   test('терминальных каналов v1 больше нет', () => {
     // The pty is gone; a channel that outlives its feature is a trap for the
     // next reader.

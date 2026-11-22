@@ -9,6 +9,8 @@ import type { PanelOverride } from '../app/panelVisibility'
 import type {
   AppSettings,
   CommandInfo,
+  ConnectStep,
+  ServerView,
   PanelData,
   PanelSnapshot,
   ResolvedPath,
@@ -32,7 +34,8 @@ const PER_TAB_KEYS = [
   'commandsByTab',
   'pathsByTab',
   'layerByTab',
-  'panelChoiceByTab'
+  'panelChoiceByTab',
+  'terminalShownByTab'
 ] as const
 
 /** How the agents layer shows a chat's subagents (этап 4). */
@@ -248,6 +251,10 @@ interface AppState {
   agentsView: AgentsView
   /** этап 4: what is typed to a subagent, by `${tabId}:${cardId}`; in memory only. */
   agentDrafts: Record<string, string>
+  /** Stage 6: the servers Qclod knows, as main sees them. */
+  servers: ServerView[]
+  /** Stage 6: the last checklist of each server's connect, by server id. */
+  connectSteps: Record<string, ConnectStep[]>
 
   setSettings: (settings: AppSettings) => void
   patchSettings: (patch: Partial<AppSettings>) => void
@@ -260,7 +267,7 @@ interface AppState {
   setLayout: (layout: LayoutState) => void
   setPaneWidths: (widths: number[]) => void
   /** Asks main for a folder's past conversations; once, unless forced. */
-  loadProjectHistory: (cwd: string, force?: boolean) => void
+  loadProjectHistory: (cwd: string, force?: boolean, hostId?: string) => void
   setTabs: (tabs: TabState[]) => void
   setRibbon: (id: TabId, snapshot: RibbonSnapshot) => void
   applyRibbon: (id: TabId, changes: RibbonChange[], rev: number) => void
@@ -280,6 +287,11 @@ interface AppState {
   closeAgents: (tabId: TabId) => void
   setAgentsView: (view: AgentsView) => void
   setAgentDraft: (key: string, text: string) => void
+  setServers: (servers: ServerView[]) => void
+  setConnectSteps: (hostId: string, steps: ConnectStep[]) => void
+  /** Stage 6: a server chat's terminal drawer is shown; hiding it keeps its session. */
+  terminalShownByTab: Record<TabId, boolean>
+  setTerminalShown: (tabId: TabId, shown: boolean) => void
 }
 
 /** Applies one batch of changes to one tab's ribbon, without mutating in place. */
@@ -365,9 +377,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   pathsByTab: {},
   recentCommands: [],
   layerByTab: {},
+  terminalShownByTab: {},
   panelChoiceByTab: {},
   agentsView: restored.agentsView ?? 'graph',
   agentDrafts: {},
+  servers: [],
+  connectSteps: {},
 
   setSettings: (settings) => set({ settings }),
   patchSettings: (patch) =>
@@ -410,8 +425,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     ),
   setPaneWidths: (paneWidths) => set({ paneWidths }),
 
-  loadProjectHistory: (cwd, force = false) => {
-    const key = projectKey(cwd)
+  loadProjectHistory: (cwd, force = false, hostId) => {
+    const key = projectKey(cwd, hostId)
     const running = historyReads.get(key)
     if (running) {
       // The answer on its way may predate what changed (a chat closed meanwhile): one more read follows it.
@@ -430,9 +445,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const done = (entry: ProjectHistory): void => {
       historyReads.delete(key)
       set((state) => ({ historyByProject: { ...state.historyByProject, [key]: entry } }))
-      if (read.again) get().loadProjectHistory(cwd, true)
+      if (read.again) get().loadProjectHistory(cwd, true, hostId)
     }
-    window.qclod.projectHistory(cwd).then(
+    window.qclod.projectHistory(cwd, hostId).then(
       (items) => done({ items }),
       (err: unknown) => done({ items: [], error: err instanceof Error ? err.message : String(err) })
     )
@@ -558,6 +573,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   setPaneLayer: (tabId, layer) => set((state) => ({ layerByTab: { ...state.layerByTab, [tabId]: layer } })),
+  setTerminalShown: (tabId, shown) =>
+    set((state) => ({ terminalShownByTab: { ...state.terminalShownByTab, [tabId]: shown } })),
+  setServers: (servers) => set({ servers }),
+  setConnectSteps: (hostId, steps) => set((state) => ({ connectSteps: { ...state.connectSteps, [hostId]: steps } })),
   setPanelChoice: (tabId, choice) =>
     set((state) =>
       (state.panelChoiceByTab[tabId] ?? null) === choice

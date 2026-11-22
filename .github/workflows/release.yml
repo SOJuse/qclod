@@ -1,6 +1,8 @@
 name: release
-# One workflow for a release and for a dry run. A tag v*.*.* publishes; a push to
-# release/** or ci/** builds the same things and keeps them as artifacts, publishing nothing.
+# One workflow (сверка F4): a tag v*.*.* builds and publishes; a push to
+# release/** or ci/** builds everything the same way and only uploads
+# artifacts. Jobs run in order relay → win → mac: win puts the relay's .gz
+# into the release before the release becomes visible (F23); mac adds the DMG.
 on:
   push:
     tags: ['v*.*.*']
@@ -8,7 +10,64 @@ on:
 permissions:
   contents: write
 jobs:
+  relay:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:relay && npm run relay:sea
+      - name: smoke — the binary says its version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then EXPECTED="${GITHUB_REF_NAME#v}"; else EXPECTED="$(node -p "require('./package.json').version")"; fi
+          SAID="$(./dist-relay/qclod-relay-linux-${{ matrix.arch }} version)"
+          echo "$SAID"
+          test "$SAID" = "{\"version\":\"$EXPECTED\",\"proto\":1}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-${{ matrix.arch }}
+          path: |
+            dist-relay/*.gz
+            dist-relay/*.sha256
+          if-no-files-found: error
+      # The ssh loop: a real sshd on localhost, the relay's test build installed
+      # and attached over ssh (tests/integration/sshLoop.test.ts).
+      - name: ssh loop — sshd and a key
+        if: matrix.arch == 'x64'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-server tmux
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          sudo systemctl start ssh
+          ssh-keyscan -H localhost >> ~/.ssh/known_hosts
+      - name: ssh loop — the relay's test build
+        if: matrix.arch == 'x64'
+        run: npm run build:relay:e2e && node scripts/make-relay-sea.mjs --e2e
+      - name: ssh loop
+        if: matrix.arch == 'x64'
+        run: npm run test:integration
+        env:
+          QCLOD_SSH_LOOP_HOST: localhost
+          QCLOD_RELAY_BINARY_DIR: dist-relay-e2e
+
   win:
+    needs: relay
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,23 +76,62 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - if: startsWith(github.ref, 'refs/tags/v')
-        run: node scripts/check-release-tag.mjs
+      - name: the relay's .gz from the relay job
+        uses: actions/download-artifact@v4
+        with:
+          pattern: relay-*
+          path: dist-relay
+          merge-multiple: true
+      - run: node scripts/relay-manifest.mjs
+      - run: node scripts/check-release-tag.mjs
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           RELEASE_TAG: ${{ github.ref_name }}
       - run: npm run typecheck
-      - if: startsWith(github.ref, 'refs/tags/v')
+      # By tag: a draft release first, the relay into it, then the installer;
+      # the release is made visible only with the relay already in it (F23).
+      - name: draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release view "$GITHUB_REF_NAME" || gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Qclod $VERSION"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: relay into the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" dist-relay/*.gz --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: installer into the release
+        if: startsWith(github.ref, 'refs/tags/v')
         run: npm run release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+      - name: release visible
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft -q .isDraft)" = "true" ]; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Without a tag: the same build, kept as artifacts (сверка F3: a build
+      # before the tag installs its relay from these .gz).
+      - name: build without publishing
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: npm run dist
-      - if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         with:
-          name: qclod-win
-          path: dist/*.exe
-          retention-days: 7
+          name: win
+          path: |
+            dist/*.exe
+            dist/latest.yml
+            dist-relay/*.gz
+          if-no-files-found: error
   mac:
     needs: win
     runs-on: macos-latest
@@ -47,6 +145,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: the relay's .gz from the relay job
+        uses: actions/download-artifact@v4
+        with:
+          pattern: relay-*
+          path: dist-relay
+          merge-multiple: true
+      - run: node scripts/relay-manifest.mjs
       - if: startsWith(github.ref, 'refs/tags/v')
         run: node scripts/check-release-tag.mjs
         env:

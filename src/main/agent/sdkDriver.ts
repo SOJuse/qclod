@@ -107,6 +107,9 @@ export function sdkQueryOptions(
     // Qclod's own confirmation (AgentSession.allowMode) is the gate.
     allowDangerouslySkipPermissions: true,
     ...(options.resume ? { resume: options.resume } : {}),
+    // The relay's environment with the login shell's PATH (stage 6); locally
+    // absent, and the SDK passes on the app's own.
+    ...(options.env ? { env: options.env } : {}),
     ...(options.extraArgs && Object.keys(options.extraArgs).length > 0
       ? { extraArgs: options.extraArgs }
       : {}),
@@ -148,8 +151,14 @@ function sdkCanUseTool(options: DriverOptions): CanUseTool {
  * Never exercised by the test suite: every automated run talks to the fixture
  * instead, by project constraint. Keep it thin enough to read.
  */
-export async function createSdkDriver(options: DriverOptions): Promise<AgentDriver> {
-  const { query } = await importEsm<{ query: typeof queryFn }>('@anthropic-ai/claude-agent-sdk')
+export async function createSdkDriver(
+  options: DriverOptions,
+  deps: { query?: typeof queryFn } = {}
+): Promise<AgentDriver> {
+  // The relay (stage 6) hands its statically bundled query(): inside a
+  // single-executable binary there is no package to import at run time.
+  const query =
+    deps.query ?? (await importEsm<{ query: typeof queryFn }>('@anthropic-ai/claude-agent-sdk')).query
 
   const inbox: Array<Record<string, unknown>> = []
   let wake: (() => void) | null = null

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ClipboardCopy, Copy, ExternalLink, FolderOpen, SquarePen, type LucideIcon } from 'lucide-react'
+import { ClipboardCopy, Copy, Download, ExternalLink, Eye, FolderOpen, SquarePen, type LucideIcon } from 'lucide-react'
 import type { ResolvedPath, TabId } from '../../shared/types'
 import { useAppStore } from '../state/useAppStore'
 import { relativePath } from './linkify'
@@ -38,6 +38,7 @@ export function PathMenu({
 }): JSX.Element {
   const editorCommand = useAppStore((s) => s.settings?.editorCommand ?? '')
   const cwd = useAppStore((s) => s.tabs.find((t) => t.id === tabId)?.cwd ?? '')
+  const remote = useAppStore((s) => s.tabs.find((t) => t.id === tabId)?.server !== undefined)
   const box = useRef<HTMLDivElement | null>(null)
   const rows = useRef<Array<HTMLButtonElement | null>>([])
   const [active, setActive] = useState(0)
@@ -51,17 +52,35 @@ export function PathMenu({
     if (fresh) await fn(fresh)
   }
 
-  const items: Item[] = [
-    { label: 'Открыть', Icon: ExternalLink, run: act((p) => window.qclod.openPath(tabId, p.absPath)) },
-    { label: 'Показать в проводнике', Icon: FolderOpen, run: act((p) => window.qclod.revealPath(tabId, p.absPath)) },
-    { label: 'Скопировать путь', Icon: Copy, run: () => navigator.clipboard.writeText(target.absPath) },
-    {
-      label: 'Скопировать относительный путь',
-      Icon: ClipboardCopy,
-      run: () => navigator.clipboard.writeText(relativePath(cwd, target.absPath))
-    }
-  ]
-  if (editorCommand.trim() !== '') {
+  // «Посмотреть»: the file as the pane's layer, at the line the text names (сверка F9).
+  const view: Item = {
+    label: 'Посмотреть',
+    Icon: Eye,
+    run: act(async (p) => {
+      useAppStore.getState().setPaneLayer(tabId, { kind: 'file', path: p.absPath, ...(p.line ? { line: p.line } : {}) })
+    })
+  }
+  // A server chat's path is the server's: nothing here can open or show it (stage 6).
+  const items: Item[] = remote
+    ? [
+        ...(target.isDir ? [] : [view]),
+        ...(target.isDir
+          ? []
+          : [{ label: 'Скачать и открыть', Icon: Download, run: act((p) => window.qclod.downloadAndOpen(tabId, p.absPath)) }]),
+        { label: 'Копировать путь', Icon: Copy, run: () => navigator.clipboard.writeText(target.absPath) }
+      ]
+    : [
+        { label: 'Открыть', Icon: ExternalLink, run: act((p) => window.qclod.openPath(tabId, p.absPath)) },
+        { label: 'Показать в проводнике', Icon: FolderOpen, run: act((p) => window.qclod.revealPath(tabId, p.absPath)) },
+        { label: 'Скопировать путь', Icon: Copy, run: () => navigator.clipboard.writeText(target.absPath) },
+        {
+          label: 'Скопировать относительный путь',
+          Icon: ClipboardCopy,
+          run: () => navigator.clipboard.writeText(relativePath(cwd, target.absPath))
+        },
+        ...(target.isDir ? [] : [view])
+      ]
+  if (!remote && editorCommand.trim() !== '') {
     items.push({
       label: 'Открыть в редакторе',
       Icon: SquarePen,

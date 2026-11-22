@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -38,6 +38,10 @@ let sendNowAnswer = false
 const subagentCalls: unknown[][] = []
 let subagentSendAnswer: unknown = { ok: true }
 let subagentStopAnswer: unknown = 'stopping'
+/** Stage 6: the tab is a server chat, its autonomy core in the relay. */
+let serverTab = false
+/** Stage 6: what a server chat asked of its relay. */
+const relayCalls: Array<[string, unknown]> = []
 
 function call(channel: string, ...args: unknown[]): unknown {
   return handlers.get(channel)!({}, ...args)
@@ -53,7 +57,16 @@ beforeEach(() => {
   cancelAnswer = null
   remoteAnswer = 'ok'
   sendNowAnswer = false
+  serverTab = false
+  relayCalls.length = 0
   const session = {
+    get hostsAutonomy() {
+      return serverTab
+    },
+    autonomyAct: async (cardId: string, action: string) => {
+      autonomyCalls.push(['relay', cardId, action])
+      return true
+    },
     get panel() {
       return { permissionMode: mode }
     },
@@ -88,7 +101,14 @@ beforeEach(() => {
   registerAgentIpc({
     getWindow: () => null,
     controller: {
-      list: () => [{ id: 't1', cwd: USER_DATA, title: 'проект' }],
+      list: () => [
+        {
+          id: 't1',
+          cwd: USER_DATA,
+          title: 'проект',
+          ...(serverTab ? { server: { hostId: 'h1', relaySessionId: 's1' } } : {})
+        }
+      ],
       send: (_id: string, input: UserInput) => {
         sent.push(input)
         return sendAnswer
@@ -112,7 +132,15 @@ beforeEach(() => {
       answerNow: (...args: unknown[]) => autonomyCalls.push(['answerNow', ...args]),
       remoteWanted: (...args: unknown[]) => autonomyCalls.push(['remoteWanted', ...args])
     },
-    userData: USER_DATA
+    userData: USER_DATA,
+    serverClient: async () => ({
+      call: async (m: string, p: unknown) => {
+        relayCalls.push([m, p])
+        if (m === 'fs.index') return { files: ['src/remote.ts'], truncated: false }
+        if (m === 'fs.upload') return { path: '/home/u/.qclod/uploads/s1/1-note.txt' }
+        throw new Error('нет')
+      }
+    })
   } as unknown as AgentIpcDeps)
 })
 
@@ -132,6 +160,16 @@ describe('autonomy:* каналы', () => {
       call(channel, 'чужая', 'card-1')
       expect(autonomyCalls).toEqual([])
     }
+  })
+
+  test('autonomyHold серверной вкладки уходит в RelayDriver.autonomy, а не в AutonomyHost', () => {
+    serverTab = true
+    call(CHANNELS.autonomyHold, 't1', 'tu-q1')
+    call(CHANNELS.autonomyAnswerNow, 't1', 'tu-q1')
+    expect(autonomyCalls).toEqual([
+      ['relay', 'tu-q1', 'hold'],
+      ['relay', 'tu-q1', 'answerNow']
+    ])
   })
 
   test('agentRemote сообщает remoteWanted и зовёт setRemote', async () => {
@@ -361,6 +399,36 @@ describe('этап 2: проекты и раскладка', () => {
       projects: [{ cwd: OPEN, collapsed: false }]
     })
     expect(await call(CHANNELS.projectForget, 9)).toEqual(layout.get())
+  })
+})
+
+describe('этап 6: файлы серверного чата', () => {
+  test('filesIndex серверной вкладки зовёт fs.index, а не buildFileIndex; кеш на минуту', async () => {
+    serverTab = true
+    expect(await call(CHANNELS.filesIndex, 't1')).toEqual(['src/remote.ts'])
+    expect(relayCalls).toEqual([['fs.index', { root: USER_DATA, limit: 8000 }]])
+    expect(await call(CHANNELS.filesIndex, 't1')).toEqual(['src/remote.ts'])
+    expect(relayCalls).toHaveLength(1)
+  })
+
+  test('filesIndex локальной вкладки — buildFileIndex, посредник не спрошен', async () => {
+    expect(Array.isArray(await call(CHANNELS.filesIndex, 't1'))).toBe(true)
+    expect(relayCalls).toEqual([])
+  })
+
+  test('filesUploadRemote: только серверная вкладка; ответ — путь на сервере', async () => {
+    const file = join(USER_DATA, 'note.txt')
+    writeFileSync(file, 'привет')
+    expect(await call(CHANNELS.filesUploadRemote, 't1', file)).toEqual({
+      error: 'Не удалось загрузить на сервер: это не чат на сервере'
+    })
+    serverTab = true
+    expect(await call(CHANNELS.filesUploadRemote, 't1', 5)).toMatchObject({ error: expect.any(String) })
+    expect(await call(CHANNELS.filesUploadRemote, 't1', file)).toEqual({ remotePath: '/home/u/.qclod/uploads/s1/1-note.txt' })
+    expect(relayCalls[0]).toEqual([
+      'fs.upload',
+      { s: 's1', name: 'note.txt', offset: 0, dataBase64: Buffer.from('привет').toString('base64'), final: true }
+    ])
   })
 })
 

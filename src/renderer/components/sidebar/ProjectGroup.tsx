@@ -18,7 +18,7 @@ interface Props {
   shown: number
   onActivate: (id: TabId) => void
   onClose: (id: TabId) => void
-  onNewChat: (cwd: string) => void
+  onNewChat: (cwd: string, hostId?: string) => void
   onOpenPast: (cwd: string, session: SessionSummary) => void
   onToggle: (collapsed: boolean) => void
   onForget: () => void
@@ -81,7 +81,7 @@ export function ProjectGroup({
           data-testid="project-new-chat"
           aria-label={`Новый чат в ${name}`}
           title={`Новый чат в ${name}`}
-          onClick={() => onNewChat(cwd)}
+          onClick={() => onNewChat(cwd, remote?.hostId)}
         >
           <Plus size={14} aria-hidden="true" />
         </button>

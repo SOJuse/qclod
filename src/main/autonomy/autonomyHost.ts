@@ -1,6 +1,6 @@
 import { AutonomyCore, CONTINUE_TEXT, noticeText } from '../../core/autonomy'
 import type { AutonomyClock, AutonomyCommand, AutonomyEvent, AutonomyInput } from '../../core/autonomy'
-import { NO_AUTONOMY, type AutonomyView, type SessionStatus, type TabAutonomyRecord, type TabId } from '../../shared/types'
+import { NO_AUTONOMY, type AutonomyView, type SessionStatus, type TabAutonomyRecord, type TabId, type TabServer } from '../../shared/types'
 import type { AgentSession } from '../agent/AgentSession'
 import type { AgentSessionManager } from '../agent/AgentSessionManager'
 import { classifyStartFailure } from '../agent/startFailure'
@@ -55,8 +55,9 @@ export class AutonomyHost implements AutonomyHooks {
 
   // ----------------------------------------------------------- the hooks
 
-  tabAdded(id: TabId, record: TabAutonomyRecord | undefined): void {
-    if (this.entries.has(id)) return
+  tabAdded(id: TabId, record: TabAutonomyRecord | undefined, server?: TabServer): void {
+    // A server chat's core lives in its relay (сверка F5): no second one here.
+    if (this.entries.has(id) || server) return
     const entry: Entry = {
       core: null as unknown as AutonomyCore,
       session: null,

@@ -28,8 +28,17 @@ import type {
   TabState,
   TaskOutput,
   UpdateState,
-  UserInput
+  UserInput,
+  // stage 6
+  ConnectStep,
+  FileSource,
+  ServerEntry,
+  ServerView,
+  SshPrompt,
+  SshPromptAnswer,
+  ViewerContent
 } from '../shared/types'
+import type { FsEntry } from '../shared/relayProtocol'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: unknown, payload: T): void => cb(payload)
@@ -256,7 +265,69 @@ const api = {
     ipcRenderer.invoke(CHANNELS.agentSubagentSend, tabId, cardId, text),
   /** Останавливает сабагента этой карточки. */
   stopSubagent: (tabId: TabId, cardId: string): Promise<SubagentStopResult> =>
-    ipcRenderer.invoke(CHANNELS.agentSubagentStop, tabId, cardId)
+    ipcRenderer.invoke(CHANNELS.agentSubagentStop, tabId, cardId),
+
+  // — stage 6: servers over SSH. Handlers come with tasks 15–26; main checks
+  // every argument (sanitize.ts) before it reaches ssh or the relay.
+  listServers: (): Promise<ServerView[]> => ipcRenderer.invoke(CHANNELS.serversList),
+  /** A new or changed server; `password` only with auth 'password' and «Запомнить». */
+  saveServer: (entry: ServerEntry, password?: string): Promise<ServerView[]> =>
+    ipcRenderer.invoke(CHANNELS.serversSave, entry, password),
+  removeServer: (hostId: string): Promise<ServerView[]> => ipcRenderer.invoke(CHANNELS.serversRemove, hostId),
+  /** Runs the connection checklist; true when the server is online. */
+  connectServer: (hostId: string): Promise<boolean> => ipcRenderer.invoke(CHANNELS.serversConnect, hostId),
+  forgetServerPassword: (hostId: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.serversForgetPassword, hostId),
+  /** The person's answer to a question ssh asked (host key, password…). */
+  answerSshPrompt: (answer: SshPromptAnswer): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.serversPromptAnswer, answer),
+  listServerDir: (
+    hostId: string,
+    path: string
+  ): Promise<{ path: string; entries: FsEntry[]; truncated: boolean }> =>
+    ipcRenderer.invoke(CHANNELS.serversListDir, hostId, path),
+  /** «Открыть здесь»: a chat in that folder of the server; null when it could not. */
+  openServerFolder: (hostId: string, path: string): Promise<TabState | null> =>
+    ipcRenderer.invoke(CHANNELS.serversOpenFolder, hostId, path),
+  /** `claude auth login` on the server; progress comes as onServerLoginProgress. */
+  serverLogin: (hostId: string): Promise<void> => ipcRenderer.invoke(CHANNELS.serversLogin, hostId),
+  serverLoginCode: (hostId: string, code: string): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.serversLoginCode, hostId, code),
+  /** «Обновить посредник»; `force` — even with agents at work (they restart with the same conversation). */
+  updateRelay: (hostId: string, force: boolean): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.serversUpdateRelay, hostId, force),
+  /** A file for the viewer, here or on the tab's server. */
+  readForViewer: (source: FileSource, tabId: TabId, path: string): Promise<ViewerContent> =>
+    ipcRenderer.invoke(CHANNELS.viewerRead, source, tabId, path),
+  /** A server's file, downloaded and opened with the default program. */
+  downloadAndOpen: (tabId: TabId, path: string): Promise<'opened' | 'revealed' | null> =>
+    ipcRenderer.invoke(CHANNELS.viewerDownloadOpen, tabId, path),
+  /** A local file, uploaded to the tab's server; its path there, or why not. */
+  uploadRemoteFile: (tabId: TabId, localPath: string): Promise<{ remotePath: string } | { error: string }> =>
+    ipcRenderer.invoke(CHANNELS.filesUploadRemote, tabId, localPath),
+  /** A terminal on the tab's server; resolves with its id. */
+  terminalOpen: (tabId: TabId, cols: number, rows: number): Promise<string> =>
+    ipcRenderer.invoke(CHANNELS.terminalOpen, tabId, cols, rows),
+  terminalResize: (termId: string, cols: number, rows: number): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.terminalResize, termId, cols, rows),
+  terminalClose: (termId: string): Promise<void> => ipcRenderer.invoke(CHANNELS.terminalClose, termId),
+  /** Fire-and-forget: keystrokes for the terminal. */
+  terminalInput: (termId: string, data: string): void => ipcRenderer.send(CHANNELS.terminalInput, termId, data),
+  onServersChanged: (cb: (servers: ServerView[]) => void) => on(CHANNELS.serversChanged, cb),
+  onSshPrompt: (cb: (prompt: SshPrompt) => void) => on(CHANNELS.serversPrompt, cb),
+  onConnectProgress: (cb: (e: { hostId: string; steps: ConnectStep[] }) => void) =>
+    on(CHANNELS.serversConnectProgress, cb),
+  onServerLoginProgress: (
+    cb: (e: {
+      hostId: string
+      url?: string
+      state: 'starting' | 'waitingCode' | 'checking' | 'done' | 'failed'
+      email?: string
+      error?: string
+    }) => void
+  ) => on(CHANNELS.serversLoginProgress, cb),
+  onTerminalData: (cb: (e: { termId: string; data: string }) => void) => on(CHANNELS.terminalData, cb),
+  onTerminalExit: (cb: (e: { termId: string; exitCode: number }) => void) => on(CHANNELS.terminalExit, cb)
 }
 
 export type QclodApi = typeof api

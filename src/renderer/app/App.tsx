@@ -22,6 +22,9 @@ import { withCommand } from '../palette/commands'
 import type { PaletteContext, PaletteRunner, PaletteSection } from '../palette/types'
 import { withLocalCommands } from '../../shared/commandFilter'
 import { UpdateBanner } from '../components/UpdateBanner'
+import { ServersSheet, type ServersSheetMode } from '../components/servers/ServersSheet'
+import { SshPromptDialog } from '../components/servers/SshPromptDialog'
+import type { SshPrompt } from '../../shared/types'
 import { compactNow } from '../input/slash'
 import { reasonOf } from '../ui/StateView'
 import { actionKeys, resolveAppShortcut, tabAtTarget, type AppActionId } from './shortcuts'
@@ -72,6 +75,11 @@ export function App(): JSX.Element {
   const [setupNeeded, setSetupNeeded] = useState(false)
   /** Ctrl+K, open: kept to one section or not; `n` tells one opening from the next. */
   const [palette, setPalette] = useState<{ scope?: PaletteSection; n: number } | null>(null)
+  /** Stage 6: the servers' sheet — a new chat on a server — and the questions ssh asks, in order. */
+  const [serversSheet, setServersSheet] = useState<ServersSheetMode | null>(null)
+  const [sshPrompts, setSshPrompts] = useState<SshPrompt[]>([])
+  const servers = useAppStore((s) => s.servers)
+  const connectSteps = useAppStore((s) => s.connectSteps)
   /** Ctrl+W was pressed once on a working tab; a second press within 3 s closes it. */
   const [closeGuardTab, setCloseGuardTab] = useState<string | null>(null)
   const closeGuardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -148,7 +156,7 @@ export function App(): JSX.Element {
       applyPanes([state.activeTabId])
       return
     }
-    const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject))
+    const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject, state.servers))
     const at = order.indexOf(state.activeTabId)
     const other = [...order.slice(at + 1), ...order.slice(0, Math.max(0, at))].find(
       (id) => id !== state.activeTabId && !state.paneTabIds.includes(id)
@@ -210,14 +218,16 @@ export function App(): JSX.Element {
   const historyByProject = useAppStore((s) => s.historyByProject)
   const loadProjectHistory = useAppStore((s) => s.loadProjectHistory)
   const sidebar = useMemo(
-    () => buildSidebar(tabs, layout.projects, historyByProject),
-    [tabs, layout.projects, historyByProject]
+    () => buildSidebar(tabs, layout.projects, historyByProject, servers),
+    [tabs, layout.projects, historyByProject, servers]
   )
   const sidebarOpen = !layout.sidebarCollapsed
 
   // A project's past conversations are asked for the first time it is shown open.
   useEffect(() => {
-    for (const project of sidebar) if (!project.collapsed && project.past === null) loadProjectHistory(project.cwd)
+    for (const project of sidebar) {
+      if (!project.collapsed && project.past === null) loadProjectHistory(project.cwd, false, project.remote?.hostId)
+    }
   }, [sidebar, loadProjectHistory])
 
   const setSettings = useAppStore((s) => s.setSettings)
@@ -257,8 +267,16 @@ export function App(): JSX.Element {
       // The list is live: a plugin installed mid-session changes it.
       window.qclod.onCommandsChanged((event) =>
         useAppStore.getState().setCommands(event.tabId, event.commands)
-      )
+      ),
+      // Stage 6: the servers, their checklists, ssh's questions.
+      window.qclod.onServersChanged((list) => useAppStore.getState().setServers(list)),
+      window.qclod.onConnectProgress((e) => useAppStore.getState().setConnectSteps(e.hostId, e.steps)),
+      window.qclod.onSshPrompt((prompt) => setSshPrompts((queue) => [...queue, prompt]))
     ]
+    window.qclod.listServers().then(
+      (list) => useAppStore.getState().setServers(list),
+      () => undefined
+    )
     return () => {
       clearTimeout(tabsRetry)
       for (const off of unsubscribers) off()
@@ -291,9 +309,9 @@ export function App(): JSX.Element {
   }, [])
 
   const toggleProject = useCallback(
-    (cwd: string, collapsed: boolean): void => {
-      void window.qclod.setLayout({ projectCollapsed: { cwd, collapsed } })
-      if (!collapsed) loadProjectHistory(cwd)
+    (cwd: string, collapsed: boolean, hostId?: string): void => {
+      void window.qclod.setLayout({ projectCollapsed: { cwd, collapsed, ...(hostId ? { hostId } : {}) } })
+      if (!collapsed) loadProjectHistory(cwd, false, hostId)
     },
     [loadProjectHistory]
   )
@@ -311,8 +329,8 @@ export function App(): JSX.Element {
       return setPalette(null)
     }
     const state = useAppStore.getState()
-    const sidebarNow = buildSidebar(state.tabs, state.layout.projects, state.historyByProject)
-    for (const cwd of historyToLoad(sidebarNow)) state.loadProjectHistory(cwd)
+    const sidebarNow = buildSidebar(state.tabs, state.layout.projects, state.historyByProject, state.servers)
+    for (const p of historyToLoad(sidebarNow)) state.loadProjectHistory(p.cwd, false, p.hostId)
     setPalette({ ...(scope === undefined ? {} : { scope }), n: (was?.n ?? 0) + 1 })
   }, [])
 
@@ -346,7 +364,14 @@ export function App(): JSX.Element {
 
   /** A new chat in this folder; without one, the folder is asked for first. */
   const newChat = useCallback(
-    (cwd?: string): void => {
+    (cwd?: string, hostId?: string): void => {
+      // A folder on a server: a chat there at once (stage 6).
+      if (cwd && hostId) {
+        void window.qclod.openServerFolder(hostId, cwd).then((tab) => {
+          if (tab) activate(tab.id)
+        })
+        return
+      }
       const create = (folder: string): void => {
         void window.qclod.createTab(folder).then((tab) => {
           if (tab) activate(tab.id)
@@ -362,8 +387,8 @@ export function App(): JSX.Element {
 
   /** A past conversation from the sidebar: its own chat, or the open one that already holds it. */
   const openPast = useCallback(
-    (cwd: string, session: SessionSummary): void => {
-      window.qclod.openProjectSession(cwd, session.id, session.title).then(
+    (cwd: string, session: SessionSummary, hostId?: string): void => {
+      window.qclod.openProjectSession(cwd, session.id, session.title, hostId).then(
         (tab) => {
           if (tab) activate(tab.id)
         },
@@ -424,7 +449,7 @@ export function App(): JSX.Element {
     (id: AppActionId, at?: number | string): void => {
       const state = useAppStore.getState()
       // The sidebar's order, top to bottom: what the person sees.
-      const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject))
+      const order = chatOrder(buildSidebar(state.tabs, state.layout.projects, state.historyByProject, state.servers))
       const here = order.indexOf(state.activeTabId)
       const step = (delta: number): void => {
         if (order.length < 2 || here < 0) return
@@ -475,6 +500,24 @@ export function App(): JSX.Element {
           // A short press on the active pane: start, or stop (этап 5).
           if (state.activeTabId) toggleVoice(state.activeTabId)
           return
+        case 'openServerFolder': {
+          // A new chat on that server: its folder picker, connecting first when it is not on line.
+          if (typeof at !== 'string') return setServersSheet({ kind: 'picker' })
+          const server = state.servers.find((s) => s.id === at)
+          if (!server) return
+          return setServersSheet(server.state === 'online' ? { kind: 'folder', hostId: at } : { kind: 'connect', hostId: at })
+        }
+        case 'openServerTerminal': {
+          // The server's terminal (task 26) opens under a chat on that server: the active one, else
+          // the first; with no chat there yet, a folder is picked first.
+          if (typeof at !== 'string') return
+          const onServer = state.tabs.filter((t) => t.server?.hostId === at)
+          const tab = onServer.find((t) => t.id === state.activeTabId) ?? onServer[0]
+          if (!tab) return setServersSheet({ kind: 'connect', hostId: at })
+          if (tab.id !== state.activeTabId) activate(tab.id)
+          state.setTerminalShown(tab.id, true)
+          return
+        }
       }
     },
     [activate, newChat, closeActiveTab, togglePalette, togglePanel, toggleSidebar, toggleSplit, restartSession, cycleMode]
@@ -503,7 +546,7 @@ export function App(): JSX.Element {
         const state = useAppStore.getState()
         if (state.activeTabId) state.setPaneLayer(state.activeTabId, layer)
       },
-      loadHistory: (cwd) => loadProjectHistory(cwd)
+      loadHistory: (cwd, hostId) => loadProjectHistory(cwd, false, hostId)
     }
   }, [activate, newChat, openPast, runAction, focusComposer, loadProjectHistory])
 
@@ -516,9 +559,10 @@ export function App(): JSX.Element {
         files: fileIndexByTab[activeTabId] ?? [],
         filesPending: fileIndexByTab[activeTabId] === undefined,
         commands: withLocalCommands(commandsByTab[activeTabId] ?? []),
+        servers,
         run: paletteRun
       },
-    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, paletteRun]
+    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, servers, paletteRun]
   )
 
   // Window-level shortcuts, by physical key. The handler is registered once and
@@ -627,6 +671,10 @@ export function App(): JSX.Element {
           onRecheck={recheck}
           onDone={() => setSetupDismissed(true)}
           onOpenSettings={() => setSettingsOpen(true)}
+          onServersOnly={() => {
+            setSetupDismissed(true)
+            setServersSheet({ kind: 'picker' })
+          }}
         />
         {settingsOpen && (
           <SettingsScreen
@@ -675,10 +723,11 @@ export function App(): JSX.Element {
               closeChat(id)
             }}
             onNewChat={newChat}
+            onNewServerChat={() => setServersSheet({ kind: 'picker' })}
             onOpenPast={openPast}
             onToggleProject={toggleProject}
-            onForget={(cwd) => void window.qclod.forgetProject(cwd)}
-            onRetryPast={(cwd) => loadProjectHistory(cwd)}
+            onForget={(cwd, hostId) => void window.qclod.forgetProject(cwd, hostId)}
+            onRetryPast={(cwd, hostId) => loadProjectHistory(cwd, false, hostId)}
           />
         )}
         <SplitView
@@ -723,6 +772,28 @@ export function App(): JSX.Element {
           {...(palette.scope === undefined ? {} : { initialScope: palette.scope })}
           onClose={() => setPalette(null)}
           onFocusLost={focusComposer}
+        />
+      )}
+      {serversSheet && (
+        <ServersSheet
+          servers={servers}
+          steps={connectSteps}
+          initial={serversSheet}
+          onClose={() => {
+            setServersSheet(null)
+            focusComposer()
+          }}
+          onOpened={(tab) => activate(tab.id)}
+        />
+      )}
+      {sshPrompts[0] && (
+        <SshPromptDialog
+          key={sshPrompts[0].promptId}
+          prompt={sshPrompts[0]}
+          onAnswer={(answer) => {
+            void window.qclod.answerSshPrompt(answer)
+            setSshPrompts((queue) => queue.filter((p) => p.promptId !== answer.promptId))
+          }}
         />
       )}
       {settingsOpen && (

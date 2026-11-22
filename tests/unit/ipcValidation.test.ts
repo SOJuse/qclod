@@ -334,8 +334,15 @@ describe('sanitizeLayoutPatch', () => {
     expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: '', collapsed: true } })).toEqual({})
     expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: 'C:\\p', collapsed: 'да' } })).toEqual({})
     expect(sanitizeLayoutPatch({ projectCollapsed: 'C:\\p' })).toEqual({})
+    // Stage 6 (task 22): a server's project folds by its hostId (≤ 200); anything else is dropped.
     expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: 'C:\\p', collapsed: true, hostId: 'x' } })).toEqual({
-      projectCollapsed: { cwd: 'C:\\p', collapsed: true }
+      projectCollapsed: { cwd: 'C:\\p', collapsed: true, hostId: 'x' }
+    })
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: '/p', collapsed: true, hostId: 'x'.repeat(201) } })).toEqual({
+      projectCollapsed: { cwd: '/p', collapsed: true }
+    })
+    expect(sanitizeLayoutPatch({ projectCollapsed: { cwd: '/p', collapsed: true, hostId: 7 } })).toEqual({
+      projectCollapsed: { cwd: '/p', collapsed: true }
     })
   })
 

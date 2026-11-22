@@ -1,5 +1,7 @@
 import type { VoiceSettings } from './voice'
 
+import type { HostInfo, ServerAuth } from './relayProtocol'
+
 export type TabId = string
 
 /** What a tab's agent is doing right now. */
@@ -471,6 +473,8 @@ export interface PersistedTab {
   lastSessionId?: string
   /** Whether it was working, Remote Control wanted, a limit waited out (stage 3). */
   autonomy?: TabAutonomyRecord
+  /** stage 6: the chat runs on a server, through its relay. Kept in tabs.json. */
+  server?: TabServer
 }
 
 export interface TabState extends PersistedTab {
@@ -574,7 +578,8 @@ export interface LayoutState {
 }
 
 export type LayoutPatch = Partial<Pick<LayoutState, 'panes' | 'paneWidths' | 'sidebarCollapsed'>> & {
-  projectCollapsed?: { cwd: string; collapsed: boolean }
+  /** `hostId` (stage 6): a project on that server. */
+  projectCollapsed?: { cwd: string; collapsed: boolean; hostId?: string }
 }
 
 /** Frozen through and through: copy it, never change it in place. */
@@ -697,6 +702,84 @@ export interface ResolvedPath {
   line?: number
   column?: number
 }
+
+// stage 6: servers over SSH
+
+export type ServerColour = 'blue' | 'violet' | 'green' | 'amber' | 'rose' | 'cyan'
+
+export interface ServerEntry {
+  id: string
+  label: string
+  /** user@host or a Host of ~/.ssh/config. */
+  target: string
+  port?: number
+  identityFile?: string
+  auth: 'key' | 'password'
+  colour: ServerColour
+  /** Folders opened there, newest first. */
+  recent: string[]
+  /** Came from ~/.ssh/config rather than the form. */
+  fromConfig: boolean
+}
+
+export type ServerConnState =
+  | 'idle'
+  | 'connecting'
+  | 'online'
+  | 'reconnecting'
+  | 'offline'
+  | 'needsAuth'
+  | 'hostKeyChanged'
+  | 'error'
+
+export interface ServerView extends ServerEntry {
+  state: ServerConnState
+  problem?: string
+  hasPassword: boolean
+  info?: HostInfo & { claudeVersion: string | null }
+  account?: ServerAuth
+  relayUpdate?: 'pending' | 'required'
+  /** Stage 6 (task 20): whether a password can be kept (safeStorage works on this machine). */
+  canStorePassword?: boolean
+}
+
+/** Which server a tab's chat runs on; relaySessionId once the relay has opened it. */
+export interface TabServer {
+  hostId: string
+  relaySessionId?: string
+}
+
+/** A question ssh asks through askpass, for the window to put to the person. */
+export type SshPrompt =
+  | { promptId: string; hostId: string; kind: 'hostKey'; host: string; keyType: string; fingerprint: string }
+  | {
+      promptId: string
+      hostId: string
+      kind: 'password' | 'passphrase' | 'other'
+      text: string
+      canRemember: boolean
+      retry: boolean
+    }
+
+export type SshPromptAnswer =
+  | { promptId: string; ok: false }
+  | { promptId: string; ok: true; value: string; remember?: boolean }
+
+/** One line of the connection checklist. */
+export interface ConnectStep {
+  id: 'ssh' | 'auth' | 'claude' | 'relay' | 'login'
+  state: 'pending' | 'running' | 'ok' | 'warn' | 'fail'
+  text: string
+  hint?: string
+}
+
+export type FileSource = { kind: 'local' } | { kind: 'remote'; hostId: string }
+
+export type ViewerContent =
+  | { kind: 'text'; text: string; language: string; size: number; truncated: boolean }
+  | { kind: 'image'; dataUrl: string; size: number }
+  | { kind: 'binary'; size: number }
+  | { kind: 'error'; message: string }
 
 /** An error the window caught in itself, sent to the main process for the log. */
 export interface RendererErrorReport {

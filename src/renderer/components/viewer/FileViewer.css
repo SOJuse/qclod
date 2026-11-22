@@ -1,0 +1,117 @@
+/* The read-only file viewer: a pane layer of its own (stage 6, task 24). */
+.file-viewer-host {
+  height: 100%;
+  min-height: 0;
+}
+
+.file-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.viewer-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+
+.viewer-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
+.viewer-badge {
+  flex: 0 0 auto;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--hover-fill);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.viewer-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.viewer-button:hover {
+  background: var(--hover-fill);
+  color: var(--text);
+}
+
+.viewer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-top: var(--space-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.viewer-note {
+  margin: 0 0 var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.viewer-error {
+  color: var(--status-critical);
+}
+
+.viewer-image {
+  max-width: 100%;
+  height: auto;
+}
+
+.viewer-text {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading);
+  color: var(--text);
+}
+
+.viewer-line {
+  display: flex;
+  gap: var(--space-3);
+  white-space: pre;
+}
+
+/* The line a path in the chat pointed at (path:line). */
+.viewer-line[data-line-mark] {
+  background: var(--accent-fill);
+}
+
+/* The number comes from data-line: a pseudo-element is never copied with the text. */
+.viewer-line::before {
+  content: attr(data-line);
+  flex: 0 0 auto;
+  min-width: 4ch;
+  text-align: right;
+  color: var(--text-faint);
+}
+
+.viewer-code {
+  flex: 1 1 auto;
+  font-family: inherit;
+}

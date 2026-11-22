@@ -16,8 +16,10 @@ import {
   webContents
 } from 'electron'
 import { execFile, spawn } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import { statfs } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
+
 import { join } from 'node:path'
 import { APP_ID } from '../shared/appId'
 import { AFTER_HANG, RELOAD_PARAM } from '../shared/reloadReason'
@@ -60,6 +62,7 @@ import { alertNotification, notifyIfNeeded, shouldRaiseWindowForPermission } fro
 import { RendererOutbox } from './rendererOutbox'
 import { PathResolver } from './files/pathResolver'
 import { cleanupPasteDir } from './files/imagePaste'
+import { cleanupRemoteFiles } from './ssh/remoteFiles'
 import { createUpdateSource, UpdateFlow } from './update/updater'
 import { openAgentTerminal, startVoiceTyping } from './system/console'
 import { locateAgent } from './setup/findAgent'
@@ -73,6 +76,23 @@ import { AutonomyHost } from './autonomy/autonomyHost'
 import { applyOpenAtLogin } from './system/loginItem'
 import { claimSingleInstance } from './system/singleInstance'
 import { installMediaPermissions, micAccessStatus, openMicSettings } from './voice/micAccess'
+import { runAskpassClient } from './ssh/askpassClient'
+import { AskpassServer } from './ssh/askpass'
+import { HostStore } from './ssh/hostStore'
+import { electronSecretBox } from './ssh/secretBox'
+import { readUserConfigHosts } from './ssh/sshConfig'
+import { findSsh, setSshContext } from './ssh/sshRun'
+import { HostManager } from './ssh/hostManager'
+import { RelayClient } from './ssh/relayClient'
+import { createRelayDriver } from './ssh/relayDriver'
+import { sshTransport } from './ssh/transport'
+import { SshPromptBroker } from './ssh/promptBroker'
+import { registerServerIpc } from './ssh/serverIpc'
+import { TerminalHub, nodePtySpawn, type TerminalSpawn } from './ssh/terminal'
+import { registerTerminalIpc } from './ssh/terminalIpc'
+import { ServerLogin, pipePty } from './ssh/serverLogin'
+import type { RelayManifest } from './ssh/relayInstaller'
+import type { ServerEntry, SessionSummary } from '../shared/types'
 import { QuitReason, sessionEnding } from './system/quitReason'
 import type { AppSettings, PermissionRequest, TabId } from '../shared/types'
 import { VoiceHost, type WorkerLike } from './voice/voiceHost'
@@ -267,10 +287,22 @@ function watchWindow(win: BrowserWindow, log: (e: ErrorEntry) => void): void {
 //   5. command-line switches                         (stage 5, app.commandLine.appendSwitch)
 // and then app.whenReady().
 
+// Windows: ssh runs Qclod.exe itself as SSH_ASKPASS (ssh/askpass.ts). That run
+// only carries one question to the running Qclod and prints the answer: it
+// touches no profile, takes no instance lock (a second instance would raise
+// the window and the question would get no answer) and opens no window.
+const askpassMode = process.env['QCLOD_ASKPASS_PIPE'] !== undefined
+if (askpassMode) {
+  void runAskpassClient(process.argv.slice(1), process.env).then(
+    (code) => app.exit(code),
+    () => app.exit(1)
+  )
+}
+
 // Tests point the app at a throwaway profile so runs cannot affect each other
 // or the real one.
 const userDataOverride = process.env['QCLOD_USER_DATA']
-if (userDataOverride) app.setPath('userData', userDataOverride)
+if (userDataOverride && !askpassMode) app.setPath('userData', userDataOverride)
 
 // What broke, for whoever has to find out why (system/errorLog.ts). Errors the
 // main process throws are written down as well as printed, from here on: one
@@ -284,7 +316,7 @@ installMainErrorHandlers(process, (e) => errorLog.write(e))
 // the second arrives: the raise waits for the window.
 let onSecondInstance: (() => void) | null = null
 let secondPending = false
-const gotLock = claimSingleInstance(app, () => {
+const gotLock = askpassMode ? false : claimSingleInstance(app, () => {
   if (onSecondInstance) onSecondInstance()
   else secondPending = true
 })
@@ -366,6 +398,9 @@ if (gotLock) void app.whenReady().then(async () => {
   // app may stay open in the tray for weeks.
   cleanupPasteDir(userData)
   setInterval(() => cleanupPasteDir(userData), 60 * 60 * 1000).unref()
+  // Server files downloaded to open with a program (stage 6).
+  cleanupRemoteFiles(userData)
+  setInterval(() => cleanupRemoteFiles(userData), 60 * 60 * 1000).unref()
 
   const outbox = new RendererOutbox((channel, payload) => {
     const win = mainWindow
@@ -469,7 +504,11 @@ if (gotLock) void app.whenReady().then(async () => {
   // leaving the agent waiting forever.
   const broker = new PermissionBroker({
     loadRules: () => loadRules(userData),
-    saveRules: (rules) => saveRules(userData, rules),
+    saveRules: (rules) => {
+      saveRules(userData, rules)
+      // The servers' relays answer by the same rules (stage 6).
+      void hosts?.syncSettings()
+    },
     ask: (request: PermissionRequest) => {
       const win = mainWindow
       if (!win || win.isDestroyed()) {
@@ -485,9 +524,86 @@ if (gotLock) void app.whenReady().then(async () => {
     }
   })
 
+  // — stage 6: servers over SSH. ssh's questions go to the window (askpass), the
+  // servers and their relays are HostManager's; a server chat's driver is the relay's.
+  const promptBroker = new SshPromptBroker((prompt) => {
+    const win = mainWindow
+    if (!win || win.isDestroyed() || offScreen) return false
+    showWindow()
+    send(CHANNELS.serversPrompt, prompt)
+    return true
+  })
+  const hostStore = new HostStore(userData, electronSecretBox())
+  const askpass = new AskpassServer({
+    platform: process.platform,
+    execPath: process.execPath,
+    userData,
+    ask: (prompt) => promptBroker.ask(prompt),
+    storedPassword: (hostId) => hostStore.password(hostId),
+    onRemember: (hostId, password) => hosts?.rememberPassword(hostId, password),
+    canRemember: () => hostStore.canStorePasswords(),
+    askpassScript: join(__dirname, 'askpass.js'),
+    log: (line) => console.log('[ssh]', line)
+  })
+  const askpassUp = askpass.start().catch((err: unknown) => {
+    console.warn('[askpass]', err instanceof Error ? err.message : String(err))
+  })
+  setSshContext({
+    sshPath: findSsh(),
+    platform: process.platform,
+    userData,
+    ...(typeof process.getuid === 'function' ? { uid: process.getuid() } : {}),
+    askpass
+  })
+  try {
+    hostStore.mergeConfigHosts(readUserConfigHosts())
+  } catch (err) {
+    console.warn('[ssh config]', err instanceof Error ? err.message : String(err))
+  }
+  /** The hashes of the relay this version installs (build/relay-manifest.json, сверка F3); none in a dev run. */
+  const relayManifest = ((): RelayManifest | null => {
+    const file = app.isPackaged ? join(process.resourcesPath, 'relay-manifest.json') : join(app.getAppPath(), 'build', 'relay-manifest.json')
+    try {
+      if (!existsSync(file)) return null
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as RelayManifest
+      return parsed.assets?.x64 && parsed.assets?.arm64 ? parsed : null
+    } catch {
+      return null
+    }
+  })()
+  const targetOf = (e: ServerEntry) => ({
+    target: e.target,
+    ...(e.port !== undefined ? { port: e.port } : {}),
+    ...(e.identityFile ? { identityFile: e.identityFile } : {})
+  })
+  let hosts: HostManager | undefined
+  const relayDriverFactory = async (options: Parameters<typeof createRelayDriver>[0]) => {
+    const server = options.server!
+    await askpassUp
+    const client = (await hosts!.client(server.hostId)) as unknown as RelayClient
+    return createRelayDriver(options, {
+      client,
+      ...(server.relaySessionId ? { relaySessionId: server.relaySessionId } : {}),
+      onSessionId: () => undefined
+    })
+  }
+
   const manager = new AgentSessionManager({
     getAgentPath: () => settings.agentPath,
-    createDriver: createDriverFactory(),
+    createDriver: createDriverFactory({ relay: relayDriverFactory }),
+    onAlert: (id, text) => {
+      const tab = controller.list().find((t) => t.id === id)
+      if (!tab || offScreen) return
+      alertNotification({
+        settings,
+        title: tab.title,
+        body: text,
+        onActivate: () => {
+          showWindow()
+          send(CHANNELS.activateTab, id)
+        }
+      })
+    },
     askPermission: (request, signal) =>
       broker.request(
         request.tabId,
@@ -553,6 +669,7 @@ if (gotLock) void app.whenReady().then(async () => {
       list: (cwd) => history.list(cwd),
       transcript
     },
+    serverHistory: (cwd, hostId) => serverHistory(cwd, hostId),
     onChanged: (tabs) => {
       send(CHANNELS.tabsChanged, tabs)
       tray?.rebuild()
@@ -665,6 +782,111 @@ if (gotLock) void app.whenReady().then(async () => {
     void voiceSnapshot(modelStore, micAccess).then((s) => send(CHANNELS.voiceModelsChanged, s))
   })
 
+  hosts = new HostManager({
+    store: hostStore,
+    askpass,
+    userData,
+    appVersion: app.getVersion(),
+    manifest: relayManifest,
+    onChanged: (views) => send(CHANNELS.serversChanged, views),
+    onProgress: (hostId, steps) => send(CHANNELS.serversConnectProgress, { hostId, steps }),
+    openTab: (cwd, server) => controller.create(cwd, { ...settings.defaults }, undefined, undefined, server),
+    rules: () => broker.rules(),
+    autoAnswerMs,
+    makeClient: (entry) =>
+      new RelayClient({
+        hostId: entry.id,
+        appVersion: app.getVersion(),
+        clientName: `Qclod ${process.platform} ${hostname()}`,
+        transport: sshTransport(targetOf(entry), entry.id, askpass)
+      }),
+    ...(__QCLOD_TEST_SEAMS__ && process.env['QCLOD_RELAY_BINARY_DIR']
+      ? { localRelayDir: process.env['QCLOD_RELAY_BINARY_DIR'] }
+      : {}),
+    log: (line) => console.log('[servers]', line)
+  })
+  const serverHosts = hosts
+  // node-pty, loaded with the first terminal; a build without it falls back to plain pipes for the login.
+  let ptySpawn: TerminalSpawn | null = null
+  const loadPty = async (): Promise<TerminalSpawn | null> => {
+    if (ptySpawn) return ptySpawn
+    try {
+      ptySpawn = await nodePtySpawn()
+    } catch (err) {
+      console.warn('[terminal] node-pty', err instanceof Error ? err.message : String(err))
+    }
+    return ptySpawn
+  }
+  // The server's terminal (task 26): a drawer under a server chat, ssh -tt in node-pty.
+  const terminals = new TerminalHub({
+    spawnPty: (file, args, o) => {
+      if (!ptySpawn) throw new Error('node-pty не загружен')
+      return ptySpawn(file, args, o)
+    },
+    send,
+    sshPath: findSsh(),
+    platform: process.platform,
+    userData,
+    ...(typeof process.getuid === 'function' ? { uid: process.getuid() } : {})
+  })
+  registerTerminalIpc({
+    hub: terminals,
+    open: async (tabId, size) => {
+      const tab = controller.list().find((t) => t.id === tabId)
+      if (!tab) return null
+      if (!(await loadPty())) return null
+      // e2e: a local shell in place of ssh; a release build has no such branch (buildFlags.d.ts).
+      if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_E2E_TERMINAL']) {
+        const shell = process.platform === 'win32' ? (process.env['ComSpec'] ?? 'cmd.exe') : '/bin/sh'
+        return terminals.start(tabId, shell, [], size, process.env)
+      }
+      const entry = tab.server ? hostStore.get(tab.server.hostId) : null
+      if (!tab.server || !entry) return null
+      await askpassUp
+      // A saved password goes by itself; otherwise ssh's question comes to the window (SshPromptDialog).
+      const ask = askpass.forSpawn(tab.server.hostId, { interactive: true })
+      return terminals.open(tabId, targetOf(entry), tab.cwd, ask.env, size, () => ask.done())
+    }
+  })
+  // «Войти» of a server's Claude account (task 23): ssh -tt … claude auth login, one per server.
+  const logins = new Map<string, ServerLogin>()
+  const startServerLogin = async (hostId: string): Promise<void> => {
+    const entry = hostStore.get(hostId)
+    if (!entry) return
+    await askpassUp
+    const view = serverHosts.list().find((v) => v.id === hostId)
+    const claude = serverHosts.probeOf(hostId)?.claudePath ?? view?.account?.claudePath ?? 'claude'
+    logins.get(hostId)?.cancel()
+    const ask = askpass.forSpawn(hostId, { interactive: true })
+    // A real terminal when node-pty is there (task 26), else ssh -tt over pipes.
+    const pty = await loadPty()
+    const login = new ServerLogin({
+      spawnPty: pty ? (file, args, o) => pty(file, args, { ...o, name: 'xterm-256color' }) : pipePty,
+      onProgress: (p) => {
+        send(CHANNELS.serversLoginProgress, { hostId, ...p })
+        if (p.state === 'done' || p.state === 'failed') ask.done()
+      },
+      recheck: async () =>
+        (await serverHosts.refreshAccount(hostId)) ?? { loggedIn: null, claudePath: null, claudeVersion: null },
+      sshPath: findSsh(),
+      platform: process.platform,
+      userData,
+      ...(typeof process.getuid === 'function' ? { uid: process.getuid() } : {})
+    })
+    logins.set(hostId, login)
+    login.start(targetOf(entry), claude, ask.env)
+  }
+  registerServerIpc({
+    hosts: serverHosts,
+    askpassAnswers: (answer) => promptBroker.answer(answer),
+    login: { start: startServerLogin, code: (hostId, code) => logins.get(hostId)?.sendCode(code) }
+  })
+  /** A server project's past conversations: the relay's list (сверка F21). */
+  async function serverHistory(cwd: string, hostId: string): Promise<SessionSummary[]> {
+    const client = await serverHosts.client(hostId)
+    return client.call<SessionSummary[]>('history.list', { cwd })
+  }
+
   registerBaseIpc({
     getWindow: () => mainWindow,
     getSettings: () => settings,
@@ -672,8 +894,11 @@ if (gotLock) void app.whenReady().then(async () => {
       const previousHotkey = settings.globalHotkey
       const previousLogin = settings.openAtLogin
       const previousVoiceModel = settings.voice.model
+      const previousAnswer = settings.autoAnswerMinutes
       settings = mergeDefaults(settings, patch)
       saveSettings(userData, settings)
+      // The relays count the same minutes (stage 6).
+      if (settings.autoAnswerMinutes !== previousAnswer) void serverHosts.syncSettings()
       if (settings.globalHotkey !== previousHotkey) hotkey.apply(settings.globalHotkey)
       if (settings.openAtLogin !== previousLogin) syncLoginItem()
       if (settings.voice.model !== previousVoiceModel) voiceHost.modelChanged()
@@ -699,6 +924,10 @@ if (gotLock) void app.whenReady().then(async () => {
     resolver: new PathResolver(),
     getEditorCommand: () => settings.editorCommand,
     autonomy,
+    serverHistory,
+    knownServer: (hostId) => hostStore.get(hostId) !== null,
+    serverClient: (hostId) => serverHosts.client(hostId),
+    onTabClosed: (id) => terminals.closeTab(id),
     userData,
     openTerminal: (cwd) => {
       // e2e records the call instead of opening a console (buildFlags.d.ts).
@@ -862,7 +1091,16 @@ if (gotLock) void app.whenReady().then(async () => {
     // Before the sessions go down: their ending is no crash and no idle to write down.
     autonomy.quitting(quitReason.deliberate)
     broker.cancelAll()
-    void controller.disposeAll().finally(() => app.quit())
+    promptBroker.cancelAll()
+    // A server chat's agent goes on there: it is let go of, not stopped (Review Focus 3).
+    void controller
+      .disposeAll()
+      .finally(() => {
+        terminals.closeAll()
+        serverHosts.closeAll()
+        return askpass.stop()
+      })
+      .finally(() => app.quit())
   })
 
   app.on('will-quit', () => {

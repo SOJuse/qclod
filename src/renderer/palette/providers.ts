@@ -3,6 +3,7 @@ import { commandsProvider } from './commands'
 import { filesProvider } from './files'
 import { historyProvider } from './history'
 import { projectsProvider } from './projects'
+import { serversProvider } from './servers'
 import { fold } from './rank'
 import {
   SECTION_CAP,
@@ -23,6 +24,7 @@ export const PALETTE_PROVIDERS: PaletteProvider[] = [
   projectsProvider,
   historyProvider,
   filesProvider,
+  serversProvider,
   commandsProvider
 ]
 

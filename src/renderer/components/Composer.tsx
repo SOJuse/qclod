@@ -96,7 +96,10 @@ const MAX_MATCHES = 8
 
 /** A pasted image's chip carries its thumbnail; a failed one says so in colour and words. */
 function chipClass(item: PendingAttachment): string {
-  if (item.kind !== 'image') return 'composer-chip'
+  // A server chat's file (stage 6): going up, or failed to.
+  if (item.kind !== 'image') {
+    return `composer-chip${item.error ? ' is-error' : ''}${item.uploading ? ' is-uploading' : ''}`
+  }
   return `composer-chip is-image${item.error ? ' is-error' : ''}`
 }
 

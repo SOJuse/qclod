@@ -14,6 +14,8 @@ interface Props {
   onRecheck: () => void
   onDone: () => void
   onOpenSettings: () => void
+  /** Stage 6: server chats need no local claude — straight to the servers. */
+  onServersOnly?: () => void
 }
 
 type StepState = 'done' | 'active' | 'todo' | 'blocked'
@@ -51,6 +53,7 @@ export function SetupScreen({
   checkError = null,
   onRecheck,
   onDone,
+  onServersOnly,
   onOpenSettings
 }: Props): JSX.Element {
   const [log, setLog] = useState<string[]>([])
@@ -316,6 +319,16 @@ export function SetupScreen({
             }}
             disabled={checking}
           />
+          {onServersOnly && (
+            <SetupButton
+              action={{
+                testId: 'setup-servers-only',
+                label: 'Работать только с серверами',
+                title: 'Чаты на своих серверах: Claude Code здесь не нужен',
+                run: onServersOnly
+              }}
+            />
+          )}
           <SetupButton
             action={{ testId: 'setup-done', label: 'Начать работу', title: 'Перейти к работе', run: onDone }}
             primary={allDone}

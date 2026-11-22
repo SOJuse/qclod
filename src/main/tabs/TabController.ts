@@ -15,6 +15,7 @@ import type {
   StatusEvent,
   TabAutonomyRecord,
   TabId,
+  TabServer,
   TabState,
   UserInput
 } from '../../shared/types'
@@ -33,7 +34,8 @@ export interface TabHistory {
 
 /** What the autonomy host (autonomy/autonomyHost.ts) is told about the tabs and their sessions. */
 export interface AutonomyHooks {
-  tabAdded(id: TabId, record: TabAutonomyRecord | undefined): void
+  /** `server`: a server chat, whose core lives in its relay (stage 6). */
+  tabAdded(id: TabId, record: TabAutonomyRecord | undefined, server?: TabServer): void
   tabClosed(id: TabId): void
   sessionAdopted(id: TabId, session: AgentSession): void
   /**
@@ -56,6 +58,8 @@ export interface TabControllerDeps {
   /** Launch options a new tab starts with, from settings. */
   getDefaults: () => LaunchOverrides
   history: TabHistory
+  /** Stage 6: a server project's past conversations, from its relay (сверка F21). */
+  serverHistory?: (cwd: string, hostId: string) => Promise<SessionSummary[]>
   onChanged: (tabs: TabState[]) => void
   onRibbon: (event: RibbonEvent) => void
   onPanel: (event: PanelEvent) => void
@@ -193,16 +197,18 @@ export class TabController {
         overrides: tab.overrides,
         ...(tab.lastSessionId ? { lastSessionId: tab.lastSessionId } : {}),
         ...(tab.autonomy ? { autonomy: tab.autonomy } : {}),
+        ...(tab.server ? { server: { ...tab.server } } : {}),
         status: 'stopped',
         badge: false,
-        missingCwd: tab.missingCwd
+        // A server's folder is not looked for here (stage 6).
+        missingCwd: tab.server ? false : tab.missingCwd
       })
-      this.deps.autonomy?.tabAdded(tab.id, tab.autonomy)
+      this.deps.autonomy?.tabAdded(tab.id, tab.autonomy, tab.server)
     }
 
     // A tabs.json from before projects existed: its folders become projects,
     // so closing their last chat does not take them off the list.
-    for (const tab of this.tabs) layout.addProject(tab.cwd)
+    for (const tab of this.tabs) layout.addProject(tab.cwd, tab.server?.hostId)
 
     // The layout may name chats that are gone. The active one is the saved
     // one if it is still here, else the first pane still alive, else the
@@ -230,7 +236,9 @@ export class TabController {
     overrides: LaunchOverrides = this.deps.getDefaults(),
     title?: string,
     /** A conversation to continue, set before the session is ever started. */
-    lastSessionId?: string
+    lastSessionId?: string,
+    /** Stage 6: the chat runs on this server, through its relay. */
+    server?: TabServer
   ): TabState {
     const tab: TabState = {
       id: randomUUID(),
@@ -238,14 +246,15 @@ export class TabController {
       title: title ?? basename(cwd) ?? cwd,
       overrides,
       ...(lastSessionId ? { lastSessionId } : {}),
+      ...(server ? { server: { hostId: server.hostId } } : {}),
       status: 'stopped',
       badge: false,
-      missingCwd: !isDirectory(cwd)
+      missingCwd: server ? false : !isDirectory(cwd)
     }
     this.tabs.push(tab)
-    this.deps.autonomy?.tabAdded(tab.id, undefined)
+    this.deps.autonomy?.tabAdded(tab.id, undefined, tab.server)
     // A chat's folder is a project from then on, and stays one after it closes.
-    this.deps.layout.addProject(cwd)
+    this.deps.layout.addProject(cwd, server?.hostId)
     this.setActiveId(tab.id)
     this.persist()
     this.emit()
@@ -262,8 +271,8 @@ export class TabController {
    * path brings the ribbon back — there is no second way to load a
    * conversation that could drift from the first.
    */
-  openSession(cwd: string, sessionId: string, title?: string): TabState {
-    const open = this.tabs.find((tab) => tab.lastSessionId === sessionId)
+  openSession(cwd: string, sessionId: string, title?: string, hostId?: string): TabState {
+    const open = this.tabs.find((tab) => tab.lastSessionId === sessionId && tab.server?.hostId === hostId)
     if (open) {
       this.track(this.activate(open.id))
       return { ...open }
@@ -271,8 +280,9 @@ export class TabController {
     // The pointer is set as the tab is made, so the one session it starts is
     // already the right one. Creating a tab and then swapping its session
     // leaves the first one running: an orphan agent whose own init overwrites
-    // the stored id with a throwaway.
-    return this.create(cwd, {}, title, sessionId)
+    // the stored id with a throwaway. On a server it goes as session.open's
+    // resume (сверка F21).
+    return this.create(cwd, {}, title, sessionId, hostId ? { hostId } : undefined)
   }
 
   /** The empty chat's list of past conversations opens them here. */
@@ -317,7 +327,10 @@ export class TabController {
     // one opens in the same folder (its project stays). A folder that is gone
     // could host no agent, so then the default one.
     if (this.tabs.length === 0) {
-      this.create(closed && !closed.missingCwd ? closed.cwd : this.deps.defaultCwd)
+      // A server chat's successor is a chat in the same folder on the same server (сверка F6).
+      if (closed?.server) {
+        this.create(closed.cwd, this.deps.getDefaults(), undefined, undefined, { hostId: closed.server.hostId })
+      } else this.create(closed && !closed.missingCwd ? closed.cwd : this.deps.defaultCwd)
     } else {
       this.persist()
       this.emit()
@@ -331,6 +344,8 @@ export class TabController {
       // Forgotten on disk now, not when the new session first answers: a
       // launch in between would pick the old conversation back up.
       delete tab.lastSessionId
+      // A server chat's old session was closed there; the next one is new.
+      if (tab.server) delete tab.server.relaySessionId
       this.persist()
       this.emit()
     })
@@ -350,7 +365,22 @@ export class TabController {
     if (this.replacing.has(id)) return
     const unsent = this.deps.manager.get(id)?.sentBeforeInit ?? []
     // Resent only into the session this retry starts (`replaceSession`).
-    await this.replaceSession(id, () => undefined, unsent)
+    // A server chat's agent is let go of and attached again, not stopped.
+    await this.replaceSession(id, () => undefined, unsent, this.isServer(id))
+  }
+
+  /**
+   * Stage 6: a server chat's session again from its relay — after a new relay,
+   * or anything that left the window's ribbon behind the journal. The agent
+   * there is let go of and attached again, never stopped.
+   */
+  async reattach(id: TabId): Promise<boolean> {
+    if (!this.isServer(id) || this.replacing.has(id)) return false
+    return this.replaceSession(id, () => undefined, [], true)
+  }
+
+  private isServer(id: TabId): boolean {
+    return this.tabs.some((t) => t.id === id && t.server !== undefined)
   }
 
   /**
@@ -363,7 +393,7 @@ export class TabController {
   async revive(id: TabId): Promise<boolean> {
     if (this.replacing.has(id)) return false
     const unsent = this.deps.manager.get(id)?.sentBeforeInit ?? []
-    return this.replaceSession(id, () => undefined, unsent)
+    return this.replaceSession(id, () => undefined, unsent, this.isServer(id))
   }
 
   /** A line in the tab's ribbon from outside its session (the autonomy host). */
@@ -439,7 +469,9 @@ export class TabController {
   private async replaceSession(
     id: TabId,
     prepare: (tab: TabState) => void,
-    unsent: UserInput[] = []
+    unsent: UserInput[] = [],
+    /** Stage 6: a server chat's agent is let go of, and the new session attaches to it. */
+    detach = false
   ): Promise<boolean> {
     const tab = this.tabs.find((t) => t.id === id)
     if (!tab) return false
@@ -456,7 +488,7 @@ export class TabController {
     else this.previews.delete(id)
     this.replacing.add(id)
     try {
-      await this.deps.manager.close(id)
+      await (detach ? this.deps.manager.close(id, { detachOnly: true }) : this.deps.manager.close(id))
       // Closed while the old session was closing: nothing to start.
       if (!this.tabs.includes(tab)) {
         this.previews.delete(id)
@@ -542,11 +574,14 @@ export class TabController {
   /** Past conversations of this tab's folder, for the history screen (Task 14). */
   async history(id: TabId): Promise<SessionSummary[]> {
     const tab = this.tabs.find((t) => t.id === id)
-    return tab ? this.deps.history.list(tab.cwd) : []
+    if (!tab) return []
+    if (tab.server) return this.deps.serverHistory ? this.deps.serverHistory(tab.cwd, tab.server.hostId) : []
+    return this.deps.history.list(tab.cwd)
   }
 
+  /** Quitting: local agents stop; a server chat's agent goes on there (Review Focus 3). */
   async disposeAll(): Promise<void> {
-    await this.deps.manager.disposeAll()
+    await this.deps.manager.disposeAll({ detachOnly: true })
   }
 
   // ------------------------------------------------------------- sessions
@@ -581,14 +616,24 @@ export class TabController {
       id,
       tab.cwd,
       this.launchOptions(tab),
-      seed ?? undefined
+      seed ?? undefined,
+      tab.server
     )
     this.previews.delete(id)
     this.adopt(id, session)
 
-    const resumeId = tab.lastSessionId
+    // A server chat with a session in its relay attaches to it; otherwise the
+    // stored conversation is resumed — there by session.open (сверка F21).
+    const resumeId = tab.server?.relaySessionId ? undefined : tab.lastSessionId
     if (resumeId) await this.resume(id, session, resumeId)
     else await session.start()
+    if (tab.server?.relaySessionId && session.status === 'error' && /not_found|нет сессии/i.test(session.error ?? '')) {
+      // The relay no longer has it (closed there, or a new relay): the next
+      // try opens the conversation again by its id.
+      delete tab.server.relaySessionId
+      this.persist()
+      this.patch(id, { canRetry: true })
+    }
 
     this.rememberSession(id, session)
     // Not a session that recovery has already replaced: that one is dead.
@@ -616,7 +661,8 @@ export class TabController {
   private async buildPreview(id: TabId): Promise<SessionSeed | null> {
     const tab = this.tabs.find((t) => t.id === id)
     const sessionId = tab?.lastSessionId
-    if (!tab || tab.missingCwd || !sessionId || this.deps.manager.get(id)) return null
+    // A server chat's record is its relay's journal: the session seeds from it.
+    if (!tab || tab.missingCwd || tab.server || !sessionId || this.deps.manager.get(id)) return null
 
     // The file is read whole (before the last compaction too, subagent steps
     // included) and found by the tab's folder.
@@ -834,11 +880,21 @@ export class TabController {
   }
 
   private rememberSession(id: TabId, session: AgentSession): void {
-    const sessionId = session.sessionId
-    if (!sessionId) return
     const tab = this.tabs.find((t) => t.id === id)
-    if (!tab || tab.lastSessionId === sessionId) return
-    tab.lastSessionId = sessionId
+    if (!tab) return
+    // Stage 6: the relay's id of a server chat goes to tabs.json as soon as it is known.
+    const relayId = tab.server ? session.relaySessionId : null
+    let changed = false
+    if (tab.server && relayId && tab.server.relaySessionId !== relayId) {
+      tab.server = { ...tab.server, relaySessionId: relayId }
+      changed = true
+    }
+    const sessionId = session.sessionId
+    if (sessionId && tab.lastSessionId !== sessionId) {
+      tab.lastSessionId = sessionId
+      changed = true
+    }
+    if (!changed) return
     this.persist()
     this.emit()
   }
@@ -884,7 +940,8 @@ export class TabController {
         title: tab.title,
         overrides: tab.overrides,
         ...(tab.lastSessionId ? { lastSessionId: tab.lastSessionId } : {}),
-        ...(tab.autonomy ? { autonomy: tab.autonomy } : {})
+        ...(tab.autonomy ? { autonomy: tab.autonomy } : {}),
+        ...(tab.server ? { server: tab.server } : {})
       }))
     )
   }

@@ -8,6 +8,8 @@ import {
   materialize,
   pendingFromSent,
   prepareAttachment,
+  prepareRemoteFile,
+  needsUpload,
   queuedSendStep,
   type PendingAttachment
 } from '../../src/renderer/input/attachments'
@@ -249,5 +251,44 @@ describe('очередь возвращается в поле', () => {
     expect(draftWithReturned(['два', 'три'], 'уже набрано')).toBe('два\n\nтри\n\nуже набрано')
     expect(draftWithReturned(['два'], '')).toBe('два')
     expect(draftWithReturned([], 'как было')).toBe('как было')
+  })
+})
+
+describe('этап 6: файл серверного чата', () => {
+  test('prepareRemoteFile: успех даёт серверный путь, и в сообщение уходит он', async () => {
+    const done = await prepareRemoteFile({ kind: 'file', path: 'C:/doc/a.pdf' }, async () => ({ remotePath: '/home/u/.qclod/uploads/s1/1-a.pdf' }))
+    expect(done).toEqual({ kind: 'file', path: 'C:/doc/a.pdf', remotePath: '/home/u/.qclod/uploads/s1/1-a.pdf' })
+    expect(materialize([done])).toEqual([{ kind: 'file', path: '/home/u/.qclod/uploads/s1/1-a.pdf' }])
+    expect(attachmentLabel(done)).toBe('a.pdf')
+  })
+
+  test('ошибка даёт error, и materialize вложение не включает', async () => {
+    const failed = await prepareRemoteFile({ kind: 'file', path: 'C:/doc/a.pdf' }, async () => ({
+      error: 'Файл больше 100 МБ — на сервер не загружается'
+    }))
+    expect(failed).toEqual({ kind: 'file', path: 'C:/doc/a.pdf', error: 'Файл больше 100 МБ — на сервер не загружается' })
+    expect(materialize([failed])).toEqual([])
+    expect(attachmentLabel(failed)).toBe('Файл больше 100 МБ — на сервер не загружается')
+    const thrown = await prepareRemoteFile({ kind: 'file', path: 'C:/doc/a.pdf' }, async () => {
+      throw new Error('нет связи')
+    })
+    expect(thrown).toMatchObject({ error: 'Не удалось загрузить на сервер: нет связи' })
+  })
+
+  test('пока файл грузится, отправка ждёт; загрузился — уходит; не загрузился — отменяется', () => {
+    const uploading: PendingAttachment = { kind: 'file', path: 'C:/a.txt', uploading: true }
+    expect(isPreparing(uploading)).toBe(true)
+    expect(attachmentLabel(uploading)).toBe('a.txt — загружаю на сервер…')
+    expect(materialize([uploading])).toEqual([])
+    expect(queuedSendStep(true, [uploading])).toBe('wait')
+    expect(queuedSendStep(true, [{ kind: 'file', path: 'C:/a.txt', remotePath: '/srv/a.txt' }])).toBe('send')
+    expect(queuedSendStep(true, [{ kind: 'file', path: 'C:/a.txt', error: 'нет' }])).toBe('cancel')
+  })
+
+  test('needsUpload: только не начатый файл', () => {
+    expect(needsUpload({ kind: 'file', path: 'C:/a' })).toBe(true)
+    expect(needsUpload({ kind: 'file', path: 'C:/a', uploading: true })).toBe(false)
+    expect(needsUpload({ kind: 'file', path: 'C:/a', remotePath: '/x' })).toBe(false)
+    expect(needsUpload({ kind: 'image', mediaType: 'image/png' })).toBe(false)
   })
 })

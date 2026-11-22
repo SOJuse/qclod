@@ -469,9 +469,11 @@ export function sanitizeLayoutPatch(value: unknown): LayoutPatch {
 
   const folding = value['projectCollapsed']
   if (isPlainObject(folding)) {
-    const { cwd, collapsed } = folding
+    const { cwd, collapsed, hostId } = folding
     if (isString(cwd) && cwd !== '' && cwd.length <= MAX_LAYOUT_CWD && typeof collapsed === 'boolean') {
-      patch.projectCollapsed = { cwd, collapsed }
+      // Stage 6: a server's project, by that server's id.
+      const host = isString(hostId) && hostId !== '' && hostId.length <= 200 ? hostId : undefined
+      patch.projectCollapsed = { cwd, collapsed, ...(host ? { hostId: host } : {}) }
     }
   }
   return patch
@@ -492,4 +494,94 @@ export function sanitizeErrorReport(value: unknown): RendererErrorReport | null 
   if (isString(stack)) report.stack = stack.slice(0, MAX_ERROR_TEXT)
   if (isString(componentStack)) report.componentStack = componentStack.slice(0, MAX_ERROR_TEXT)
   return report
+}
+
+// ---------------------------------------------------------------- stage 6: servers
+
+const MAX_SERVER_VALUE = 4096
+const MAX_HOST_ID = 64
+const MAX_TARGET = 255
+
+/** A server's id as main made it: short, no spaces. */
+export function sanitizeHostId(value: unknown): string | null {
+  if (!isString(value) || value === '' || value.length > MAX_HOST_ID || !/^[\w.-]+$/.test(value)) return null
+  return value
+}
+
+/**
+ * A server from the form. The target goes to ssh as an argument: whitespace,
+ * a control character or a leading `-` (ssh would take it for an option) and
+ * it is no target. A port outside 1–65535 is refused.
+ */
+export function sanitizeServerEntry(value: unknown): {
+  id?: string
+  label: string
+  target: string
+  port?: number
+  identityFile?: string
+  auth: 'key' | 'password'
+  colour?: import('../../shared/types').ServerColour
+  fromConfig: boolean
+} | null {
+  if (!isPlainObject(value)) return null
+  const { id, label, target, port, identityFile, auth, colour, fromConfig } = value
+  if (!isString(target) || target === '' || target.length > MAX_TARGET) return null
+  // eslint-disable-next-line no-control-regex
+  if (/[\s\u0000-\u001f\u007f]/.test(target) || target.startsWith('-')) return null
+  if (label !== undefined && (!isString(label) || label.length > MAX_TITLE || /[\r\n\0]/.test(label))) return null
+  let cleanPort: number | undefined
+  if (port !== undefined && port !== null) {
+    if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) return null
+    cleanPort = port
+  }
+  let key: string | undefined
+  if (identityFile !== undefined && identityFile !== '') {
+    if (!isString(identityFile) || identityFile.length > MAX_SERVER_VALUE || /[\r\n\0]/.test(identityFile) || identityFile.startsWith('-')) {
+      return null
+    }
+    key = identityFile
+  }
+  const knownColours = ['blue', 'violet', 'green', 'amber', 'rose', 'cyan']
+  return {
+    ...(id !== undefined && sanitizeHostId(id) ? { id: id as string } : {}),
+    label: isString(label) ? label.trim() : '',
+    target,
+    ...(cleanPort !== undefined ? { port: cleanPort } : {}),
+    ...(key ? { identityFile: key } : {}),
+    auth: auth === 'password' ? 'password' : 'key',
+    ...(isString(colour) && knownColours.includes(colour) ? { colour: colour as import('../../shared/types').ServerColour } : {}),
+    fromConfig: fromConfig === true
+  }
+}
+
+/** A password to keep: a string of at most 4096, one line (askpass prints it as one). */
+export function sanitizeServerPassword(value: unknown): string | null {
+  if (!isString(value) || value === '' || value.length > MAX_SERVER_VALUE || /[\r\n\0]/.test(value)) return null
+  return value
+}
+
+/** The person's answer to ssh's question: a known shape, a value of at most 4096 on one line. */
+export function sanitizePromptAnswer(value: unknown): import('../../shared/types').SshPromptAnswer | null {
+  if (!isPlainObject(value)) return null
+  const { promptId, ok, value: given, remember } = value
+  if (!isString(promptId) || promptId === '' || promptId.length > MAX_HOST_ID) return null
+  if (ok !== true) return { promptId, ok: false }
+  if (!isString(given) || given.length > MAX_SERVER_VALUE || /[\r\n\0]/.test(given)) return null
+  return { promptId, ok: true, value: given, ...(remember === true ? { remember: true } : {}) }
+}
+
+/** A path on a server: at most 4096 characters, no NUL; `~` is the home there. */
+export function sanitizeRemotePath(value: unknown): string | null {
+  if (!isString(value) || value.length > MAX_SERVER_VALUE || value.includes('\0')) return null
+  return value
+}
+
+/** Stage 6: a server terminal's id — what TerminalHub handed out (a uuid). */
+export function sanitizeTerminalId(value: unknown): string | null {
+  return isString(value) && /^[0-9a-f-]{36}$/i.test(value) ? value : null
+}
+
+/** Stage 6: keystrokes for a server terminal, at most 64 KiB at a time. */
+export function sanitizeTerminalInput(value: unknown): string | null {
+  return isString(value) && value.length > 0 && value.length <= 64 * 1024 ? value : null
 }

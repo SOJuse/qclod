@@ -148,8 +148,10 @@ test('«Открыть в редакторе» есть только с зада
   await win.locator('[data-testid="close-settings"]').click()
 
   await link.click({ button: 'right' })
-  await expect(items).toHaveCount(5)
+  // The five above and «Открыть в редакторе».
+  await expect(items).toHaveCount(6)
   await items.filter({ hasText: 'Открыть в редакторе' }).click()
+
   await expect.poll(shellLog).toEqual([{ action: 'editor', path: aTs(), line: 3 }])
 })
 

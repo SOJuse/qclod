@@ -1,4 +1,3 @@
-import { basename } from 'node:path'
 import { clip } from '../../shared/format'
 import { projectKey } from '../../shared/projects'
 import type { HistoryHit } from '../../shared/types'
@@ -105,7 +104,8 @@ export class HistorySearch {
       return {
         sessionId: file.sessionId,
         cwd,
-        projectLabel: basename(cwd.replace(/[\\/]+$/, '')) || cwd,
+        // Either slash: a Windows project's path read on a Mac is still named by its folder.
+        projectLabel: cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || cwd,
         title: clip(texts.firstPrompt ?? 'Без названия', 60),
         snippet: `${head}${t.shown.slice(from, to)}${tail}`,
         matchStart: at - from + head.length,

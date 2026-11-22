@@ -72,6 +72,7 @@ export function Sidebar({
               aria-checked={where === 'local'}
               className={`sidebar-where-option${where === 'local' ? ' is-on' : ''}`}
               data-testid="new-chat-local"
+              title="Новый чат на этом компьютере"
               onClick={() => setWhere('local')}
             >
               Локально
@@ -82,6 +83,8 @@ export function Sidebar({
               aria-checked={where === 'server'}
               className={`sidebar-where-option${where === 'server' ? ' is-on' : ''}`}
               data-testid="new-chat-server"
+              title="Новый чат на сервере"
+
               onClick={() => setWhere('server')}
             >
               Сервер

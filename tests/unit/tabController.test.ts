@@ -2495,13 +2495,20 @@ describe('TabController: серверные чаты', () => {
       home: h.root
     })
     running[running.length - 1]!.daemon = daemon
-    await daemon.start()
+    expect(await daemon.start()).toBe(true)
     const isNotice = (i: RibbonItem): i is Extract<RibbonItem, { kind: 'notice' }> => i.kind === 'notice'
-    await until(
-      () => session.items.filter(isNotice).some((i) => i.text.startsWith('Начало разговора старше журнала сервера — показано с')),
-      15000,
-      'строка о разрыве'
-    )
+    try {
+      await until(
+        () => session.items.filter(isNotice).some((i) => i.text.startsWith('Начало разговора старше журнала сервера — показано с')),
+        15000,
+        'строка о разрыве'
+      )
+    } catch (err) {
+      // What the chat had instead, so a failure on another system says where it stopped.
+      const seen = session.items.map((i) => (isNotice(i) ? `notice:${i.text.slice(0, 40)}` : i.kind)).slice(-8)
+      throw new Error(`${(err as Error).message}; клиент ${h.client.state}; лента: ${seen.join(' | ')}`)
+    }
+
     await until(() => session.items.filter(isNotice).some((i) => i.text.startsWith('запись 79')), 5000, 'записи после разрыва')
     expect(h.manager.get(tab.id)).toBe(session)
   })

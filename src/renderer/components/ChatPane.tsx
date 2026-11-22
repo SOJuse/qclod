@@ -42,6 +42,8 @@ import { PaneLayer } from './PaneLayer'
 import { AgentsLayer } from './agents/AgentsLayer'
 import { AgentComposer, SEND_REFUSAL, agentPlaceholder } from './agents/AgentComposer'
 import { useTemplates } from '../state/useTemplates'
+import { GitLayer, gitTitle } from './git/GitLayer'
+import { useGitStatus } from './git/useGitStatus'
 import { SidePanel } from './SidePanel'
 import './ChatPane.css'
 
@@ -56,12 +58,12 @@ export interface PanelRequest {
 
 /**
  * What a layer over the ribbon shows, by kind — one line per stage. A kind
- * with nothing to show draws no layer: in этап 2 there is none yet.
+ * with nothing to show draws no layer.
  */
 function paneLayerView(
   layer: PaneLayerState,
   pane: { tabId: string; items: RibbonItem[]; costRates: CostRates | null },
-  ctx: { tabId: TabId; source: FileSource; close: () => void }
+  ctx: { tabId: TabId; source: FileSource; cwd: string; git: ReturnType<typeof useGitStatus>; close: () => void }
 ): { title: string; body: ReactNode } | null {
   switch (layer.kind) {
     case 'agents': // этап 4: the pane's subagents, layer.agentId opened
@@ -78,7 +80,19 @@ function paneLayerView(
         )
       }
     case 'git': // этап 7: the folder's changes
-      return null
+      return {
+        title: gitTitle(ctx.git.status),
+        body: (
+          <GitLayer
+            tabId={ctx.tabId}
+            source={ctx.source}
+            cwd={ctx.cwd}
+            status={ctx.git.status}
+            refresh={ctx.git.refresh}
+            refreshNow={ctx.git.refreshNow}
+          />
+        )
+      }
   }
 }
 
@@ -297,13 +311,25 @@ export function ChatPane({
   const items = ribbonByTab[tabId]
   const layer = useAppStore((s) => s.layerByTab[tabId] ?? null)
   const layerSource: FileSource = tab?.server ? { kind: 'remote', hostId: tab.server.hostId } : { kind: 'local' }
+  const git = useGitStatus(tabId)
   const layerView = layer
     ? paneLayerView(
         layer,
         { tabId, items: items ?? NO_ITEMS, costRates: panel.costRates },
-        { tabId, source: layerSource, close: () => useAppStore.getState().setPaneLayer(tabId, null) }
+        {
+          tabId,
+          source: layerSource,
+          cwd: tab?.cwd ?? '',
+          git,
+          close: () => useAppStore.getState().setPaneLayer(tabId, null)
+        }
       )
     : null
+  const gitState =
+    git.status?.kind === 'notRepo' || git.status?.kind === 'noGit' || git.status?.kind === 'unavailable'
+      ? git.status.kind
+      : 'ok'
+
 
   /** A subagent's own ribbon open over this pane: its input stands where the chat's does (решение 1). */
   const agentCard = useMemo(() => {
@@ -427,6 +453,10 @@ export function ChatPane({
                 terminalOpen: terminalShown === true
               }
             : {})}
+          onOpenGit={() => useAppStore.getState().setPaneLayer(tabId, { kind: 'git' })}
+          gitBadge={git.status?.kind === 'ok' ? git.status.changes.length : null}
+          gitState={gitState}
+          {...(git.status?.kind === 'unavailable' ? { gitHint: git.status.reason } : {})}
         />
 
         <div className="chat-body" ref={bodyRef}>

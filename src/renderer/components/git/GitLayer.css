@@ -1,0 +1,194 @@
+.git-layer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  font-size: var(--text-sm);
+}
+
+.git-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.git-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-dim);
+}
+
+.git-gap {
+  flex: 1 1 auto;
+}
+
+.git-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) 3fr;
+}
+
+.git-files,
+.git-diff {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.git-files {
+  border-right: 1px solid var(--border);
+}
+
+.git-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+}
+
+.git-file.is-selected {
+  background: var(--hover-fill);
+}
+
+.git-file-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.git-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-file-dir {
+  color: var(--text-faint);
+}
+
+.git-file-kind {
+  flex: 0 0 auto;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.git-file[data-kind='conflict'] .git-file-kind {
+  color: var(--status-critical);
+}
+
+.git-diff-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.git-diff-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.git-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-dim);
+}
+
+.git-button {
+  flex: 0 0 auto;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.git-button:hover:not(:disabled) {
+  background: var(--hover-fill);
+}
+
+.git-button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* Room under the commit row for the floating input. */
+.git-commit {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.git-message {
+  width: 100%;
+  resize: vertical;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.git-commit .git-button.is-primary {
+  align-self: flex-end;
+}
+
+.git-done {
+  margin: 0;
+  color: var(--cat-edit);
+}
+
+.git-refusal {
+  color: var(--status-critical);
+}
+
+.git-refusal p {
+  margin: 0;
+}
+
+.git-refusal-output {
+  margin: var(--space-1) 0 0;
+  max-height: 8em;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+}

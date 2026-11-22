@@ -78,6 +78,9 @@ import {
   USE_EXECUTION_STATE_HELPER
 } from './system/keepAwake'
 import { AutonomyHost } from './autonomy/autonomyHost'
+import { GitService } from './git/GitService'
+import { localGitRunner, type GitRunner } from './git/gitRunner'
+import { registerGitIpc } from './gitIpc'
 import { applyOpenAtLogin } from './system/loginItem'
 import { claimSingleInstance } from './system/singleInstance'
 import { installMediaPermissions, micAccessStatus, openMicSettings } from './voice/micAccess'
@@ -937,7 +940,9 @@ if (gotLock) void app.whenReady().then(async () => {
     ;(globalThis as { __qclodShellLog?: unknown[] }).__qclodShellLog = []
   }
 
+  const pathResolver = new PathResolver()
   registerAgentIpc({
+
     getWindow: () => mainWindow,
     // этап 7: Ctrl+K «В разговорах», over the owner's transcripts, read only.
     historySearch: new HistorySearch(claudeConfigDir(process.env, homedir())),
@@ -946,7 +951,7 @@ if (gotLock) void app.whenReady().then(async () => {
     broker,
     layout,
     history,
-    resolver: new PathResolver(),
+    resolver: pathResolver,
     getEditorCommand: () => settings.editorCommand,
     autonomy,
     serverHistory,
@@ -985,6 +990,17 @@ if (gotLock) void app.whenReady().then(async () => {
     library: templates
   })
   registerTemplatesIpc({ library: templates, getWindow: () => mainWindow, harvest })
+  // этап 7: Git panel. The folder is the chat's own (controller.list), never the window's.
+  const gitRunners = new Map<string, GitRunner>()
+  registerGitIpc({
+    service: new GitService((tab) => {
+      if (tab.hostId) return { unavailable: 'Git для серверных проектов пока недоступен.' }
+      let run = gitRunners.get(tab.cwd)
+      if (!run) gitRunners.set(tab.cwd, (run = localGitRunner(tab.cwd)))
+      return run
+    }),
+    tabs: () => controller.list().map((t) => ({ id: t.id, cwd: t.cwd }))
+  })
   ipcMain.handle(CHANNELS.hotkeyStatus, () => withFault(CHANNELS.hotkeyStatus, () => hotkey.status))
 
   // Voice input is Windows' own (Win+H), pressed for the person: the input

@@ -37,6 +37,8 @@ interface ViewProps {
   openError?: string | null
   onOpen(): void
   onClose(): void
+  /** The close button's text: «Закрыть», or where it goes back to («Назад к изменениям»). */
+  closeLabel?: string
 }
 
 /** The text's lines, highlighted when it is not too long for it. */
@@ -78,7 +80,8 @@ export function FileViewerView({
   opening = false,
   openError = null,
   onOpen,
-  onClose
+  onClose,
+  closeLabel = VIEWER_TEXTS.close
 }: ViewProps): JSX.Element {
   const remote = source.kind === 'remote'
   return (
@@ -103,7 +106,7 @@ export function FileViewerView({
         </button>
         <button type="button" className="viewer-button" data-testid="viewer-close" onClick={onClose}>
           <X size={14} aria-hidden="true" />
-          <span>{VIEWER_TEXTS.close}</span>
+          <span>{closeLabel}</span>
         </button>
       </header>
       {openError !== null && (
@@ -151,8 +154,9 @@ export function FileViewer(props: {
   onClose(): void
   /** The chat it is opened from: main checks the path against it. */
   tabId: TabId
+  closeLabel?: string
 }): JSX.Element {
-  const { source, path, line, onClose, tabId } = props
+  const { source, path, line, onClose, tabId, closeLabel } = props
   const [content, setContent] = useState<ViewerContent | null>(null)
   const self = useRef<HTMLDivElement | null>(null)
   const sourceKey = source.kind === 'remote' ? `remote:${source.hostId}` : 'local'
@@ -210,7 +214,9 @@ export function FileViewer(props: {
         openError={openError}
         onOpen={onOpen}
         onClose={onClose}
+        {...(closeLabel !== undefined ? { closeLabel } : {})}
       />
+
     </div>
   )
 }

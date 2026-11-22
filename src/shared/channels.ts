@@ -285,6 +285,7 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.historySearch
 ])
 
+
 export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.ribbonChanged,
   CHANNELS.panelChanged,

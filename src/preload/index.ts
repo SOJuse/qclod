@@ -370,6 +370,7 @@ const api = {
   historySearch: (query: string): Promise<HistoryHit[]> => ipcRenderer.invoke(CHANNELS.historySearch, query)
 }
 
+
 export type QclodApi = typeof api
 
 contextBridge.exposeInMainWorld('qclod', api)

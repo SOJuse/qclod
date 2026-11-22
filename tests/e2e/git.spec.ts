@@ -76,8 +76,8 @@ test('Git-слой: бейдж, diff, коммит отмеченных', async 
 
   // «Весь файл» and back.
   await win.locator('[data-testid="git-full-file"]').click()
-  await expect(win.locator('[data-testid="file-viewer-code"]')).toContainText('const one = 11')
-  await win.locator('[data-testid="file-viewer-back"]').click()
+  await expect(win.locator('[data-testid="viewer-text"]')).toContainText('const one = 11')
+  await win.locator('[data-testid="viewer-close"]', { hasText: 'Назад к изменениям' }).click()
   await expect(win.locator('[data-testid="diff-viewer"]')).toBeVisible()
 
   // Untick two.ts, commit the other two.

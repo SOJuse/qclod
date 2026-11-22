@@ -59,8 +59,8 @@ export function PathMenu({
   // the resolver's line, else the one written after the path («src/a.ts:3»).
   const view: Item = {
     label: 'Посмотреть',
-    testId: 'path-view',
     Icon: Eye,
+
     run: act(async (p) => {
       const line = p.line ?? splitPathLine(p.raw).line
       useAppStore.getState().setPaneLayer(tabId, { kind: 'file', path: p.absPath, ...(line ? { line } : {}) })

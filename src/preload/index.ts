@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { CHANNELS } from '../shared/channels'
 import type { VoiceErrorCode, VoiceEvent, VoiceModelId, VoiceModelsSnapshot } from '../shared/voice'
+import type { VpnView } from '../shared/vpn'
 import type {
   EnvironmentReport,
   LoginProgress,
@@ -367,7 +368,18 @@ const api = {
   gitCommit: (tabId: string, paths: string[], message: string): Promise<CommitResult> =>
     ipcRenderer.invoke(CHANNELS.gitCommit, tabId, paths, message),
   /** Full-text search over past conversations (Ctrl+K «В разговорах»). */
-  historySearch: (query: string): Promise<HistoryHit[]> => ipcRenderer.invoke(CHANNELS.historySearch, query)
+  historySearch: (query: string): Promise<HistoryHit[]> => ipcRenderer.invoke(CHANNELS.historySearch, query),
+  // — 1.0.1: vpn. The window never gets the link back: only host and name (VpnView).
+  vpn: {
+    get: (): Promise<VpnView> => ipcRenderer.invoke(CHANNELS.vpnGet),
+    /** '' forgets the stored link. Rejects with a short reason for a bad one. */
+    setLink: (link: string): Promise<VpnView> => ipcRenderer.invoke(CHANNELS.vpnSetLink, link),
+    setOptions: (o: { autoConnect?: boolean; sites?: string | 'defaults' }): Promise<VpnView> =>
+      ipcRenderer.invoke(CHANNELS.vpnSetOptions, o),
+    connect: (): Promise<VpnView> => ipcRenderer.invoke(CHANNELS.vpnConnect),
+    disconnect: (): Promise<VpnView> => ipcRenderer.invoke(CHANNELS.vpnDisconnect),
+    onChanged: (cb: (v: VpnView) => void) => on(CHANNELS.vpnChanged, cb)
+  }
 }
 
 

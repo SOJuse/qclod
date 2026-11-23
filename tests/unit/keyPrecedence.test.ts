@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
+  caretStuck,
+  historyAtOnce,
   resolveComposerKey,
   type ComposerContext,
   type KeyLike
@@ -318,5 +320,33 @@ describe('открытый план', () => {
       resolveComposerKey(key({ key: '1', code: 'Digit1' }), ctx({ text: 'а', pendingPlan: true }))
     ).toBe('insert')
     expect(resolveComposerKey(key({ key: 'Enter' }), ctx({ text: 'а', pendingPlan: true }))).toBe('submit')
+  })
+})
+
+describe('стрелки по строкам вызванного сообщения', () => {
+  test('историю сразу листают только с самого края текста', () => {
+    expect(historyAtOnce('ArrowUp', 10, 0)).toBe(true)
+    expect(historyAtOnce('ArrowUp', 10, 4)).toBe(false)
+    expect(historyAtOnce('ArrowDown', 10, 10)).toBe(true)
+    expect(historyAtOnce('ArrowDown', 10, 4)).toBe(false)
+  })
+
+  test('каретка, не сдвинутая браузером, значит край визуальных строк', () => {
+    expect(caretStuck(7, 7)).toBe(true)
+    expect(caretStuck(7, 19)).toBe(false)
+  })
+
+  test('после ↑ каретка в начале: ↓ идёт по строкам, история — только с последней', () => {
+    const text = 'а\nб\nв'
+    const ctxAt = (at: number): ComposerContext =>
+      ctx({
+        text,
+        caretOnFirstLine: !text.slice(0, at).includes('\n'),
+        caretOnLastLine: !text.slice(at).includes('\n')
+      })
+    const down = key({ key: 'ArrowDown' })
+    expect(resolveComposerKey(down, ctxAt(0))).toBe('caret')
+    expect(resolveComposerKey(down, ctxAt(2))).toBe('caret')
+    expect(resolveComposerKey(down, ctxAt(4))).toBe('historyNext')
   })
 })

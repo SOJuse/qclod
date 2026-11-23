@@ -228,3 +228,17 @@ export function resolveComposerKey(ev: KeyLike, ctx: ComposerContext): ComposerK
   }
   return 'insert'
 }
+
+/**
+ * ↑/↓ at the edge of a logical line: may the history move right now? Only when
+ * the caret is already at the very start (↑) or end (↓) of the text. Anywhere
+ * else the line may be a wrapped one, so the browser moves the caret first.
+ */
+export function historyAtOnce(key: 'ArrowUp' | 'ArrowDown', textLength: number, caret: number): boolean {
+  return key === 'ArrowUp' ? caret === 0 : caret === textLength
+}
+
+/** After the browser's own ↑/↓: a caret that did not move was on the first/last visual line, so the history takes it. */
+export function caretStuck(before: number, after: number): boolean {
+  return before === after
+}

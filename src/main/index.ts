@@ -100,6 +100,7 @@ import { SshPromptBroker } from './ssh/promptBroker'
 import { registerServerIpc } from './ssh/serverIpc'
 import { TerminalHub, nodePtySpawn, type TerminalSpawn } from './ssh/terminal'
 import { registerTerminalIpc } from './ssh/terminalIpc'
+import { localShell, localTerminalEnv } from './ssh/localTerminal'
 import { ServerLogin, pipePty } from './ssh/serverLogin'
 import type { RelayManifest } from './ssh/relayInstaller'
 import type { ServerEntry, SessionSummary } from '../shared/types'
@@ -110,6 +111,7 @@ import { registerVoiceIpc, voiceSnapshot } from './voice/voiceIpc'
 import type { FromWorker } from './voice/protocol'
 import { ModelStore } from './voice/modelStore'
 import { modelsRoot } from './voice/modelsRoot'
+import { createVpnService, registerVpnIpc } from './vpn/vpnIpc'
 import { cudaReady, detectNvidia, VC_REDIST_URL, vcRuntimeReady } from './voice/nvidia'
 
 let mainWindow: BrowserWindow | null = null
@@ -607,9 +609,19 @@ if (gotLock) void app.whenReady().then(async () => {
     })
   }
 
+  // 1.0.1: vpn — Hysteria2 for Claude Code's process and the listed sites (system PAC); Qclod itself goes direct.
+  const vpn = createVpnService({
+    dir: userData,
+    box: electronSecretBox(),
+    send: (view) => send(CHANNELS.vpnChanged, view),
+    log: (message) => errorLog.write({ source: 'main', scope: 'vpn', message, at: Date.now() })
+  })
+  registerVpnIpc(vpn)
+  void vpn.startup()
+
   const manager = new AgentSessionManager({
     getAgentPath: () => settings.agentPath,
-    createDriver: createDriverFactory({ relay: relayDriverFactory }),
+    createDriver: createDriverFactory({ relay: relayDriverFactory, localProxyEnv: () => vpn.claudeEnv() }),
     onAlert: (id, text) => {
       const tab = controller.list().find((t) => t.id === id)
       if (!tab || offScreen) return
@@ -858,6 +870,12 @@ if (gotLock) void app.whenReady().then(async () => {
       if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_E2E_TERMINAL']) {
         const shell = process.platform === 'win32' ? (process.env['ComSpec'] ?? 'cmd.exe') : '/bin/sh'
         return terminals.start(tabId, shell, [], size, process.env)
+      }
+      // A local chat: a shell of this computer in the tab's own folder (the window names no folder).
+      if (!tab.server) {
+        const env = localTerminalEnv(process.env)
+        const sh = localShell(process.platform, env)
+        return terminals.start(tabId, sh.file, sh.args, size, env, undefined, tab.cwd)
       }
       const entry = tab.server ? hostStore.get(tab.server.hostId) : null
       if (!tab.server || !entry) return null
@@ -1160,7 +1178,7 @@ if (gotLock) void app.whenReady().then(async () => {
       .finally(() => {
         terminals.closeAll()
         serverHosts.closeAll()
-        return askpass.stop()
+        return Promise.all([askpass.stop(), vpn.dispose().catch(() => undefined)])
       })
       .finally(() => app.quit())
   })

@@ -20,6 +20,11 @@ export class InputHistory {
     this.setEntries(entries)
   }
 
+  /** A recalled entry is on screen and a draft is held behind it. */
+  get browsing(): boolean {
+    return this.position >= 0
+  }
+
   get size(): number {
     return this.items.length
   }
@@ -73,6 +78,13 @@ export class InputHistory {
     }
     this.position -= 1
     return this.position < 0 ? this.draft : this.items[this.position]
+  }
+
+  /** Leaves the browsing and hands back the held draft, if there is one. */
+  release(): string | undefined {
+    if (this.position < 0) return undefined
+    this.reset()
+    return this.draft
   }
 
   /** The person typed into a recalled entry; the held draft stays. */

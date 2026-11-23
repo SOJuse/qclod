@@ -128,8 +128,11 @@ describe('scanHumanPrompts', () => {
 describe('listSessionFiles', () => {
   test('не видит <id>/subagents/*.jsonl, новые сверху', async () => {
     const s = resumedSession('main', 'C:\\work')
-    writeTranscript(configDir, 'C:\\work', 'main', s.lines, s.subagents)
-    session('C:\\work', 'later', ['ещё один разговор тут'], -2)
+    const mainPath = writeTranscript(configDir, 'C:\\work', 'main', s.lines, s.subagents)
+    const laterPath = session('C:\\work', 'later', ['ещё один разговор тут'], -2)
+    // The order is by mtime: pin both instead of leaning on the clock of the run.
+    utimesSync(mainPath, new Date(NOW - 5000), new Date(NOW - 5000))
+    utimesSync(laterPath, new Date(NOW), new Date(NOW))
     const files = await listSessionFiles(configDir)
     expect(files.map((f) => f.sessionId)).toEqual(['later', 'main'])
     expect(files.every((f) => !f.path.includes('subagents'))).toBe(true)

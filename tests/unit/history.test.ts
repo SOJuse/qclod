@@ -151,3 +151,28 @@ describe('InputHistory', () => {
     expect(h.prev('')).toBe('б')
   })
 })
+
+describe('InputHistory: черновик в поездке по истории', () => {
+  test('browsing и release: черновик возвращается ровно, записи не портятся', () => {
+    const h = new InputHistory(['первое', 'второе'])
+    expect(h.browsing).toBe(false)
+    expect(h.prev('строка\nчерновика')).toBe('второе')
+    expect(h.browsing).toBe(true)
+    h.edit()
+    expect(h.release()).toBe('строка\nчерновика')
+    expect(h.browsing).toBe(false)
+    expect(h.release()).toBeUndefined()
+    expect(h.entries).toEqual(['первое', 'второе'])
+  })
+
+  test('несколько шагов назад и столько же вперёд — тот же черновик', () => {
+    const h = new InputHistory(['а', 'б', 'в'])
+    h.prev('мой')
+    h.prev('в')
+    h.prev('б')
+    expect(h.next()).toBe('б')
+    expect(h.next()).toBe('в')
+    expect(h.next()).toBe('мой')
+    expect(h.browsing).toBe(false)
+  })
+})

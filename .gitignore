@@ -14,3 +14,4 @@ build/installerHeader.bmp
 dist-relay/
 dist-relay-e2e/
 build/relay-manifest.json
+build/vendor/

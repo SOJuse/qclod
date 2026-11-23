@@ -120,13 +120,14 @@ export function ChatHeader({
       {onToggleTerminal && (
         <button
           type="button"
-          className="chat-header-button is-text"
+          className="chat-header-button"
           data-testid="open-terminal"
+          aria-label="Терминал"
           aria-pressed={terminalOpen}
+          title={terminalOpen ? 'Скрыть терминал' : 'Терминал этого чата'}
           onClick={onToggleTerminal}
         >
           <SquareTerminal size={14} aria-hidden="true" />
-          <span>Терминал</span>
         </button>
       )}
       {onOpenAgents && (
@@ -138,7 +139,7 @@ export function ChatHeader({
           onClick={onOpenAgents}
         >
           <Bot size={14} aria-hidden="true" />
-          <span>{agentsCount > 0 ? `Агенты (${agentsCount})` : 'Агенты'}</span>
+          <span className="chat-header-label">{agentsCount > 0 ? `Агенты (${agentsCount})` : 'Агенты'}</span>
         </button>
       )}
       {onOpenGit && (

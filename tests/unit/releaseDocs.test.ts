@@ -8,7 +8,7 @@ const pkg = JSON.parse(read('package.json')) as { version: string }
 
 describe('документы 1.0 (этап 7, задача 17)', () => {
   test('первая строка текста релиза — «# Qclod <версия из package.json>»', () => {
-    expect(pkg.version).toBe('1.0.0')
+    expect(pkg.version).toMatch(/^1\.\d+\.\d+$/)
     expect(read('build/release-notes.md').split('\n')[0]).toBe(`# Qclod ${pkg.version}`)
   })
 

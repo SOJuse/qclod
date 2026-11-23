@@ -388,6 +388,62 @@ test('длинная перенесённая строка: ↓ сначала �
   }
 })
 
+test('черновик переживает поездку по истории: ↓ возвращает текст и каретку', async () => {
+  const { app, profile, win } = await launch({ steps: [], nextTurn: [] })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    for (const text of ['первое', 'второе']) {
+      await input.fill(text)
+      await input.press('Enter')
+      await expect(input).toHaveValue('')
+    }
+    const draft = 'строка раз\nстрока два\nтретья'
+    await input.fill(draft)
+    await input.press('Control+Home')
+    await input.press('ArrowRight')
+    await input.press('ArrowRight')
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('второе')
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('первое')
+    await input.type('!')
+    for (let i = 0; i < 6; i++) {
+      if ((await input.inputValue()) === draft) break
+      await input.press('ArrowDown')
+      await win.waitForTimeout(30)
+    }
+    await expect(input).toHaveValue(draft)
+    expect(await input.evaluate((el) => (el as HTMLTextAreaElement).selectionStart)).toBe(2)
+    // The edited entry did not spoil the history itself.
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('второе')
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('первое')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('Esc в истории возвращает черновик', async () => {
+  const { app, profile, win } = await launch({ steps: [], nextTurn: [] })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    await input.fill('прошлое')
+    await input.press('Enter')
+    await expect(input).toHaveValue('')
+    await input.fill('мой черновик')
+    await input.press('Control+Home')
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('прошлое')
+    await input.press('Escape')
+    await expect(input).toHaveValue('мой черновик')
+  } finally {
+    await close(app, profile)
+  }
+})
+
 /** A first answer slow enough to type the next message into. */
 const SLOW_FIRST_TURN = {
   steps: [],

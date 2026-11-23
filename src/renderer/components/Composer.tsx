@@ -221,6 +221,8 @@ export function Composer({
 }: Props): JSX.Element {
   const field = useRef<HTMLTextAreaElement | null>(null)
   const histories = useRef(new Map<string, InputHistory>())
+  /** Where the caret was in the draft a tab left for the history; it comes back with the draft. */
+  const heldCaret = useRef(new Map<string, { start: number; end: number }>())
   const [caret, setCaretState] = useState(0)
   // The voice hears where the caret is: its next phrase goes there (этап 5).
   const voiceRef = useRef(voice)
@@ -445,6 +447,30 @@ export function Composer({
     setCaret(at)
   }
 
+  /** One ↑/↓ step through the history, keeping the draft and its caret for the way back. */
+  function walkHistory(prev: boolean, start = draft.length, end = start): string | undefined {
+    if (prev && !history.browsing) heldCaret.current.set(tabId, { start, end })
+    const line = prev ? history.prev(draft) : history.next()
+    if (line === undefined) return undefined
+    if (history.browsing) {
+      // Going back lands at the start so ↓ walks down the lines of the
+      // recalled message; coming forward lands at the end so ↑ walks up.
+      replaceDraft(line, prev ? 0 : line.length)
+    } else {
+      const held = heldCaret.current.get(tabId)
+      replaceDraft(line, held ? Math.min(held.start, line.length) : line.length, held ? Math.min(held.end, line.length) : undefined)
+    }
+    return line
+  }
+
+  /** Leaves the history: the held draft returns, caret where it was. */
+  function restoreDraft(): void {
+    const held = heldCaret.current.get(tabId)
+    const text = history.release()
+    if (text === undefined) return
+    replaceDraft(text, held ? Math.min(held.start, text.length) : text.length, held ? Math.min(held.end, text.length) : undefined)
+  }
+
   function runOutcome(outcome: SlashOutcome): void {
     switch (outcome.kind) {
       case 'none':
@@ -531,6 +557,8 @@ export function Composer({
 
       case 'interrupt':
         ev.preventDefault()
+        // Esc out of the history gives the draft back; the agent is still interrupted.
+        if (history.browsing) restoreDraft()
         onInterrupt()
         return
 
@@ -573,18 +601,9 @@ export function Composer({
       case 'historyNext': {
         const prev = action === 'historyPrev'
         const el = field.current
-        const recall = (): void => {
-          const line = prev ? history.prev(draft) : history.next()
-          if (line === undefined) return
-          // Going back lands at the start so ↓ walks down the lines of the
-          // recalled message; coming forward lands at the end so ↑ walks up.
-          replaceDraft(line, prev ? 0 : line.length)
-        }
         if (!el || historyAtOnce(prev ? 'ArrowUp' : 'ArrowDown', draft.length, el.selectionStart)) {
-          const line = prev ? history.prev(draft) : history.next()
-          if (line === undefined) return
+          if (walkHistory(prev, el?.selectionStart, el?.selectionEnd) === undefined) return
           ev.preventDefault()
-          replaceDraft(line, prev ? 0 : line.length)
           return
         }
         // A long line wraps: let the browser step the caret across the visual
@@ -594,7 +613,9 @@ export function Composer({
         setTimeout(() => {
           const now = field.current
           if (!now || now.value !== text || now.selectionStart !== now.selectionEnd) return
-          if (caretStuck(before, now.selectionStart) || sameVisualLine(now, before, now.selectionStart)) recall()
+          if (caretStuck(before, now.selectionStart) || sameVisualLine(now, before, now.selectionStart)) {
+            walkHistory(prev, before, before)
+          }
         }, 0)
         return
       }

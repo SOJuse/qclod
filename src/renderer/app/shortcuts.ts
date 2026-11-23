@@ -25,6 +25,7 @@ export type AppActionId =
   // Stage 6 (сверка F16): actions on a server, its id as runAction's arg; no row of their own here.
   | 'openServerFolder'
   | 'openServerTerminal'
+  | 'openLocalTerminal'
   // этап 7: шаблоны
   | 'templates'
   | 'saveDraftAsTemplate'
@@ -178,5 +179,5 @@ export function tabAtTarget(tabIds: string[], index: number | undefined): string
  * otherwise go to the agent.
  */
 export function paletteActionKeepsFocus(id: AppActionId): boolean {
-  return id === 'openServerFolder' || id === 'openServerTerminal'
+  return id === 'openServerFolder' || id === 'openServerTerminal' || id === 'openLocalTerminal'
 }

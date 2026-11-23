@@ -99,10 +99,17 @@ export class TerminalHub {
     args: string[],
     size: { cols: number; rows: number },
     env: NodeJS.ProcessEnv,
-    onEnd?: (exitCode?: number) => void
+    onEnd?: (exitCode?: number) => void,
+    cwd?: string
   ): string {
     const termId = randomUUID()
-    const pty = this.deps.spawnPty(file, args, { cols: size.cols, rows: size.rows, env, name: 'xterm-256color' })
+    const pty = this.deps.spawnPty(file, args, {
+      cols: size.cols,
+      rows: size.rows,
+      env,
+      name: 'xterm-256color',
+      ...(cwd ? { cwd } : {})
+    })
     const term: Term = { tabId, pty, backlog: [], backlogSize: 0, ...(onEnd ? { onEnd } : {}) }
     this.terms.set(termId, term)
     pty.onData((data) => {

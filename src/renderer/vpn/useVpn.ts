@@ -34,6 +34,7 @@ export function useVpn(): VpnView | null {
 /** Calls that answer with a fresh view update everyone at once. */
 export const vpnActions = {
   connect: () => window.qclod.vpn.connect().then(set),
+  openTelegram: () => window.qclod.vpn.openTelegram(),
   disconnect: () => window.qclod.vpn.disconnect().then(set),
   setLink: (link: string) => window.qclod.vpn.setLink(link).then(set),
   setOptions: (o: { autoConnect?: boolean; sites?: string | 'defaults' }) => window.qclod.vpn.setOptions(o).then(set)

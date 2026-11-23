@@ -102,6 +102,28 @@ export function VpnSection(): JSX.Element {
         </div>
         <p className="settings-hint">Применится к новым чатам; «Начать заново» — сразу.</p>
       </Group>
+      <Group title="Telegram">
+        <p data-testid="vpn-telegram-addr">SOCKS5 127.0.0.1:{vpn.socksPort}</p>
+        <div className="vpn-actions">
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            data-testid="vpn-telegram-connect"
+            onClick={() => void vpnActions.openTelegram().catch(() => undefined)}
+          >
+            Подключить Telegram
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            data-testid="vpn-telegram-copy"
+            onClick={() => void navigator.clipboard.writeText(`127.0.0.1:${vpn.socksPort}`).catch(() => undefined)}
+          >
+            Скопировать
+          </button>
+        </div>
+        <p className="settings-hint">Telegram будет ходить через VPN, пока Qclod запущен и VPN подключён.</p>
+      </Group>
       <Group title="Сайты через VPN">
         <p className="settings-hint">
           По домену в строке, поддомены тоже. Остальное — напрямую.

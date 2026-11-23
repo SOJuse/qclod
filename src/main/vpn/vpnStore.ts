@@ -14,10 +14,12 @@ export interface VpnRecord {
   savedProxy: SavedProxy | null
   /** The client we started, to end an orphan at the next start. */
   clientPid: number | null
+  /** The SOCKS5 port for other apps, kept so Telegram's setup survives a restart. */
+  socksPort: number | null
 }
 
 export function defaultVpnRecord(): VpnRecord {
-  return { sealedLink: null, autoConnect: true, sites: [...DEFAULT_VPN_SITES], savedProxy: null, clientPid: null }
+  return { sealedLink: null, autoConnect: true, sites: [...DEFAULT_VPN_SITES], savedProxy: null, clientPid: null, socksPort: null }
 }
 
 function savedProxyOf(v: unknown): SavedProxy | null {
@@ -44,7 +46,11 @@ export function loadVpnRecord(dir: string): VpnRecord {
     autoConnect: typeof o['autoConnect'] === 'boolean' ? o['autoConnect'] : d.autoConnect,
     sites: Array.isArray(o['sites']) ? parseSites(o['sites']) : d.sites,
     savedProxy: savedProxyOf(o['savedProxy']),
-    clientPid: typeof o['clientPid'] === 'number' && Number.isInteger(o['clientPid']) ? o['clientPid'] : null
+    clientPid: typeof o['clientPid'] === 'number' && Number.isInteger(o['clientPid']) ? o['clientPid'] : null,
+    socksPort:
+      typeof o['socksPort'] === 'number' && Number.isInteger(o['socksPort']) && o['socksPort'] > 1023 && o['socksPort'] < 65536
+        ? o['socksPort']
+        : null
   }
 }
 

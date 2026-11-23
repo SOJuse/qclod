@@ -39,7 +39,10 @@ export interface VpnDeps {
   clearTimeout?(t: unknown): void
 }
 
-const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '')
+/** «discard»: nothing listens on it locally — a request through it fails instead of going direct. */
+export const DEAD_PORT = 9
+
+const stripAnsi =(s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '')
 
 /** A short reason from a client's log line, without addresses' secrets (the client logs none). */
 export function logReason(line: string): string | null {
@@ -243,8 +246,9 @@ export class VpnService {
    */
   async claudeEnv(): Promise<Record<string, string> | null> {
     if (!this.enabled) return null
-    if (this.portsReady) await this.portsReady.catch(() => undefined)
-    return this.ports ? claudeProxyEnv(this.ports.http) : null
+    await this.ensurePorts().catch(() => undefined)
+    // No port could be had: a proxy nobody listens on, so the agent cannot go around the tunnel.
+    return claudeProxyEnv(this.ports?.http ?? DEAD_PORT)
   }
 
   // ---- lifecycle ----
@@ -281,20 +285,30 @@ export class VpnService {
     this.enabled = true
     this.attempt = 0
     this.lastError = null
-    if (!this.ports) {
-      this.portsReady = (async () => {
-        const free = this.deps.freePort ?? freeLocalPort
-        this.ports = { socks: await free(), http: await free() }
-      })()
-      try {
-        await this.portsReady
-      } catch (e) {
-        this.fail(`Нет свободного порта: ${(e as Error).message}`)
-        return this.view()
-      }
+    try {
+      await this.ensurePorts()
+    } catch (e) {
+      this.fail(`Нет свободного порта: ${(e as Error).message}`)
+      return this.view()
     }
     this.startClient()
     return this.view()
+  }
+
+  /** The local listeners' ports: the same for the whole run unless a port was taken. One pick at a time. */
+  private ensurePorts(): Promise<void> {
+    if (this.ports) return Promise.resolve()
+    if (!this.portsReady) {
+      const pick = (async () => {
+        const free = this.deps.freePort ?? freeLocalPort
+        this.ports = { socks: await free(), http: await free() }
+      })()
+      this.portsReady = pick
+      pick.catch(() => {
+        if (this.portsReady === pick) this.portsReady = null
+      })
+    }
+    return this.portsReady
   }
 
   async disconnect(): Promise<VpnView> {

@@ -170,14 +170,14 @@ describe('реестр', () => {
     vi.resetModules()
   })
 
-  test('на Windows раздел voice стоит после permissions (40) и перед about (90)', async () => {
+  test('на Windows раздел voice стоит после vpn (45, 1.0.1) и перед about (90)', async () => {
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' })
     vi.resetModules()
     const { sortedSections } = await import('../../src/renderer/components/settings/registry')
     const ids = sortedSections().map((s) => s.id)
     const voice = sortedSections().find((s) => s.id === 'voice')
     expect(voice).toMatchObject({ title: 'Голос', order: 50 })
-    expect(ids.indexOf('voice')).toBe(ids.indexOf('permissions') + 1)
+    expect(ids.indexOf('voice')).toBe(ids.indexOf('vpn') + 1)
     expect(ids.indexOf('voice')).toBeLessThan(ids.indexOf('about'))
   })
 

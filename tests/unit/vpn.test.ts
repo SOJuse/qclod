@@ -9,7 +9,7 @@ import { pacDecision, pacScript, PAC_PATH } from '@main/vpn/pac'
 import { backoffMs, claudeProxyEnv, withProxyEnv } from '@main/vpn/proxyEnv'
 import { applyPac, restorePac, type Registry } from '@main/vpn/systemProxy'
 import { loadVpnRecord } from '@main/vpn/vpnStore'
-import { logReason, VpnService, type ClientProcess } from '@main/vpn/vpnService'
+import { DEAD_PORT, logReason, VpnService, type ClientProcess } from '@main/vpn/vpnService'
 import { sanitizeVpnLink, sanitizeVpnOptions } from '@main/tabs/sanitize'
 
 vi.mock('electron', () => ({}))
@@ -200,7 +200,7 @@ describe('VpnService', () => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
   })
 
-  function setup(opts: { autoConnect?: boolean } = {}) {
+  function setup(opts: { autoConnect?: boolean; freePort?: () => Promise<number> } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'qclod-vpn-'))
     dirs.push(dir)
     const children: Array<ClientProcess & { line(l: string): void; exit(c: number): void; killed: boolean }> = []
@@ -212,7 +212,7 @@ describe('VpnService', () => {
       box: { available: () => true, seal: (s) => Buffer.from(s).toString('base64'), open: (s) => Buffer.from(s, 'base64').toString() },
       registry: reg,
       binaryPath: () => 'hysteria.exe',
-      freePort: async () => port++,
+      freePort: opts.freePort ?? (async () => port++),
       probe: async () => 77,
       spawnClient: () => {
         const lines: Array<(l: string) => void> = []
@@ -302,5 +302,56 @@ describe('VpnService', () => {
     await svc.connect()
     expect(svc.view().status).toBe('error')
     expect(svc.view().lastError).toMatch(/ссылк/i)
+  })
+})
+
+describe('VpnService never lets Claude go around the tunnel', () => {
+  const box = { available: () => true, seal: (s: string) => s, open: (s: string) => s }
+  function svcWith(freePort: () => Promise<number>, spawned: Array<{ line(l: string): void; exit(c: number): void }>) {
+    const dir = mkdtempSync(join(tmpdir(), 'qclod-vpn-'))
+    return new VpnService({
+      dir,
+      box,
+      registry: null,
+      binaryPath: () => 'x',
+      freePort,
+      probe: async () => 1,
+      spawnClient: () => {
+        const lines: Array<(l: string) => void> = []
+        const exits: Array<(c: number | null) => void> = []
+        spawned.push({ line: (l) => lines.forEach((cb) => cb(l)), exit: (c) => exits.forEach((cb) => cb(c)) })
+        return { pid: undefined, onLine: (cb) => void lines.push(cb), onExit: (cb) => void exits.push(cb), kill: () => undefined }
+      },
+      onChange: () => undefined,
+      log: () => undefined,
+      setTimeout: () => 0,
+      clearTimeout: () => undefined
+    })
+  }
+
+  test('a bind error drops the ports — claudeEnv picks new ones, never null', async () => {
+    let port = 50000
+    const spawned: Array<{ line(l: string): void; exit(c: number): void }> = []
+    const svc = svcWith(async () => port++, spawned)
+    await svc.setLink(LINK)
+    await svc.connect()
+    spawned[0]!.line('FATAL\tfailed to run\t{"error": "listen tcp 127.0.0.1:50001: bind: address already in use"}')
+    spawned[0]!.exit(1)
+    const env = await svc.claudeEnv()
+    expect(env).not.toBeNull()
+    expect(env!['HTTPS_PROXY']).toBe('http://127.0.0.1:50003')
+    await svc.dispose()
+  })
+
+  test('no port at all — a dead local proxy, not none', async () => {
+    const spawned: Array<{ line(l: string): void; exit(c: number): void }> = []
+    const svc = svcWith(async () => {
+      throw new Error('no ports')
+    }, spawned)
+    await svc.setLink(LINK)
+    await svc.connect()
+    expect(svc.view().status).toBe('error')
+    expect((await svc.claudeEnv())?.['HTTPS_PROXY']).toBe(`http://127.0.0.1:${DEAD_PORT}`)
+    await svc.dispose()
   })
 })

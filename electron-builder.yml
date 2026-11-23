@@ -42,6 +42,12 @@ extraResources:
     to: tray
     filter:
       - '*.png'
+  # 1.0.1: vpn — the Hysteria2 client (scripts/fetch-hysteria.mjs checks its SHA-256).
+  - from: build/vendor/hysteria
+    to: hysteria
+    filter:
+      - 'hysteria*'
+      - '!*.part'
 
 win:
   target:

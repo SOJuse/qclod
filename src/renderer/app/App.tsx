@@ -822,6 +822,10 @@ export function App(): JSX.Element {
             onToggleProject={toggleProject}
             onForget={(cwd, hostId) => void window.qclod.forgetProject(cwd, hostId)}
             onRetryPast={(cwd, hostId) => loadProjectHistory(cwd, false, hostId)}
+            onOpenVpnSettings={() => {
+              setSettingsSection('vpn')
+              setSettingsOpen(true)
+            }}
           />
         )}
         <SplitView

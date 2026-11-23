@@ -110,6 +110,7 @@ import { registerVoiceIpc, voiceSnapshot } from './voice/voiceIpc'
 import type { FromWorker } from './voice/protocol'
 import { ModelStore } from './voice/modelStore'
 import { modelsRoot } from './voice/modelsRoot'
+import { createVpnService, registerVpnIpc } from './vpn/vpnIpc'
 import { cudaReady, detectNvidia, VC_REDIST_URL, vcRuntimeReady } from './voice/nvidia'
 
 let mainWindow: BrowserWindow | null = null
@@ -607,9 +608,19 @@ if (gotLock) void app.whenReady().then(async () => {
     })
   }
 
+  // 1.0.1: vpn — Hysteria2 for Claude Code's process and the listed sites (system PAC); Qclod itself goes direct.
+  const vpn = createVpnService({
+    dir: userData,
+    box: electronSecretBox(),
+    send: (view) => send(CHANNELS.vpnChanged, view),
+    log: (message) => errorLog.write({ source: 'main', scope: 'vpn', message, at: Date.now() })
+  })
+  registerVpnIpc(vpn)
+  void vpn.startup()
+
   const manager = new AgentSessionManager({
     getAgentPath: () => settings.agentPath,
-    createDriver: createDriverFactory({ relay: relayDriverFactory }),
+    createDriver: createDriverFactory({ relay: relayDriverFactory, localProxyEnv: () => vpn.claudeEnv() }),
     onAlert: (id, text) => {
       const tab = controller.list().find((t) => t.id === id)
       if (!tab || offScreen) return
@@ -1160,7 +1171,7 @@ if (gotLock) void app.whenReady().then(async () => {
       .finally(() => {
         terminals.closeAll()
         serverHosts.closeAll()
-        return askpass.stop()
+        return Promise.all([askpass.stop(), vpn.dispose().catch(() => undefined)])
       })
       .finally(() => app.quit())
   })

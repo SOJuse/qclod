@@ -23,6 +23,7 @@ import {
   type VoiceSettings
 } from '../../shared/voice'
 import { clip } from '../../shared/format'
+import { parseSites } from '../../shared/vpn'
 import { isInsidePasteDir } from '../files/imagePaste'
 import { isSafeSshTarget } from '../ssh/sshArgs'
 
@@ -631,4 +632,22 @@ export function sanitizeExcludedProjects(value: unknown): string[] {
 /** A stored template id: what the window may name in «удалить». */
 export function isTemplateId(value: unknown): value is string {
   return isString(value) && TEMPLATE_ID.test(value)
+}
+
+// 1.0.1: vpn
+/** A pasted hysteria2:// link (or '' to forget it): a string of at most 4096 characters. */
+export function sanitizeVpnLink(value: unknown): string | null {
+  return isString(value) && value.length <= 4096 ? value : null
+}
+
+/** «Подключаться при запуске» and «Сайты через VPN»; anything else is dropped. */
+export function sanitizeVpnOptions(value: unknown): { autoConnect?: boolean; sites?: string[] | 'defaults' } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const o = value as Record<string, unknown>
+  const out: { autoConnect?: boolean; sites?: string[] | 'defaults' } = {}
+  if (typeof o['autoConnect'] === 'boolean') out.autoConnect = o['autoConnect']
+  if (o['sites'] === 'defaults') out.sites = 'defaults'
+  else if (isString(o['sites']) && o['sites'].length <= 50_000) out.sites = parseSites(o['sites'])
+  else if (Array.isArray(o['sites']) && o['sites'].length <= 1000 && o['sites'].every(isString)) out.sites = parseSites(o['sites'])
+  return out
 }

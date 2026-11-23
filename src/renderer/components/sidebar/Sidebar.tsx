@@ -4,6 +4,7 @@ import { hint } from '../../app/shortcuts'
 import type { SidebarProject } from '../../chat/sidebarModel'
 import type { SessionSummary, TabId } from '../../../shared/types'
 import { PAST_FIRST, PAST_STEP, ProjectGroup } from './ProjectGroup'
+import { VpnButton } from './VpnButton'
 import './Sidebar.css'
 
 export interface SidebarProps {
@@ -25,6 +26,8 @@ export interface SidebarProps {
   onRetryPast: (cwd: string, hostId?: string) => void
   /** «Показать ещё» was pressed; the sidebar itself shows the next rows. */
   onMore?: (cwd: string) => void
+  /** 1.0.1: vpn — «Настройки VPN» from the row at the foot. Without it there is no row. */
+  onOpenVpnSettings?: () => void
 }
 
 /**
@@ -44,7 +47,8 @@ export function Sidebar({
   onForget,
   onRetryPast,
   onMore,
-  onNewServerChat
+  onNewServerChat,
+  onOpenVpnSettings
 }: SidebarProps): JSX.Element {
   /** How many past conversations each project shows, by project key; PAST_FIRST until «Показать ещё». */
   const [shown, setShown] = useState<Record<string, number>>({})
@@ -114,6 +118,7 @@ export function Sidebar({
           />
         ))}
       </div>
+      {onOpenVpnSettings && <VpnButton onOpenSettings={onOpenVpnSettings} />}
     </nav>
   )
 }

@@ -9,7 +9,8 @@ import type {
   SessionStatus
 } from '../../shared/types'
 import { markRemote, withLocalCommands } from '../../shared/commandFilter'
-import { resolveComposerKey, type ComposerContext } from '../input/keyPrecedence'
+import { sameVisualLine } from '../input/caretLine'
+import { caretStuck, historyAtOnce, resolveComposerKey, type ComposerContext } from '../input/keyPrecedence'
 import {
   attachmentLabel,
   attachmentsFromClipboard,
@@ -570,12 +571,31 @@ export function Composer({
 
       case 'historyPrev':
       case 'historyNext': {
-        const line = action === 'historyPrev' ? history.prev(draft) : history.next()
-        if (line === undefined) return
-        ev.preventDefault()
-        // Going back lands at the start so ↑ goes on through the past; coming
-        // forward lands at the end so ↓ does.
-        replaceDraft(line, action === 'historyPrev' ? 0 : line.length)
+        const prev = action === 'historyPrev'
+        const el = field.current
+        const recall = (): void => {
+          const line = prev ? history.prev(draft) : history.next()
+          if (line === undefined) return
+          // Going back lands at the start so ↓ walks down the lines of the
+          // recalled message; coming forward lands at the end so ↑ walks up.
+          replaceDraft(line, prev ? 0 : line.length)
+        }
+        if (!el || historyAtOnce(prev ? 'ArrowUp' : 'ArrowDown', draft.length, el.selectionStart)) {
+          const line = prev ? history.prev(draft) : history.next()
+          if (line === undefined) return
+          ev.preventDefault()
+          replaceDraft(line, prev ? 0 : line.length)
+          return
+        }
+        // A long line wraps: let the browser step the caret across the visual
+        // lines; only if it stayed put was this the first/last one.
+        const before = el.selectionStart
+        const text = draft
+        setTimeout(() => {
+          const now = field.current
+          if (!now || now.value !== text || now.selectionStart !== now.selectionEnd) return
+          if (caretStuck(before, now.selectionStart) || sameVisualLine(now, before, now.selectionStart)) recall()
+        }, 0)
         return
       }
     }

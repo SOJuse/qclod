@@ -330,6 +330,64 @@ test('история вкладки — из её ленты, у второй в
   }
 })
 
+test('↑ вызывает многострочное сообщение, ↓ идёт по его строкам, история — с последней', async () => {
+  const { app, profile, win } = await launch({ steps: [], nextTurn: [] })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    for (const text of ['старое', 'а\nб\nв']) {
+      await input.fill(text)
+      await input.press('Enter')
+      await expect(input).toHaveValue('')
+    }
+    await input.fill('черновик')
+    await input.press('Home')
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue('а\nб\nв')
+    const caret = (): Promise<number> => input.evaluate((el) => (el as HTMLTextAreaElement).selectionStart)
+    expect(await caret()).toBe(0)
+    await input.press('ArrowDown')
+    await expect(input).toHaveValue('а\nб\nв')
+    expect(await caret()).toBe(2)
+    await input.press('ArrowDown')
+    await expect(input).toHaveValue('а\nб\nв')
+    expect(await caret()).toBe(4)
+    await input.press('ArrowDown')
+    await expect(input).toHaveValue('черновик')
+  } finally {
+    await close(app, profile)
+  }
+})
+
+test('длинная перенесённая строка: ↓ сначала идёт по визуальным строкам', async () => {
+  const { app, profile, win } = await launch({ steps: [], nextTurn: [] })
+  try {
+    const input = win.locator('[data-testid="composer-input"]')
+    await input.click()
+    const long = Array.from({ length: 120 }, (_, i) => 'слово' + i).join(' ')
+    await input.fill(long)
+    await input.press('Enter')
+    await expect(input).toHaveValue('')
+    await input.fill('черновик')
+    await input.press('Home')
+    await input.press('ArrowUp')
+    await expect(input).toHaveValue(long)
+    const caret = (): Promise<number> => input.evaluate((el) => (el as HTMLTextAreaElement).selectionStart)
+    expect(await caret()).toBe(0)
+    await input.press('ArrowDown')
+    await expect.poll(caret).toBeGreaterThan(0)
+    await expect(input).toHaveValue(long)
+    for (let i = 0; i < 60; i++) {
+      if ((await input.inputValue()) !== long) break
+      await input.press('ArrowDown')
+      await win.waitForTimeout(30)
+    }
+    await expect(input).toHaveValue('черновик')
+  } finally {
+    await close(app, profile)
+  }
+})
+
 /** A first answer slow enough to type the next message into. */
 const SLOW_FIRST_TURN = {
   steps: [],

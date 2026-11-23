@@ -19,6 +19,16 @@ export interface VpnView {
   lastError: string | null
   /** The OS can seal the link (safeStorage). */
   canStore: boolean
+  /** The fixed local SOCKS5 port for other apps (Telegram): 127.0.0.1 only. */
+  socksPort: number
+}
+
+/** The first port tried for the SOCKS5 listener; kept across runs once chosen. */
+export const DEFAULT_SOCKS_PORT = 10808
+
+/** Telegram Desktop's own «add proxy» link: opening it offers to add and turn the proxy on. */
+export function telegramProxyUrl(port: number): string {
+  return `tg://socks?server=127.0.0.1&port=${port}`
 }
 
 /** Owner's presets (decision 3); subdomains are included by the PAC. */
@@ -48,6 +58,10 @@ export const DEFAULT_VPN_SITES: readonly string[] = Object.freeze([
   'discordapp.com',
   'discordapp.net',
   'linkedin.com',
+  'telegram.org',
+  't.me',
+  'telegram.me',
+  'web.telegram.org',
   'notion.so',
   'medium.com',
   'spotify.com'

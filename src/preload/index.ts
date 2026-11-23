@@ -378,6 +378,8 @@ const api = {
       ipcRenderer.invoke(CHANNELS.vpnSetOptions, o),
     connect: (): Promise<VpnView> => ipcRenderer.invoke(CHANNELS.vpnConnect),
     disconnect: (): Promise<VpnView> => ipcRenderer.invoke(CHANNELS.vpnDisconnect),
+    /** Opens tg://socks for the fixed port (main knows it). Resolves with the link. */
+    openTelegram: (): Promise<string> => ipcRenderer.invoke(CHANNELS.vpnTelegram),
     onChanged: (cb: (v: VpnView) => void) => on(CHANNELS.vpnChanged, cb)
   }
 }

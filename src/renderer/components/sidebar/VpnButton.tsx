@@ -56,6 +56,19 @@ export function VpnButton({ onOpenSettings }: { onOpenSettings: () => void }): J
             type="button"
             role="menuitem"
             className="vpn-pop-item"
+            data-testid="vpn-menu-telegram"
+            title={`SOCKS5 127.0.0.1:${vpn.socksPort}`}
+            onClick={() => {
+              setOpen(false)
+              void vpnActions.openTelegram().catch(() => undefined)
+            }}
+          >
+            Подключить Telegram
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="vpn-pop-item"
             data-testid="vpn-settings"
             onClick={() => {
               setOpen(false)

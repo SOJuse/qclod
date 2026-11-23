@@ -1,7 +1,7 @@
 // 1.0.1: vpn — the service made with Electron's pieces, and what the window may ask of it.
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, shell } from 'electron'
 import { CHANNELS } from '../../shared/channels'
 import type { SecretBox } from '../ssh/secretBox'
 import { sanitizeVpnLink, sanitizeVpnOptions } from '../tabs/sanitize'
@@ -101,5 +101,16 @@ export function registerVpnIpc(vpn: VpnService): void {
   })
   ipcMain.handle(CHANNELS.vpnSetOptions, (_e, raw: unknown) => vpn.setOptions(sanitizeVpnOptions(raw)))
   ipcMain.handle(CHANNELS.vpnConnect, () => vpn.connect())
+  ipcMain.handle(CHANNELS.vpnTelegram, async () => {
+    const url = vpn.telegramUrl()
+    if (__QCLOD_TEST_SEAMS__) {
+      // e2e reads what would have been opened; a test build never launches Telegram.
+      const g = globalThis as { __qclodTelegramOpens?: string[] }
+      ;(g.__qclodTelegramOpens ??= []).push(url)
+      return url
+    }
+    await shell.openExternal(url)
+    return url
+  })
   ipcMain.handle(CHANNELS.vpnDisconnect, () => vpn.disconnect())
 }

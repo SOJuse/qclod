@@ -7,7 +7,7 @@ import { createServer, request, type Server } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
 import { join } from 'node:path'
 import { connect as tlsConnect } from 'node:tls'
-import { DEFAULT_VPN_SITES, parseSites, type VpnStatus, type VpnView } from '../../shared/vpn'
+import { DEFAULT_SOCKS_PORT, DEFAULT_VPN_SITES, telegramProxyUrl, parseSites, type VpnStatus, type VpnView } from '../../shared/vpn'
 import type { SecretBox } from '../ssh/secretBox'
 import { clientConfig, parseHy2Link, type Hy2Link } from './link'
 import { PAC_PATH, pacScript } from './pac'
@@ -31,6 +31,8 @@ export interface VpnDeps {
   spawnClient?(binary: string, configPath: string): ClientProcess
   probe?(httpPort: number): Promise<number>
   freePort?(): Promise<number>
+  /** Is this exact port free on 127.0.0.1 (for the fixed SOCKS5 port)? */
+  portFree?(port: number): Promise<boolean>
   /** Ends an orphan of an earlier run if it is our client. */
   killOrphan?(pid: number): Promise<void>
   onChange(view: VpnView): void
@@ -92,6 +94,14 @@ export function nodeSpawnClient(binary: string, configPath: string): ClientProce
       }
     }
   }
+}
+
+export function localPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = createNetServer()
+    s.once('error', () => resolve(false))
+    s.listen(port, '127.0.0.1', () => s.close(() => resolve(true)))
+  })
 }
 
 export function freeLocalPort(): Promise<number> {
@@ -191,7 +201,8 @@ export class VpnService {
       sites: [...this.rec.sites],
       latencyMs: this.latencyMs,
       lastError: this.lastError,
-      canStore: this.deps.box.available()
+      canStore: this.deps.box.available(),
+      socksPort: this.ports?.socks ?? this.rec.socksPort ?? DEFAULT_SOCKS_PORT
     }
   }
 
@@ -301,7 +312,13 @@ export class VpnService {
     if (!this.portsReady) {
       const pick = (async () => {
         const free = this.deps.freePort ?? freeLocalPort
-        this.ports = { socks: await free(), http: await free() }
+        const socks = await this.pickSocksPort()
+        this.ports = { socks, http: await free() }
+        if (this.rec.socksPort !== socks) {
+          this.rec.socksPort = socks
+          this.save()
+        }
+        this.changed()
       })()
       this.portsReady = pick
       pick.catch(() => {
@@ -309,6 +326,19 @@ export class VpnService {
       })
     }
     return this.portsReady
+  }
+
+  /** The remembered (or default) port if free, else the next free one; 127.0.0.1 only. */
+  private async pickSocksPort(): Promise<number> {
+    const free = this.deps.portFree ?? localPortFree
+    const start = this.rec.socksPort ?? DEFAULT_SOCKS_PORT
+    for (let p = start; p < start + 200 && p < 65536; p++) if (await free(p)) return p
+    throw new Error('нет свободного порта для SOCKS5')
+  }
+
+  /** The tg://socks link for Telegram Desktop, on the fixed SOCKS5 port. */
+  telegramUrl(): string {
+    return telegramProxyUrl(this.view().socksPort)
   }
 
   async disconnect(): Promise<VpnView> {

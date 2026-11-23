@@ -80,3 +80,29 @@ test('VPN: ссылка в настройках, подключение, зна�
   await win.locator('[data-testid="vpn-toggle"]').click()
   await expect(win.locator('[data-testid="vpn-button"]')).toHaveAttribute('data-status', 'off')
 })
+
+test('VPN: блок «Telegram» — адрес на постоянном порту, кнопка открывает tg://socks, заготовки сайтов', async () => {
+  const app = await launch()
+  const win = await app.firstWindow()
+  await expect(win.locator('[data-testid="vpn-button"]')).toBeVisible({ timeout: 15000 })
+  // The menu item first (the section covers the sidebar once open).
+  await win.locator('[data-testid="vpn-button"]').click()
+  await win.locator('[data-testid="vpn-menu-telegram"]').click()
+  await expect
+    .poll(() => app.evaluate(() => (globalThis as { __qclodTelegramOpens?: string[] }).__qclodTelegramOpens?.length ?? 0))
+    .toBe(1)
+  await win.locator('[data-testid="vpn-button"]').click()
+  await win.locator('[data-testid="vpn-settings"]').click()
+  await expect(win.locator('[data-testid="vpn-telegram-addr"]')).toHaveText(/^SOCKS5 127\.0\.0\.1:\d+$/)
+  const port = (await win.locator('[data-testid="vpn-telegram-addr"]').innerText()).split(':')[1]!
+  await win.locator('[data-testid="vpn-telegram-connect"]').click()
+  await expect
+    .poll(() => app.evaluate(() => (globalThis as { __qclodTelegramOpens?: string[] }).__qclodTelegramOpens ?? []))
+    .toHaveLength(2)
+  const opens = await app.evaluate(() => (globalThis as { __qclodTelegramOpens?: string[] }).__qclodTelegramOpens ?? [])
+  expect(opens).toEqual([`tg://socks?server=127.0.0.1&port=${port}`, `tg://socks?server=127.0.0.1&port=${port}`])
+  // Presets bring the Telegram sites back.
+  await win.locator('[data-testid="vpn-sites"]').fill('example.com')
+  await win.locator('[data-testid="vpn-sites-defaults"]').click()
+  await expect(win.locator('[data-testid="vpn-sites"]')).toHaveValue(/web\.telegram\.org/)
+})

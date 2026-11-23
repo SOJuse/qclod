@@ -178,6 +178,7 @@ export const CHANNELS = Object.freeze({
   vpnSetOptions: 'vpn:setOptions',
   vpnConnect: 'vpn:connect',
   vpnDisconnect: 'vpn:disconnect',
+  vpnTelegram: 'vpn:telegram',
   // main -> renderer (event)
   vpnChanged: 'vpn:changed'
 } as const)
@@ -297,7 +298,8 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.vpnSetLink,
   CHANNELS.vpnSetOptions,
   CHANNELS.vpnConnect,
-  CHANNELS.vpnDisconnect
+  CHANNELS.vpnDisconnect,
+  CHANNELS.vpnTelegram
 ])
 
 

@@ -1,9 +1,9 @@
 // 1.0.1: vpn. All values here are made up.
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { DEFAULT_VPN_SITES, parseSites } from '@shared/vpn'
+import { DEFAULT_SOCKS_PORT, DEFAULT_VPN_SITES, parseSites, telegramProxyUrl } from '@shared/vpn'
 import { clientConfig, parseHy2Link, serverAddress } from '@main/vpn/link'
 import { pacDecision, pacScript, PAC_PATH } from '@main/vpn/pac'
 import { backoffMs, claudeProxyEnv, withProxyEnv } from '@main/vpn/proxyEnv'
@@ -200,7 +200,7 @@ describe('VpnService', () => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
   })
 
-  function setup(opts: { autoConnect?: boolean; freePort?: () => Promise<number> } = {}) {
+  function setup(opts: { autoConnect?: boolean; freePort?: () => Promise<number>; portFree?: (p: number) => Promise<boolean> } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'qclod-vpn-'))
     dirs.push(dir)
     const children: Array<ClientProcess & { line(l: string): void; exit(c: number): void; killed: boolean }> = []
@@ -213,6 +213,7 @@ describe('VpnService', () => {
       registry: reg,
       binaryPath: () => 'hysteria.exe',
       freePort: opts.freePort ?? (async () => port++),
+      portFree: opts.portFree ?? (async () => true),
       probe: async () => 77,
       spawnClient: () => {
         const lines: Array<(l: string) => void> = []
@@ -248,7 +249,7 @@ describe('VpnService', () => {
     expect(svc.view().status).toBe('connecting')
     expect(readdirSync(join(dir, 'vpn'))).toHaveLength(1)
     // Claude waits at the local proxy even before the tunnel is up.
-    expect((await svc.claudeEnv())?.['HTTPS_PROXY']).toBe('http://127.0.0.1:40001')
+    expect((await svc.claudeEnv())?.['HTTPS_PROXY']).toBe('http://127.0.0.1:40000')
     children[0]!.line('INFO\tconnected to server')
     expect(readdirSync(join(dir, 'vpn'))).toHaveLength(0)
     expect(svc.view().status).toBe('connected')
@@ -281,7 +282,7 @@ describe('VpnService', () => {
     expect(children).toHaveLength(2)
     children[1]!.exit(1)
     expect(timers.map((t) => t.ms)).toEqual([2000, 5000])
-    expect((await svc.claudeEnv())?.['HTTPS_PROXY']).toBe('http://127.0.0.1:40001')
+    expect((await svc.claudeEnv())?.['HTTPS_PROXY']).toBe('http://127.0.0.1:40000')
     await svc.dispose()
   })
 
@@ -305,6 +306,67 @@ describe('VpnService', () => {
   })
 })
 
+describe('Telegram: a fixed SOCKS5 port', () => {
+  test('the default port, the tg:// link, Telegram sites in the presets', async () => {
+    const { svc, dir } = setupTg()
+    await svc.setLink(LINK)
+    expect(svc.view().socksPort).toBe(DEFAULT_SOCKS_PORT)
+    await svc.connect()
+    expect(svc.view().socksPort).toBe(10808)
+    expect(svc.telegramUrl()).toBe('tg://socks?server=127.0.0.1&port=10808')
+    expect(telegramProxyUrl(12345)).toBe('tg://socks?server=127.0.0.1&port=12345')
+    for (const d of ['telegram.org', 't.me', 'telegram.me', 'web.telegram.org']) expect(DEFAULT_VPN_SITES).toContain(d)
+    expect(JSON.parse(readFileSync(join(dir, 'vpn.json'), 'utf8')).socksPort).toBe(10808)
+    await svc.dispose()
+  })
+
+  test('a taken port gives the next free one, and it is remembered across runs', async () => {
+    const taken = new Set([10808, 10809])
+    const a = setupTg((p) => !taken.has(p))
+    await a.svc.setLink(LINK)
+    await a.svc.connect()
+    expect(a.svc.view().socksPort).toBe(10810)
+    await a.svc.dispose()
+    // A new run in the same profile: the remembered port first.
+    const asked: number[] = []
+    const b = setupTg((p) => (asked.push(p), true), a.dir)
+    expect(b.svc.view().socksPort).toBe(10810)
+    await b.svc.connect()
+    expect(asked[0]).toBe(10810)
+    expect(b.svc.view().socksPort).toBe(10810)
+    await b.svc.dispose()
+  })
+
+  test('the client listens on 127.0.0.1 only; the saved list can take the presets back', async () => {
+    const { svc } = setupTg()
+    await svc.setLink(LINK)
+    svc.setOptions({ sites: ['example.com'] })
+    expect(svc.view().sites).not.toContain('t.me')
+    expect(svc.setOptions({ sites: 'defaults' }).sites).toContain('web.telegram.org')
+    expect(JSON.stringify(clientConfig(parseHy2Link(LINK), { socks: 10808, http: 1 }))).toContain('"listen":"127.0.0.1:10808"')
+    await svc.dispose()
+  })
+})
+
+function setupTg(portFree: (p: number) => boolean = () => true, dir = mkdtempSync(join(tmpdir(), 'qclod-vpn-'))) {
+  let port = 41000
+  const svc = new VpnService({
+    dir,
+    box: { available: () => true, seal: (s: string) => s, open: (s: string) => s },
+    registry: null,
+    binaryPath: () => 'x',
+    freePort: async () => port++,
+    portFree: async (p) => portFree(p),
+    probe: async () => 1,
+    spawnClient: () => ({ pid: undefined, onLine: () => undefined, onExit: () => undefined, kill: () => undefined }),
+    onChange: () => undefined,
+    log: () => undefined,
+    setTimeout: () => 0,
+    clearTimeout: () => undefined
+  })
+  return { svc, dir }
+}
+
 describe('VpnService never lets Claude go around the tunnel', () => {
   const box = { available: () => true, seal: (s: string) => s, open: (s: string) => s }
   function svcWith(freePort: () => Promise<number>, spawned: Array<{ line(l: string): void; exit(c: number): void }>) {
@@ -315,6 +377,7 @@ describe('VpnService never lets Claude go around the tunnel', () => {
       registry: null,
       binaryPath: () => 'x',
       freePort,
+      portFree: async () => true,
       probe: async () => 1,
       spawnClient: () => {
         const lines: Array<(l: string) => void> = []
@@ -339,7 +402,7 @@ describe('VpnService never lets Claude go around the tunnel', () => {
     spawned[0]!.exit(1)
     const env = await svc.claudeEnv()
     expect(env).not.toBeNull()
-    expect(env!['HTTPS_PROXY']).toBe('http://127.0.0.1:50003')
+    expect(env!['HTTPS_PROXY']).toBe('http://127.0.0.1:50001')
     await svc.dispose()
   })
 

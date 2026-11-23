@@ -8,6 +8,7 @@ import { PermissionsSection } from './PermissionsSection'
 import { ServersSection } from './ServersSection'
 import { WindowSection } from './WindowSection'
 import { VoiceSection } from './VoiceSection'
+import { VpnSection } from './VpnSection'
 import { isWindows } from '../../voice/platform'
 
 /**
@@ -21,6 +22,8 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'agent', title: 'Запуск агента', order: 30, Component: AgentSection },
   { id: 'autonomy', title: 'Автономность', order: 35, Component: AutonomySection },
   { id: 'permissions', title: 'Разрешения', order: 40, Component: PermissionsSection },
+  // 1.0.1: vpn
+  { id: 'vpn', title: 'VPN', order: 45, Component: () => createElement(VpnSection) },
   // Voice is Windows-only in 1.0 (G11): isWindows() is window.qclod.platform === 'win32'.
 
   ...(isWindows() ? [{ id: 'voice', title: 'Голос', order: 50, Component: () => createElement(VoiceSection) }] : []),

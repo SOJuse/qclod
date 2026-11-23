@@ -170,7 +170,16 @@ export const CHANNELS = Object.freeze({
   gitCommit: 'git:commit',
   historySearch: 'history:search',
   // main -> renderer (event)
-  templatesChanged: 'templates:changed'
+  templatesChanged: 'templates:changed',
+  // 1.0.1: vpn
+  // renderer -> main (invoke)
+  vpnGet: 'vpn:get',
+  vpnSetLink: 'vpn:setLink',
+  vpnSetOptions: 'vpn:setOptions',
+  vpnConnect: 'vpn:connect',
+  vpnDisconnect: 'vpn:disconnect',
+  // main -> renderer (event)
+  vpnChanged: 'vpn:changed'
 } as const)
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -282,7 +291,13 @@ export const INVOKE_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.gitStatus,
   CHANNELS.gitDiff,
   CHANNELS.gitCommit,
-  CHANNELS.historySearch
+  CHANNELS.historySearch,
+  // 1.0.1: vpn
+  CHANNELS.vpnGet,
+  CHANNELS.vpnSetLink,
+  CHANNELS.vpnSetOptions,
+  CHANNELS.vpnConnect,
+  CHANNELS.vpnDisconnect
 ])
 
 
@@ -313,7 +328,9 @@ export const EVENT_CHANNELS: readonly ChannelName[] = Object.freeze([
   CHANNELS.terminalData,
   CHANNELS.terminalExit,
   // этап 7: шаблоны, Git, поиск по истории
-  CHANNELS.templatesChanged
+  CHANNELS.templatesChanged,
+  // 1.0.1: vpn
+  CHANNELS.vpnChanged
 ])
 
 /** Fire-and-forget: the renderer sends, nothing comes back. */

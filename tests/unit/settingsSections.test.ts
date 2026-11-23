@@ -42,6 +42,8 @@ describe('settings sections', () => {
       ['agent', 'Запуск агента', 30],
       ['autonomy', 'Автономность', 35],
       ['permissions', 'Разрешения', 40],
+      // 1.0.1: vpn
+      ['vpn', 'VPN', 45],
       // этап 6: «Серверы» at 60 (сверка F16).
       ['servers', 'Серверы', 60],
       ['about', 'О программе', 90]
@@ -57,6 +59,7 @@ describe('settings sections', () => {
       'agent',
       'autonomy',
       'permissions',
+      'vpn',
       'servers',
       'about'
     ])

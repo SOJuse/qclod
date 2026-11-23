@@ -1,5 +1,6 @@
 import type { AgentDriver, DriverFactory, DriverOptions } from './driver'
 import { toPermissionContext } from './permissionContext'
+import { withProxyEnv } from '../vpn/proxyEnv'
 
 /** What a test build says instead of starting the real agent. */
 export const REAL_AGENT_REFUSED =
@@ -31,11 +32,25 @@ export function driverChoice(
  * or a token spent. A release build does not contain it at all
  * (buildFlags.d.ts), so a user cannot land in it by accident.
  */
-export function createDriverFactory(opts: { relay?: DriverFactory } = {}): DriverFactory {
+export function createDriverFactory(
+  opts: {
+    relay?: DriverFactory
+    /** 1.0.1: vpn — the proxy env of a new local Claude Code process; null — none. Server chats never get it. */
+    localProxyEnv?: () => Promise<Record<string, string> | null>
+  } = {}
+): DriverFactory {
   const local = localDriverFactory()
   // Stage 6: a server chat's agent runs in its relay; nothing local is started for it.
-  return (options) => {
-    if (!options.server) return local(options)
+  return async (options) => {
+    if (!options.server) {
+      const proxy = opts.localProxyEnv ? await opts.localProxyEnv() : null
+      const env = withProxyEnv(options.env ?? process.env, proxy)
+      if (__QCLOD_TEST_SEAMS__) {
+        // e2e and the live check read what the agent's process was given.
+        ;(globalThis as { __qclodAgentProxy?: string | null }).__qclodAgentProxy = env?.['HTTPS_PROXY'] ?? null
+      }
+      return local(env ? { ...options, env } : options)
+    }
     if (!opts.relay) return Promise.reject(new Error('Серверные чаты недоступны в этом запуске'))
     return opts.relay(options)
   }

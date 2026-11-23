@@ -100,6 +100,7 @@ import { SshPromptBroker } from './ssh/promptBroker'
 import { registerServerIpc } from './ssh/serverIpc'
 import { TerminalHub, nodePtySpawn, type TerminalSpawn } from './ssh/terminal'
 import { registerTerminalIpc } from './ssh/terminalIpc'
+import { localShell, localTerminalEnv } from './ssh/localTerminal'
 import { ServerLogin, pipePty } from './ssh/serverLogin'
 import type { RelayManifest } from './ssh/relayInstaller'
 import type { ServerEntry, SessionSummary } from '../shared/types'
@@ -858,6 +859,12 @@ if (gotLock) void app.whenReady().then(async () => {
       if (__QCLOD_TEST_SEAMS__ && process.env['QCLOD_E2E_TERMINAL']) {
         const shell = process.platform === 'win32' ? (process.env['ComSpec'] ?? 'cmd.exe') : '/bin/sh'
         return terminals.start(tabId, shell, [], size, process.env)
+      }
+      // A local chat: a shell of this computer in the tab's own folder (the window names no folder).
+      if (!tab.server) {
+        const env = localTerminalEnv(process.env)
+        const sh = localShell(process.platform, env)
+        return terminals.start(tabId, sh.file, sh.args, size, env, undefined, tab.cwd)
       }
       const entry = tab.server ? hostStore.get(tab.server.hostId) : null
       if (!tab.server || !entry) return null

@@ -35,6 +35,16 @@ export const commandsProvider: PaletteProvider = {
         }
       })
     )
+    if (ctx.localTerminal !== undefined) {
+      actions.push({
+        row: {
+          key: 'action:openLocalTerminal',
+          section: 'commands',
+          title: `Терминал — ${ctx.localTerminal}`,
+          run: () => ctx.run.runAction('openLocalTerminal')
+        }
+      })
+    }
     if (query === '') return actions.slice(0, SECTION_CAP).map((a) => a.row)
     const slash = ctx.commands.map((command): { row: PaletteItem; name?: string } => ({
       name: command.name,

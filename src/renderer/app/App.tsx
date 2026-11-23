@@ -27,6 +27,7 @@ import { HISTORY_TEXT_MIN } from '../palette/historyText'
 import { fold } from '../palette/rank'
 import type { PaletteContext, PaletteRunner, PaletteSection } from '../palette/types'
 import { withLocalCommands } from '../../shared/commandFilter'
+import { projectName } from '../../shared/projects'
 import { UpdateBanner } from '../components/UpdateBanner'
 import { ServersSheet, type ServersSheetMode } from '../components/servers/ServersSheet'
 import { SshPromptDialog } from '../components/servers/SshPromptDialog'
@@ -261,6 +262,10 @@ export function App(): JSX.Element {
   const fileIndexByTab = useAppStore((s) => s.fileIndexByTab)
   const commandsByTab = useAppStore((s) => s.commandsByTab)
   const hasDraft = useAppStore((s) => (s.draftByTab[s.activeTabId] ?? '').trim() !== '')
+  const localTerminalName = useMemo(() => {
+    const t = tabs.find((x) => x.id === activeTabId)
+    return t && !t.server ? projectName(t.cwd) : undefined
+  }, [tabs, activeTabId])
   const templates = useTemplates()
   const panelByTab = useAppStore((s) => s.panelByTab)
   const layout = useAppStore((s) => s.layout)
@@ -562,6 +567,13 @@ export function App(): JSX.Element {
           if (!server) return
           return setServersSheet(server.state === 'online' ? { kind: 'folder', hostId: at } : { kind: 'connect', hostId: at })
         }
+        case 'openLocalTerminal': {
+          // A local chat's terminal opens under the active chat.
+          const tab = state.tabs.find((t) => t.id === state.activeTabId)
+          if (!tab || tab.server) return
+          state.setTerminalShown(tab.id, true)
+          return
+        }
         case 'openServerTerminal': {
           // The server's terminal (task 26) opens under a chat on that server: the active one, else
           // the first; with no chat there yet, a folder is picked first.
@@ -635,11 +647,12 @@ export function App(): JSX.Element {
         servers,
         templates,
         hasDraft,
+        ...(localTerminalName !== undefined ? { localTerminal: localTerminalName } : {}),
         historyText,
         onQuery: onPaletteQuery,
         run: paletteRun
       },
-    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, servers, templates, hasDraft, historyText, onPaletteQuery, paletteRun]
+    [palette, sidebar, activeTabId, fileIndexByTab, commandsByTab, servers, templates, hasDraft, localTerminalName, historyText, onPaletteQuery, paletteRun]
   )
 
   // Window-level shortcuts, by physical key. The handler is registered once and

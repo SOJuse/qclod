@@ -57,6 +57,8 @@ export interface PaletteContext {
   commands: CommandInfo[]
   /** Stage 6: the servers Qclod knows. */
   servers?: ServerView[]
+  /** The active chat is a local one: its project's name, for «Терминал — <проект>». */
+  localTerminal?: string
   /** этап 7: the owner's prompt templates. */
   templates?: PromptTemplate[]
   /** этап 7: the active chat's input has text («Сохранить черновик как шаблон»). */

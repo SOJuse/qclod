@@ -8,6 +8,7 @@ import { KEY_CHANGED_STRIP_TEXT, OFFLINE_STRIP_TEXT, SERVER_REMOVED_TEXT } from 
 import { ServerLoginDialog } from './servers/ServerLoginDialog'
 import { FileViewer } from './viewer/FileViewer'
 import { TerminalDrawer } from './terminal/TerminalDrawer'
+import { projectName } from '../../shared/projects'
 import { EMPTY_PANEL, useAppStore, type PaneLayerState } from '../state/useAppStore'
 import { useHeldDrafts } from '../state/heldDrafts'
 import { compactNow, sendCommand } from '../input/slash'
@@ -447,7 +448,7 @@ export function ChatPane({
           {...(server ? { onReconnect: () => void window.qclod.connectServer(server.id).catch(() => undefined) } : {})}
           {...(server && onOpenServerChecklist ? { onShowChecklist: () => onOpenServerChecklist(server.id) } : {})}
           serverGone={serverGone}
-          {...(server
+          {...(server || (tab && !serverGone)
             ? {
                 onToggleTerminal: () => useAppStore.getState().setTerminalShown(tabId, terminalShown !== true),
                 terminalOpen: terminalShown === true
@@ -651,10 +652,10 @@ export function ChatPane({
         </div>
 
         {/* Stage 6: the server's terminal, once opened; hidden it keeps its session. */}
-        {server && terminalShown !== undefined && (
+        {(server || (tab && !tab.server)) && terminalShown !== undefined && (
           <TerminalDrawer
             tabId={tabId}
-            label={server.label || server.target}
+            label={server ? server.label || server.target : projectName(tab?.cwd ?? '')}
             shown={terminalShown}
             onHide={() => {
               useAppStore.getState().setTerminalShown(tabId, false)
